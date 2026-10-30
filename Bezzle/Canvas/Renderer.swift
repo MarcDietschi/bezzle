@@ -238,9 +238,10 @@ enum Renderer {
             ctx.clip(using: rule)
             let rect = drawn
             ctx.interpolationQuality = .high
-            ctx.translateBy(x: rect.minX, y: rect.maxY)
-            ctx.scaleBy(x: 1, y: -1)
-            ctx.draw(picture, in: CGRect(origin: .zero, size: rect.size))
+            // Upright, or turned over where it lies when its layer was flipped.
+            ctx.translateBy(x: rect.midX, y: rect.midY)
+            ctx.scaleBy(x: image.flippedX == true ? -1 : 1, y: image.flippedY == true ? 1 : -1)
+            ctx.draw(picture, in: CGRect(x: -rect.width / 2, y: -rect.height / 2, width: rect.width, height: rect.height))
             ctx.restoreGState()
             return
         }
@@ -348,17 +349,22 @@ enum Renderer {
 
     // MARK: Pictures of a design
 
-    /// One artboard as a picture, `scale` pixels to the point.
-    static func image(of board: Node, scale: CGFloat, opaque: Bool = true, assets: Assets? = nil) -> CGImage? {
-        let size = CGSize(width: max(1, (board.frame.width * scale).rounded()), height: max(1, (board.frame.height * scale).rounded()))
+    /// One artboard as a picture, `scale` pixels to the point; or only `part` of it, on the
+    /// canvas, such as one slide of a carousel.
+    static func image(of board: Node, part: CGRect? = nil, scale: CGFloat, opaque: Bool = true, assets: Assets? = nil) -> CGImage? {
+        let rect = part ?? board.frame
+        let size = CGSize(width: max(1, (rect.width * scale).rounded()), height: max(1, (rect.height * scale).rounded()))
         guard let ctx = bitmap(size) else { return nil }
         ctx.translateBy(x: 0, y: size.height)
         ctx.scaleBy(x: scale, y: -scale)
-        ctx.translateBy(x: -board.frame.minX, y: -board.frame.minY)
+        ctx.translateBy(x: -rect.minX, y: -rect.minY)
         withFlippedContext(ctx) {
             var b = board
             if !opaque && !board.fill.on { b.fill.color = b.fill.color.with(alpha: 0) }
-            drawArtboard(b, in: ctx, options: Options(deviceScale: scale, assets: assets))
+            var options = Options(deviceScale: scale, assets: assets)
+            // What lies wholly outside the part is left out.
+            options.visible = part
+            drawArtboard(b, in: ctx, options: options)
         }
         return ctx.makeImage()
     }
@@ -382,14 +388,22 @@ enum Renderer {
         return ctx.makeImage()
     }
 
-    /// One artboard as a page of a PDF, in points.
-    static func drawPDFPage(_ board: Node, in ctx: CGContext, assets: Assets? = nil) {
-        var box = CGRect(origin: .zero, size: board.frame.size)
+    /// One artboard as a page of a PDF, in points; or only `part` of it, on the canvas, such as
+    /// one slide of a carousel.
+    static func drawPDFPage(_ board: Node, part: CGRect? = nil, in ctx: CGContext, assets: Assets? = nil) {
+        let rect = part ?? board.frame
+        var box = CGRect(origin: .zero, size: rect.size)
         ctx.beginPage(mediaBox: &box)
-        ctx.translateBy(x: 0, y: board.frame.height)
+        ctx.translateBy(x: 0, y: rect.height)
         ctx.scaleBy(x: 1, y: -1)
-        ctx.translateBy(x: -board.frame.minX, y: -board.frame.minY)
-        withFlippedContext(ctx) { drawArtboard(board, in: ctx, options: Options(assets: assets)) }
+        ctx.translateBy(x: -rect.minX, y: -rect.minY)
+        var options = Options(assets: assets)
+        if let part {
+            // The rest of the artboard stays off the page, and out of the file.
+            ctx.clip(to: part)
+            options.visible = part
+        }
+        withFlippedContext(ctx) { drawArtboard(board, in: ctx, options: options) }
         ctx.endPage()
     }
 

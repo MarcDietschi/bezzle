@@ -154,12 +154,12 @@ struct FillField: View {
         } else {
             HStack(spacing: 8) {
                 FillSwatch(fill: fill)
-                    .frame(width: 26, height: 26)
+                    .frame(width: Theme.controlHeight, height: Theme.controlHeight)
                 Text(kind == .linear ? "Linear gradient" : kind == .radial ? "Radial gradient" : "Picture")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.ink)
                     .padding(.horizontal, 9)
-                    .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: Theme.controlHeight, alignment: .leading)
                     .well(radius: 7)
             }
             .contentShape(Rectangle())

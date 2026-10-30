@@ -46,6 +46,48 @@ struct StoreTests {
         #expect(bench.node("R1")?.frame.maxX == 400)
     }
 
+    @Test func flippingALayerTurnsItOverWhereItIs() throws {
+        var card = CanvasTests.rect("R", CGRect(x: 10, y: 20, width: 40, height: 30))
+        card.corners = [1, 2, 3, 4]
+        card.rotation = 30
+        card.fill.gradient = Gradient(kind: .linear, stops: [GradientStop(offset: 0, color: .white), GradientStop(offset: 1, color: .black)],
+                                      start: CGPoint(x: 0.25, y: 0), end: CGPoint(x: 1, y: 1))
+        let bench = Bench(extra: [card])
+        bench.store.selection = [bench.node("R")!.id]
+        bench.step { bench.store.flip(horizontally: true) }
+        var r = try #require(bench.node("R"))
+        #expect(abs(r.frame.midX - 30) < 0.001 && abs(r.frame.midY - 35) < 0.001 && r.frame.size == card.frame.size)
+        #expect(r.rotation == -30)
+        #expect(r.corners == [2, 1, 4, 3])
+        #expect(r.fill.gradient?.start == CGPoint(x: 0.75, y: 0) && r.fill.gradient?.end == CGPoint(x: 0, y: 1))
+        bench.step { bench.store.flip(horizontally: false) }
+        r = try #require(bench.node("R"))
+        #expect(r.rotation == 30)
+        #expect(r.corners == [3, 4, 1, 2])
+        #expect(r.fill.gradient?.start == CGPoint(x: 0.75, y: 1))
+        bench.undoLast()
+        #expect(bench.node("R")?.corners == [2, 1, 4, 3])
+    }
+
+    @Test func flippingSeveralLayersMirrorsThemAcrossTheirMiddle() {
+        var shape = Node(kind: .path, name: "P", frame: CGRect(x: 200, y: 100, width: 40, height: 40))
+        shape.path = "M 0 0 L 40 0 L 0 40 Z"
+        shape.pathBox = CGRect(x: 0, y: 0, width: 40, height: 40)
+        var group = Node(kind: .group, name: "G", frame: CGRect(x: 100, y: 20, width: 50, height: 50))
+        group.children = [Node(kind: .line, name: "L", frame: CGRect(x: 0, y: 0, width: 20, height: 50)),
+                          CanvasTests.rect("Dot", CGRect(x: 30, y: 0, width: 20, height: 20))]
+        let bench = Bench(extra: [group, shape])
+        bench.store.selection = [bench.node("G")!.id, bench.node("P")!.id]
+        // Together they reach from x 100 to 240, so they mirror across x 170.
+        bench.step { bench.store.flip(horizontally: true) }
+        #expect(bench.node("P")?.frame.minX == 100)
+        #expect(bench.node("P")?.path == "M 40 0 L 0 0 L 40 40 Z")
+        #expect(bench.node("G")?.frame == CGRect(x: 190, y: 20, width: 50, height: 50))
+        // What the group holds is mirrored inside it.
+        #expect(bench.node("L")?.frame.minX == 30 && bench.node("L")?.rising == true)
+        #expect(bench.node("Dot")?.frame.minX == 0)
+    }
+
     @Test func arrangeMovesWithinItsOwnList() {
         let bench = Bench(extra: [CanvasTests.rect("R1", .zero), CanvasTests.rect("R2", .zero), CanvasTests.rect("R3", .zero)])
         bench.store.selection = [bench.node("R1")!.id]

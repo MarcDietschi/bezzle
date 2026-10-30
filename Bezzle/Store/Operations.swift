@@ -236,6 +236,33 @@ extension DocumentStore {
         }
     }
 
+    // MARK: Flipping
+
+    /// Mirrors the selection left to right, or top to bottom, where it is: a single layer about
+    /// its own middle, several about the middle of the box around them all. Artboards stay as they are.
+    func flip(horizontally: Bool) {
+        let ids = selection.filter { doc.node($0).map { !$0.locked && !$0.isArtboard } == true }
+        guard !ids.isEmpty else { return }
+        let box = ids.compactMap { id in doc.node(id).map { Geometry.bounds(of: $0).offsetBy(dx: doc.parentOrigin(of: id).x, dy: doc.parentOrigin(of: id).y) } }
+            .reduce(nil as CGRect?) { $0?.union($1) ?? $1 }
+        guard let box else { return }
+        edit(horizontally ? "Flip Horizontally" : "Flip Vertically") { doc in
+            for id in ids {
+                // The line in the layer's parent's own coordinates.
+                let o = doc.parentOrigin(of: id)
+                let axis = horizontally ? box.midX - o.x : box.midY - o.y
+                doc.update(id) { $0 = BezzleDocument.flipped($0, horizontally: horizontally, about: axis) }
+            }
+        }
+    }
+
+    /// Whether flipping the selection would change it. Words read forwards whichever way they
+    /// are flipped, so a text layer on its own stays as it is.
+    var canFlip: Bool {
+        let nodes = selectedNodes.filter { !$0.locked && !$0.isArtboard }
+        return nodes.count > 1 || nodes.contains { $0.kind != .text }
+    }
+
     // MARK: Copy and paste
 
     static let pasteboardType = NSPasteboard.PasteboardType("com.erik.bezzle.layers")
@@ -339,6 +366,13 @@ extension DocumentStore {
     func zoomToSelection() {
         guard let bounds = selectionBounds else { zoomToFit(); return }
         viewport.fit(bounds, in: canvasSize, padding: 80, maxZoom: 8)
+    }
+
+    /// Brings a layer whole into view, at the zoom there is unless it is too big for that. A
+    /// layer in view already is left where it is.
+    func show(_ id: UUID) {
+        guard let frame = doc.absoluteFrame(of: id), !visibleCanvasRect.contains(frame) else { return }
+        viewport.fit(frame, in: canvasSize, padding: 80, maxZoom: viewport.zoom)
     }
 }
 

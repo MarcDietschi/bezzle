@@ -26,6 +26,8 @@ import SwiftUI
 ///   BEZZLE_STRESS=seconds:out.txt   pan, hover, select and nudge for a while, then write how long
 ///                                  the app was busy each time, and quit
 ///   BEZZLE_XDCHECK=xd-folder:out-folder  import every XD file and compare with XD's own previews (see XDCheck)
+///   BEZZLE_ICLOUD_SCHEMA=out.txt   teach iCloud's development environment every record type sharing uses,
+///                                  so they can be deployed to production; write how it went, and quit
 ///   BEZZLE_SNAPSHOT_LAYERS=1       take them through the layer tree instead of the views' drawing
 ///   BEZZLE_DUMP_VIEWS=1            next to each, the canvas's views and their frames in the window
 ///   BEZZLE_HITTEST=name,…          and with it, which view a click in the middle of these layers reaches
@@ -43,6 +45,15 @@ enum DebugHooks {
         ran = true
         if let spec = env["BEZZLE_XDCHECK"] {
             after(0.3) { XDCheck.run(spec) }
+            return
+        }
+        if let out = env["BEZZLE_ICLOUD_SCHEMA"] {
+            Task {
+                let report: String
+                do { report = try await CloudSync.shared.teachSchema() } catch { report = "failed: \(error)" }
+                try? report.write(toFile: out, atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+            }
             return
         }
         if let look = env["BEZZLE_APPEARANCE"] { NSApp.appearance = NSAppearance(named: look == "dark" ? .darkAqua : .aqua) }
@@ -97,7 +108,7 @@ enum DebugHooks {
             if parts.count >= 3, let s = Double(parts[0]) {
                 after(s) {
                     let layers = store.selection.compactMap { ExportItem(layer: $0, in: store.doc) }
-                    let items = layers.isEmpty ? store.doc.artboards.map(ExportItem.init(artboard:)) : layers
+                    let items = layers.isEmpty ? store.doc.artboards.flatMap(ExportItem.items(for:)) : layers
                     for format in parts[2].split(separator: ",").compactMap({ ExportFormat(rawValue: String($0)) }) {
                         Exporter.export(items, format: format, scale: 1, name: store.name, to: URL(fileURLWithPath: parts[1]), assets: store.assets)
                     }

@@ -1,11 +1,52 @@
 import AppKit
 
 /// Pointers the system does not have: a resize arrow at any angle, so it follows a turned
-/// layer's sides, and a curved arrow for turning.
+/// layer's sides, a curved arrow for turning, the pen, the knife, and building with pieces.
 enum Cursors {
     private static var resizeCache: [Int: NSCursor] = [:]
     private static var rotateCache: [Int: NSCursor] = [:]
     private static var penCache: [PenMark: NSCursor] = [:]
+    private static var buildCache: [Bool: NSCursor] = [:]
+
+    /// A box cutter, its blade's point at the top left where the cut runs, as on the tool's button.
+    static let knife: NSCursor = NSCursor(image: draw(size: 24, flipped: true) { ctx in
+        ctx.translateBy(x: 4, y: 4)
+        ctx.rotate(by: -.pi / 4)
+        let k = CGMutablePath()
+        // Drawn point up here, as the image is flipped.
+        k.move(to: .zero)
+        k.addLine(to: CGPoint(x: 4.4, y: 4.2))
+        k.addLine(to: CGPoint(x: 4.4, y: 6.2))
+        k.addLine(to: CGPoint(x: 0, y: 6.2))
+        k.closeSubpath()
+        k.addRect(CGRect(x: -0.8, y: 7, width: 6, height: 1.4))
+        k.addRoundedRect(in: CGRect(x: -0.4, y: 9.2, width: 5.2, height: 7.6), cornerWidth: 1.4, cornerHeight: 1.4)
+        outlined(k, in: ctx)
+    }, hotSpot: NSPoint(x: 4, y: 4))
+
+    /// A cross for pointing at pieces, marked to join them or, when `erase`, to wipe them away.
+    static func build(erase: Bool) -> NSCursor {
+        if let c = buildCache[erase] { return c }
+        let cursor = NSCursor(image: draw(size: 24, flipped: true) { ctx in
+            let cross = CGMutablePath()
+            cross.move(to: CGPoint(x: 9, y: 2)); cross.addLine(to: CGPoint(x: 9, y: 16))
+            cross.move(to: CGPoint(x: 2, y: 9)); cross.addLine(to: CGPoint(x: 16, y: 9))
+            let c = CGPoint(x: 18.5, y: 18.5)
+            cross.move(to: CGPoint(x: c.x - 3, y: c.y)); cross.addLine(to: CGPoint(x: c.x + 3, y: c.y))
+            if !erase { cross.move(to: CGPoint(x: c.x, y: c.y - 3)); cross.addLine(to: CGPoint(x: c.x, y: c.y + 3)) }
+            ctx.setLineCap(.round)
+            ctx.addPath(cross)
+            ctx.setStrokeColor(.white)
+            ctx.setLineWidth(3.2)
+            ctx.strokePath()
+            ctx.addPath(cross)
+            ctx.setStrokeColor(.black)
+            ctx.setLineWidth(1.2)
+            ctx.strokePath()
+        }, hotSpot: NSPoint(x: 9, y: 9))
+        buildCache[erase] = cursor
+        return cursor
+    }
 
     /// What a click with the pen does where the pointer is, marked beside the nib.
     enum PenMark: Hashable {

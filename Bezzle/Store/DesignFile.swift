@@ -23,6 +23,22 @@ nonisolated enum DesignFile {
         return try JSONDecoder().decode(BezzleDocument.self, from: data)
     }
 
+    /// Turns a design kept as a single file into a package, as everything since pictures is.
+    static func makePackage(_ url: URL) throws {
+        guard !isPackage(url) else { return }
+        let doc = try read(url)
+        let old = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString)-\(url.lastPathComponent)")
+        try FileManager.default.moveItem(at: url, to: old)
+        do {
+            try write(doc, to: url)
+            try? FileManager.default.removeItem(at: old)
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.moveItem(at: old, to: url)
+            throw error
+        }
+    }
+
     /// Saves over what is there, in the form it already has; a new design becomes a package.
     static func write(_ doc: BezzleDocument, to url: URL) throws {
         let encoder = JSONEncoder()

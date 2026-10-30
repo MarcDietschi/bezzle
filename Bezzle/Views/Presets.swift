@@ -7,7 +7,8 @@ struct PresetStrip<Glyph: View>: View {
     @Environment(DocumentStore.self) private var store
     let action: String
     let items: [PresetItem]
-    var height: CGFloat = 30
+    /// Inside the well's rim, the whole as tall as any control.
+    var height: CGFloat = Theme.controlHeight - 4
     @ViewBuilder let glyph: (PresetItem) -> Glyph
     @Namespace private var namespace
     @State private var hovered: String?
@@ -245,9 +246,10 @@ struct OptionBlock<Content: View, Exact: View>: View {
                         .allowsHitTesting(hovering)
                 }
             }
-            content
-            if Exact.self != EmptyView.self {
-                VStack(alignment: .leading, spacing: 8) { exact }
+            // Every row the same distance from the next, picked or exact.
+            VStack(alignment: .leading, spacing: 8) {
+                content
+                if Exact.self != EmptyView.self { exact }
             }
         }
         .contentShape(Rectangle())
@@ -327,7 +329,7 @@ private struct AddChip: View {
         }
         .foregroundStyle(hovering ? Theme.ink : Theme.ink2)
         .padding(.horizontal, 10)
-        .frame(height: 26)
+        .frame(height: Theme.controlHeight)
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Theme.ink.opacity(hovering ? 0.28 : 0.16), style: StrokeStyle(lineWidth: 1, dash: [3, 2.5]))

@@ -40,7 +40,9 @@ enum Theme {
 
     static let radius: CGFloat = 14
     static let controlRadius: CGFloat = 8
-    static let controlHeight: CGFloat = 30
+    /// How tall a control in a row of them is: fields, menus, wells of choices, so that side by
+    /// side they line up top and bottom.
+    static let controlHeight: CGFloat = 28
     /// Height of the strip along the top of the window, level with the traffic lights.
     static let barHeight: CGFloat = 52
 

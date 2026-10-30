@@ -7,22 +7,27 @@ struct MenuButton: View {
     let title: String
     var width: CGFloat = 240
     var prominent = false
+    /// As wide as it is given, its chevron at the far end, as a field is; otherwise as wide as its title.
+    var fills = false
     let entries: () -> [MenuEntry]
     @State private var hovering = false
 
     var body: some View {
         let isOpen = host.open?.id == id
-        HStack(spacing: 6) {
+        HStack(spacing: fills ? 0 : 6) {
             Text(title)
                 .font(.system(size: 12.5, weight: prominent ? .medium : .regular))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
+                .minimumScaleFactor(fills ? 0.9 : 1)
+            if fills { Spacer(minLength: 4) }
             Chevron(color: Theme.ink3)
                 .rotationEffect(.degrees(isOpen ? 180 : 0))
         }
         .padding(.leading, 10)
         .padding(.trailing, 8)
-        .frame(height: 26)
+        .frame(maxWidth: fills ? .infinity : nil)
+        .frame(height: Theme.controlHeight)
         .background {
             RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                 .fill(Theme.ink.opacity(isOpen ? 0.09 : hovering ? 0.065 : 0.04))
@@ -57,7 +62,8 @@ struct SegmentedWell<Value: Hashable>: View {
                     .font(.system(size: 12, weight: selected ? .medium : .regular))
                     .foregroundStyle(selected ? Theme.ink : Theme.ink2)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 26)
+                    // Inside the well's rim, the whole as tall as any control.
+                    .frame(height: Theme.controlHeight - 4)
                     .background {
                         if selected {
                             RoundedRectangle(cornerRadius: 7, style: .continuous)

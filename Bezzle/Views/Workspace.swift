@@ -31,7 +31,7 @@ struct Workspace: View {
                     .padding(.bottom, 8)
                     .padding(.trailing, 2)
                 Inspector(store: store)
-                    .frame(width: 280)
+                    .frame(width: Inspector.width)
             }
         }
         .background(Theme.paper)
@@ -133,6 +133,7 @@ struct TopBar: View {
             Spacer(minLength: 12)
             MenuButton(id: "zoom", title: "\(Int((store.viewport.zoom * 100).rounded()))%", width: 220) { zoomMenu }
                 .help("Zoom")
+            if CloudSync.isAvailable { ShareButton(store: store) }
             CardButton(title: "Export…", height: 28) { store.exporting = true }
                 .help("Export  ⌘E")
         }
@@ -279,6 +280,25 @@ struct ToolGlyph: View {
                 nib.addLine(to: CGPoint(x: 2.8, y: -11.6))
                 ctx.stroke(nib.applying(place), with: .foreground, style: stroke)
                 ctx.fill(Path(ellipseIn: CGRect(x: -1.25, y: -6.9, width: 2.5, height: 2.5)).applying(place), with: .foreground)
+                return
+            case .knife:
+                // A box cutter cutting towards the bottom left, as the pen writes: the slanted
+                // blade, the collar holding it, and the long handle with its slider. Drawn upright,
+                // point down, then turned.
+                let k = w / 18 * 0.92
+                let place = CGAffineTransform(translationX: w / 2 - 6.4 * k, y: h / 2 + 6.4 * k).rotated(by: .pi / 4).scaledBy(x: k, y: k)
+                var knife = Path()
+                knife.move(to: CGPoint(x: -2.4, y: 0))
+                knife.addLine(to: CGPoint(x: 2.4, y: -4.4))
+                knife.addLine(to: CGPoint(x: 2.4, y: -6.4))
+                knife.addLine(to: CGPoint(x: -2.4, y: -6.4))
+                knife.closeSubpath()
+                knife.move(to: CGPoint(x: -3.6, y: -8))
+                knife.addLine(to: CGPoint(x: 3.6, y: -8))
+                knife.addRoundedRect(in: CGRect(x: -2.8, y: -18.1, width: 5.6, height: 8.4), cornerSize: CGSize(width: 1.6, height: 1.6))
+                knife.move(to: CGPoint(x: 0, y: -12.2))
+                knife.addLine(to: CGPoint(x: 0, y: -15.4))
+                ctx.stroke(knife.applying(place), with: .foreground, style: stroke)
                 return
             case .text:
                 p.move(to: CGPoint(x: w * 0.22, y: h * 0.28))

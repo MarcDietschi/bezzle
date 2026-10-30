@@ -77,6 +77,14 @@ nonisolated struct Fill: Codable, Hashable {
     var gradient: Gradient?
     /// Drawn instead of the colour or a gradient when there is one.
     var image: ImageFill?
+
+    /// The same fill turned over with its layer, left to right or top to bottom.
+    func flipped(horizontally: Bool) -> Fill {
+        var f = self
+        f.gradient = gradient?.flipped(horizontally: horizontally)
+        f.image = image?.flipped(horizontally: horizontally)
+        return f
+    }
 }
 
 nonisolated struct GradientStop: Codable, Hashable {
@@ -117,6 +125,16 @@ nonisolated struct Gradient: Codable, Hashable {
                                  c: (b.x - start.x) * size.width, d: (b.y - start.y) * size.height,
                                  tx: start.x * size.width, ty: start.y * size.height)
     }
+
+    /// The same colours running the other way across the layer, or the other way down it.
+    func flipped(horizontally: Bool) -> Gradient {
+        func turn(_ p: CGPoint) -> CGPoint { horizontally ? CGPoint(x: 1 - p.x, y: p.y) : CGPoint(x: p.x, y: 1 - p.y) }
+        var g = self
+        g.start = turn(start)
+        g.end = turn(end)
+        g.across = across.map(turn)
+        return g
+    }
 }
 
 /// A picture filling a layer.
@@ -139,6 +157,23 @@ nonisolated struct ImageFill: Codable, Hashable {
     var offset: CGPoint = .zero
     /// Larger than 1 to zoom into the picture beyond what covering needs.
     var scale: CGFloat = 1
+    /// Turned over where it is drawn, left to right or top to bottom, as its layer was flipped.
+    var flippedX: Bool?
+    var flippedY: Bool?
+
+    /// The picture turned over with its layer: it lands on the other side, and faces the other way.
+    func flipped(horizontally: Bool) -> ImageFill {
+        var i = self
+        // Not -0, which a file would keep.
+        if horizontally {
+            if offset.x != 0 { i.offset.x = -offset.x }
+            i.flippedX = flippedX == true ? nil : true
+        } else {
+            if offset.y != 0 { i.offset.y = -offset.y }
+            i.flippedY = flippedY == true ? nil : true
+        }
+        return i
+    }
 }
 
 nonisolated struct Border: Codable, Hashable {
@@ -183,6 +218,26 @@ nonisolated enum BlendMode: String, Codable, CaseIterable {
         case .saturation: .saturation
         case .color: .color
         case .luminosity: .luminosity
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .multiply: "Multiply"
+        case .screen: "Screen"
+        case .overlay: "Overlay"
+        case .darken: "Darken"
+        case .lighten: "Lighten"
+        case .colorDodge: "Colour Dodge"
+        case .colorBurn: "Colour Burn"
+        case .hardLight: "Hard Light"
+        case .softLight: "Soft Light"
+        case .difference: "Difference"
+        case .exclusion: "Exclusion"
+        case .hue: "Hue"
+        case .saturation: "Saturation"
+        case .color: "Colour"
+        case .luminosity: "Luminosity"
         }
     }
 }
@@ -309,6 +364,9 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     var locked = false
     /// Artboards only: whether what reaches past the edge is cut off there.
     var clips = true
+    /// Carousels only: the size of each slide. The artboard is as many of them side by side as
+    /// it is wide, and is exported cut into them. See `Carousel`.
+    var slideSize: CGSize?
 
     init(kind: Kind, name: String? = nil, frame: CGRect) {
         self.kind = kind

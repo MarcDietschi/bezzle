@@ -460,6 +460,20 @@ nonisolated extension Node {
         return n
     }
 
+    /// This path as `shape` again, the rectangle, ellipse or line `asPath()` made it from, with
+    /// everything else that has changed on it since, such as its fill.
+    func asShape(_ shape: Node) -> Node {
+        var n = self
+        n.kind = shape.kind
+        n.path = shape.path
+        n.pathBox = shape.pathBox
+        n.cornerRadius = shape.cornerRadius
+        n.corners = shape.corners
+        n.cornerSmoothing = shape.cornerSmoothing
+        n.rising = shape.rising
+        return n
+    }
+
     /// A rectangle whose corners are each rounded their own way, as the renderer draws it.
     private static func roundedOutline(_ r: CGRect, corners: [CGFloat]) -> CGPath {
         let most = min(r.width, r.height) / 2

@@ -2,7 +2,7 @@ import AppKit
 import Observation
 
 enum Tool: String, CaseIterable {
-    case select, artboard, rectangle, ellipse, line, pen, text
+    case select, artboard, rectangle, ellipse, line, pen, knife, text
 
     var title: String {
         switch self {
@@ -12,6 +12,7 @@ enum Tool: String, CaseIterable {
         case .ellipse: "Ellipse"
         case .line: "Line"
         case .pen: "Pen"
+        case .knife: "Knife"
         case .text: "Text"
         }
     }
@@ -24,6 +25,7 @@ enum Tool: String, CaseIterable {
         case .ellipse: "E"
         case .line: "L"
         case .pen: "P"
+        case .knife: "K"
         case .text: "T"
         }
     }
@@ -67,6 +69,7 @@ final class DocumentStore {
             guard tool != oldValue else { return }
             // The pen works on the points being edited; any other drawing tool leaves them.
             if tool != .select && tool != .pen { editingPath = nil }
+            if tool != .select { editingPicture = nil; building = nil }
             guides = []
         }
     }
@@ -84,10 +87,26 @@ final class DocumentStore {
     var editingText: UUID?
     /// The path whose points are being edited, shown on the canvas in place of its frame.
     var editingPath: UUID? {
-        didSet { if editingPath != oldValue { selectedPoints = [] } }
+        didSet {
+            guard editingPath != oldValue else { return }
+            selectedPoints = []
+            if editingPath != openedShape?.id { closeShape() }
+            if editingPath != nil { editingPicture = nil }
+        }
     }
+    /// The layer whose picture is being moved and resized inside it, shown whole on the canvas.
+    var editingPicture: UUID?
+    /// A rectangle, ellipse or line whose points are being edited: a path until they are left,
+    /// and then the shape again unless its outline was changed. What it was, and what it became.
+    @ObservationIgnored private var openedShape: (id: UUID, shape: Node, path: Node)?
     /// The points picked out on it.
     var selectedPoints: Set<PathPoint> = []
+    /// The shapes being built with: the canvas shows the pieces they cut each other into, to be
+    /// joined or wiped away. See `startBuilding`.
+    var building: [UUID]? {
+        didSet { if building != nil { editingPath = nil; editingPicture = nil } }
+    }
+    @ObservationIgnored var piecesWorkedOut: (version: Int, ids: [UUID], pieces: [Outlines.Piece])?
     /// Whether the layers list is out.
     var showsLayers = true
     /// The size of the canvas on screen, for zooming from the menus.
@@ -118,6 +137,8 @@ final class DocumentStore {
     var exporting = false
     /// What bringing the design in from Adobe XD could only approximate, shown until read.
     var importReport: XDReport?
+    /// Set while the design is shared through iCloud.
+    var sharing: Collaboration?
 
     private struct Snapshot {
         var doc: BezzleDocument
@@ -132,7 +153,19 @@ final class DocumentStore {
     }
 
     convenience init(opening url: URL) throws {
-        self.init(url: url, document: try DesignFile.read(url))
+        var document = try DesignFile.read(url)
+        // A shared design opens as it is shared, which its own file may lag behind.
+        let sharing = Collaboration.open(url)
+        if let sharing {
+            let viewport = document.viewport
+            document = sharing.document()
+            document.viewport = viewport
+        }
+        self.init(url: url, document: document)
+        if let sharing {
+            self.sharing = sharing
+            sharing.attach(to: self)
+        }
     }
 
     /// The design's pictures, read from its package as they are drawn.
@@ -149,6 +182,7 @@ final class DocumentStore {
         var next = doc
         change(&next)
         next.fitGroups(since: doc)
+        next.fitCarousels()
         guard next != doc else { return }
         doc = next
         if gestureStart == nil { record(before, action) }
@@ -166,6 +200,7 @@ final class DocumentStore {
         if start.doc != doc { record(start, action) }
         guides = []
         measurement = nil
+        sharing?.showIfIdle()
     }
 
     /// Puts everything back as it was when the gesture started (Escape during a drag).
@@ -176,17 +211,25 @@ final class DocumentStore {
         selection = start.selection
         guides = []
         measurement = nil
+        sharing?.showIfIdle()
     }
 
     var inGesture: Bool { gestureStart != nil }
 
     private func record(_ before: Snapshot, _ action: String) {
         guard let undoManager else { return }
+        // The history never sees an opened shape become a path: undoing the first change to its
+        // outline goes back to the shape.
+        let before = Snapshot(doc: withShapeBack(before.doc), selection: before.selection)
+        let after = withShapeBack(doc)
         undoManager.registerUndo(withTarget: self) { store in
-            let now = Snapshot(doc: store.doc, selection: store.selection)
-            store.doc = before.doc
+            let now = Snapshot(doc: store.withShapeBack(store.doc), selection: store.selection)
+            // Others sharing the design may have changed it since: only what this step did is
+            // taken back, and their changes stay.
+            store.doc = now.doc == after ? before.doc : FlatDesign.apply(from: after, to: before.doc, onto: now.doc)
             store.selection = before.selection.filter { store.doc.path(of: $0) != nil }
             store.editingText = nil
+            if let id = store.editingPath, store.node(id)?.kind != .path { store.editingPath = nil }
             store.record(now, action)
             store.scheduleSave()
         }
@@ -196,7 +239,36 @@ final class DocumentStore {
     private func selectionChanged() {
         if let editing = editingText, !selection.contains(editing) { editingText = nil }
         if let editing = editingPath, selection != [editing] { editingPath = nil }
+        if let editing = editingPicture, selection != [editing] { editingPicture = nil }
+        if let shapes = building, Set(shapes) != Set(selection) { building = nil }
         preview = nil
+    }
+
+    // MARK: Shapes opened as paths
+
+    /// Starts editing the points of a rectangle, ellipse or line, which is a path while they are
+    /// edited. Left as it was, it is the shape again.
+    func editAsPath(_ id: UUID) {
+        guard let shape = node(id), !shape.locked, let path = shape.asPath() else { return }
+        selection = [id]
+        doc.update(id) { $0 = path }
+        openedShape = (id, shape, path)
+        editingPath = id
+    }
+
+    /// `doc` with the opened shape in it, if its outline is still the one it was opened with.
+    private func withShapeBack(_ doc: BezzleDocument) -> BezzleDocument {
+        guard let (id, shape, path) = openedShape, let n = doc.node(id), n.kind == .path,
+              n.path == path.path, n.pathBox == path.pathBox else { return doc }
+        var back = doc
+        back.update(id) { $0 = $0.asShape(shape) }
+        return back
+    }
+
+    private func closeShape() {
+        let back = withShapeBack(doc)
+        openedShape = nil
+        if back != doc { doc = back }
     }
 
     /// Shows `change` to the selection on the canvas without making it, or with nil takes away
@@ -302,7 +374,9 @@ final class DocumentStore {
     func save() {
         saveTask?.cancel()
         saveTask = nil
-        var copy = doc
+        var copy = withShapeBack(doc)
+        sharing?.takeIn(copy)
+        sharing?.persist()
         copy.viewport = viewport
         let url = url
         Self.saving.async {
@@ -317,7 +391,7 @@ final class DocumentStore {
 
     /// Saving happens on a queue of its own, one save after another, so writing a large design
     /// does not hold the app up.
-    private static let saving = DispatchQueue(label: "com.erik.Bezzle.saving", qos: .userInitiated)
+    static let saving = DispatchQueue(label: "com.erik.Bezzle.saving", qos: .userInitiated)
 
     /// Waits until every save asked for so far is on disk.
     static func finishSaving() {
@@ -336,9 +410,64 @@ final class DocumentStore {
             Library.shared.renamed(from: url, to: target)
             url = target
             assets = Assets(design: target)
+            sharing?.moved(to: target)
         } catch {
             NSLog("Bezzle could not rename %@: %@", url.path, error.localizedDescription)
         }
+    }
+
+    // MARK: Sharing
+
+    /// The design as the others see it: an opened shape is still the shape.
+    var sharedDoc: BezzleDocument { withShapeBack(doc) }
+
+    /// Shows the design with what others changed: `next` holds everything done here as well.
+    /// It is not a step of the undo history, and undoing afterwards leaves it in place.
+    func showChangesFromOthers(_ next: BezzleDocument) {
+        var next = next
+        let old = doc
+        next.viewport = old.viewport
+        // A shape whose points are being edited is a path here; it stays one, unless someone
+        // else changed it meanwhile.
+        if let opened = openedShape {
+            if let mine = old.node(opened.id), next.node(opened.id) == withShapeBack(old).node(opened.id) {
+                next.update(opened.id) { $0 = mine }
+            } else {
+                openedShape = nil
+                editingPath = nil
+            }
+        }
+        // Artboards nobody changed stay as they were, sharing their storage, so what is worked
+        // out from them is not worked out again.
+        var kept: [UUID: Node] = [:]
+        for n in old.nodes { kept[n.id] = n }
+        next.nodes = next.nodes.map { n in kept[n.id].flatMap { $0 == n ? $0 : nil } ?? n }
+        guard next != old else { return }
+        if var start = gestureStart {
+            start.doc = FlatDesign.apply(from: old, to: next, onto: start.doc)
+            gestureStart = start
+        }
+        doc = next
+        let gone = selection.filter { next.path(of: $0) == nil }
+        if !gone.isEmpty { selection.removeAll { gone.contains($0) } }
+        if let id = hovered, next.path(of: id) == nil { hovered = nil }
+        if let id = editingPicture, next.node(id) == nil { editingPicture = nil }
+        if let id = editingPath, next.node(id)?.kind != .path { editingPath = nil }
+        if !selectedPoints.isEmpty, let id = editingPath, old.node(id)?.path != next.node(id)?.path { selectedPoints = [] }
+        canvas?.syncEditor()
+        scheduleSave()
+    }
+
+    /// A design that was one file becomes a package, which pictures and sharing need.
+    func becamePackage() {
+        assets = Assets(design: url)
+    }
+
+    /// A picture someone else added has come from iCloud.
+    func pictureArrived(_ name: String) {
+        assets.arrived(name)
+        canvas?.tiles.forget()
+        canvas?.needsDisplay = true
     }
 
     // MARK: Reading

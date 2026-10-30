@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CloudKit
 import UniformTypeIdentifiers
 
 @main
@@ -22,7 +23,10 @@ struct BezzleApp: App {
         .defaultSize(width: 1100, height: 760)
         .restorationBehavior(.disabled)
         .windowResizability(.contentMinSize)
-        .commands { BezzleCommands() }
+        .commands {
+            BezzleCommands()
+            MCPCommands()
+        }
 
         WindowGroup("Design", id: "design", for: URL.self) { $url in
             if let current = url {
@@ -86,6 +90,8 @@ struct DesignWindow: View {
             store?.canvas?.endEditing()
             store?.save()
             DocumentStore.finishSaving()
+            store?.sharing?.close()
+            if let store { MCPTools.closed(store) }
             WindowRouter.shared.openDesigns -= 1
             // With the last design closed, the home screen comes back.
             if WindowRouter.shared.openDesigns == 0 && !AppDelegate.terminating { openWindow(id: "home") }
@@ -107,6 +113,7 @@ struct DesignWindow: View {
             s.undoManager = undoManager
             s.importReport = report
             store = s
+            MCPTools.opened(s)
             Library.shared.touched(design)
             #if DEBUG
             DebugHooks.attach(s)
@@ -130,6 +137,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         ClickAway.watch()
         PlainTyping.watch()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        MCPServer.shared.launch()
+        CloudSync.shared.start()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        CloudSync.shared.fetchNow()
+    }
+
+    /// An invitation to a shared design was clicked.
+    func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
+        CloudSync.shared.accept(metadata)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -194,6 +215,10 @@ struct BezzleCommands: Commands {
                 Button("Across") { store?.distribute(horizontally: true) }
                 Button("Down") { store?.distribute(horizontally: false) }
             }
+            Button("Flip Horizontally") { store?.flip(horizontally: true) }
+                .disabled(store?.canFlip != true)
+            Button("Flip Vertically") { store?.flip(horizontally: false) }
+                .disabled(store?.canFlip != true)
             Divider()
             Button(store?.selectedNodes.allSatisfy(\.locked) == true && store?.selection.isEmpty == false ? "Unlock" : "Lock") {
                 guard let store else { return }
@@ -210,6 +235,29 @@ struct BezzleCommands: Commands {
             Button("Convert to Path") { store?.convertToPath() }
                 .keyboardShortcut("8")
                 .disabled(store?.canConvertToPath != true)
+            Divider()
+            Button("Union") { store?.combine(.union) }
+                .keyboardShortcut("u", modifiers: [.command, .option])
+                .disabled(store?.canCombine != true)
+            Button("Subtract") { store?.combine(.subtract) }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(store?.canCombine != true)
+            Button("Intersect") { store?.combine(.intersect) }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(store?.canCombine != true)
+            Button("Exclude Overlap") { store?.combine(.exclude) }
+                .keyboardShortcut("x", modifiers: [.command, .option])
+                .disabled(store?.canCombine != true)
+            Button(store?.building != nil ? "Done Building" : "Build with Pieces") {
+                guard let store else { return }
+                if store.building != nil { store.building = nil } else { store.startBuilding() }
+            }
+            .keyboardShortcut("b", modifiers: [.command, .option])
+            .disabled(store?.canCombine != true)
+            Divider()
+            Button("Outline Border") { store?.outlineBorders() }
+                .keyboardShortcut("o", modifiers: [.command, .option])
+                .disabled(store?.canOutlineBorders != true)
         }
         CommandGroup(before: .windowSize) {
             Button("Zoom In") { store?.zoomStep(in: true) }.keyboardShortcut("=")

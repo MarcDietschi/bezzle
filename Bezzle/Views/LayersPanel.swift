@@ -3,6 +3,8 @@ import AppKit
 
 /// Every layer, topmost first: artboards with what lies on them, and loose layers on the canvas.
 /// A click selects, a double click renames, a drag moves a layer up or down or onto another artboard.
+/// While something on one artboard is selected, the list is a page of that artboard's layers
+/// alone, with the way back to every layer at the top. The artboard itself is picked among the rest.
 struct LayersPanel: View {
     let store: DocumentStore
     /// Artboards are open until shut; groups are shut until opened, as there can be thousands.
@@ -15,14 +17,57 @@ struct LayersPanel: View {
     @State private var dragging: UUID?
     @State private var dropSlot: Int?
     @State private var anchor: UUID?
+    /// The artboard whose layers the list shows on their own; nil for every layer.
+    @State private var page: UUID?
+    @State private var turning = Turn()
+    /// When the list last turned to another page, so that the second click of a double click
+    /// does not rename whichever row came to be under the pointer.
+    @State private var turnedAt: TimeInterval = 0
+    /// How far down each page is, apart, so the page sliding away stays where it was.
+    @State private var scrolls: [UUID?: ScrollPosition] = [:]
+    @State private var sight = Sight()
 
     static let rowHeight: CGFloat = 28
+    private static let headerHeight: CGFloat = 20
+    /// How far the list dissolves at an edge with more beyond it.
+    private static let fade: CGFloat = 16
+    private static let bottomPadding: CGFloat = 16
+
+    /// The part of the list in sight. Kept out of view state, as it changes with every step of a scroll.
+    private final class Sight {
+        var rect: CGRect = .zero
+    }
+
+    /// Which way the list last turned: 1 into an artboard's page, -1 back out, 0 from one page to
+    /// another. Read as the pages slide, so the one going knows where to go.
+    final class Turn {
+        var way: CGFloat = 0
+    }
 
     struct Row: Identifiable {
         let node: Node
         let depth: Int
         let parent: UUID?
         var id: UUID { node.id }
+    }
+
+    /// What is selected, the artboard it lies on, and whether any of it lies on that artboard
+    /// rather than being the artboard, so the list follows a layer moved onto another artboard
+    /// as well as a new selection.
+    private struct Picked: Equatable {
+        let ids: [UUID]
+        let board: UUID?
+        let inside: Bool
+    }
+
+    private var picked: Picked {
+        let ids = store.selection
+        return Picked(ids: ids, board: artboard(for: ids), inside: ids.contains { store.node($0)?.isArtboard == false })
+    }
+
+    /// The artboard being shown on its own, while there is one.
+    private var board: Node? {
+        page.flatMap { store.node($0) }.flatMap { $0.isArtboard ? $0 : nil }
     }
 
     private func isShut(_ node: Node) -> Bool {
@@ -37,32 +82,72 @@ struct LayersPanel: View {
                 if node.isContainer && !isShut(node) { add(node.children, depth: depth + 1, parent: node.id) }
             }
         }
-        add(store.doc.nodes, depth: 0, parent: nil)
+        if let board { add(board.children, depth: 0, parent: board.id) } else { add(store.doc.nodes, depth: 0, parent: nil) }
         return out
     }
 
     var body: some View {
         let rows = rows
+        let board = board
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Layers")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Spacer()
-                Text("\(store.layerCount)")
+            // The title stays where it is as the artboard's name comes and goes beside it, and
+            // nothing here may take a second line, so the list below never moves.
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                LayersTitle(back: board == nil ? nil : { showAll() })
+                if let board {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Theme.ink4)
+                    BoardCrumb(board: board, store: store,
+                               renaming: renaming == board.id,
+                               draft: $draft,
+                               rename: { startRenaming(board) },
+                               finishRename: { keep in endRenaming(board.id, keep: keep) })
+                }
+                Spacer(minLength: 8)
+                Text("\(board.map { BezzleDocument.layerCount($0.children) } ?? store.layerCount)")
                     .font(.system(size: 11.5).monospacedDigit())
                     .foregroundStyle(Theme.ink3)
+                    .lineLimit(1)
+                    .fixedSize()
             }
+            .frame(height: Self.headerHeight)
             .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
 
+            // The pages lie over each other as one slides away and the next comes in.
+            ZStack(alignment: .topLeading) {
+                list(rows)
+                    .id(board?.id)
+                    .transition(PageTurn(turn: turning))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipped()
+        }
+        .contentShape(Rectangle())
+        .onAppear {
+            // A design with many artboards starts with them shut, as a list of thousands helps no one.
+            if store.doc.artboards.count > 12 { collapsed = Set(store.doc.artboards.map(\.id)) }
+            page = target(for: picked)
+            reveal()
+        }
+        .onChange(of: picked) { old, new in
+            reveal()
+            let turned = !new.ids.isEmpty && turn(to: target(for: new))
+            bringIntoSight(turned ? new.ids : new.ids.filter { !old.ids.contains($0) }, animated: !turned)
+            if let id = renaming, !store.selection.contains(id) { endRenaming(keep: true) }
+        }
+    }
+
+    @ViewBuilder private func list(_ rows: [Row]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Nothing here yet.")
+                    Text(board == nil ? "Nothing here yet." : "Nothing on this artboard yet.")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Theme.ink2)
-                    Text("Draw an artboard with A, or a shape with R, E or L.")
+                    Text(board == nil ? "Draw an artboard with A, or a shape with R, E or L." : "Draw a shape on it with R, E or L.")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.ink3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -82,36 +167,70 @@ struct LayersPanel: View {
                                      dimmed: dragging == row.id,
                                      toggle: { toggle(row.node) },
                                      select: { select(row, rows: rows) },
-                                     rename: { startRenaming(row) },
+                                     rename: { if !justTurned { startRenaming(row.node) } },
                                      finishRename: { keep in endRenaming(row.id, keep: keep) })
                             .gesture(drag(row, rows: rows))
                         }
                     }
                     .overlay(alignment: .topLeading) { dropLine(rows) }
                     .padding(.horizontal, 8)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, Self.bottomPadding)
                     .coordinateSpace(name: "layers")
                 }
+                .scrollPosition(scrolled(board?.id))
+                .onScrollGeometryChange(for: CGRect.self) { $0.visibleRect } action: { [sight] _, rect in sight.rect = rect }
                 .scrollIndicators(.never)
-                .edgeFade(length: 16)
+                .edgeFade(length: Self.fade)
             }
-        }
-        .contentShape(Rectangle())
-        .onAppear {
-            // A design with many artboards starts with them shut, as a list of thousands helps no one.
-            if store.doc.artboards.count > 12 { collapsed = Set(store.doc.artboards.map(\.id)) }
-            reveal()
-        }
-        .onChange(of: store.selection) {
-            reveal()
-            if let id = renaming, !store.selection.contains(id) { endRenaming(keep: true) }
         }
     }
 
-    private func startRenaming(_ row: Row) {
+    // MARK: Pages
+
+    /// The artboard a selection lies on: nil when it lies on more than one, or off them.
+    private func artboard(for selection: [UUID]) -> UUID? {
+        let boards = Set(selection.map { store.node($0)?.isArtboard == true ? $0 : store.doc.artboard(of: $0)?.id })
+        return boards.count == 1 ? boards.first ?? nil : nil
+    }
+
+    /// The page for a selection: its artboard's once something on the artboard is picked. The
+    /// artboard alone keeps its page if that is open, and is otherwise shown among every layer.
+    private func target(for picked: Picked) -> UUID? {
+        picked.inside || picked.board == board?.id ? picked.board : nil
+    }
+
+    /// Shows this artboard's layers on their own, or every layer for nil. Whether it turned.
+    private func turn(to target: UUID?) -> Bool {
+        let current = board?.id
+        guard target != current else {
+            page = target
+            return false
+        }
+        turning.way = current == nil ? 1 : target == nil ? -1 : 0
+        turnedAt = ProcessInfo.processInfo.systemUptime
+        // The new page starts at its top, however far down it was last time.
+        scrolls[target] = ScrollPosition(edge: .top)
+        sight.rect.origin = .zero
+        withAnimation(Theme.unfold) { page = target }
+        return true
+    }
+
+    /// Back to every layer, with the artboard that was open in sight.
+    private func showAll() {
+        guard let from = board?.id else { return }
         endRenaming(keep: true)
-        draft = row.node.name
-        renaming = row.id
+        _ = turn(to: nil)
+        bringIntoSight([from], animated: false)
+    }
+
+    private var justTurned: Bool {
+        ProcessInfo.processInfo.systemUptime - turnedAt < NSEvent.doubleClickInterval
+    }
+
+    private func startRenaming(_ node: Node) {
+        endRenaming(keep: true)
+        draft = node.name
+        renaming = node.id
     }
 
     /// Ends the renaming of `id`, or of whichever layer is being renamed, keeping what was typed or not.
@@ -128,6 +247,40 @@ struct LayersPanel: View {
                 if holder.isGroup { openGroups.insert(holder.id) } else { collapsed.remove(holder.id) }
             }
         }
+    }
+
+    /// Scrolls the list to the topmost of these layers, unless one of them is in sight already.
+    /// One partly in sight is brought in just far enough; one out of sight comes to the middle.
+    private func bringIntoSight(_ ids: [UUID], animated: Bool = true) {
+        guard !ids.isEmpty else { return }
+        let rows = rows
+        let wanted = Set(ids)
+        let tops = rows.indices.filter { wanted.contains(rows[$0].id) }.map { CGFloat($0) * Self.rowHeight }
+        guard let top = tops.first else { return }
+        let shown = sight.rect
+        // A row under the fade at an edge is not quite in sight.
+        let clear = shown.insetBy(dx: 0, dy: Self.fade)
+        if tops.contains(where: { clear.minY <= $0 && $0 + Self.rowHeight <= clear.maxY }) { return }
+
+        let bottom = top + Self.rowHeight
+        let y: CGFloat
+        if bottom > shown.minY && top < shown.maxY {
+            y = top < clear.minY ? top - Self.fade : bottom + Self.fade - shown.height
+        } else {
+            y = top + Self.rowHeight / 2 - shown.height / 2
+        }
+        let farthest = CGFloat(rows.count) * Self.rowHeight + Self.bottomPadding - shown.height
+        let target = min(max(y, 0), max(farthest, 0))
+        let page = board?.id
+        if animated {
+            withAnimation(Theme.unfold) { scrolls[page, default: ScrollPosition(edge: .top)].scrollTo(y: target) }
+        } else {
+            scrolls[page, default: ScrollPosition(edge: .top)].scrollTo(y: target)
+        }
+    }
+
+    private func scrolled(_ page: UUID?) -> Binding<ScrollPosition> {
+        Binding(get: { scrolls[page] ?? ScrollPosition(edge: .top) }, set: { scrolls[page] = $0 })
     }
 
     private func toggle(_ node: Node) {
@@ -158,6 +311,8 @@ struct LayersPanel: View {
             store.selection = [row.id]
             anchor = row.id
         }
+        // Picking an artboard here, or going into one, shows it on the canvas as well.
+        if let target = artboard(for: store.selection), target != board?.id { store.show(target) }
     }
 
     // MARK: Moving layers by dragging
@@ -183,7 +338,7 @@ struct LayersPanel: View {
         if row.node.isArtboard {
             while let a = above, a.depth > 0 { above = rows.first { $0.id == a.parent } }
         }
-        guard let above else { return (nil, store.doc.nodes.count, 0) }
+        guard let above else { return board.map { ($0.id, $0.children.count, 0) } ?? (nil, store.doc.nodes.count, 0) }
         if above.id == row.id { return nil }
         // Nothing goes into itself, or into what it holds.
         func within(_ id: UUID) -> Bool { id == row.id || store.doc.ancestors(of: id).contains { $0.id == row.id } }
@@ -191,7 +346,7 @@ struct LayersPanel: View {
             // Just under an open artboard's or group's name: on top of what is in it.
             return within(above.id) ? nil : (above.id, above.node.children.count, above.depth + 1)
         }
-        if above.depth > 0, let parent = above.parent, let container = store.node(parent),
+        if let parent = above.parent, let container = store.node(parent),
            let i = container.children.firstIndex(where: { $0.id == above.id }) {
             return row.node.isArtboard || within(parent) ? nil : (parent, i, above.depth)
         }
@@ -254,6 +409,100 @@ private struct LayerBranches<RowView: View>: View {
             i = end
         }
         return out
+    }
+}
+
+/// How the list turns a page: the page coming in slides from the side it lies on, an artboard's
+/// to the right of every layer, as the one going slides away to the other. Between two artboards
+/// they only fade.
+private struct PageTurn: Transition {
+    let turn: LayersPanel.Turn
+
+    func body(content: Content, phase: TransitionPhase) -> some View {
+        content
+            .offset(x: -CGFloat(phase.value) * turn.way * 36)
+            .opacity(phase.isIdentity ? 1 : 0)
+    }
+}
+
+/// The panel's title, which on an artboard's page is the way back to every layer.
+private struct LayersTitle: View {
+    let back: (() -> Void)?
+    @State private var hovering = false
+
+    var body: some View {
+        Text("Layers")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(back == nil || hovering ? Theme.ink : Theme.ink3)
+            .lineLimit(1)
+            .fixedSize()
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture { back?() }
+            .help(back == nil ? "" : "Show every artboard")
+            .animation(Theme.quick, value: hovering)
+    }
+}
+
+/// The name of the artboard whose page is open: a click selects the artboard, a double click renames it.
+private struct BoardCrumb: View {
+    let board: Node
+    let store: DocumentStore
+    let renaming: Bool
+    @Binding var draft: String
+    let rename: () -> Void
+    /// Whether to keep what was typed.
+    let finishRename: (Bool) -> Void
+    @State private var hovering = false
+    @State private var lastClick: TimeInterval = 0
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let selected = store.selection.contains(board.id)
+        Group {
+            if renaming {
+                TextField("", text: $draft)
+                    .textFieldStyle(.plain)
+                    .focused($focused)
+                    .onAppear { focused = true }
+                    .onSubmit { finishRename(true) }
+                    .onExitCommand { finishRename(false) }
+                    .onChange(of: focused) { _, now in if !now { finishRename(true) } }
+            } else {
+                Text(board.name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(Theme.ink)
+        // Its highlight reaches past the name, which stays in line with the crumbs beside it.
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(selected ? Theme.pencilWash : hovering || store.hovered == board.id ? Theme.ink.opacity(0.05) : .clear)
+        }
+        .contentShape(Rectangle())
+        .onHover { inside in
+            hovering = inside
+            store.hovered = inside ? board.id : (store.hovered == board.id ? nil : store.hovered)
+        }
+        .onTapGesture {
+            let now = ProcessInfo.processInfo.systemUptime
+            let second = (NSApp.currentEvent?.clickCount ?? 1) >= 2 || now - lastClick < NSEvent.doubleClickInterval
+            lastClick = second ? 0 : now
+            if second {
+                rename()
+            } else {
+                store.canvas?.endEditing()
+                store.selection = [board.id]
+                store.show(board.id)
+            }
+        }
+        .padding(.horizontal, -4)
+        .padding(.vertical, -2)
+        .animation(Theme.quick, value: hovering)
     }
 }
 

@@ -96,10 +96,10 @@ nonisolated struct BezzleDocument: Codable, Equatable {
     }
 
     /// How many layers there are, without making a list of them.
-    var layerCount: Int {
-        func count(_ nodes: [Node]) -> Int { nodes.reduce(nodes.count) { $0 + count($1.children) } }
-        return count(nodes)
-    }
+    var layerCount: Int { Self.layerCount(nodes) }
+
+    /// How many layers these are, with all they hold.
+    static func layerCount(_ nodes: [Node]) -> Int { nodes.reduce(nodes.count) { $0 + layerCount($1.children) } }
 
     subscript(path: NodePath) -> Node {
         get {
@@ -237,6 +237,43 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         }
         n.frame = CGRect(center: Geometry.rotated(n.frame.center, about: pivot, by: degrees), size: n.frame.size)
         n.rotation = CanvasView.normalized(n.rotation + degrees)
+        return n
+    }
+
+    /// A layer mirrored in its parent, across the upright line at `axis` when `horizontally`,
+    /// else across the level one. It turns the other way, and its outline, corners, gradient and
+    /// picture are turned over; words still read forwards. A group is not flipped itself: what it
+    /// holds is, across the same line, and its frame is fitted around them afterwards.
+    @MainActor
+    static func flipped(_ node: Node, horizontally: Bool, about axis: CGFloat) -> Node {
+        var n = node
+        if n.isGroup {
+            let inner = axis - (horizontally ? n.frame.minX : n.frame.minY)
+            n.children = n.children.map { flipped($0, horizontally: horizontally, about: inner) }
+            n.mask = n.mask?.map { flipped($0, horizontally: horizontally, about: inner) }
+            return n
+        }
+        let c = n.frame.center
+        n.frame = CGRect(center: horizontally ? CGPoint(x: 2 * axis - c.x, y: c.y) : CGPoint(x: c.x, y: 2 * axis - c.y), size: n.frame.size)
+        // Not -0, which a file would keep.
+        if n.rotation != 0 { n.rotation = CanvasView.normalized(-n.rotation) }
+        n.fill = n.fill.flipped(horizontally: horizontally)
+        switch n.kind {
+        case .rectangle:
+            // Top left, top right, bottom right, bottom left.
+            if let k = n.corners, k.count == 4 { n.corners = horizontally ? [k[1], k[0], k[3], k[2]] : [k[3], k[2], k[1], k[0]] }
+        case .line:
+            n.rising.toggle()
+        case .path:
+            // Turned over within its own box, which stays where it is.
+            if let data = n.path {
+                let box = n.pathBox ?? PathData.bounds(data)
+                n.path = PathData.transformed(data, horizontally ? CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: box.minX + box.maxX, ty: 0)
+                                                                 : CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: box.minY + box.maxY))
+            }
+        default:
+            break
+        }
         return n
     }
 

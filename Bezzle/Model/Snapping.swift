@@ -18,13 +18,16 @@ struct SnapTargets {
         let first = ids.first
         let parent = first.flatMap { doc.parent(of: $0) }
         var boxes: [CGRect] = []
+        // The artboard the layers lie on, or are crossing onto.
+        var onto: Node?
         if let parent, let box = doc.absoluteFrame(of: parent.id) {
             boxes.append(box)
             for child in parent.children where !ids.contains(child.id) && !child.hidden {
                 boxes.append(Geometry.bounds(of: child).offsetBy(dx: box.minX, dy: box.minY))
             }
+            onto = first.flatMap { doc.artboard(of: $0) }
             // Inside a group, the artboard around it counts too.
-            if parent.isGroup, let board = first.flatMap({ doc.artboard(of: $0) }) { boxes.append(board.frame) }
+            if parent.isGroup, let onto { boxes.append(onto.frame) }
         } else {
             for node in doc.nodes where !ids.contains(node.id) && !node.hidden {
                 boxes.append(node.isArtboard ? node.frame : Geometry.bounds(of: node))
@@ -34,7 +37,12 @@ struct SnapTargets {
                 for child in board.children where !ids.contains(child.id) && !child.hidden {
                     boxes.append(Geometry.bounds(of: child).offsetBy(dx: board.frame.minX, dy: board.frame.minY))
                 }
+                onto = board
             }
+        }
+        // On a carousel, each slide's edges and middle catch as the artboard's do.
+        if let onto, onto.isCarousel, !ids.contains(onto.id) {
+            boxes += onto.slideRects.map { $0.offsetBy(dx: onto.frame.minX, dy: onto.frame.minY) }
         }
         for b in boxes {
             xs += [Line(value: b.minX, box: b), Line(value: b.midX, box: b), Line(value: b.maxX, box: b)]

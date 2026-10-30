@@ -45,4 +45,10 @@ final class Assets {
         cache[name, default: [:]][step] = image
         return image
     }
+
+    /// A picture that was not there has come, from someone sharing the design: it is looked for again.
+    func arrived(_ name: String) {
+        missing.remove(name)
+        sources[name] = nil
+    }
 }

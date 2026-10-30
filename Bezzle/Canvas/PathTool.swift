@@ -55,7 +55,8 @@ final class PathTool {
         case points(id: UUID, base: BezierPath, moving: Set<PathPoint>, grabbed: PathPoint, start: CGPoint, targets: SnapTargets,
                     moved: Bool, action: String)
         case handle(id: UUID, base: BezierPath, at: HandleRef, moved: Bool)
-        case marquee(start: CGPoint, base: Set<PathPoint>)
+        /// Dragging round points; when it `leaves`, a click that does not drag ends editing them.
+        case marquee(start: CGPoint, base: Set<PathPoint>, leaves: Bool)
     }
 
     private var drag: Drag?
@@ -393,9 +394,9 @@ final class PathTool {
     }
 
     /// Dragging round points, from somewhere that is not on the path: picks those inside.
-    func startMarquee(at v: CGPoint, adding: Bool) {
+    func startMarquee(at v: CGPoint, adding: Bool, offPath: Bool) {
         downView = v
-        drag = .marquee(start: canvas(v), base: adding ? store.livePoints : [])
+        drag = .marquee(start: canvas(v), base: adding ? store.livePoints : [], leaves: offPath && !adding)
         if !adding { store.selectedPoints = [] }
     }
 
@@ -479,7 +480,7 @@ final class PathTool {
             store.setPoints(next, of: id, "Move Handle")
             drag = .handle(id: id, base: base, at: at, moved: true)
 
-        case .marquee(let start, let base):
+        case .marquee(let start, let base, _):
             let rect = Geometry.rect(from: start, to: p)
             marquee = rect
             if let (_, points) = store.editedPoints {
@@ -506,8 +507,9 @@ final class PathTool {
             store.endGesture(action)
         case .handle:
             store.endGesture("Move Handle")
-        case .marquee:
+        case .marquee(_, _, let leaves):
             marquee = nil
+            if leaves, hypot(v.x - downView.x, v.y - downView.y) <= 3 { store.editingPath = nil }
         }
         hover(v, flags: flags)
         redraw()

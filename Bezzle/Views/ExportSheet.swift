@@ -9,6 +9,8 @@ struct ExportSheet: View {
     let store: DocumentStore
     @AppStorage("exportFormat") private var format: ExportFormat = .png
     @AppStorage("exportScale") private var scale: Double = 2
+    /// Slides are measured in the pixels the platforms take, so they go out at 1× unless asked otherwise.
+    @AppStorage("carouselExportScale") private var slideScale: Double = 1
     @State private var scope: Scope?
     @State private var working = false
     @State private var done: URL?
@@ -42,10 +44,18 @@ struct ExportSheet: View {
     private var items: [ExportItem] {
         switch chosen {
         case .layers: layers
-        case .artboards: pickedBoards.map(ExportItem.init(artboard:))
-        case .all: store.doc.artboards.map(ExportItem.init(artboard:))
+        case .artboards: pickedBoards.flatMap(ExportItem.items(for:))
+        case .all: store.doc.artboards.flatMap(ExportItem.items(for:))
         }
     }
+
+    /// Whether all that goes out is slides of carousels, which keep a scale of their own.
+    private var onlySlides: Bool {
+        let items = items
+        return !items.isEmpty && items.allSatisfy { $0.slide != nil }
+    }
+
+    private var scaleUsed: Binding<Double> { onlySlides ? $slideScale : $scale }
 
     private func title(_ scope: Scope) -> String {
         switch scope {
@@ -88,7 +98,7 @@ struct ExportSheet: View {
                     if format.isPicture {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Scale").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.ink)
-                            SegmentedWell(selection: $scale, options: [(1, "1×"), (2, "2×"), (3, "3×")])
+                            SegmentedWell(selection: scaleUsed, options: [(1, "1×"), (2, "2×"), (3, "3×")])
                         }
                     }
                     Text(summary)
@@ -118,11 +128,21 @@ struct ExportSheet: View {
         .onExitCommand { close() }
     }
 
+    /// What goes out, in words: a carousel by its slides.
+    private func names(_ items: [ExportItem]) -> String {
+        guard let first = items.first else { return "" }
+        if chosen == .layers { return items.count == 1 ? first.name : "\(items.count) layers" }
+        let boards = Set(items.map(\.node.id)).count
+        let carousels = Set(items.filter { $0.slide != nil }.map(\.node.id)).count
+        if boards == 1 { return carousels == 1 ? "The \(items.count == 1 ? "one slide" : "\(items.count) slides") of \(first.node.name)" : first.name }
+        return "\(boards) artboards" + (carousels == 0 ? "" : carousels == 1 ? ", the carousel a slide each" : ", the carousels a slide each")
+    }
+
     private var summary: String {
         let items = items
         guard let first = items.first else { return "" }
         let one = items.count == 1
-        let names = one ? first.name : chosen == .layers ? "\(items.count) layers" : "\(items.count) artboards"
+        let names = names(items)
         // A layer goes out only as big as what it paints, shadow and all, on nothing.
         let alone = chosen == .layers ? (format == .jpeg ? ", on white" : ", on a transparent background") : ""
         switch format {
@@ -132,9 +152,11 @@ struct ExportSheet: View {
             return "\(names) as SVG\(one ? "" : ", a file each"): shapes, text and gradients stay editable; background blurs come as pictures\(alone)."
         case .png, .jpeg:
             var size = ""
-            if one {
-                let r = first.node.isArtboard ? first.node.frame : first.bounds(assets: store.assets)
-                size = " at \(Int((r.width * scale).rounded())) × \(Int((r.height * scale).rounded())) pixels"
+            // One picture, or slides all the same size.
+            let sizes = one ? [first.bounds(assets: store.assets).size] : chosen == .layers ? [] : items.map { $0.bounds(assets: nil).size }
+            if let s = sizes.first, sizes.allSatisfy({ $0 == s }) {
+                let scale = scaleUsed.wrappedValue
+                size = " at \(Int((s.width * scale).rounded())) × \(Int((s.height * scale).rounded())) pixels"
             }
             return "\(names)\(size)\(one ? "" : ", a file each")\(alone)."
         }
@@ -153,7 +175,7 @@ struct ExportSheet: View {
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         UserDefaults.standard.set(folder.path, forKey: "exportFolder")
         working = true
-        let written = Exporter.export(items, format: format, scale: CGFloat(scale), name: store.name, to: folder, assets: store.assets)
+        let written = Exporter.export(items, format: format, scale: CGFloat(scaleUsed.wrappedValue), name: store.name, to: folder, assets: store.assets)
         working = false
         withAnimation(Theme.spring) { done = written.first.map { written.count == 1 ? $0 : folder } }
     }

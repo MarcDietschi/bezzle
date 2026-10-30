@@ -41,14 +41,30 @@ enum CanvasMenus {
             let locked = nodes.allSatisfy(\.locked)
             entries.append(.item(locked ? "Unlock" : "Lock", shortcut: "⌘L") { store.setLocked(!locked, store.selection) })
             entries.append(.item("Hide", shortcut: "⇧⌘H") { store.setHidden(true, store.selection) })
+            // Return places a picture, so a path filled with one opens its points from here.
+            let picture = store.canEditPicture
+            if picture {
+                let placing = store.editingPicture == nodes[0].id
+                entries += [.separator, .item(placing ? "Done Placing Picture" : "Place Picture", shortcut: "↩") {
+                    if placing { store.editingPicture = nil } else { store.editPicture() }
+                }]
+            }
             if nodes.count == 1, nodes[0].kind == .path, !nodes[0].locked {
                 if store.editingPath == nodes[0].id {
                     entries += [.separator, .item("Done Editing Points", shortcut: "↩") { store.editingPath = nil }]
                 } else {
-                    entries += [.separator, .item("Edit Points", shortcut: "↩") { store.editPoints() }]
+                    entries += [picture ? nil : .separator, .item("Edit Points", shortcut: picture ? nil : "↩") { store.editPoints() }].compactMap { $0 }
                 }
             } else if store.canConvertToPath {
                 entries += [.separator, .item("Convert to Path", shortcut: "⌘8") { store.convertToPath() }]
+            }
+            if store.canCombine {
+                entries.append(.item(store.building != nil ? "Done Building" : "Build with Pieces", shortcut: "⌥⌘B") {
+                    if store.building != nil { store.building = nil } else { store.startBuilding() }
+                })
+            }
+            if store.canOutlineBorders {
+                entries.append(.item("Outline Border", shortcut: "⌥⌘O") { store.outlineBorders() })
             }
             let exported = nodes.count > 1 ? "\(nodes.count) Layers" : nodes.first?.isArtboard == true ? "Artboard" : nodes.first?.isGroup == true ? "Group" : "Layer"
             entries += [.separator, .item("Export \(exported)…", shortcut: "⌘E") { ExportPanel.present(for: store) }]

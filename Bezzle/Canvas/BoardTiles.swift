@@ -80,6 +80,13 @@ final class BoardTiles {
         return pow(2, CGFloat(k) / 2)
     }
 
+    /// Lets every tile go, for when what they show changed without their artboards changing, as
+    /// when a picture they lacked arrives.
+    func forget() {
+        boards = [:]
+        bytes = 0
+    }
+
     /// Starts a frame drawn at `scale` pixels to the canvas point, forgetting artboards that are gone.
     func begin(scale: CGFloat, now: CFTimeInterval, artboards: Set<UUID>) {
         if clock > 0 { frames?.append(counts) }

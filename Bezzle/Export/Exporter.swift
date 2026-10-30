@@ -19,18 +19,38 @@ enum ExportFormat: String, CaseIterable {
     var isPicture: Bool { self == .png || self == .jpeg }
 }
 
-/// One thing to export: an artboard, or one layer on its own, from wherever it lies.
+/// One thing to export: an artboard, one slide of a carousel, or one layer on its own, from
+/// wherever it lies.
 struct ExportItem {
+    /// Which slide of how many, and where it lies in the carousel, in the carousel's own coordinates.
+    struct Slide {
+        let number: Int
+        let count: Int
+        let rect: CGRect
+    }
+
     let node: Node
     /// The artboard a layer lies on, for what shows through its background blurs.
     let board: Node?
     /// Where the top left of what holds the layer is, on the canvas.
     let origin: CGPoint
+    /// Set when the artboard is a carousel and this is one of its slides.
+    let slide: Slide?
 
     init(artboard: Node) {
         node = artboard
         board = nil
         origin = .zero
+        slide = nil
+    }
+
+    /// The slide `number` of a carousel, counted from 1.
+    init(slide number: Int, of carousel: Node) {
+        let rects = carousel.slideRects
+        node = carousel
+        board = nil
+        origin = .zero
+        slide = Slide(number: number, count: rects.count, rect: rects[min(max(number, 1), rects.count) - 1])
     }
 
     init?(layer id: UUID, in doc: BezzleDocument) {
@@ -38,9 +58,25 @@ struct ExportItem {
         node = n
         board = doc.artboard(of: id)
         origin = doc.parentOrigin(of: id)
+        slide = nil
     }
 
-    var name: String { node.name }
+    /// What an artboard goes out as: a carousel a slide at a time, anything else whole.
+    static func items(for artboard: Node) -> [ExportItem] {
+        guard artboard.isCarousel else { return [ExportItem(artboard: artboard)] }
+        return (1...artboard.slideCount).map { ExportItem(slide: $0, of: artboard) }
+    }
+
+    /// A slide's carries its number, with as many digits as the last one has and at least two,
+    /// so that the files sort in order: "Launch 01", "Launch 02"…
+    var name: String {
+        guard let slide else { return node.name }
+        let digits = max(2, String(slide.count).count), number = String(slide.number)
+        return "\(node.name) \(String(repeating: "0", count: max(0, digits - number.count)))\(number)"
+    }
+
+    /// The part of the canvas a slide covers.
+    var slideFrame: CGRect? { slide.map { $0.rect.offsetBy(dx: node.frame.minX, dy: node.frame.minY) } }
 
     /// What it is drawn with: for a layer, where it sits on its artboard, so that a blur of what
     /// lies behind it finds that.
@@ -64,7 +100,7 @@ struct ExportItem {
     /// The part of the canvas it covers: an artboard's frame, or for a layer just what it paints,
     /// its shadow and blur included, found by drawing it.
     func bounds(assets: Assets?) -> CGRect {
-        if node.isArtboard { return node.frame }
+        if node.isArtboard { return slideFrame ?? node.frame }
         return picture(scale: 1, opaque: false, assets: assets)?.rect ?? node.frame.offsetBy(dx: origin.x, dy: origin.y)
     }
 
@@ -72,7 +108,8 @@ struct ExportItem {
     /// paints, on nothing; `opaque` puts it on white, as a JPEG has to be.
     func picture(scale: CGFloat, opaque: Bool, assets: Assets?) -> (image: CGImage, rect: CGRect)? {
         if node.isArtboard {
-            return Renderer.image(of: node, scale: scale, opaque: opaque, assets: assets).map { ($0, node.frame) }
+            let rect = slideFrame ?? node.frame
+            return Renderer.image(of: node, part: slideFrame, scale: scale, opaque: opaque, assets: assets).map { ($0, rect) }
         }
         // The layer's own top left falls on a whole pixel, so its edges come out sharp.
         let frame = node.frame.offsetBy(dx: origin.x, dy: origin.y)
@@ -106,7 +143,9 @@ enum Exporter {
         var written: [URL] = []
         switch format {
         case .pdf:
-            let url = free(folder.appendingPathComponent(items.count == 1 ? items[0].name : name).appendingPathExtension("pdf"))
+            // Named after what it is when there is one of it, such as a carousel, a page a slide.
+            let one = Set(items.map(\.node.id)).count == 1
+            let url = free(folder.appendingPathComponent(one ? items[0].node.name : name).appendingPathExtension("pdf"))
             guard let ctx = CGContext(url as CFURL, mediaBox: nil, [kCGPDFContextCreator: "Bezzle"] as CFDictionary) else { return [] }
             for item in items { page(item, in: ctx, assets: assets) }
             ctx.closePDF()
@@ -136,7 +175,7 @@ enum Exporter {
     /// One page of a PDF, in points, as big as the item: shapes and text stay shapes and text.
     private static func page(_ item: ExportItem, in ctx: CGContext, assets: Assets?) {
         if item.node.isArtboard {
-            Renderer.drawPDFPage(item.node, in: ctx, assets: assets)
+            Renderer.drawPDFPage(item.node, part: item.slideFrame, in: ctx, assets: assets)
             return
         }
         let bounds = item.bounds(assets: assets)

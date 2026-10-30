@@ -57,6 +57,34 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return tool
     }()
 
+    /// A picture being placed inside the layer it fills.
+    private(set) lazy var pictureTool: PictureTool = {
+        let tool = PictureTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
+    /// Cutting shapes apart along a line.
+    private(set) lazy var knifeTool: KnifeTool = {
+        let tool = KnifeTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
+    /// Joining and wiping away the pieces overlapping shapes make.
+    private(set) lazy var shapeBuilder: ShapeBuilder = {
+        let tool = ShapeBuilder(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
+    /// Rounding a path's corners, and pulling a shape's outline out or in.
+    private(set) lazy var outlineTool: OutlineTool = {
+        let tool = OutlineTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
     init(store: DocumentStore) {
         self.store = store
         super.init(frame: .zero)
@@ -159,10 +187,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         ctx.restoreGState()
         if previewMotion.isMoving { keepEasing() }
 
+        drawSlideCuts(ctx)
         drawArtboardTitles(ctx)
         drawHover(ctx)
         drawSelection(ctx)
         pathTool.draw(ctx, scale: deviceScale)
+        pictureTool.draw(ctx, scale: deviceScale)
+        outlineTool.draw(ctx, scale: deviceScale)
+        shapeBuilder.draw(ctx, scale: deviceScale)
+        knifeTool.draw(ctx, scale: deviceScale)
+        if pictureTool.animating { redrawSoon() }
         drawGuides(ctx)
         drawMarquee(ctx)
         drawMeasurement(ctx)
@@ -231,8 +265,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private static let titleFont = NSFont.systemFont(ofSize: 11, weight: .medium)
     private var titleWidths: [String: CGFloat] = [:]
 
+    /// Room at the right of a carousel's first slide for its number, which the name stops short of.
+    private static let slideNumberRoom: CGFloat = 28
+
     private func titleRect(of board: Node) -> CGRect {
-        let r = store.viewport.toView(board.frame)
+        var r = store.viewport.toView(board.frame)
+        if board.isCarousel, let slide = board.slideSize { r.size.width = slide.width * store.viewport.zoom - Self.slideNumberRoom }
         let measured = titleWidths[board.name] ?? {
             let w = (board.name as NSString).size(withAttributes: [.font: Self.titleFont]).width
             if titleWidths.count > 2000 { titleWidths.removeAll() }
@@ -248,12 +286,56 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             // Too small on screen for its name to be read.
             guard board.frame.width * store.viewport.zoom >= 30 else { continue }
             let rect = titleRect(of: board)
+            let color = selected.contains(board.id) || store.hovered == board.id ? CanvasInk.labelSelected : CanvasInk.label
+            if board.isCarousel { drawSlideNumbers(board, color: color) }
             guard rect.intersects(bounds) else { continue }
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byTruncatingTail
-            let color = selected.contains(board.id) || store.hovered == board.id ? CanvasInk.labelSelected : CanvasInk.label
             (board.name as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                           attributes: [.font: Self.titleFont, .foregroundColor: color, .paragraphStyle: paragraph])
+        }
+    }
+
+    /// Each slide's number over its top right corner, in the line the artboard's name is in.
+    private func drawSlideNumbers(_ board: Node, color: NSColor) {
+        let zoom = store.viewport.zoom
+        // Only once a slide leaves room for the name's least width beside its number.
+        guard let slide = board.slideSize, slide.width * zoom >= Self.slideNumberRoom + 40 else { return }
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: color]
+        for (i, rect) in board.slideRects.enumerated() {
+            let r = store.viewport.toView(rect.offsetBy(dx: board.frame.minX, dy: board.frame.minY))
+            guard r.maxX >= bounds.minX, r.minX <= bounds.maxX else { continue }
+            let number = "\(i + 1)" as NSString
+            let w = number.size(withAttributes: attributes).width
+            number.draw(at: CGPoint(x: r.maxX - w, y: r.minY - 19), withAttributes: attributes)
+        }
+    }
+
+    /// Where a carousel will be cut into slides: a dashed line down each cut, over what is on it.
+    /// Only on the canvas; nothing of it is exported.
+    private func drawSlideCuts(_ ctx: CGContext) {
+        let zoom = store.viewport.zoom
+        for board in store.doc.artboards where !board.hidden && board.isCarousel && board.slideCount > 1 {
+            guard let slide = board.slideSize, slide.width * zoom >= 4 else { continue }
+            let r = store.viewport.toView(board.frame)
+            guard r.intersects(bounds) else { continue }
+            ctx.saveGState()
+            for i in 1..<board.slideCount {
+                let x = crisp(CGPoint(x: r.minX + CGFloat(i) * slide.width * zoom, y: 0)).x
+                guard x >= bounds.minX, x <= bounds.maxX else { continue }
+                ctx.move(to: CGPoint(x: x, y: max(r.minY, bounds.minY)))
+                ctx.addLine(to: CGPoint(x: x, y: min(r.maxY, bounds.maxY)))
+            }
+            guard let cuts = ctx.path else { ctx.restoreGState(); continue }
+            ctx.setLineWidth(1)
+            // A light line under the blue dashes keeps the cut in sight on dark slides and light ones.
+            ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.7).cgColor)
+            ctx.strokePath()
+            ctx.addPath(cuts)
+            ctx.setStrokeColor(CanvasInk.pencil.cgColor)
+            ctx.setLineDash(phase: 0, lengths: [4, 3])
+            ctx.strokePath()
+            ctx.restoreGState()
         }
     }
 
@@ -318,6 +400,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if single?.kind == .line || single?.locked == true { return [] }
         let size = store.viewport.toView(frame).size
         return Handle.allCases.compactMap { h in
+            // A carousel is as high as its slides: only its sides and corners pull it.
+            if single?.isCarousel == true && h.unit.x == 0.5 { return nil }
             // Small things keep only their corners, so the handles do not pile up.
             if !h.isCorner && ((h.unit.x == 0.5 && size.width < 28) || (h.unit.y == 0.5 && size.height < 28)) { return nil }
             return (h, store.viewport.toView(Geometry.point(h.unit, of: frame, rotation: rotation)))
@@ -328,6 +412,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let ids = store.selection
         // A path whose points show has those instead of a frame and handles.
         if ids.count == 1, ids[0] == pathTool.shownPath { return }
+        // A picture being placed has its own edges and corners instead.
+        if ids.count == 1, ids[0] == store.editingPicture { return }
+        // Shapes being built with show their pieces instead.
+        if store.building != nil { return }
         guard !ids.isEmpty, store.editingText == nil || ids.count > 1 else {
             if let editing = store.editingText, let points = viewCorners(of: editing) {
                 ctx.addPath(outlinePath(points, closed: true))
@@ -522,7 +610,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func handleHit(_ v: CGPoint) -> HandleHit? {
-        guard store.editingText == nil, store.editingPath == nil else { return nil }
+        guard store.editingText == nil, store.editingPath == nil, store.editingPicture == nil, store.building == nil else { return nil }
         let ids = store.selection
         if ids.count == 1, let node = store.node(ids[0]), node.kind == .line {
             guard !node.locked, let ends = viewCorners(of: ids[0]) else { return nil }
@@ -552,8 +640,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         lastViewPoint = v
         updateHover(v)
         if store.tool == .pen || store.editingPath != nil { pathTool.hover(v, flags: event.modifierFlags) }
+        hoverShapeTools(v, flags: event.modifierFlags)
         updateCursor(v, flags: event.modifierFlags)
         updateOverlays(v)
+    }
+
+    /// The knife, building with pieces, and a shape's corners and edge, which each show
+    /// something of their own under the pointer.
+    private func hoverShapeTools(_ v: CGPoint?, flags: NSEvent.ModifierFlags) {
+        shapeBuilder.hover(v, flags: flags)
+        outlineTool.hover(v, flags: flags)
+        knifeTool.hover(v, flags: flags)
     }
 
     /// The corner dots show while the pointer is on the selected rectangle; the shadow's outline
@@ -578,6 +675,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func mouseExited(with event: NSEvent) {
         store.hovered = nil
         pathTool.hover(nil, flags: [])
+        hoverShapeTools(nil, flags: [])
         NSCursor.arrow.set()
     }
 
@@ -593,6 +691,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private func updateCursor(_ v: CGPoint, flags: NSEvent.ModifierFlags) {
         if spaceHeld { NSCursor.openHand.set(); return }
         if let cursor = pathTool.cursor { cursor.set(); return }
+        if let cursor = pictureTool.cursor(at: v) { cursor.set(); return }
+        if let cursor = shapeBuilder.cursor ?? knifeTool.cursor ?? outlineTool.cursor(at: v) { cursor.set(); return }
         switch store.tool {
         case .select:
             switch handleHit(v) {
@@ -632,13 +732,22 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
         switch store.tool {
         case .select:
+            // Off the pieces, building is done, and the press goes on as any.
+            if shapeBuilder.down(at: v, event: event) { return }
+            if store.editingPicture != nil {
+                if pictureTool.down(at: v, clicks: event.clickCount) { return }
+                // Anywhere off the picture: out of placing, and on as any press.
+                store.editingPicture = nil
+            }
             if store.editingPath != nil {
                 if pathTool.editDown(at: v, event: event) { return }
                 // Off the path's points and outline: dragging round points, or, on another
-                // layer, out of editing to pick that.
+                // layer, out of editing to pick that. A click on nothing at all leaves editing too.
                 let other = titleHit(v) ?? pick(p)
                 if other == nil || other == store.editingPath {
-                    if event.clickCount >= 2 { store.editingPath = nil } else { pathTool.startMarquee(at: v, adding: event.modifierFlags.contains(.shift)) }
+                    if event.clickCount >= 2 { store.editingPath = nil } else {
+                        pathTool.startMarquee(at: v, adding: event.modifierFlags.contains(.shift), offPath: other == nil)
+                    }
                     return
                 }
                 store.editingPath = nil
@@ -646,6 +755,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             selectDown(at: p, view: v, event: event)
         case .pen:
             pathTool.penDown(at: v, event: event)
+        case .knife:
+            knifeTool.down(at: v, event: event)
         case .text:
             if let id = hit(p), store.node(id)?.kind == .text {
                 store.selection = [id]
@@ -665,13 +776,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private func selectDown(at p: CGPoint, view v: CGPoint, event: NSEvent) {
         let shift = event.modifierFlags.contains(.shift)
 
-        if let handle = handleHit(v) {
+        // A path's corner dots and a shape's edge with Option, unless a resize handle is in the way.
+        let handle = handleHit(v)
+        if case .resize = handle {} else if outlineTool.down(at: v, event: event) { return }
+        if let handle {
             startHandleDrag(handle, at: p)
             return
         }
 
         // A double click goes into a group, and each quick click after it one level further,
-        // however fast they come; on a text, it starts typing.
+        // however fast they come; on a text, it starts typing; on a path or a shape, it opens its points.
         if event.clickCount >= 2, let id = pick(p), let node = store.node(id) {
             if node.isGroup, let inner = hit(p, in: node) {
                 store.selection = [inner]
@@ -682,9 +796,20 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 beginEditing(id, action: "Typing")
                 return
             }
+            // On a picture, it places the picture inside it, and a drag straight on moves it.
+            if !node.isArtboard, !node.locked, node.fill.on, node.fill.image != nil {
+                store.selection = [id]
+                store.editPicture()
+                _ = pictureTool.down(at: v, clicks: 1)
+                return
+            }
             if node.kind == .path {
                 store.selection = [id]
                 store.editingPath = id
+                return
+            }
+            if !node.locked, node.asPath() != nil {
+                store.editAsPath(id)
                 return
             }
         }
@@ -764,6 +889,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     private func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
         if pathTool.dragging { pathTool.drag(to: v, flags: flags); return }
+        if pictureTool.dragging { pictureTool.drag(to: v, flags: flags); return }
+        if shapeBuilder.dragging { shapeBuilder.drag(to: v, flags: flags); return }
+        if outlineTool.dragging { outlineTool.drag(to: v, flags: flags); return }
+        if knifeTool.dragging { knifeTool.drag(to: v, flags: flags); return }
         let p = store.viewport.toCanvas(v)
         let shift = flags.contains(.shift), option = flags.contains(.option)
         let snapping = !flags.contains(.command)
@@ -829,10 +958,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             store.guides = guides
 
         case .resize(let handle, let originals, let absolute, let bounds, let rotation, let targets):
+            let carousel = originals.count == 1 ? originals.values.first.flatMap { $0.isCarousel ? $0 : nil } : nil
             var frame = Geometry.resize(bounds, rotation: rotation, handle: handle, to: p,
                                         keepAspect: shift || keepsAspect(originals, handle), fromCenter: option)
             var guides: [Guide] = []
-            if rotation == 0 {
+            if let carousel, let slide = carousel.slideSize, slide.width > 0 {
+                // As many whole slides as the pointer reaches past half of one, from the side
+                // across from the handle, which stays put.
+                let reach = handle.unit.x == 0 ? bounds.maxX - p.x : p.x - bounds.minX
+                let size = carousel.carouselSize(count: Int((reach / slide.width).rounded()))
+                frame = CGRect(x: handle.unit.x == 0 ? bounds.maxX - size.width : bounds.minX, y: bounds.minY, width: size.width, height: size.height)
+            } else if rotation == 0 {
                 if snapping && !option {
                     (frame, guides) = targets.snap(resizing: frame, handle: handle, threshold: threshold)
                 }
@@ -912,7 +1048,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             if originals.count == 1, let (id, original) = originals.first, original.kind == .text, let f = store.doc.absoluteFrame(of: id) {
                 shown = f
             }
-            store.measurement = ("\(Self.number(shown.width)) × \(Self.number(shown.height))", Geometry.bounds(of: shown, rotation: rotation))
+            if let carousel, let slide = carousel.slideSize, slide.width > 0 {
+                let count = Int((frame.width / slide.width).rounded())
+                store.measurement = ("\(count) \(count == 1 ? "slide" : "slides")", frame)
+            } else {
+                store.measurement = ("\(Self.number(shown.width)) × \(Self.number(shown.height))", Geometry.bounds(of: shown, rotation: rotation))
+            }
 
         case .rotate(let center, let startAngle, let originals, let absolute):
             var delta = Double((atan2(p.y - center.y, p.x - center.x) - startAngle) * 180 / .pi)
@@ -1013,6 +1154,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func mouseUp(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
         pathTool.up(at: v, flags: event.modifierFlags)
+        pictureTool.up()
+        shapeBuilder.up(at: v)
+        outlineTool.up()
+        knifeTool.up(at: v)
         switch interaction {
         case .none:
             break
@@ -1193,6 +1338,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {
+        // A picture first: Return on one places it, where on a path it would open the points.
+        if pictureTool.key(event) { return }
+        // Building and the knife before the pen: Return ends them, where on a path it would open its points.
+        if shapeBuilder.key(event) || knifeTool.key(event) { return }
+        if event.keyCode == 53, outlineTool.dragging { outlineTool.cancel(); return }
         if pathTool.key(event) { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let step: CGFloat = flags.contains(.shift) ? 10 : 1
@@ -1243,8 +1393,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func flagsChanged(with event: NSEvent) {
         // Shift and Option change a drag in progress at once, without waiting for the pointer to move.
         if pathTool.dragging { pathTool.drag(to: lastViewPoint, flags: event.modifierFlags); return }
+        if pictureTool.dragging { pictureTool.drag(to: lastViewPoint, flags: event.modifierFlags); return }
+        if shapeBuilder.dragging || outlineTool.dragging || knifeTool.dragging {
+            drag(to: lastViewPoint, flags: event.modifierFlags)
+            updateCursor(lastViewPoint, flags: event.modifierFlags)
+            return
+        }
         if case .none = interaction {
             if store.tool == .pen || store.editingPath != nil { pathTool.hover(lastViewPoint, flags: event.modifierFlags) }
+            hoverShapeTools(lastViewPoint, flags: event.modifierFlags)
             updateCursor(lastViewPoint, flags: event.modifierFlags)
             return
         }

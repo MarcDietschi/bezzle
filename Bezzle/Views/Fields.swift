@@ -59,7 +59,7 @@ struct NumberField: View {
         }
         // Pulled past a limit, the number gives a little the way it is pulled.
         .offset(x: scrubber.give)
-        .frame(height: 26)
+        .frame(height: Theme.controlHeight)
         .background(alignment: .bottom) {
             Tape(pulled: scrubber.pulled, color: scrubbing ? Theme.pencil.opacity(0.55) : Theme.ink.opacity(0.22))
                 .frame(height: 5)
@@ -464,7 +464,7 @@ struct ColorField: View {
     var body: some View {
         HStack(spacing: 8) {
             Swatch(color: color)
-                .frame(width: 26, height: 26)
+                .frame(width: Theme.controlHeight, height: Theme.controlHeight)
                 .contentShape(Rectangle())
                 .onTapGesture { (picker ?? openPicker)() }
                 .menuAnchor(id)
@@ -491,12 +491,13 @@ struct ColorField: View {
                         .padding(.trailing, 7)
                 }
             }
-            .frame(width: suggestions.isEmpty ? nil : 88, height: 26)
-            .frame(maxWidth: suggestions.isEmpty ? .infinity : nil)
+            .frame(maxWidth: .infinity)
+            .frame(height: Theme.controlHeight)
             .well(radius: 7)
             if !suggestions.isEmpty {
-                HStack(spacing: 5) {
-                    ForEach(suggestions.prefix(5), id: \.self) { c in
+                // In the inspector's last column, where the narrow fields at the ends of rows are.
+                HStack(spacing: 4) {
+                    ForEach(suggestions.prefix(4), id: \.self) { c in
                         Suggestion(color: c) { inside in
                             preview?(inside ? c.with(alpha: color?.a ?? 1) : nil)
                         } choose: {
@@ -505,6 +506,7 @@ struct ColorField: View {
                         }
                     }
                 }
+                .frame(width: Inspector.endField, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -541,7 +543,7 @@ private struct Suggestion: View {
             .overlay { Circle().strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5) }
             .frame(width: 16, height: 16)
             .scaleEffect(hovering ? 1.18 : 1)
-            .frame(width: 18, height: 26)
+            .frame(width: 16, height: Theme.controlHeight)
             .contentShape(Rectangle())
             .onHover { inside in
                 hovering = inside

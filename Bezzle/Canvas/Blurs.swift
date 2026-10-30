@@ -33,6 +33,8 @@ extension Renderer {
     static func drawBlurred(_ node: Node, radius: CGFloat, in ctx: CGContext, options: Options) {
         var plain = node
         plain.blur = nil
+        // Blurred on its own, and then mixed as a whole with what lies under it.
+        plain.blend = nil
         let scale = pixelScale(ctx)
         // The blur spreads about three times its radius; a shadow reaches further still.
         var region = Geometry.bounds(of: node).insetBy(dx: -node.border.width, dy: -node.border.width)
@@ -55,7 +57,11 @@ extension Renderer {
                 .flatMap { blurred($0, sigma: radius * scale, clamp: false) }
             if let image { BlurCache.shared.keep(object: plain, scale: scale, region: region, image: image) }
         }
-        if let image { place(image, at: region.origin, scale: scale, in: ctx) }
+        guard let image else { return }
+        ctx.saveGState()
+        if let blend = node.blend { ctx.setBlendMode(blend.cg) }
+        place(image, at: region.origin, scale: scale, in: ctx)
+        ctx.restoreGState()
     }
 
     /// What lies behind a layer with a background blur, blurred, shown through the layer's

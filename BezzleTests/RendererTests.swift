@@ -92,4 +92,69 @@ struct RendererTests {
         #expect(pixel(image, 40, 140).r < 10)
         #expect(pixel(image, 40, 100).r > 250)
     }
+
+    @MainActor
+    @Test func aFlippedPictureFacesTheOtherWay() throws {
+        // A picture of four squares: red at the top left, blue at the top right, green below the red.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let ctx = try #require(Renderer.bitmap(CGSize(width: 2, height: 2)))
+        for (x, y, color) in [(0, 1, RGBA(r: 1, g: 0, b: 0)), (1, 1, RGBA(r: 0, g: 0, b: 1)), (0, 0, RGBA(r: 0, g: 1, b: 0)), (1, 0, RGBA.black)] {
+            ctx.setFillColor(color.cgColor)
+            ctx.fill(CGRect(x: x, y: y, width: 1, height: 1))
+        }
+        let squares = try #require(ctx.makeImage())
+        let png = try #require(NSBitmapImageRep(cgImage: squares).representation(using: .png, properties: [:]))
+        try png.write(to: folder.appendingPathComponent("squares.png"))
+        let assets = Assets(folder: folder)
+
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        var card = Node(kind: .rectangle, name: "R", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        card.fill.image = ImageFill(asset: "squares.png", mode: .stretch, size: CGSize(width: 2, height: 2))
+        board.children = [card]
+        func topLeft(_ node: Node) throws -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8) {
+            board.children = [node]
+            return pixel(try #require(Renderer.image(of: board, scale: 1, assets: assets)), 10, 10)
+        }
+        #expect(try topLeft(card).r > 200)
+        let across = BezzleDocument.flipped(card, horizontally: true, about: 50)
+        #expect(try topLeft(across).b > 200)
+        #expect(try topLeft(BezzleDocument.flipped(card, horizontally: false, about: 50)).g > 200)
+        // Flipped back, it is as it was.
+        #expect(BezzleDocument.flipped(across, horizontally: true, about: 50) == card)
+
+        // As SVG: the picture is turned over, and the outline that cuts it is not.
+        board.children = [across]
+        let svg = SVGWriter.document(for: ExportItem(artboard: board), bounds: board.frame, assets: assets)
+        #expect(XMLParser(data: Data(svg.utf8)).parse())
+        #expect(svg.contains("transform=\"matrix(-1 0 0 1 100 0)\""))
+        #expect(svg.contains("<g clip-path="))
+    }
+
+    @Test func aBlendModeMixesALayerWithWhatLiesUnderIt() throws {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        board.fill.color = RGBA(r: 1, g: 0.5, b: 0)
+        var tint = Node(kind: .rectangle, name: "Tint", frame: CGRect(x: 20, y: 20, width: 60, height: 60))
+        tint.fill.color = RGBA(r: 0.5, g: 0.5, b: 1)
+        func middle(_ node: Node) throws -> [Int] {
+            board.children = [node]
+            let image = try #require(Renderer.image(of: board, scale: 1))
+            // The bytes as drawn, in the sRGB they were drawn in, with nothing converted on the way.
+            let ctx = try #require(Renderer.bitmap(CGSize(width: image.width, height: image.height)))
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let bytes = try #require(ctx.data).assumingMemoryBound(to: UInt8.self)
+            return (0..<3).map { Int(bytes[50 * ctx.bytesPerRow + 50 * 4 + $0]) }
+        }
+        func near(_ a: [Int], _ b: [Int]) -> Bool { zip(a, b).allSatisfy { abs($0 - $1) <= 4 } }
+        let normal = try middle(tint)
+        #expect(near(normal, [127, 127, 255]), "\(normal)")
+        tint.blend = .multiply
+        let multiplied = try middle(tint)
+        #expect(near(multiplied, [127, 63, 0]), "\(multiplied)")
+        // Blurred, it is still mixed with what is under it, not laid over it.
+        tint.blur = Blur(radius: 2)
+        let blurred = try middle(tint)
+        #expect(near(blurred, [127, 63, 0]), "blurred: \(blurred)")
+    }
 }

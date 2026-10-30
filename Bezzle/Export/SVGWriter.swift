@@ -22,7 +22,7 @@ struct SVGWriter {
         var w = SVGWriter(assets: assets)
         let body: String
         if item.node.isArtboard {
-            body = w.artboard(item.node)
+            body = w.artboard(item.node, part: item.slideFrame)
         } else {
             body = "<g transform=\"translate(\(n(item.origin.x)) \(n(item.origin.y)))\">\(w.layer(item.node, item.options(scale: w.pictureScale, assets: assets)))</g>"
         }
@@ -40,7 +40,8 @@ struct SVGWriter {
 
     // MARK: Artboards and layers
 
-    private mutating func artboard(_ board: Node) -> String {
+    /// An artboard, or only what reaches `part` of it, on the canvas, such as one slide of a carousel.
+    private mutating func artboard(_ board: Node, part: CGRect? = nil) -> String {
         let size = board.frame.size
         var out = "<g id=\"\(id(for: board.name))\" transform=\"translate(\(n(board.frame.minX)) \(n(board.frame.minY)))\">\n"
         if board.fill.on {
@@ -50,7 +51,8 @@ struct SVGWriter {
         }
         var options = Renderer.Options(deviceScale: pictureScale, assets: assets)
         options.board = board
-        let inside = board.children.map { layer($0, options) }.joined(separator: "\n")
+        options.visible = part
+        let inside = board.children.filter { Renderer.inSight($0, options) }.map { layer($0, options) }.joined(separator: "\n")
         if board.clips {
             let clip = newID("clip")
             defs.append("<clipPath id=\"\(clip)\"><rect width=\"\(n(size.width))\" height=\"\(n(size.height))\"/></clipPath>")
@@ -167,7 +169,14 @@ struct SVGWriter {
         let clip = newID("clip")
         defs.append("<clipPath id=\"\(clip)\">\(geometry)\(rule.replacingOccurrences(of: "fill-rule", with: "clip-rule"))/></clipPath>")
         let r = Renderer.imageRect(image, in: size)
-        return "<image x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\" preserveAspectRatio=\"none\" xlink:href=\"\(href)\" clip-path=\"url(#\(clip))\"\(alpha < 1 ? " opacity=\"\(n(alpha))\"" : "")/>"
+        let fade = alpha < 1 ? " opacity=\"\(n(alpha))\"" : ""
+        let element = "<image x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\" preserveAspectRatio=\"none\" xlink:href=\"\(href)\""
+        guard image.flippedX == true || image.flippedY == true else { return element + " clip-path=\"url(#\(clip))\"\(fade)/>" }
+        // Turned over where it lies. A cut on the picture itself would be turned over with it, so
+        // the outline cuts a group around it instead.
+        let sx: CGFloat = image.flippedX == true ? -1 : 1, sy: CGFloat = image.flippedY == true ? -1 : 1
+        return "<g clip-path=\"url(#\(clip))\"\(fade)>" + element
+            + " transform=\"matrix(\(n(sx)) 0 0 \(n(sy)) \(n((1 - sx) * r.midX)) \(n((1 - sy) * r.midY)))\"/></g>"
     }
 
     /// The border. SVG strokes along the middle of the edge; one inside or outside is drawn twice

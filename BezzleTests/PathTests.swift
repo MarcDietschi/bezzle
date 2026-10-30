@@ -366,5 +366,149 @@ struct PointEditingTests {
         #expect(bench.store.editingPath == nil)
         #expect(bench.store.selection == [bench.node("R")!.id])
     }
+
+    /// A square on artboard A, from 110,110 to 210,210, opened by a double click in its middle.
+    private func openedSquare() -> Bench {
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))])
+        bench.click(CGPoint(x: 160, y: 160))
+        bench.click(CGPoint(x: 160, y: 160), clicks: 2)
+        return bench
+    }
+
+    @Test func aDoubleClickedShapeLeftAsItWasIsTheShapeAgain() {
+        let bench = openedSquare()
+        let id = bench.node("R")!.id
+        #expect(bench.store.editingPath == id)
+        #expect(bench.node("R")?.kind == .path)
+        // Not a change to its outline: it is still the shape afterwards, with the new opacity.
+        bench.step { bench.store.updateSelection("Opacity") { $0.opacity = 0.5 } }
+        bench.key(53)
+        #expect(bench.store.editingPath == nil)
+        #expect(bench.store.selection == [id])
+        #expect(bench.node("R")?.kind == .rectangle)
+        #expect(bench.node("R")?.opacity == 0.5)
+        #expect(bench.node("R")?.frame == CGRect(x: 10, y: 10, width: 100, height: 100))
+    }
+
+    @Test func aDoubleClickedShapeWhosePointsMovedStaysAPath() {
+        let bench = openedSquare()
+        bench.drag(CGPoint(x: 210, y: 210), CGPoint(x: 240, y: 230), flags: .command)
+        bench.click(CGPoint(x: 450, y: 350))
+        #expect(bench.store.editingPath == nil)
+        #expect(bench.node("R")?.kind == .path)
+        #expect(bench.node("R")?.frame == CGRect(x: 10, y: 10, width: 130, height: 120))
+    }
+
+    @Test func undoingTheFirstChangeToAnOpenedShapeBringsTheShapeBack() {
+        let bench = openedSquare()
+        bench.drag(CGPoint(x: 210, y: 210), CGPoint(x: 240, y: 230), flags: .command)
+        bench.undoLast()
+        #expect(bench.store.editingPath == nil)
+        #expect(bench.node("R")?.kind == .rectangle)
+        #expect(bench.node("R")?.frame == CGRect(x: 10, y: 10, width: 100, height: 100))
+        bench.undo.redo()
+        #expect(bench.node("R")?.kind == .path)
+        #expect(bench.node("R")?.frame == CGRect(x: 10, y: 10, width: 130, height: 120))
+    }
+}
+
+@MainActor
+struct CombineTests {
+    private func near(_ a: CGRect?, _ b: CGRect) -> Bool {
+        guard let a else { return false }
+        return abs(a.minX - b.minX) < 0.01 && abs(a.minY - b.minY) < 0.01 && abs(a.width - b.width) < 0.01 && abs(a.height - b.height) < 0.01
+    }
+
+    /// "R", red, at 10,10 on artboard A, 100 square; "F" over it, from 60,60 the same size; "T"
+    /// above both, away from them. F and R are selected, front first.
+    private func bench(front: Node.Kind = .rectangle, frontFrame: CGRect = CGRect(x: 60, y: 60, width: 100, height: 100)) -> Bench {
+        var r = CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))
+        r.fill.color = RGBA(r: 1, g: 0, b: 0)
+        let bench = Bench(extra: [r, Node(kind: front, name: "F", frame: frontFrame), CanvasTests.rect("T", CGRect(x: 300, y: 200, width: 20, height: 20))])
+        bench.store.selection = [bench.node("F")!.id, bench.node("R")!.id]
+        return bench
+    }
+
+    private func made(_ bench: Bench) -> Node? {
+        bench.store.selection.count == 1 ? bench.store.node(bench.store.selection[0]) : nil
+    }
+
+    @Test func aUnionIsOnePathStyledAsTheBackShapeWhereTheFrontOneWas() throws {
+        let bench = bench(front: .ellipse)
+        #expect(bench.store.canCombine)
+        bench.step { bench.store.combine(.union) }
+        let n = try #require(made(bench))
+        #expect(n.kind == .path && n.name == "R" && n.fill.color == RGBA(r: 1, g: 0, b: 0))
+        #expect(near(n.frame, CGRect(x: 10, y: 10, width: 150, height: 150)))
+        #expect(bench.a.children.map(\.name) == ["R", "T"])
+        let outline = try #require(bench.store.doc.outline(of: n.id))
+        // In the square, in the circle, and in the circle's box but outside it.
+        #expect(outline.contains(CGPoint(x: 120, y: 120)) && outline.contains(CGPoint(x: 250, y: 210)))
+        #expect(!outline.contains(CGPoint(x: 250, y: 250)))
+    }
+
+    @Test func subtractingCutsTheFrontShapesOutOfTheBackOne() throws {
+        let bench = bench(frontFrame: CGRect(x: 60, y: 0, width: 100, height: 120))
+        bench.step { bench.store.combine(.subtract) }
+        #expect(near(made(bench)?.frame, CGRect(x: 10, y: 10, width: 50, height: 100)))
+    }
+
+    @Test func intersectingKeepsWhereTheyOverlap() throws {
+        let bench = bench()
+        bench.step { bench.store.combine(.intersect) }
+        #expect(near(made(bench)?.frame, CGRect(x: 60, y: 60, width: 50, height: 50)))
+    }
+
+    @Test func excludingCutsOutWhereTheyOverlap() throws {
+        let bench = bench()
+        bench.step { bench.store.combine(.exclude) }
+        let n = try #require(made(bench))
+        #expect(near(n.frame, CGRect(x: 10, y: 10, width: 150, height: 150)))
+        let outline = try #require(bench.store.doc.outline(of: n.id))
+        #expect(outline.contains(CGPoint(x: 130, y: 130)) && outline.contains(CGPoint(x: 240, y: 240)))
+        #expect(!outline.contains(CGPoint(x: 185, y: 185)))
+        // Drawn the same whichever way overlaps fill.
+        #expect(n.evenOdd == nil)
+    }
+
+    @Test func nothingLeftChangesNothing() {
+        let bench = bench(frontFrame: CGRect(x: 200, y: 150, width: 50, height: 50))
+        let before = bench.store.doc
+        bench.step { bench.store.combine(.intersect) }
+        #expect(bench.store.doc == before)
+        #expect(bench.store.selection.count == 2)
+    }
+
+    @Test func undoBringsTheShapesBack() {
+        let bench = bench()
+        bench.step { bench.store.combine(.union) }
+        bench.undoLast()
+        #expect(bench.a.children.map(\.name) == ["R", "F", "T"])
+        #expect(bench.node("R")?.kind == .rectangle && bench.node("F")?.kind == .rectangle)
+    }
+
+    @Test func theBackShapesTurnIsKept() throws {
+        var r = CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))
+        r.rotation = 30
+        let bench = Bench(extra: [r, CanvasTests.rect("F", CGRect(x: 55, y: 55, width: 10, height: 10))])
+        bench.store.selection = [bench.node("R")!.id, bench.node("F")!.id]
+        bench.step { bench.store.combine(.union) }
+        let n = try #require(made(bench))
+        #expect(n.rotation == 30)
+        #expect(near(n.frame, CGRect(x: 10, y: 10, width: 100, height: 100)))
+    }
+
+    @Test func onlyTwoOrMoreShapesCombine() {
+        let bench = bench()
+        bench.store.selection = [bench.node("R")!.id]
+        #expect(!bench.store.canCombine)
+        let text = Node(kind: .text, name: "Words", frame: CGRect(x: 0, y: 0, width: 40, height: 20))
+        bench.step { bench.store.add(text, onto: bench.a.id) }
+        bench.store.selection = [bench.node("R")!.id, bench.node("F")!.id, text.id]
+        #expect(!bench.store.canCombine)
+        bench.step { bench.store.setLocked(true, [bench.node("F")!.id]) }
+        bench.store.selection = [bench.node("R")!.id, bench.node("F")!.id]
+        #expect(!bench.store.canCombine)
+    }
 }
 
