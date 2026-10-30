@@ -1,0 +1,95 @@
+import Testing
+import AppKit
+@testable import Bezzle
+
+struct RendererTests {
+    /// The alpha of one pixel of an artboard drawn at 1×, x and y from the top left.
+    private func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8) {
+        let rep = NSBitmapImageRep(cgImage: image)
+        let c = rep.colorAt(x: x, y: y)!.usingColorSpace(.sRGB)!
+        return (UInt8(c.redComponent * 255), UInt8(c.greenComponent * 255), UInt8(c.blueComponent * 255), UInt8(c.alphaComponent * 255))
+    }
+
+    @Test func shadowFallsBelowAShape() throws {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        board.fill.color = .white
+        var box = Node(kind: .rectangle, name: "R", frame: CGRect(x: 30, y: 20, width: 40, height: 30))
+        box.fill.color = .white
+        box.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.5), x: 0, y: 10, blur: 4)
+        board.children = [box]
+        let image = try #require(Renderer.image(of: board, scale: 1))
+        let below = pixel(image, 50, 55)
+        let above = pixel(image, 50, 15)
+        #expect(below.r < 230, "under the shape: \(below)")
+        #expect(above.r > 250, "over the shape: \(above)")
+    }
+
+    @Test func aBackgroundBlurBlursWhatLiesBehindIt() throws {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 40, y: 60, width: 200, height: 100))
+        board.fill.color = .white
+        var dark = Node(kind: .rectangle, name: "Dark", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        dark.fill.color = .black
+        // Clear glass over the edge between black and white, inside a group so it is not at the top.
+        var glass = Node(kind: .rectangle, name: "Glass", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        glass.fill.color = .white
+        glass.blur = Blur(radius: 10, background: true, brightness: 0, fillOpacity: 0)
+        var group = Node(kind: .group, name: "G", frame: CGRect(x: 50, y: 0, width: 100, height: 100))
+        group.children = [glass]
+        board.children = [dark, group]
+        let image = try #require(Renderer.image(of: board, scale: 1))
+        // On the edge, under the glass: grey.
+        let edge = pixel(image, 100, 50)
+        #expect(edge.r > 60 && edge.r < 200, "on the edge: \(edge)")
+        // Under the glass, a little way into the black: lifted by the white beside it.
+        #expect(pixel(image, 92, 50).r > 20)
+        // Outside the glass nothing is blurred.
+        #expect(pixel(image, 45, 50).r < 5)
+        #expect(pixel(image, 195, 50).r > 250)
+    }
+
+    @Test func aBackgroundBlursLightMovesEveryColourAlike() throws {
+        for (light, expected) in [(-0.3, 0.2), (0.3, 0.8), (0, 0.5)] {
+            var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+            board.fill.color = RGBA(r: 0.5, g: 0.5, b: 0.5, a: 1)
+            var glass = Node(kind: .rectangle, name: "Glass", frame: CGRect(x: 20, y: 20, width: 60, height: 60))
+            glass.fill.color = .white
+            glass.blur = Blur(radius: 6, background: true, brightness: light, fillOpacity: 0)
+            board.children = [glass]
+            let image = try #require(Renderer.image(of: board, scale: 1))
+            // The bytes as drawn, in the sRGB they were drawn in, with nothing converted on the way.
+            let ctx = try #require(Renderer.bitmap(CGSize(width: image.width, height: image.height)))
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let bytes = try #require(ctx.data).assumingMemoryBound(to: UInt8.self)
+            func at(_ x: Int, _ y: Int) -> [Double] { (0..<3).map { Double(bytes[y * ctx.bytesPerRow + x * 4 + $0]) } }
+            let under = at(50, 50)
+            #expect(under.allSatisfy { abs($0 - expected * 255) <= 3 }, "light \(light): \(under)")
+            // Outside the glass, the paper as it is.
+            #expect(at(5, 5).allSatisfy { abs($0 - 127.5) <= 2 }, "\(at(5, 5))")
+        }
+    }
+
+    @Test func anObjectBlurSpreadsTheLayer() throws {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        board.fill.color = .white
+        var dot = Node(kind: .rectangle, name: "Dot", frame: CGRect(x: 30, y: 30, width: 40, height: 40))
+        dot.fill.color = .black
+        dot.blur = Blur(radius: 4)
+        board.children = [dot]
+        let image = try #require(Renderer.image(of: board, scale: 2))
+        #expect(pixel(image, 100, 100).r < 20, "the middle stays dark")
+        let past = pixel(image, 56, 100)
+        #expect(past.r > 20 && past.r < 240, "just past the edge it spreads: \(past)")
+        #expect(pixel(image, 20, 100).r > 250, "far off it is untouched")
+    }
+
+    @Test func fillIsDrawnWhereTheFrameIs() throws {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 200, y: 300, width: 100, height: 100))
+        board.fill.color = .white
+        var box = Node(kind: .rectangle, name: "R", frame: CGRect(x: 10, y: 60, width: 20, height: 20))
+        box.fill.color = .black
+        board.children = [box]
+        let image = try #require(Renderer.image(of: board, scale: 2))
+        #expect(pixel(image, 40, 140).r < 10)
+        #expect(pixel(image, 40, 100).r > 250)
+    }
+}

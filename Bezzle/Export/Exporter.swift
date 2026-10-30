@@ -1,0 +1,185 @@
+import AppKit
+import UniformTypeIdentifiers
+import ImageIO
+
+/// The kinds of file a design can be exported as.
+enum ExportFormat: String, CaseIterable {
+    case png, jpeg, svg, pdf
+
+    var fileExtension: String {
+        switch self {
+        case .png: "png"
+        case .jpeg: "jpg"
+        case .svg: "svg"
+        case .pdf: "pdf"
+        }
+    }
+
+    /// Drawn in pixels, at a scale; the others stay sharp at any size.
+    var isPicture: Bool { self == .png || self == .jpeg }
+}
+
+/// One thing to export: an artboard, or one layer on its own, from wherever it lies.
+struct ExportItem {
+    let node: Node
+    /// The artboard a layer lies on, for what shows through its background blurs.
+    let board: Node?
+    /// Where the top left of what holds the layer is, on the canvas.
+    let origin: CGPoint
+
+    init(artboard: Node) {
+        node = artboard
+        board = nil
+        origin = .zero
+    }
+
+    init?(layer id: UUID, in doc: BezzleDocument) {
+        guard let n = doc.node(id), !n.isArtboard, !n.hidden else { return nil }
+        node = n
+        board = doc.artboard(of: id)
+        origin = doc.parentOrigin(of: id)
+    }
+
+    var name: String { node.name }
+
+    /// What it is drawn with: for a layer, where it sits on its artboard, so that a blur of what
+    /// lies behind it finds that.
+    func options(scale: CGFloat, assets: Assets?) -> Renderer.Options {
+        var o = Renderer.Options(deviceScale: scale, assets: assets)
+        if let board {
+            o.board = board
+            o.offset = CGPoint(x: origin.x - board.frame.minX, y: origin.y - board.frame.minY)
+        }
+        return o
+    }
+
+    /// Draws a layer as it is on the canvas, the context in canvas coordinates.
+    func drawLayer(in ctx: CGContext, scale: CGFloat, assets: Assets?) {
+        ctx.saveGState()
+        ctx.translateBy(x: origin.x, y: origin.y)
+        Renderer.drawNode(node, in: ctx, options: options(scale: scale, assets: assets))
+        ctx.restoreGState()
+    }
+
+    /// The part of the canvas it covers: an artboard's frame, or for a layer just what it paints,
+    /// its shadow and blur included, found by drawing it.
+    func bounds(assets: Assets?) -> CGRect {
+        if node.isArtboard { return node.frame }
+        return picture(scale: 1, opaque: false, assets: assets)?.rect ?? node.frame.offsetBy(dx: origin.x, dy: origin.y)
+    }
+
+    /// Drawn at `scale` pixels to the point: an artboard whole, or a layer trimmed to what it
+    /// paints, on nothing; `opaque` puts it on white, as a JPEG has to be.
+    func picture(scale: CGFloat, opaque: Bool, assets: Assets?) -> (image: CGImage, rect: CGRect)? {
+        if node.isArtboard {
+            return Renderer.image(of: node, scale: scale, opaque: opaque, assets: assets).map { ($0, node.frame) }
+        }
+        // The layer's own top left falls on a whole pixel, so its edges come out sharp.
+        let frame = node.frame.offsetBy(dx: origin.x, dy: origin.y)
+        let reach = Renderer.reach(of: node).offsetBy(dx: origin.x, dy: origin.y)
+        let minX = frame.minX + ((reach.minX - frame.minX) * scale).rounded(.down) / scale
+        let minY = frame.minY + ((reach.minY - frame.minY) * scale).rounded(.down) / scale
+        let w = Int(((reach.maxX - minX) * scale).rounded(.up)), h = Int(((reach.maxY - minY) * scale).rounded(.up))
+        guard w > 0, h > 0, w * h <= 400_000_000, let ctx = Renderer.bitmap(CGSize(width: w, height: h)) else { return nil }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: scale, y: -scale)
+        ctx.translateBy(x: -minX, y: -minY)
+        Renderer.withFlippedContext(ctx) { drawLayer(in: ctx, scale: scale, assets: assets) }
+        guard let drawn = ctx.makeImage(), let used = Exporter.painted(in: ctx) else { return nil }
+        let rect = CGRect(x: minX + CGFloat(used.minX) / scale, y: minY + CGFloat(used.minY) / scale,
+                          width: CGFloat(used.width) / scale, height: CGFloat(used.height) / scale)
+        guard let trimmed = drawn.cropping(to: used) else { return nil }
+        guard opaque, let white = Renderer.bitmap(CGSize(width: trimmed.width, height: trimmed.height)) else { return (trimmed, rect) }
+        let all = CGRect(x: 0, y: 0, width: trimmed.width, height: trimmed.height)
+        white.setFillColor(CGColor.white)
+        white.fill(all)
+        white.draw(trimmed, in: all)
+        return white.makeImage().map { ($0, rect) }
+    }
+}
+
+enum Exporter {
+    /// Writes each item into `folder` and returns the files made: a picture or an SVG each, or
+    /// one PDF with a page each. Nothing is overwritten: a name already taken gets a number.
+    @discardableResult
+    static func export(_ items: [ExportItem], format: ExportFormat, scale: CGFloat, name: String, to folder: URL, assets: Assets? = nil) -> [URL] {
+        var written: [URL] = []
+        switch format {
+        case .pdf:
+            let url = free(folder.appendingPathComponent(items.count == 1 ? items[0].name : name).appendingPathExtension("pdf"))
+            guard let ctx = CGContext(url as CFURL, mediaBox: nil, [kCGPDFContextCreator: "Bezzle"] as CFDictionary) else { return [] }
+            for item in items { page(item, in: ctx, assets: assets) }
+            ctx.closePDF()
+            written.append(url)
+        case .svg:
+            for item in items {
+                let svg = SVGWriter.document(for: item, bounds: item.bounds(assets: assets), assets: assets)
+                let url = free(folder.appendingPathComponent(item.name).appendingPathExtension("svg"))
+                if (try? svg.write(to: url, atomically: true, encoding: .utf8)) != nil { written.append(url) }
+            }
+        case .png, .jpeg:
+            let type = format == .png ? UTType.png : UTType.jpeg
+            for item in items {
+                guard let (image, _) = item.picture(scale: scale, opaque: format == .jpeg, assets: assets) else { continue }
+                let suffix = scale == 1 ? "" : "@\(Int(scale))x"
+                let url = free(folder.appendingPathComponent(item.name + suffix).appendingPathExtension(format.fileExtension))
+                guard let dest = CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil) else { continue }
+                var props: [CFString: Any] = [kCGImagePropertyDPIWidth: 72 * scale, kCGImagePropertyDPIHeight: 72 * scale]
+                if format == .jpeg { props[kCGImageDestinationLossyCompressionQuality] = 0.9 }
+                CGImageDestinationAddImage(dest, image, props as CFDictionary)
+                if CGImageDestinationFinalize(dest) { written.append(url) }
+            }
+        }
+        return written
+    }
+
+    /// One page of a PDF, in points, as big as the item: shapes and text stay shapes and text.
+    private static func page(_ item: ExportItem, in ctx: CGContext, assets: Assets?) {
+        if item.node.isArtboard {
+            Renderer.drawPDFPage(item.node, in: ctx, assets: assets)
+            return
+        }
+        let bounds = item.bounds(assets: assets)
+        var box = CGRect(origin: .zero, size: bounds.size)
+        ctx.beginPage(mediaBox: &box)
+        ctx.translateBy(x: 0, y: bounds.height)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.translateBy(x: -bounds.minX, y: -bounds.minY)
+        Renderer.withFlippedContext(ctx) { item.drawLayer(in: ctx, scale: 2, assets: assets) }
+        ctx.endPage()
+    }
+
+    /// The pixels of a bitmap that are not wholly clear, counted from its top left; nil when none are.
+    static func painted(in ctx: CGContext) -> CGRect? {
+        guard let data = ctx.data else { return nil }
+        let bytes = data.assumingMemoryBound(to: UInt8.self)
+        let w = ctx.width, h = ctx.height, row = ctx.bytesPerRow
+        var minX = w, minY = h, maxX = -1, maxY = -1
+        for y in 0..<h {
+            let line = bytes + y * row
+            var x = 0
+            while x < w {
+                if line[x * 4 + 3] != 0 {
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                    minY = min(minY, y)
+                    maxY = y
+                }
+                x += 1
+            }
+        }
+        guard maxX >= 0 else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+    }
+
+    private static func free(_ url: URL) -> URL {
+        var candidate = url
+        var i = 2
+        let base = url.deletingPathExtension().lastPathComponent, ext = url.pathExtension
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = url.deletingLastPathComponent().appendingPathComponent("\(base) \(i)").appendingPathExtension(ext)
+            i += 1
+        }
+        return candidate
+    }
+}
