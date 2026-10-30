@@ -11,7 +11,7 @@ import AppKit
 /// each ten with Shift, and Escape puts it back.
 struct NumberField: View {
     @Environment(DocumentStore.self) private var store
-    let label: String
+    let label: LocalizedStringResource
     let value: Double?
     var unit: String = ""
     var range: ClosedRange<Double> = -100_000...100_000
@@ -20,7 +20,7 @@ struct NumberField: View {
     var scrub: Double = 1
     var decimals = 1
     /// How the change is named in the Edit menu.
-    let action: String
+    let action: LocalizedStringResource
     let apply: (Double) -> Void
     /// Applies a typed change to each selected layer's own value, so "+2" adds two to every one
     /// of them, and arrow keys move each when they differ. Without it, changes start from the value shown.
@@ -36,9 +36,12 @@ struct NumberField: View {
     var body: some View {
         let scrubbing = scrubber.on
         HStack(spacing: 4) {
+            // On one line, a little smaller if a language's word is long for the field.
             Text(label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(scrubbing ? Theme.pencil : hovering ? Theme.ink2 : Theme.ink3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(minWidth: 12, alignment: .leading)
                 .padding(.leading, 8)
             TextField("", text: $draft)
@@ -211,8 +214,9 @@ struct NumberField: View {
         let f = pow(10, Double(decimals))
         let r = (v * f).rounded() / f
         if r == r.rounded() { return String(Int(r)) }
-        return String(format: "%.\(decimals)f", r)
-            .replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
+        // With the decimal mark of the user's language, which typing takes either way; never
+        // grouped, as "1,000" would be read back as one.
+        return r.formatted(.number.precision(.fractionLength(0...decimals)).grouping(.never))
     }
 }
 
@@ -451,7 +455,7 @@ struct ColorField: View {
     let id: String
     let color: RGBA?
     var suggestions: [RGBA] = []
-    let action: String
+    let action: LocalizedStringResource
     /// Shows a suggested colour on the canvas while the pointer is on it; nil when it leaves.
     var preview: ((RGBA?) -> Void)? = nil
     /// Opens something else from the swatch in place of the colour picker, such as the fill menu.
@@ -474,7 +478,7 @@ struct ColorField: View {
                 }
                 #endif
             HStack(spacing: 2) {
-                Text("#")
+                Text(verbatim: "#")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.ink3)
                     .padding(.leading, 8)
@@ -485,7 +489,7 @@ struct ColorField: View {
                     .focused($focused)
                     .onSubmit { commit() }
                 if let color, color.a < 1 {
-                    Text("\(Int((color.a * 100).rounded()))%")
+                    Text(verbatim: "\(Int((color.a * 100).rounded()))%")
                         .font(.system(size: 11).monospacedDigit())
                         .foregroundStyle(Theme.ink3)
                         .padding(.trailing, 7)
@@ -552,7 +556,7 @@ private struct Suggestion: View {
             .onTapGesture(perform: choose)
             .onDisappear { if hovering { hover(false) } }
             .animation(Theme.quick, value: hovering)
-            .help("#\(color.hex)")
+            .help(Text(verbatim: "#\(color.hex)"))
     }
 }
 
@@ -602,7 +606,7 @@ struct ColorPanel: View {
     @Environment(DocumentStore.self) private var store
     @Environment(MenuHost.self) private var menus
     let id: String
-    let action: String
+    let action: LocalizedStringResource
     /// The colour to start from, when the field knows it, such as one stop of a gradient.
     var start: RGBA?
     /// Starts again from `start` when this changes, such as when another of a gradient's colours
@@ -654,7 +658,7 @@ struct ColorPanel: View {
 
             HStack(spacing: 8) {
                 HexEntry(color: current) { c in set(c); apply(c) }
-                Text("\(Int((alpha * 100).rounded()))%")
+                Text(verbatim: "\(Int((alpha * 100).rounded()))%")
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(Theme.ink2)
                     .frame(width: 40, alignment: .trailing)
@@ -680,7 +684,7 @@ struct ColorPanel: View {
                                 .frame(width: 20, height: 20)
                                 .contentShape(Rectangle())
                                 .onTapGesture { set(c); apply(c) }
-                                .help("#\(c.hex)")
+                                .help(Text(verbatim: "#\(c.hex)"))
                         }
                     }
                 }
@@ -734,7 +738,7 @@ private struct HexEntry: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            Text("#")
+            Text(verbatim: "#")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.ink3)
                 .padding(.leading, 8)

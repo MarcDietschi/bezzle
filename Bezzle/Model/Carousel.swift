@@ -1,4 +1,4 @@
-import CoreGraphics
+import Foundation
 
 /// Social carousels: an artboard of slides side by side, designed as one, so that what runs from
 /// one slide into the next lines up across the cut; it is exported a picture per slide. Its width
@@ -6,18 +6,24 @@ import CoreGraphics
 nonisolated enum Carousel {
     /// A slide size the platforms take, in pixels.
     struct Format: Identifiable, Hashable {
-        let name: String
+        /// Shown in the user's language.
+        let title: LocalizedStringResource
         let size: CGSize
         /// Where it is posted.
         let platforms: String
+        /// The English name, which the AI is told and which stays the same whatever the language.
+        var name: String { title.key }
         var id: String { name }
+
+        static func == (a: Format, b: Format) -> Bool { a.name == b.name && a.size == b.size }
+        func hash(into hasher: inout Hasher) { hasher.combine(name) }
     }
 
     static let formats: [Format] = [
-        Format(name: "Portrait 4:5", size: CGSize(width: 1080, height: 1350), platforms: "Instagram, LinkedIn, Facebook"),
-        Format(name: "Square 1:1", size: CGSize(width: 1080, height: 1080), platforms: "Instagram, LinkedIn, Facebook"),
-        Format(name: "Tall 3:4", size: CGSize(width: 1080, height: 1440), platforms: "Instagram"),
-        Format(name: "Story 9:16", size: CGSize(width: 1080, height: 1920), platforms: "TikTok"),
+        Format(title: "Portrait 4:5", size: CGSize(width: 1080, height: 1350), platforms: "Instagram, LinkedIn, Facebook"),
+        Format(title: "Square 1:1", size: CGSize(width: 1080, height: 1080), platforms: "Instagram, LinkedIn, Facebook"),
+        Format(title: "Tall 3:4", size: CGSize(width: 1080, height: 1440), platforms: "Instagram"),
+        Format(title: "Story 9:16", size: CGSize(width: 1080, height: 1920), platforms: "TikTok"),
     ]
 
     /// How many slides a carousel can have: as many as Instagram takes.

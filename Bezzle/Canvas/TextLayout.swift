@@ -2,7 +2,7 @@ import AppKit
 
 /// Fonts by family and face, as the Font Book names them, with the Mac's own font as "System".
 enum Fonts {
-    static let systemFaces: [(String, NSFont.Weight)] = [
+    nonisolated static let systemFaces: [(String, NSFont.Weight)] = [
         ("Ultralight", .ultraLight), ("Thin", .thin), ("Light", .light), ("Regular", .regular),
         ("Medium", .medium), ("Semibold", .semibold), ("Bold", .bold), ("Heavy", .heavy), ("Black", .black),
     ]
@@ -39,19 +39,24 @@ enum Fonts {
         return ok
     }
 
-    private struct FontKey: Hashable { let family: String, face: String, size: CGFloat }
-    private static var cache: [FontKey: NSFont] = [:]
+    private nonisolated struct FontKey: Hashable { let family: String, face: String, size: CGFloat }
+    /// Asked for by text drawn on several threads at once.
+    private nonisolated static let cache = Shared([FontKey: NSFont]())
+    /// The font manager is asked one at a time.
+    private nonisolated static let resolving = NSLock()
 
-    static func font(_ style: TextStyle) -> NSFont {
+    nonisolated static func font(_ style: TextStyle) -> NSFont {
         let key = FontKey(family: style.family, face: style.face, size: style.size)
-        if let font = cache[key] { return font }
-        let font = resolve(style)
-        if cache.count > 2000 { cache.removeAll() }
-        cache[key] = font
+        if let font = cache.with({ $0[key] }) { return font }
+        let font = resolving.withLock { resolve(style) }
+        cache.with {
+            if $0.count > 2000 { $0.removeAll() }
+            $0[key] = font
+        }
         return font
     }
 
-    private static func resolve(_ style: TextStyle) -> NSFont {
+    private nonisolated static func resolve(_ style: TextStyle) -> NSFont {
         let size = max(style.size, 1)
         if style.family == TextStyle.system {
             let italic = style.face.hasSuffix("Italic")
@@ -70,7 +75,7 @@ enum Fonts {
 
 /// Lays text out the one way Bezzle does everywhere (on the canvas, in the editor, in exports),
 /// so what you type is exactly what is drawn.
-enum TextLayout {
+nonisolated enum TextLayout {
     static func attributes(_ style: TextStyle, color: RGBA) -> [NSAttributedString.Key: Any] {
         let font = Fonts.font(style)
         let paragraph = NSMutableParagraphStyle()
@@ -139,8 +144,25 @@ enum TextLayout {
         let width: CGFloat?
     }
 
-    private static var cache: [Key: Laid] = [:]
-    private static let kept = 12_000
+    /// The layouts kept for one thread. Text Kit's layouts are each for one thread at a time, and
+    /// tiles are drawn on several at once, so each thread keeps its own: the main thread plenty,
+    /// for it lays out every text it shows, the others what the tiles they draw show.
+    private final class Layouts {
+        var cache: [Key: Laid] = [:]
+        let kept: Int
+        init(kept: Int) { self.kept = kept }
+    }
+
+    private nonisolated(unsafe) static let onMain = Layouts(kept: 12_000)
+
+    private static var layouts: Layouts {
+        if Thread.isMainThread { return onMain }
+        let threads = Thread.current.threadDictionary
+        if let mine = threads["Bezzle text layouts"] as? Layouts { return mine }
+        let mine = Layouts(kept: 1_000)
+        threads["Bezzle text layouts"] = mine
+        return mine
+    }
 
     static func attributed(_ node: Node) -> NSAttributedString {
         let style = node.style ?? TextStyle()
@@ -165,10 +187,11 @@ enum TextLayout {
         let style = node.style ?? TextStyle()
         let width = style.sizing == .autoWidth ? naturalWidth(node) + 0.5 : max(node.frame.width, 1)
         let key = Key(text: node.text ?? "", style: style, fill: node.fill, width: width)
-        if let laid = cache[key] { return laid }
+        let kept = layouts
+        if let laid = kept.cache[key] { return laid }
         let laid = laid(node, width: width)
-        if cache.count > kept { cache.removeAll() }
-        cache[key] = laid
+        if kept.cache.count > kept.kept { kept.cache.removeAll() }
+        kept.cache[key] = laid
         return laid
     }
 
@@ -179,9 +202,10 @@ enum TextLayout {
         var probe = node
         probe.style = style
         let key = Key(text: node.text ?? "", style: style, fill: nil, width: nil)
-        if let laid = cache[key] { return ceil(laid.usedSize.width) }
+        let kept = layouts
+        if let laid = kept.cache[key] { return ceil(laid.usedSize.width) }
         let laid = laid(probe, width: 100_000)
-        cache[key] = laid
+        kept.cache[key] = laid
         return ceil(laid.usedSize.width)
     }
 
@@ -210,7 +234,7 @@ enum TextLayout {
 }
 
 extension Node {
-    static func with(_ node: Node, frame: CGRect) -> Node {
+    nonisolated static func with(_ node: Node, frame: CGRect) -> Node {
         var n = node
         n.frame = frame
         return n

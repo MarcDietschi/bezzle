@@ -7,12 +7,14 @@ extension MCPTools {
     /// history, as a change made by hand is. When `body` throws, nothing changes. Returns whether
     /// anything did.
     @discardableResult
-    private func change(_ store: DocumentStore, _ action: String, _ body: (inout BezzleDocument) throws -> Void) throws -> Bool {
+    func change(_ store: DocumentStore, _ action: LocalizedStringResource, _ body: (inout BezzleDocument) throws -> Void) throws -> Bool {
         store.canvas?.endEditing()
         var working = store.doc
         try body(&working)
         // As `edit` will see it: what changes nothing must not leave an empty step to undo.
         var fitted = working
+        fitted.syncGrids(since: store.doc)
+        fitted.syncDecks(since: store.doc, fronts: store.fronts)
         fitted.fitGroups(since: store.doc)
         fitted.fitCarousels()
         guard fitted != store.doc else { return false }
@@ -33,17 +35,19 @@ extension MCPTools {
 
     /// Does to a copy of the design what the menus do to a selection, then makes the same change
     /// to the design, selecting what it leaves selected. Returns whether anything changed.
-    private func onSelection(_ store: DocumentStore, _ ids: [UUID], _ action: String, _ body: (DocumentStore) -> Void) throws -> Bool {
+    func onSelection(_ store: DocumentStore, _ ids: [UUID], _ action: LocalizedStringResource, _ body: (DocumentStore) -> Void) throws -> Bool {
         // It has no window and no undo history, and saves nothing: it is gone before it would.
         let copy = DocumentStore(url: store.url, document: store.doc)
         copy.selection = ids
+        copy.fronts = store.fronts
         body(copy)
         let changed = try change(store, action) { $0 = copy.doc }
+        store.fronts = copy.fronts
         store.selection = copy.selection.filter { store.doc.node($0) != nil }
         return changed
     }
 
-    private func described(_ ids: [UUID], in store: DocumentStore, full: Bool = false, depth: Int = 0, warnings: [String] = []) -> [Content] {
+    func described(_ ids: [UUID], in store: DocumentStore, full: Bool = false, depth: Int = 0, warnings: [String] = []) -> [Content] {
         let layers = ids.compactMap { store.doc.node($0) }.map { Self.describe($0, in: store.doc, full: full, depth: depth) }
         return [.text(JSONValue.compact([("layers", .array(layers)), ("warnings", .array(warnings.map { .string($0) }))]).text)]
     }
@@ -113,7 +117,7 @@ extension MCPTools {
             made.append(try Self.make(spec, parentSize: parentSize, boardSize: defaultBoard, names: &names, warnings: &warnings, nextBoard: &nextBoard))
         }
 
-        try change(store, made.count == 1 ? "Add \(made[0].kind.title)" : "Add Layers") { doc in
+        try change(store, made.count == 1 ? made[0].kind.adding : "Add Layers") { doc in
             let path = parent.flatMap { doc.path(of: $0) }
             var placed = 0
             for node in made {
@@ -174,7 +178,7 @@ extension MCPTools {
         }
         if kind == .artboard { nextBoard.x = node.frame.maxX + 80 }
         if spec["name"] == nil {
-            node.name = kind == .text ? String((node.text ?? "").prefix(40)) : carousel ? nextName("Carousel", artboard: true, taken: names) : nextName(kind.title, artboard: kind == .artboard, taken: names)
+            node.name = kind == .text ? String((node.text ?? "").prefix(40)) : carousel ? nextName(String(localized: "Carousel"), artboard: true, taken: names) : nextName(kind.title, artboard: kind == .artboard, taken: names)
         }
         names.insert(node.name)
 
@@ -326,7 +330,7 @@ extension MCPTools {
         let store = try await store(args)
         let ids = try Self.layers(args, in: store)
         let names = ids.compactMap { store.doc.node($0)?.name }
-        try change(store, ids.count == 1 ? "Delete \(store.doc.node(ids[0])?.kind.title ?? "Layer")" : "Delete Layers") { doc in
+        try change(store, ids.count == 1 ? store.doc.node(ids[0])?.kind.deleting ?? "Delete Layer" : "Delete Layers") { doc in
             for id in ids { _ = doc.detach(id) }
         }
         store.selection = store.selection.filter { store.doc.node($0) != nil }
@@ -384,7 +388,7 @@ extension MCPTools {
         guard parents.count == 1, let parent = parents.first else { throw MCPError("Group layers that lie in the same artboard or group. move_layers brings them together.") }
         let name = try args.string("name")
         var group = Node(kind: .group, name: name ?? doc.nextName(for: .group), frame: .zero)
-        try change(store, "Group") { doc in
+        try change(store, LocalizedStringResource("undo.group", defaultValue: "Group", comment: "Undo name: layers put into a group.")) { doc in
             let path = parent.flatMap { doc.path(of: $0) }
             var siblings = path.map { doc[$0].children } ?? doc.nodes
             let chosen = Set(ids)
@@ -453,7 +457,7 @@ extension MCPTools {
         case "back": .back
         default: throw MCPError("order is front, forward, backward or back.")
         }
-        let name = switch how {
+        let name: LocalizedStringResource = switch how {
         case .front: "Bring to Front"
         case .forward: "Bring Forward"
         case .backward: "Send Backward"

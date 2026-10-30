@@ -32,7 +32,7 @@ extension DocumentStore {
     }
 
     /// Changes the edited path's points as one step of the undo history.
-    func changePoints(_ action: String, _ change: (inout BezierPath) -> Void) {
+    func changePoints(_ action: LocalizedStringResource, _ change: (inout BezierPath) -> Void) {
         guard let (id, points) = editedPoints else { return }
         var next = points
         change(&next)
@@ -40,7 +40,7 @@ extension DocumentStore {
     }
 
     /// A path's new points, on the canvas. When none are left, the layer goes.
-    func setPoints(_ points: BezierPath, of id: UUID, _ action: String) {
+    func setPoints(_ points: BezierPath, of id: UUID, _ action: LocalizedStringResource) {
         edit(action) { $0.setPoints(points, of: id) }
         if node(id) == nil {
             selection.removeAll { $0 == id }
@@ -161,7 +161,7 @@ extension DocumentStore {
         /// Only where an odd number of them lie, so where two overlap is cut out.
         case exclude
 
-        var title: String {
+        var title: LocalizedStringResource {
             switch self {
             case .union: "Union"
             case .subtract: "Subtract"

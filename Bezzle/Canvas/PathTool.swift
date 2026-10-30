@@ -49,11 +49,11 @@ final class PathTool {
     private enum Drag {
         /// Pulling the handles out of the point just put down, or, when closing, out of the
         /// first. `base` is the path with that point in it, nil while it is the session's first.
-        case pull(id: UUID?, base: BezierPath?, at: PathPoint, closing: Bool, lastIn: CGPoint?, moved: Bool, action: String)
+        case pull(id: UUID?, base: BezierPath?, at: PathPoint, closing: Bool, lastIn: CGPoint?, moved: Bool, action: LocalizedStringResource?)
         /// The last point pressed again: a click takes its handle away, a drag pulls a new one out of it alone.
         case cusp(id: UUID, base: BezierPath, at: PathPoint, moved: Bool)
         case points(id: UUID, base: BezierPath, moving: Set<PathPoint>, grabbed: PathPoint, start: CGPoint, targets: SnapTargets,
-                    moved: Bool, action: String)
+                    moved: Bool, action: LocalizedStringResource)
         case handle(id: UUID, base: BezierPath, at: HandleRef, moved: Bool)
         /// Dragging round points; when it `leaves`, a click that does not drag ends editing them.
         case marquee(start: CGPoint, base: Set<PathPoint>, leaves: Bool)
@@ -182,7 +182,7 @@ final class PathTool {
 
     /// What the next point snaps to: what lies around, as for anything drawn, and the path's own points.
     private func targets(at p: CGPoint, own: BezierPath?, except: Set<PathPoint> = []) -> SnapTargets {
-        var targets = SnapTargets(doc: store.doc, moving: session?.id.map { [$0] } ?? store.editingPath.map { [$0] } ?? [])
+        var targets = SnapTargets(doc: store.seenDoc, moving: session?.id.map { [$0] } ?? store.editingPath.map { [$0] } ?? [])
         func add(_ q: CGPoint) {
             let box = CGRect(origin: q, size: .zero)
             targets.xs.append(SnapTargets.Line(value: q.x, box: box))
@@ -299,7 +299,7 @@ final class PathTool {
         let q = place(p, from: nil, own: nil, showGuides: false)
         store.selection = []
         session = Session(first: BezierPath.Anchor(q), board: store.doc.artboard(at: q)?.id)
-        drag = .pull(id: nil, base: nil, at: PathPoint(subpath: 0, index: 0), closing: false, lastIn: nil, moved: false, action: "")
+        drag = .pull(id: nil, base: nil, at: PathPoint(subpath: 0, index: 0), closing: false, lastIn: nil, moved: false, action: nil)
         redraw()
     }
 
@@ -387,7 +387,7 @@ final class PathTool {
         return false
     }
 
-    private func movePoints(_ id: UUID, _ points: BezierPath, grabbed: PathPoint, from p: CGPoint, action: String) {
+    private func movePoints(_ id: UUID, _ points: BezierPath, grabbed: PathPoint, from p: CGPoint, action: LocalizedStringResource) {
         let moving = store.livePoints
         drag = .points(id: id, base: points, moving: moving, grabbed: grabbed, start: p,
                        targets: targets(at: p, own: points, except: moving), moved: false, action: action)
@@ -420,7 +420,7 @@ final class PathTool {
             // The handle out follows the pointer and the one in mirrors it; with Option it stays
             // where it was, for a point that bends.
             let handleIn = option ? lastIn : mirror
-            guard let base, let id else {
+            guard let base, let id, let action else {
                 session?.first?.handleOut = out
                 session?.first?.handleIn = handleIn
                 drag = .pull(id: nil, base: nil, at: at, closing: closing, lastIn: handleIn, moved: true, action: action)
@@ -495,7 +495,7 @@ final class PathTool {
         drag = nil
         switch d {
         case .pull(_, _, _, let closing, _, _, let action):
-            if !action.isEmpty { store.endGesture(action) }
+            if let action { store.endGesture(action) }
             if closing {
                 session = nil
                 store.tool = .select

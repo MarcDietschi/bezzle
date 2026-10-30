@@ -66,8 +66,44 @@ enum CanvasMenus {
             if store.canOutlineBorders {
                 entries.append(.item("Outline Border", shortcut: "⌥⌘O") { store.outlineBorders() })
             }
-            let exported = nodes.count > 1 ? "\(nodes.count) Layers" : nodes.first?.isArtboard == true ? "Artboard" : nodes.first?.isGroup == true ? "Group" : "Layer"
-            entries += [.separator, .item("Export \(exported)…", shortcut: "⌘E") { ExportPanel.present(for: store) }]
+            if store.canMakeRepeatGrid {
+                entries += [.separator, .item("Make Repeat Grid", shortcut: "⌘R") { store.makeRepeatGrid() }]
+            } else if let grid = store.selectedGrid {
+                entries.append(.separator)
+                if let slot = store.slot(of: nodes[0].id), nodes[0].id != grid.id, nodes[0].kind == .text || nodes[0].fill.image != nil {
+                    entries.append(.item("Same in Every Cell") { store.sameInEveryCell(nodes[0].id) })
+                    entries.append(.item("Shuffle Cells") { store.shuffle(slot, in: grid.id) })
+                }
+                if nodes[0].id != grid.id { entries.append(.item("Select Grid") { store.selection = [grid.id] }) }
+                entries.append(.item("Ungroup Grid", shortcut: "⇧⌘R") { store.ungroupGrid(grid.id) })
+            }
+            if let board = store.postableBoard {
+                entries.append(.separator)
+                entries.append(.item("Add Post", shortcut: "⇧⌘P") { store.addPost(to: board.id) })
+                if board.isDeck {
+                    entries.append(.item("Show All Posts", shortcut: "⌥⌘P") { store.canvas?.deckTool.openSpread(board) })
+                    if nodes.count == 1, store.doc.post(of: nodes[0].id)?.post != nil {
+                        if nodes[0].kind == .text || nodes[0].fill.image != nil {
+                            entries.append(.item("Same in Every Post") { store.giveEveryPost([nodes[0].id]) })
+                        }
+                        if nodes[0].own?.isEmpty == false {
+                            entries.append(.item("Follow the Other Posts") { store.followDesign([nodes[0].id]) })
+                        }
+                    }
+                    entries.append(.item("Remove This Post", enabled: board.posts.count > 1) {
+                        if let front = store.front(of: board) { store.removePost(front, from: board.id) }
+                    })
+                    entries.append(.item("Unstack", detail: "Each post an artboard") { store.spreadOut(board.id) })
+                }
+            }
+            let export: LocalizedStringResource =
+                if nodes.count > 1 { "Export \(nodes.count) Layers…" }
+                else if nodes.first?.isDeck == true { "Export Post…" }
+                else if nodes.first?.isArtboard == true { "Export Artboard…" }
+                else if nodes.first?.isRepeatGrid == true { "Export Grid…" }
+                else if nodes.first?.isGroup == true { "Export Group…" }
+                else { "Export Layer…" }
+            entries += [.separator, .item(export, shortcut: "⌘E") { ExportPanel.present(for: store) }]
         } else {
             entries += [
                 .item("Paste", shortcut: "⌘V", enabled: store.canPaste) { store.paste() },

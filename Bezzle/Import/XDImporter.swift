@@ -1,24 +1,5 @@
 import AppKit
 
-/// What an import brought across, and what it could only come close to, so it is clear what to
-/// look at.
-struct XDReport {
-    var artboards = 0
-    var layers = 0
-    /// What was approximated, and how often.
-    var notes: [String: Int] = [:]
-    var missingFonts: Set<String> = []
-
-    mutating func note(_ what: String) { notes[what, default: 0] += 1 }
-
-    /// The notes as sentences, the most frequent first.
-    var lines: [String] {
-        var out = notes.sorted { $0.value > $1.value }.map { "\($0.key): \($0.value)" }
-        if !missingFonts.isEmpty { out.append("Fonts not on this Mac: " + missingFonts.sorted().joined(separator: ", ")) }
-        return out
-    }
-}
-
 /// Reads Adobe XD files. An .xd file is a ZIP archive with a manifest of its artboards, a JSON
 /// scene for each (XD calls it a graphics tree), shared resources such as component masters,
 /// and the pictures. Everything Bezzle can draw comes across as it is; the rest comes as close
@@ -29,43 +10,16 @@ enum XDImporter {
     enum Failure: Error, LocalizedError {
         case notXD
 
-        var errorDescription: String? { "This is not an Adobe XD file Bezzle can read." }
+        var errorDescription: String? { String(localized: "This is not an Adobe XD file Bezzle can read.") }
     }
 
-    /// Makes a new design out of the XD file, in `folder`, and says where it is.
-    static func importFile(_ url: URL, into folder: URL) throws -> (URL, XDReport) {
+    /// The design an XD file makes, its pictures still in the file.
+    static func read(_ url: URL) throws -> Imported {
         let archive = try ZipArchive(url: url)
         guard archive.contains("manifest") else { throw Failure.notXD }
         var converter = Converter(archive: archive)
         let doc = try converter.document()
-
-        let target = Library.shared.freeURL(named: url.deletingPathExtension().lastPathComponent, in: folder)
-        let images = target.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
-            for (asset, source) in converter.images {
-                do {
-                    try archive.read(source).write(to: images.appendingPathComponent(asset))
-                } catch {
-                    converter.report.note("Pictures missing from the XD file")
-                }
-            }
-            try DesignFile.write(doc, to: target)
-        } catch {
-            // Only what this import made itself is taken away again.
-            try? FileManager.default.removeItem(at: target)
-            throw error
-        }
-        return (target, converter.report)
-    }
-
-    /// The design an XD file makes, without writing anything, for checking.
-    static func read(_ url: URL) throws -> (BezzleDocument, XDReport) {
-        let archive = try ZipArchive(url: url)
-        guard archive.contains("manifest") else { throw Failure.notXD }
-        var converter = Converter(archive: archive)
-        let doc = try converter.document()
-        return (doc, converter.report)
+        return Imported(document: doc, report: converter.report, archive: archive, pictures: converter.images)
     }
 }
 
@@ -83,18 +37,9 @@ private func num(_ v: Any?, _ fallback: CGFloat = 0) -> CGFloat {
 private func dict(_ v: Any?) -> JSON { v as? JSON ?? [:] }
 private func list(_ v: Any?) -> [JSON] { v as? [JSON] ?? [] }
 
-/// Where an element lands in Bezzle: its frame in the parent, how far it is turned, and what
-/// was left of its transform after that.
-private struct Placement {
-    var frame: CGRect
-    var rotation: Double
-    var flipped: Bool
-    var scale: CGSize
-}
-
 private struct Converter {
     let archive: ZipArchive
-    var report = XDReport()
+    var report = ImportReport(source: "Adobe XD")
     /// Pictures the design keeps: its file name there, and where it is in the archive.
     var images: [String: String] = [:]
     /// Component masters and everything in them, by id, for the instances that point at them.
@@ -104,7 +49,7 @@ private struct Converter {
     private var clipPaths: [String: JSON] = [:]
     /// The kind of each picture in the archive, by its name there.
     private var imageTypes: [String: String] = [:]
-    private var fonts: [String: (String, String)] = [:]
+    private var fonts = FontMatch()
 
     init(archive: ZipArchive) {
         self.archive = archive
@@ -145,7 +90,7 @@ private struct Converter {
                 } else if path.hasPrefix("artboard-") {
                     let bounds = dict(entry["uxdesign#bounds"])
                     let frame = CGRect(x: num(bounds["x"]), y: num(bounds["y"]), width: num(bounds["width"], 375), height: num(bounds["height"], 812))
-                    doc.nodes.append(artboard(scene, name: entry["name"] as? String ?? "Artboard", frame: frame))
+                    doc.nodes.append(artboard(scene, name: entry["name"] as? String ?? String(localized: "Artboard"), frame: frame))
                 }
             }
         }
@@ -260,8 +205,44 @@ private struct Converter {
         } else if ref != nil {
             report.note("Masks that could not be found")
         }
-        if ux["repeatGrid"] != nil { report.note("Repeat grids, brought in as groups") }
+        if ux["repeatGrid"] != nil {
+            if let grid = Self.repeatGrid(g, dict(ux["repeatGrid"])) { return grid }
+            report.note("Repeat grids, brought in as groups")
+        }
         return g.children.isEmpty ? nil : g
+    }
+
+    /// An XD repeat grid as one of Bezzle's: its cells read from the top left, the first one the
+    /// others follow, each keeping its own words and pictures. Nil when its cells are not alike.
+    private static func repeatGrid(_ group: Node, _ spec: JSON) -> Node? {
+        let columns = Int(num(spec["columns"], 1)), rows = Int(num(spec["rows"], 1))
+        guard RepeatGrid.counts.contains(columns), RepeatGrid.counts.contains(rows), group.children.count == columns * rows,
+              group.mask == nil else { return nil }
+        let boxes = group.children.map { RepeatGrid.box(of: $0) }
+        let order = group.children.indices.sorted { a, b in
+            abs(boxes[a].minY - boxes[b].minY) > 1 ? boxes[a].minY < boxes[b].minY : boxes[a].minX < boxes[b].minX
+        }
+        let cells = order.map { group.children[$0] }
+        func kinds(_ n: Node) -> [Node.Kind] { [n.kind] + n.children.flatMap(kinds) }
+        let first = cells[0], box = boxes[order[0]]
+        guard cells.allSatisfy({ kinds($0) == kinds(first) }) else { return nil }
+        // As far apart as XD lays them, which may be more or less than the first cell's size.
+        let across = columns > 1 ? boxes[order[1]].minX - box.minX : num(spec["cellWidth"]) + num(spec["paddingX"])
+        let down = rows > 1 ? boxes[order[columns]].minY - box.minY : num(spec["cellHeight"]) + num(spec["paddingY"])
+        func content(_ from: Node, into to: inout Node) {
+            if to.kind == .text { to.text = from.text }
+            to.fill.image = from.fill.image
+            for i in to.children.indices where i < from.children.count { content(from.children[i], into: &to.children[i]) }
+        }
+        var grid = group
+        grid.grid = RepeatGrid(columns: columns, rows: rows, columnGap: (across - box.width).rounded(), rowGap: (down - box.height).rounded())
+        grid.children = [first] + cells.enumerated().dropFirst().map { i, cell in
+            var copy = RepeatGrid.copy(first, RepeatGrid.key(RepeatGrid.Cell(column: i % columns, row: i / columns)))
+            content(cell, into: &copy)
+            return copy
+        }
+        RepeatGrid.heal(&grid)
+        return grid
     }
 
     // MARK: Shapes
@@ -320,38 +301,15 @@ private struct Converter {
         }
     }
 
-    /// An outline in the element's own coordinates, kept turned as the element is; any stretch,
-    /// flip or slant is worked into the outline itself.
+    /// An outline in the element's own coordinates, kept turned as the element is.
     private mutating func path(_ data: String, _ m: CGAffineTransform, style: JSON) -> Node? {
-        let theta = atan2(m.b, m.a)
-        let turn = CGAffineTransform(rotationAngle: theta)
-        let rest = CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: 0, ty: 0).concatenating(turn.inverted())
-        let shaped = PathData.transformed(data, rest)
-        let box = PathData.bounds(shaped)
-        guard box.width.isFinite, box.height.isFinite, !box.isNull else { return nil }
-        let center = CGPoint(x: box.midX, y: box.midY).applying(turn)
-        var n = Node(kind: .path, frame: CGRect(center: CGPoint(x: center.x + m.tx, y: center.y + m.ty), size: box.size))
-        n.rotation = CanvasView.normalized(Double(theta) * 180 / .pi)
-        n.path = shaped
-        n.pathBox = box
+        guard var n = ImportGeometry.outline(data, m) else { return nil }
         paint(&n, style, flipped: false)
-        if !Self.isClosed(shaped) && n.border.on && n.border.position != .center { n.border.position = .center }
+        if !ImportGeometry.isClosed(data) && n.border.on && n.border.position != .center { n.border.position = .center }
         return n
     }
 
-    private static func isClosed(_ data: String) -> Bool { data.contains("Z") || data.contains("z") }
-
-    /// Takes a box in an element's coordinates to a frame and a turn in the parent. Slanted
-    /// shapes cannot be a frame and a turn, so they become outlines instead.
-    private func place(_ box: CGRect, _ m: CGAffineTransform) -> Placement? {
-        let theta = atan2(m.b, m.a)
-        let rest = CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: 0, ty: 0).concatenating(CGAffineTransform(rotationAngle: theta).inverted())
-        guard abs(rest.c) < 0.001 * max(abs(rest.a), abs(rest.d), 1) else { return nil }
-        let size = CGSize(width: box.width * abs(rest.a), height: box.height * abs(rest.d))
-        let center = CGPoint(x: box.midX, y: box.midY).applying(m)
-        return Placement(frame: CGRect(center: center, size: size), rotation: CanvasView.normalized(Double(theta) * 180 / .pi),
-                         flipped: rest.d < 0, scale: CGSize(width: abs(rest.a), height: abs(rest.d)))
-    }
+    private func place(_ box: CGRect, _ m: CGAffineTransform) -> Placement? { ImportGeometry.place(box, m) }
 
     // MARK: Style
 
@@ -403,7 +361,7 @@ private struct Converter {
             let p = dict(f["pattern"]), ux = dict(dict(p["meta"])["ux"])
             guard let uid = ux["uid"] as? String else { report.note("Pictures without a file"); return nil }
             let source = "resources/\(uid)"
-            guard archive.contains(source) else { report.note("Pictures missing from the XD file"); return Fill(on: true, color: .shape) }
+            guard archive.contains(source) else { report.note("Pictures missing from the Adobe XD file"); return Fill(on: true, color: .shape) }
             let asset = "\(uid).\(imageTypes[uid] ?? "png")"
             images[asset] = source
             let mode: ImageFill.Mode = switch ux["scaleBehavior"] as? String {
@@ -541,26 +499,7 @@ private struct Converter {
         return n
     }
 
-    /// The family and face as Bezzle names them, from what XD says. The Mac's own San Francisco
-    /// is the system font; a font that is not installed keeps its name, and is reported.
     private mutating func resolveFont(postscript: String?, family: String?, face: String?) -> (String, String) {
-        let key = "\(postscript ?? "")|\(family ?? "")|\(face ?? "")"
-        if let known = fonts[key] { return known }
-        var result: (String, String)
-        if let family, family.hasPrefix("SF Pro") || family.hasPrefix(".SF") || family == "San Francisco" {
-            let wanted = face ?? "Regular"
-            result = (TextStyle.system, Fonts.faces(of: TextStyle.system).contains(wanted) ? wanted : "Regular")
-        } else if let postscript, let font = NSFont(name: postscript, size: 12), let found = font.familyName {
-            let members = NSFontManager.shared.availableMembers(ofFontFamily: found) ?? []
-            let named = members.first { $0.first as? String == postscript }.flatMap { $0.count > 1 ? $0[1] as? String : nil }
-            result = (found, named ?? face ?? "Regular")
-        } else if let family, NSFontManager.shared.availableMembers(ofFontFamily: family) != nil {
-            result = (family, face ?? "Regular")
-        } else {
-            report.missingFonts.insert([family, face].compactMap { $0 }.joined(separator: " "))
-            result = (family ?? TextStyle.system, face ?? "Regular")
-        }
-        fonts[key] = result
-        return result
+        fonts.resolve(postscript: postscript, family: family, face: face, report: &report)
     }
 }

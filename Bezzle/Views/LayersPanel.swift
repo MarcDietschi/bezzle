@@ -74,15 +74,23 @@ struct LayersPanel: View {
         node.isGroup ? !openGroups.contains(node.id) : collapsed.contains(node.id)
     }
 
+    /// What a layer holds as the list shows it: a repeat grid only its first cell, which the others
+    /// follow, and a deck only the post in front.
+    private func listed(in node: Node) -> [Node] {
+        if node.isDeck { return store.seenLayers(of: node) }
+        guard node.isRepeatGrid, let layout = RepeatGrid.layout(of: node) else { return node.children }
+        return [node.children[layout.first]]
+    }
+
     private var rows: [Row] {
         var out: [Row] = []
         func add(_ nodes: [Node], depth: Int, parent: UUID?) {
             for node in nodes.reversed() {
                 out.append(Row(node: node, depth: depth, parent: parent))
-                if node.isContainer && !isShut(node) { add(node.children, depth: depth + 1, parent: node.id) }
+                if node.isContainer && !isShut(node) { add(listed(in: node), depth: depth + 1, parent: node.id) }
             }
         }
-        if let board { add(board.children, depth: 0, parent: board.id) } else { add(store.doc.nodes, depth: 0, parent: nil) }
+        if let board { add(listed(in: board), depth: 0, parent: board.id) } else { add(store.doc.nodes, depth: 0, parent: nil) }
         return out
     }
 
@@ -105,7 +113,7 @@ struct LayersPanel: View {
                                finishRename: { keep in endRenaming(board.id, keep: keep) })
                 }
                 Spacer(minLength: 8)
-                Text("\(board.map { BezzleDocument.layerCount($0.children) } ?? store.layerCount)")
+                Text(verbatim: (board.map { BezzleDocument.layerCount(listed(in: $0)) } ?? store.layerCount).formatted())
                     .font(.system(size: 11.5).monospacedDigit())
                     .foregroundStyle(Theme.ink3)
                     .lineLimit(1)
@@ -344,11 +352,11 @@ struct LayersPanel: View {
         func within(_ id: UUID) -> Bool { id == row.id || store.doc.ancestors(of: id).contains { $0.id == row.id } }
         if !row.node.isArtboard && above.node.isContainer && !isShut(above.node) {
             // Just under an open artboard's or group's name: on top of what is in it.
-            return within(above.id) ? nil : (above.id, above.node.children.count, above.depth + 1)
+            return within(above.id) || above.node.isRepeatGrid ? nil : (above.id, above.node.children.count, above.depth + 1)
         }
         if let parent = above.parent, let container = store.node(parent),
            let i = container.children.firstIndex(where: { $0.id == above.id }) {
-            return row.node.isArtboard || within(parent) ? nil : (parent, i, above.depth)
+            return row.node.isArtboard || within(parent) || container.isRepeatGrid ? nil : (parent, i, above.depth)
         }
         guard let i = store.doc.nodes.firstIndex(where: { $0.id == above.id }) else { return nil }
         return (nil, i, 0)
@@ -540,8 +548,10 @@ private struct LayerRow: View {
             }
             .padding(.leading, CGFloat(row.depth) * 18)
 
-            KindGlyph(kind: node.kind)
-                .foregroundStyle(selected ? Theme.ink : Theme.ink3)
+            Group {
+                if node.isRepeatGrid { RepeatGridGlyph() } else { KindGlyph(kind: node.kind) }
+            }
+            .foregroundStyle(selected ? Theme.ink : Theme.ink3)
 
             if renaming {
                 TextField("", text: $draft)
@@ -559,6 +569,11 @@ private struct LayerRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+            if let spec = node.grid, !hovering {
+                Text(verbatim: "\(spec.columns)×\(spec.rows)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.ink3)
+            }
             if hovering || node.locked {
                 RowIcon(symbol: node.locked ? "lock.fill" : "lock.open", on: node.locked, help: node.locked ? "Unlock" : "Lock") {
                     store.setLocked(!node.locked, [node.id])
@@ -598,7 +613,7 @@ private struct LayerRow: View {
 private struct RowIcon: View {
     let symbol: String
     let on: Bool
-    let help: String
+    let help: LocalizedStringResource
     let action: () -> Void
     @State private var hovering = false
 
@@ -610,6 +625,6 @@ private struct RowIcon: View {
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
-            .help(help)
+            .help(Text(help))
     }
 }

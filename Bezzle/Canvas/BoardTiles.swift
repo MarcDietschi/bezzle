@@ -11,6 +11,11 @@ import QuartzCore
 /// zoom changes, new tiles wait until it has stayed put a moment; then only tiles in sight are
 /// made, as many as a frame has time for. When an artboard changes, only the tiles where it now
 /// looks different are made again.
+///
+/// Given a `maker`, tiles are drawn away from the main thread instead, all that are wanted at
+/// once, and come in while the frames go on; the pictures of whole artboards and the tiles just
+/// out of sight too, even while the view moves. Only what changes as it is being changed is still
+/// drawn in the frame, so that it shows at once.
 @MainActor
 final class BoardTiles {
     /// A tile's side, in pixels.
@@ -52,7 +57,16 @@ final class BoardTiles {
         /// The step it is shown at. After a zoom it stays at the one before, stretched, until
         /// all it shows at the new one is ready, and then changes all at once.
         var shown: CGFloat?
+        /// Counted afresh whenever it looks different, so a tile drawn away from the main thread
+        /// from how it looked before is not kept.
+        var version: Int
     }
+
+    /// Draws tiles away from the main thread; without it, they are made in the frame.
+    var maker: TileMaker?
+    /// Told when a tile drawn away from the main thread has come, so the canvas is drawn again.
+    var arrived: (() -> Void)?
+    private var versions = 0
 
     /// What one frame drew, to find out how well the tiles keep up.
     struct Counts {
@@ -87,11 +101,22 @@ final class BoardTiles {
         bytes = 0
     }
 
+    /// Has the tiles of the artboards that show a picture made again, now that it has been read at
+    /// the size they needed rather than drawn at another for the time being. They show until then,
+    /// and the picture of the whole artboard, which stands in for them, stays as it is: made
+    /// small, any size of the picture serves it.
+    func forget(showing picture: String) {
+        for (id, board) in boards where board.node.shows(picture: picture) {
+            for key in board.tiles.keys where key.step != board.overview { boards[id]?.tiles[key]?.provisional = true }
+        }
+    }
+
     /// Starts a frame drawn at `scale` pixels to the canvas point, forgetting artboards that are gone.
     func begin(scale: CGFloat, now: CFTimeInterval, artboards: Set<UUID>) {
         if clock > 0 { frames?.append(counts) }
         counts = Counts()
         clock += 1
+        maker?.begin(ObjectIdentifier(self))
         let s = Self.step(for: scale)
         if s != step {
             step = s
@@ -107,20 +132,31 @@ final class BoardTiles {
     ///
     /// `make` draws a part of the canvas into a picture at a number of pixels to the point, with
     /// background blurs as they last were when told so. `live` says a preview is moving; `still`,
-    /// that the view has stayed put a moment. Returns whether the canvas should be drawn again
+    /// that the view has stayed put a moment. With a `maker`, `away` does what `make` does on
+    /// another thread, for an artboard left alone. Returns whether the canvas should be drawn again
     /// soon to finish the job.
     func draw(_ board: Node, in ctx: CGContext, visible: CGRect, shadowPixels: CGFloat, now: CFTimeInterval, deadline: CFTimeInterval,
-              live: Bool, still: Bool = true, make: (CGRect, CGFloat, Bool) -> CGImage?) -> Bool {
+              live: Bool, still: Bool = true, make: (CGRect, CGFloat, Bool) -> CGImage?,
+              away: (@Sendable (CGRect, CGFloat) -> CGImage?)? = nil) -> Bool {
         // Taken out while it is worked on, so its tiles are not copied on every change.
-        var entry = boards.removeValue(forKey: board.id)
-            ?? Board(node: board, changed: -.infinity, backdrops: Damage.backdrops(of: board),
-                     overview: Self.overviewStep(board.frame.size, shadowPixels: shadowPixels), shadowPixels: shadowPixels)
+        var entry = boards.removeValue(forKey: board.id) ?? {
+            versions += 1
+            return Board(node: board, changed: -.infinity, backdrops: Damage.backdrops(of: board),
+                         overview: Self.overviewStep(board.frame.size, shadowPixels: shadowPixels), shadowPixels: shadowPixels, version: versions)
+        }()
+        /// Whether it looks different in this very frame.
+        var changedNow = false
         if entry.node != board {
+            versions += 1
+            entry.version = versions
             let damage = Damage.between(entry.node, board)
             forget(in: &entry, where: damage)
             entry.node = board
             entry.backdrops = Damage.backdrops(of: board)
-            if damage?.isNull != true { entry.changed = now }
+            if damage?.isNull != true {
+                entry.changed = now
+                changedNow = true
+            }
             // The background blurs over what changed changed too. While things move they show
             // what they showed before, which these tiles still do, so they are kept for now and
             // made again once things settle.
@@ -134,6 +170,8 @@ final class BoardTiles {
         let overview = Self.overviewStep(board.frame.size, shadowPixels: shadowPixels)
         if overview != entry.overview || shadowPixels != entry.shadowPixels {
             forget(in: &entry, where: nil)
+            versions += 1
+            entry.version = versions
             entry.overview = overview
             entry.shadowPixels = shadowPixels
         }
@@ -150,8 +188,16 @@ final class BoardTiles {
         // is made first; it draws the whole artboard, so only while the view stays put, and not
         // while the artboard is being changed.
         let s = max(step, overview)
-        let wholeMissing = s != overview && still && !changing && grid(entry, step: overview).contains { entry.tiles[Key(step: overview, i: $0.i, j: $0.j)] == nil }
-        if wholeMissing, now - entry.changed > 1 || !entry.tiles.keys.contains(where: { $0.step == overview }) {
+        let away = maker == nil ? nil : away
+        // Drawn away from the main thread, it costs the frame nothing, so it is wanted even while the view moves.
+        let wholeMissing = s != overview && (still || away != nil) && !changing
+            && grid(entry, step: overview).contains { entry.tiles[Key(step: overview, i: $0.i, j: $0.j)] == nil }
+        if wholeMissing, let away, now - entry.changed > 1 || !entry.tiles.keys.contains(where: { $0.step == overview }) {
+            for cell in grid(entry, step: overview) where entry.tiles[Key(step: overview, i: cell.i, j: cell.j)] == nil {
+                want(cell, step: overview, .whole, of: board, entry, away: away)
+            }
+            again = true
+        } else if wholeMissing, now - entry.changed > 1 || !entry.tiles.keys.contains(where: { $0.step == overview }) {
             for cell in grid(entry, step: overview) where entry.tiles[Key(step: overview, i: cell.i, j: cell.j)] == nil {
                 guard CACurrentMediaTime() < deadline else { again = true; break }
                 if let image = make(cell.rect.offsetBy(dx: board.frame.minX, dy: board.frame.minY), overview, false) {
@@ -167,12 +213,19 @@ final class BoardTiles {
         let settled = s == overview || now - stepSince >= Self.settle
         func usable(_ c: Cell) -> Bool { entry.tiles[Key(step: s, i: c.i, j: c.j)].map { !$0.provisional || changing } ?? false }
 
-        if changing {
+        if changing, let away, !changedNow, !live {
+            // Changed a moment ago but not in this frame: what it lacks is not what changed, which
+            // was made when it did, but what moving or zooming since brought into sight, and that
+            // waits as it does for an artboard left alone, drawn away from the main thread.
+            for c in cells where !usable(c) { want(c, step: s, .sight, of: board, entry, away: away) }
+        } else if changing {
             // What changed shows now, all of it in sight made in one drawing: a change across many
             // tiles is drawn once, and lands on the same pixels as the tiles around it.
             let missing = cells.filter { !usable($0) }
             if !missing.isEmpty { makeTogether(missing, step: s, of: board, in: &entry, changing: true, make: make) }
             entry.shown = s
+        } else if settled, let away {
+            for c in cells where !usable(c) { want(c, step: s, .sight, of: board, entry, away: away) }
         } else if settled {
             for c in cells where !usable(c) {
                 guard CACurrentMediaTime() < deadline else { break }
@@ -219,8 +272,14 @@ final class BoardTiles {
         ctx.restoreGState()
 
         // With time to spare and nothing moving, the tiles just out of sight, so moving a little
-        // finds them ready.
-        if complete, still, !changing {
+        // finds them ready; away from the main thread, whenever the artboard is left alone.
+        if let away, settled, !changing {
+            let side = CGFloat(Self.side) / s
+            for c in grid(entry, step: s, within: seen.insetBy(dx: -side, dy: -side)) where entry.tiles[Key(step: s, i: c.i, j: c.j)] == nil {
+                want(c, step: s, .around, of: board, entry, away: away)
+                again = true
+            }
+        } else if complete, still, !changing {
             let side = CGFloat(Self.side) / s
             for c in grid(entry, step: s, within: seen.insetBy(dx: -side, dy: -side)) where entry.tiles[Key(step: s, i: c.i, j: c.j)] == nil {
                 guard CACurrentMediaTime() < deadline else {
@@ -231,6 +290,23 @@ final class BoardTiles {
             }
         }
         return again
+    }
+
+    /// Wants a tile drawn away from the main thread. It is kept when it comes if the artboard still
+    /// looks as it did when it was asked for; otherwise it is wanted again as the artboard is now.
+    private func want(_ c: Cell, step s: CGFloat, _ urgency: TileMaker.Urgency, of board: Node, _ entry: Board,
+                      away: @escaping @Sendable (CGRect, CGFloat) -> CGImage?) {
+        guard let maker else { return }
+        let rect = c.rect.offsetBy(dx: board.frame.minX, dy: board.frame.minY), cell = c.rect
+        let id = board.id, version = entry.version, key = Key(step: s, i: c.i, j: c.j)
+        maker.want(TileMaker.Key(owner: ObjectIdentifier(self), board: id, step: s, i: c.i, j: c.j), urgency, draw: { away(rect, s) }) { [weak self] image in
+            guard let self, let image, var entry = self.boards.removeValue(forKey: id) else { return }
+            defer { self.boards[id] = entry }
+            guard entry.version == version else { return }
+            self.keep(Tile(image: image, rect: cell, provisional: false, used: self.clock), at: key, in: &entry)
+            self.counts.made += 1
+            self.arrived?()
+        }
     }
 
     /// Makes tiles of one step together, from one drawing of the part of the artboard they cover,
@@ -455,7 +531,8 @@ enum Damage {
         let xo = CGPoint(x: ao.x + x.frame.minX, y: ao.y + x.frame.minY), yo = CGPoint(x: bo.x + y.frame.minX, y: bo.y + y.frame.minY)
         // A group that only changed inside: what changed inside it, carried by its shadow or blur.
         // A mask is placed in the group's own coordinates, so a masked group counts as a whole if it moved.
-        if x.isGroup, y.isGroup, shell(x) == shell(y), x.mask == nil || xo == yo {
+        // One turned in depth shows a change inside it somewhere else, so it counts as a whole.
+        if x.isGroup, y.isGroup, shell(x) == shell(y), x.mask == nil || xo == yo, Perspective(y) == nil {
             compare(x.children, y.children, xo, yo, spread: spread + effects(y), into: &damage)
             return
         }
@@ -473,7 +550,8 @@ enum Damage {
     /// that run to and from them, old and new. Nil when more than that changed, or when a change
     /// anywhere shows everywhere: a gradient or picture spread over its box, dashes along its length.
     private static func curvesMoved(_ x: Node, _ y: Node, _ ao: CGPoint, _ bo: CGPoint) -> CGRect? {
-        guard x.kind == .path, y.kind == .path, x.path != y.path, y.border.dash == 0 || !y.border.on else { return nil }
+        guard x.kind == .path, y.kind == .path, x.path != y.path, y.border.dash == 0 || !y.border.on,
+              Perspective(x) == nil, Perspective(y) == nil else { return nil }
         if x.frame.size != y.frame.size, y.fill.on, y.fill.gradient != nil || y.fill.image != nil { return nil }
         func outlineless(_ n: Node) -> Node {
             var n = shell(n)
@@ -530,7 +608,7 @@ enum Damage {
     }
 }
 
-extension Renderer {
+nonisolated extension Renderer {
     /// Where a layer may paint in its own coordinates, its frame's top left at zero, leaving out
     /// its shadow and blur.
     static func ink(of node: Node) -> CGRect {
@@ -551,10 +629,16 @@ extension Renderer {
         }
     }
 
-    /// Where a layer may paint in its parent's coordinates, its shadow and blur included.
+    /// Where a layer may paint in its parent's coordinates, its shadow and blur included, and
+    /// turned in depth.
     static func reach(of node: Node) -> CGRect {
+        if let perspective = Perspective(node) {
+            let r = perspective.bounds(of: reach(of: flattened(node)))
+            guard node.shadow.outside else { return r }
+            return r.union(r.offsetBy(dx: node.shadow.x, dy: node.shadow.y).insetBy(dx: -node.shadow.blur * 2, dy: -node.shadow.blur * 2))
+        }
         var r = ink(of: node).applying(localTransform(node))
-        if node.shadow.on {
+        if node.shadow.outside {
             r = r.union(r.offsetBy(dx: node.shadow.x, dy: node.shadow.y).insetBy(dx: -node.shadow.blur * 2, dy: -node.shadow.blur * 2))
         }
         if let blur = node.blur, blur.on, !blur.background { r = r.insetBy(dx: -blur.radius * 3, dy: -blur.radius * 3) }
@@ -579,7 +663,7 @@ extension Renderer {
     static func inSight(_ node: Node, _ options: Options) -> Bool {
         guard let visible = options.visible, let board = options.board else { return true }
         var reach: CGFloat = 64 + node.border.width
-        if node.shadow.on { reach += abs(node.shadow.x) + abs(node.shadow.y) + node.shadow.blur * 2 }
+        if node.shadow.outside { reach += abs(node.shadow.x) + abs(node.shadow.y) + node.shadow.blur * 2 }
         if let blur = node.blur, blur.on { reach += blur.radius * 3 }
         let r = Geometry.bounds(of: node).offsetBy(dx: board.frame.minX + options.offset.x, dy: board.frame.minY + options.offset.y)
         return r.insetBy(dx: -reach, dy: -reach).intersects(visible)

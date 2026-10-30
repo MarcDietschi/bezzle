@@ -6,14 +6,14 @@ enum Tool: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .select: "Select"
-        case .artboard: "Artboard"
-        case .rectangle: "Rectangle"
-        case .ellipse: "Ellipse"
-        case .line: "Line"
-        case .pen: "Pen"
-        case .knife: "Knife"
-        case .text: "Text"
+        case .select: String(localized: "Select")
+        case .artboard: String(localized: "Artboard")
+        case .rectangle: String(localized: "Rectangle")
+        case .ellipse: String(localized: "Ellipse")
+        case .line: String(localized: "Line")
+        case .pen: String(localized: "Pen")
+        case .knife: String(localized: "Knife")
+        case .text: String(localized: "Text")
         }
     }
 
@@ -61,6 +61,8 @@ final class DocumentStore {
     /// pen all ask for those of the path being edited many times a frame.
     @ObservationIgnored var pointsWorkedOut: (version: Int, points: [UUID: BezierPath]) = (-1, [:])
     @ObservationIgnored private var countWorkedOut: (version: Int, count: Int)?
+    /// The design as it is seen, each deck showing the post in front (`seenDoc`).
+    @ObservationIgnored var seenWorkedOut: (version: Int, fronts: [UUID: Int], doc: BezzleDocument)?
     var selection: [UUID] = [] {
         didSet { if selection != oldValue { selectionChanged() } }
     }
@@ -77,6 +79,13 @@ final class DocumentStore {
         // Where the design was looked at is kept too, but there is no hurry about it.
         didSet { if viewport != oldValue { scheduleSave(after: 2000) } }
     }
+    /// The post each deck shows, by its number, where it is not the first: here alone, so that
+    /// everyone sharing a design turns through its decks as they like. See `Deck`.
+    var fronts: [UUID: Int] = [:]
+    /// What is offered for a moment after a change to a deck. See `DeckOffer`.
+    var offer: DeckOffer?
+    /// Each deck's posts that something no longer fits on, as the deck was when they were found.
+    @ObservationIgnored var brokenWorkedOut: [UUID: (node: Node, posts: Set<Int>)] = [:]
     /// The layer under the pointer, outlined on the canvas.
     var hovered: UUID?
     /// Smart guides showing while something snaps.
@@ -96,6 +105,11 @@ final class DocumentStore {
     }
     /// The layer whose picture is being moved and resized inside it, shown whole on the canvas.
     var editingPicture: UUID?
+    /// Layers whose picture is having its background taken away just now, and how far it has got.
+    /// See `removeBackground`.
+    var cuttingOut: [UUID: CutoutWork] = [:]
+    /// Why a background could not be taken away, shown for a moment.
+    var cutoutTrouble: LocalizedStringResource?
     /// A rectangle, ellipse or line whose points are being edited: a path until they are left,
     /// and then the shape again unless its outline was changed. What it was, and what it became.
     @ObservationIgnored private var openedShape: (id: UUID, shape: Node, path: Node)?
@@ -135,8 +149,8 @@ final class DocumentStore {
     @ObservationIgnored weak var canvas: CanvasView?
     /// Whether the export panel is showing.
     var exporting = false
-    /// What bringing the design in from Adobe XD could only approximate, shown until read.
-    var importReport: XDReport?
+    /// What bringing the design in from another app could only approximate, shown until read.
+    var importReport: ImportReport?
     /// Set while the design is shared through iCloud.
     var sharing: Collaboration?
 
@@ -177,15 +191,21 @@ final class DocumentStore {
 
     /// Changes the document as one step of the undo history, named for the Edit menu. Inside a
     /// gesture the change is folded into the gesture's one step.
-    func edit(_ action: String, _ change: (inout BezzleDocument) -> Void) {
+    func edit(_ action: LocalizedStringResource, _ change: (inout BezzleDocument) -> Void) {
+        guard !isReadOnly else { return }
         let before = Snapshot(doc: doc, selection: selection)
         var next = doc
         change(&next)
+        next.syncGrids(since: doc, start: gestureStart?.doc)
+        next.syncDecks(since: doc, fronts: fronts)
         next.fitGroups(since: doc)
         next.fitCarousels()
         guard next != doc else { return }
         doc = next
-        if gestureStart == nil { record(before, action) }
+        if gestureStart == nil {
+            record(before, action)
+            considerOffer(after: before.doc)
+        }
         scheduleSave()
     }
 
@@ -194,10 +214,18 @@ final class DocumentStore {
         if gestureStart == nil { gestureStart = Snapshot(doc: doc, selection: selection) }
     }
 
-    func endGesture(_ action: String) {
+    func endGesture(_ action: LocalizedStringResource) {
         guard let start = gestureStart else { return }
         gestureStart = nil
-        if start.doc != doc { record(start, action) }
+        // Cells held apart while something in one of them was dragged settle where they go.
+        var settled = doc
+        settled.relayoutGrids(since: start.doc)
+        settled.fitGroups(since: doc)
+        if settled != doc { doc = settled }
+        if start.doc != doc {
+            record(start, action)
+            considerOffer(after: start.doc)
+        }
         guides = []
         measurement = nil
         sharing?.showIfIdle()
@@ -216,7 +244,7 @@ final class DocumentStore {
 
     var inGesture: Bool { gestureStart != nil }
 
-    private func record(_ before: Snapshot, _ action: String) {
+    private func record(_ before: Snapshot, _ action: LocalizedStringResource) {
         guard let undoManager else { return }
         // The history never sees an opened shape become a path: undoing the first change to its
         // outline goes back to the shape.
@@ -233,7 +261,7 @@ final class DocumentStore {
             store.record(now, action)
             store.scheduleSave()
         }
-        undoManager.setActionName(action)
+        undoManager.setActionName(String(localized: action))
     }
 
     private func selectionChanged() {
@@ -241,6 +269,16 @@ final class DocumentStore {
         if let editing = editingPath, selection != [editing] { editingPath = nil }
         if let editing = editingPicture, selection != [editing] { editingPicture = nil }
         if let shapes = building, Set(shapes) != Set(selection) { building = nil }
+        if let offer, !selection.contains(offer.anchor) { self.offer = nil }
+        // A layer of a deck's post that is not in front brings that post to the front; one of the
+        // design behind the posts is the same layer in the post in front.
+        if let first = selection.first, let (deck, post) = doc.post(of: first) {
+            if let post, post != front(of: deck) {
+                fronts[deck.id] = post
+            } else if post == nil, let front = front(of: deck) {
+                selection = selection.map { id in doc.post(of: id)?.post == nil && doc.post(of: id) != nil ? id.mixed(Deck.key(front)) : id }
+            }
+        }
         preview = nil
     }
 
@@ -285,12 +323,19 @@ final class DocumentStore {
     var shownDoc: BezzleDocument {
         guard let preview else { return doc }
         var shown = doc
+        var regrown = false
         for id in preview.ids {
             shown.update(id) { node in
                 preview.change(&node)
                 node.refit()
+                // A grid shown with more cells or fewer has them.
+                if node.isRepeatGrid {
+                    RepeatGrid.heal(&node)
+                    regrown = true
+                }
             }
         }
+        if regrown { shown.fitGroups() }
         return shown
     }
 
@@ -302,8 +347,9 @@ final class DocumentStore {
         return colors
     }
 
-    /// How many layers there are.
+    /// How many layers there are, as they are seen: of a deck, the post in front.
     var layerCount: Int {
+        if doc.nodes.contains(where: \.isDeck) { return seenDoc.layerCount }
         if let worked = countWorkedOut, worked.version == layersVersion { return worked.count }
         let count = doc.layerCount
         countWorkedOut = (layersVersion, count)
@@ -375,8 +421,16 @@ final class DocumentStore {
         saveTask?.cancel()
         saveTask = nil
         var copy = withShapeBack(doc)
-        sharing?.takeIn(copy)
-        sharing?.persist()
+        // Saved for where it was looked at alone, the design has nothing new for sharing to take
+        // in, and taking in a large one again holds the canvas up just as moving about resumes.
+        if let sharing {
+            let now = TakenIn(version: version, sharing: ObjectIdentifier(sharing), opened: openedShape?.id)
+            if takenIn != now {
+                sharing.takeIn(copy)
+                takenIn = now
+            }
+            sharing.persist()
+        }
         copy.viewport = viewport
         let url = url
         Self.saving.async {
@@ -388,6 +442,14 @@ final class DocumentStore {
         }
         Library.shared.touched(url)
     }
+
+    /// What the last save gave sharing to take in: the design as it was then, and which sharing.
+    private struct TakenIn: Equatable {
+        let version: Int
+        let sharing: ObjectIdentifier
+        let opened: UUID?
+    }
+    @ObservationIgnored private var takenIn: TakenIn?
 
     /// Saving happens on a queue of its own, one save after another, so writing a large design
     /// does not hold the app up.
@@ -420,6 +482,32 @@ final class DocumentStore {
 
     /// The design as the others see it: an opened shape is still the shape.
     var sharedDoc: BezzleDocument { withShapeBack(doc) }
+
+    /// Whether it can only be looked at: someone else's design this Mac no longer shares.
+    var isReadOnly: Bool { sharing?.mark == .ended }
+
+    /// Makes a design of its own from this one as it is now, beside the others in the Bezzle
+    /// folder, and opens it. For a design someone shared, it is how to keep one of one's own.
+    func saveCopy() {
+        save()
+        Self.finishSaving()
+        var copy = withShapeBack(doc)
+        copy.viewport = viewport
+        let target = Library.shared.freeURL(named: String(localized: "\(name) copy"), in: Library.shared.folder)
+        do {
+            try DesignFile.write(copy, to: target)
+            if let images = assets.folder, FileManager.default.fileExists(atPath: images.path) {
+                let into = target.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+                try? FileManager.default.removeItem(at: into)
+                try FileManager.default.copyItem(at: images, to: into)
+            }
+        } catch {
+            NSLog("Bezzle could not save a copy of %@: %@", url.path, error.localizedDescription)
+            return
+        }
+        Library.shared.touched(target)
+        WindowRouter.shared.open(target)
+    }
 
     /// Shows the design with what others changed: `next` holds everything done here as well.
     /// It is not a step of the undo history, and undoing afterwards leaves it in place.

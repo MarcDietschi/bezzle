@@ -5,12 +5,17 @@ import AppKit
 ///
 /// Drawing happens in canvas points with y pointing down, in a context whose current
 /// `NSGraphicsContext` is flipped (text needs it).
-enum Renderer {
+///
+/// Not tied to the main thread: the canvas draws its tiles on several threads at once, so all it
+/// keeps between drawings is behind a lock, and what it needs from the window comes in `Options`.
+nonisolated enum Renderer {
     struct Options {
         /// Layers drawn by someone else for now, such as a text being typed into.
         var skipping: Set<UUID> = []
         /// The soft shadow under each artboard, on the canvas only.
         var artboardShadows = false
+        /// Its colour, light or dark as the canvas is; worked out on the main thread, which knows.
+        var artboardShadowInk: RGBA?
         /// Canvas points to device pixels, for effects that are measured on screen.
         var deviceScale: CGFloat = 1
         /// What part of the canvas will be seen; everything else is left out.
@@ -19,6 +24,9 @@ enum Renderer {
         var screen: CGRect?
         /// Where the design's pictures come from.
         var assets: Assets?
+        /// A picture wanted at a size not yet read may be drawn at another for now, on the canvas,
+        /// which draws again once it is read. See `Assets.image(_:pixels:later:)`.
+        var picturesLater = false
         /// The artboard being drawn, and where the layers being drawn sit in it, for background
         /// blurs, which draw what lies behind them again.
         var board: Node?
@@ -28,6 +36,9 @@ enum Renderer {
         /// A preview is easing into place: background blurs keep showing what lay behind them
         /// when it began, and are made again once it settles, rather than on every frame.
         var settling = false
+        /// Drawing a layer only for the shadow it casts: what it holds casts its own shadows as
+        /// Core Graphics makes them, rather than apart. See `drawShadowApart`.
+        var castingShadow = false
     }
 
     static func draw(_ doc: BezzleDocument, in ctx: CGContext, options: Options = Options()) {
@@ -42,6 +53,8 @@ enum Renderer {
     }
 
     static func drawArtboard(_ board: Node, in ctx: CGContext, options: Options, background: Bool = true) {
+        // A deck shows one post at a time: its first, unless the canvas narrowed it to another.
+        let board = board.shownAlone
         let rect = board.frame
         if background {
             ctx.saveGState()
@@ -50,8 +63,7 @@ enum Renderer {
             let s = options.deviceScale, reach = 24 * s / pixelScale(ctx)
             let shadowed = options.artboardShadows && options.visible.map { !rect.insetBy(dx: reach, dy: reach).contains($0) } != false
             if shadowed {
-                ctx.setShadow(offset: CGSize(width: 0, height: -2 * s), blur: 10 * s,
-                              color: CanvasInk.shadow.withAlphaComponent(0.13).cgColor)
+                ctx.setShadow(offset: CGSize(width: 0, height: -2 * s), blur: 10 * s, color: artboardShadow(options))
                 // In a layer of its own, the shadow is worked out from as much of the artboard as
                 // reaches what is drawn, even when only part of it is being drawn.
                 let near = options.visible.map { rect.intersection($0.insetBy(dx: -reach, dy: -reach)) } ?? rect
@@ -134,14 +146,24 @@ enum Renderer {
         return p
     }
 
-    private static var parsedPaths: [String: CGPath] = [:]
+    /// The colour of the shadow under artboards: as given, or as the canvas's ink has it in the
+    /// appearance being drawn in, which only the main thread knows, or the light one.
+    private static func artboardShadow(_ options: Options) -> CGColor {
+        if let ink = options.artboardShadowInk { return ink.with(alpha: 0.13).cgColor }
+        guard Thread.isMainThread else { return RGBA(r: 0x3A / 255, g: 0x32 / 255, b: 0x26 / 255, a: 0.13).cgColor }
+        return MainActor.assumeIsolated { CanvasInk.shadow.withAlphaComponent(0.13).cgColor }
+    }
+
+    private static let parsedPaths = Shared([String: CGPath]())
 
     /// Path data read once and kept, as the same outlines are drawn over and over.
     private static func parsed(_ data: String) -> CGPath {
-        if let path = parsedPaths[data] { return path }
+        if let path = parsedPaths.with({ $0[data] }) { return path }
         let path = PathData.cgPath(data)
-        if parsedPaths.count > 4000 { parsedPaths.removeAll() }
-        parsedPaths[data] = path
+        parsedPaths.with {
+            if $0.count > 4000 { $0.removeAll() }
+            $0[data] = path
+        }
         return path
     }
 
@@ -160,6 +182,10 @@ enum Renderer {
             if halt.reached { return }
         }
         guard !options.skipping.contains(node.id), node.opacity > 0 else { return }
+        if let perspective = Perspective(node) {
+            drawInDepth(node, perspective, in: ctx, options: options)
+            return
+        }
         if let blur = node.blur, blur.on, !blur.background, blur.radius > 0 {
             drawBlurred(node, radius: blur.radius, in: ctx, options: options)
             return
@@ -168,36 +194,33 @@ enum Renderer {
         defer { ctx.restoreGState() }
 
         // The shadow falls the same way however the layer is turned: the light is above the page.
-        if node.shadow.on {
+        if node.shadow.outside, !drawShadowApart(node, in: ctx, options: options) {
             setShadow(node.shadow, in: ctx)
         }
         ctx.translateBy(x: node.frame.midX, y: node.frame.midY)
         if node.rotation != 0 { ctx.rotate(by: Geometry.radians(node.rotation)) }
         ctx.translateBy(x: -node.frame.width / 2, y: -node.frame.height / 2)
 
-        // One layer for the whole of it, so a fill and its border fade and cast a shadow together.
+        // One layer for the whole of it, so a fill and its border fade and cast a shadow together,
+        // and a shadow inside falls on the layer alone.
         let grouped = node.opacity < 1 || node.shadow.on || node.blend != nil
         if node.opacity < 1 { ctx.setAlpha(node.opacity) }
         if let blend = node.blend { ctx.setBlendMode(blend.cg) }
         // Only as big as the layer: left to itself, the layer is as big as everything in sight,
-        // and its shadow is blurred all over that.
-        if grouped { ctx.beginTransparencyLayer(in: ink(of: node).insetBy(dx: -1, dy: -1), auxiliaryInfo: nil) }
+        // and its shadow is blurred all over that. A shadow inside is cast from around the
+        // layer, so that much room is kept round it.
+        let around = node.shadow.inside ? innerReach(node.shadow) : 0
+        if grouped { ctx.beginTransparencyLayer(in: ink(of: node).insetBy(dx: -1 - around, dy: -1 - around), auxiliaryInfo: nil) }
 
         switch node.kind {
         case .text:
             drawText(node, in: ctx)
+            if node.shadow.inside { drawInnerShadow(node, in: ctx, options: options) { drawText(node, in: ctx) } }
         case .line:
             stroke(outline(of: node), border: node.border, in: ctx, closed: false)
         case .group:
-            if let mask = node.mask?.first {
-                ctx.addPath(placedOutline(of: mask))
-                ctx.clip()
-            }
-            var inner = options
-            inner.offset = CGPoint(x: options.offset.x + node.frame.minX, y: options.offset.y + node.frame.minY)
-            for child in node.children where !child.hidden && inSight(child, inner) {
-                drawNode(child, in: ctx, options: inner)
-            }
+            drawChildren(of: node, in: ctx, options: options)
+            if node.shadow.inside { drawInnerShadow(node, in: ctx, options: options) { drawChildren(of: node, in: ctx, options: options) } }
         default:
             let path = outline(of: node)
             let evenOdd = node.evenOdd == true
@@ -212,10 +235,32 @@ enum Renderer {
             } else {
                 paint(node.fill, in: path, size: node.frame.size, evenOdd: evenOdd, in: ctx, options: options)
             }
-            stroke(path, border: node.border, in: ctx, closed: node.kind != .path || isClosed(path))
+            // Over the fill and under the border, as a hollow lies inside its rim.
+            if node.shadow.inside { drawInnerShadow(node, outline: path, evenOdd: evenOdd, in: ctx) }
+            // Round a cut-out picture's subject, as a sticker's edge, rather than its frame.
+            if node.border.on, let silhouette = node.silhouette {
+                stroke(silhouette, border: node.border, in: ctx, closed: true, rule: .evenOdd)
+            } else {
+                stroke(path, border: node.border, in: ctx, closed: node.kind != .path || isClosed(path))
+            }
         }
 
         if grouped { ctx.endTransparencyLayer() }
+    }
+
+    /// What a group holds, cut to its mask.
+    private static func drawChildren(of group: Node, in ctx: CGContext, options: Options) {
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        if let mask = group.mask?.first {
+            ctx.addPath(placedOutline(of: mask))
+            ctx.clip()
+        }
+        var inner = options
+        inner.offset = CGPoint(x: options.offset.x + group.frame.minX, y: options.offset.y + group.frame.minY)
+        for child in group.children where !child.hidden && inSight(child, inner) {
+            drawNode(child, in: ctx, options: inner)
+        }
     }
 
     /// A fill inside an outline: a colour, a gradient stretched to the layer, or a picture.
@@ -226,7 +271,12 @@ enum Renderer {
             // Read at about the size it is drawn, not the size it was shot at.
             let drawn = imageRect(image, in: size)
             let pixels = max(drawn.width, drawn.height) * Renderer.pixelScale(ctx)
-            guard let picture = options.assets?.image(image.asset, pixels: pixels) else {
+            // Cut out, it casts its shadow from its subject alone, as that is all that is drawn.
+            // A cutout someone sharing the design made shows the picture as it was until it comes.
+            guard let picture = options.assets.flatMap({ assets in
+                assets.image(image.shown, pixels: pixels, later: options.picturesLater)
+                    ?? (image.cutout != nil ? assets.image(image.asset, pixels: pixels, later: options.picturesLater) : nil)
+            }) else {
                 // A picture that is missing shows as a quiet grey, so its place stays visible.
                 ctx.addPath(path)
                 ctx.setFillColor(CGColor(gray: 0.85, alpha: 1))
@@ -308,7 +358,7 @@ enum Renderer {
         NSGraphicsContext.current = previous
     }
 
-    private static func stroke(_ path: CGPath, border: Border, in ctx: CGContext, closed: Bool) {
+    private static func stroke(_ path: CGPath, border: Border, in ctx: CGContext, closed: Bool, rule: CGPathFillRule = .winding) {
         guard border.on, border.width > 0 else { return }
         ctx.saveGState()
         defer { ctx.restoreGState() }
@@ -320,13 +370,14 @@ enum Renderer {
                 ctx.addRect(path.boundingBox.insetBy(dx: -width * 2 - 4, dy: -width * 2 - 4))
                 ctx.clip(using: .evenOdd)
             } else {
-                ctx.clip()
+                ctx.clip(using: rule)
             }
         }
         ctx.addPath(path)
         ctx.setLineWidth(width)
         ctx.setStrokeColor(border.color.cgColor)
-        ctx.setLineJoin(.miter)
+        // A subject's outline turns sharply where hair does: rounded, it reads as one edge.
+        ctx.setLineJoin(rule == .evenOdd ? .round : .miter)
         ctx.setLineCap(closed ? .butt : (border.dash > 0 ? .butt : .round))
         if border.dash > 0 {
             ctx.setLineDash(phase: 0, lengths: [border.dash * (closed && border.position != .center ? 1 : 1), max(border.gap, 0.5)])
@@ -345,6 +396,75 @@ enum Renderer {
         if t.a * t.d - t.b * t.c > 0 { offset.height = -offset.height }
         let scale = sqrt(abs(t.a * t.d - t.b * t.c))
         ctx.setShadow(offset: offset, blur: shadow.blur * scale, color: shadow.color.cgColor)
+    }
+
+    // MARK: Shadows inside
+
+    /// How far around a layer a shadow inside it is cast from: as far as it falls and spreads.
+    static func innerReach(_ shadow: Shadow) -> CGFloat {
+        abs(shadow.x) + abs(shadow.y) + shadow.blur * 2 + 1
+    }
+
+    /// A shadow inside a shape, as if it were pressed into the page: all around the outline is
+    /// filled, cut to the inside, and only the shadow that casts in shows. The context is in the
+    /// layer's own coordinates.
+    private static func drawInnerShadow(_ node: Node, outline path: CGPath, evenOdd: Bool, in ctx: CGContext) {
+        let rule: CGPathFillRule = evenOdd ? .evenOdd : .winding
+        let reach = innerReach(node.shadow)
+        let box = path.boundingBoxOfPath.insetBy(dx: -reach, dy: -reach)
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.addPath(path)
+        ctx.clip(using: rule)
+        castInside(node, in: ctx)
+        ctx.setFillColor(node.shadow.color.cgColor)
+        // A rectangle's or an ellipse's outline never crosses itself, and one filled even-odd
+        // leaves the same hole either way; only a path filled all over is cut out properly.
+        if node.kind == .path && !evenOdd {
+            ctx.addPath(CGPath(rect: box, transform: nil).subtracting(path, using: rule))
+            ctx.fillPath()
+        } else {
+            ctx.addRect(box)
+            ctx.addPath(path)
+            ctx.fillPath(using: .evenOdd)
+        }
+    }
+
+    /// A shadow inside a layer with no outline of its own, text or a group, as if what it draws
+    /// were pressed into the page: all around it is filled, what it draws is cut out of that by
+    /// drawing it again, and the shadow cast falls on the layer alone. The context is in the
+    /// layer's own coordinates, in a transparency layer of its own.
+    private static func drawInnerShadow(_ node: Node, in ctx: CGContext, options: Options, drawing draw: () -> Void) {
+        // Stopped partway through, there is not the whole of it to cut out.
+        if options.halt?.reached == true { return }
+        let reach = innerReach(node.shadow)
+        let box = ink(of: node).insetBy(dx: -reach, dy: -reach)
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.setBlendMode(.sourceAtop)
+        castInside(node, in: ctx)
+        ctx.beginTransparencyLayer(in: box, auxiliaryInfo: nil)
+        ctx.setFillColor(node.shadow.color.cgColor)
+        ctx.fill(box)
+        // Cut out as a whole, however its own parts mix and cast.
+        ctx.setBlendMode(.destinationOut)
+        ctx.beginTransparencyLayer(in: box, auxiliaryInfo: nil)
+        draw()
+        ctx.endTransparencyLayer()
+        ctx.endTransparencyLayer()
+    }
+
+    /// Sets the shadow cast from around a layer into it. What casts it is filled in the shadow's
+    /// own colour, so the little of it that shows along the layer's soft edge is shadow too, and
+    /// the shadow it casts is no fainter than that colour. Turned back by the layer's own turn, it
+    /// falls as the light above the page casts it.
+    private static func castInside(_ node: Node, in ctx: CGContext) {
+        var cast = node.shadow
+        cast.color = cast.color.with(alpha: 1)
+        let fall = Geometry.rotate(CGPoint(x: cast.x, y: cast.y), by: -node.rotation)
+        cast.x = fall.x
+        cast.y = fall.y
+        setShadow(cast, in: ctx)
     }
 
     // MARK: Pictures of a design

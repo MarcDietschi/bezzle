@@ -8,7 +8,7 @@ struct BezzleApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Window("Bezzle", id: "home") {
+        Window(Text(verbatim: "Bezzle"), id: "home") {
             HomeView()
                 .background(TallTitleBar())
                 .onAppear {
@@ -64,7 +64,7 @@ struct DesignWindow: View {
                     .navigationTitle(store.name)
             } else if let failure {
                 VStack(spacing: 10) {
-                    Text(url.pathExtension.lowercased() == XDImporter.fileExtension ? "This XD file could not be brought in." : "This design could not be opened.")
+                    Text(Importer.source(of: url).map { String(localized: "This \($0) file could not be brought in.") } ?? String(localized: "This design could not be opened."))
                         .font(Theme.serif(22, weight: .medium))
                         .foregroundStyle(Theme.ink)
                     Text(failure)
@@ -102,11 +102,11 @@ struct DesignWindow: View {
         guard store == nil else { return }
         do {
             var design = url
-            var report: XDReport?
-            // An Adobe XD file is brought in as a new design in the library, which this window
-            // then shows; the XD file itself is left as it is.
-            if url.pathExtension.lowercased() == XDImporter.fileExtension {
-                (design, report) = try XDImporter.importFile(url, into: Library.shared.folder)
+            var report: ImportReport?
+            // A file from Adobe XD, Figma or Sketch is brought in as a new design in the library,
+            // which this window then shows; the file itself is left as it is.
+            if Importer.imports(url) {
+                (design, report) = try Importer.importFile(url, into: Library.shared.folder)
                 renamed(design)
             }
             let s = try DocumentStore(opening: design)
@@ -137,11 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         ClickAway.watch()
         PlainTyping.watch()
+        HandOver.start()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        MCPServer.shared.launch()
-        CloudSync.shared.start()
+        // Not in a copy that is about to hand over to one already running, which has these.
+        HandOver.whenRunningAlone {
+            MCPServer.shared.launch()
+            CloudSync.shared.start()
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -150,13 +154,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// An invitation to a shared design was clicked.
     func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
+        CloudSync.log.notice("macOS handed over an invitation")
+        if let link = metadata.share.url, HandOver.pass(invitation: link) { return }
         CloudSync.shared.accept(metadata)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where (BezzleDocument.fileExtensions + [XDImporter.fileExtension]).contains(url.pathExtension.lowercased()) {
-            WindowRouter.shared.open(url)
-        }
+        let designs = urls.filter { BezzleDocument.fileExtensions.contains($0.pathExtension.lowercased()) || Importer.imports($0) }
+        if HandOver.pass(designs: designs) { return }
+        designs.forEach { WindowRouter.shared.open($0) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -180,10 +186,13 @@ struct BezzleCommands: Commands {
                 .keyboardShortcut("n")
             Button("Open…") { open() }
                 .keyboardShortcut("o")
-            Button("Import from Adobe XD…") { open(only: UTType(filenameExtension: XDImporter.fileExtension)) }
+            Button("Import from XD, Figma or Sketch…") { open(only: DesignFile.importableTypes) }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
         }
         CommandGroup(after: .saveItem) {
+            Button("Save a Copy") { store?.saveCopy() }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(store == nil)
             Button("Export…") { store?.exporting = true }
                 .keyboardShortcut("e")
                 .disabled(store == nil)
@@ -232,6 +241,32 @@ struct BezzleCommands: Commands {
                 store.update(store.doc.allNodes.filter(\.hidden).map(\.id), "Show All") { $0.hidden = false }
             }
             Divider()
+            Button("Make Repeat Grid") { store?.makeRepeatGrid() }
+                .keyboardShortcut("r")
+                .disabled(store?.canMakeRepeatGrid != true)
+            Button("Ungroup Grid") { if let store, let grid = store.selectedGrid { store.ungroupGrid(grid.id) } }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(store?.selectedGrid == nil)
+            Divider()
+            Button("Add Post") {
+                if let store, let board = store.postableBoard { store.addPost(to: board.id) }
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .disabled(store?.postableBoard == nil)
+            Button("Previous Post") { store?.turnPage(by: -1) }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                .disabled(store?.turnableDeck == nil)
+            Button("Next Post") { store?.turnPage(by: 1) }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                .disabled(store?.turnableDeck == nil)
+            Button("Show All Posts") { if let store, let deck = store.turnableDeck { store.canvas?.deckTool.openSpread(deck) } }
+                .keyboardShortcut("p", modifiers: [.command, .option])
+                .disabled(store?.turnableDeck == nil)
+            Button("Remove Post") {
+                if let store, let deck = store.turnableDeck, let front = store.front(of: deck) { store.removePost(front, from: deck.id) }
+            }
+            .disabled((store?.turnableDeck?.posts.count ?? 0) < 2)
+            Divider()
             Button("Convert to Path") { store?.convertToPath() }
                 .keyboardShortcut("8")
                 .disabled(store?.canConvertToPath != true)
@@ -255,6 +290,11 @@ struct BezzleCommands: Commands {
             .keyboardShortcut("b", modifiers: [.command, .option])
             .disabled(store?.canCombine != true)
             Divider()
+            Button("Remove Background") { store?.removeBackground() }
+                .disabled(store?.canRemoveBackground != true)
+            Button("Restore Background") { store?.restoreBackground() }
+                .disabled(store?.canRestoreBackground != true)
+            Divider()
             Button("Outline Border") { store?.outlineBorders() }
                 .keyboardShortcut("o", modifiers: [.command, .option])
                 .disabled(store?.canOutlineBorders != true)
@@ -272,11 +312,11 @@ struct BezzleCommands: Commands {
         }
     }
 
-    private func open(only type: UTType? = nil) {
+    private func open(only types: [UTType]? = nil) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = type.map { [$0] } ?? DesignFile.openableTypes
+        panel.allowedContentTypes = types ?? DesignFile.openableTypes
         panel.allowsMultipleSelection = true
-        if type != nil { panel.message = "Each XD file becomes a new design in your Bezzle folder. The XD file stays as it is." }
+        if types != nil { panel.message = String(localized: "Each file becomes a new design in your Bezzle folder. The file itself stays as it is.") }
         if panel.runModal() == .OK { panel.urls.forEach { openWindow(id: "design", value: $0.standardizedFileURL) } }
     }
 }

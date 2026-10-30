@@ -78,7 +78,8 @@ final class MCPTools {
     /// Told to the assistant when it connects.
     static let instructions = """
         Bezzle is a Mac app for designing screens, posts and pages. A design is an infinite canvas \
-        of artboards (like screens or pages, possibly carousels of slides) with layers on them: \
+        of artboards (like screens or pages, possibly carousels of slides, or decks of posts that \
+        share one design and differ in their words and pictures) with layers on them: \
         rectangles, ellipses, lines, text, paths (vector outlines), groups. Coordinates are points, \
         y pointing down. An artboard's x and y are on the canvas; any other layer's are measured \
         from the top left of the artboard or group it lies in. Layers are listed bottom first. \
@@ -137,7 +138,7 @@ final class MCPTools {
         Library.shared.refresh()
         if let entry = Library.shared.entries.first(where: { $0.name.caseInsensitiveCompare(ref) == .orderedSame }) { return entry.url }
         if let url = Self.fileURL(ref), FileManager.default.fileExists(atPath: url.path) { return url }
-        throw MCPError("There is no design called \"\(ref)\". list_designs shows them all; a path to a .bezzle, .vellum or .xd file works too.")
+        throw MCPError("There is no design called \"\(ref)\". list_designs shows them all; a path to a .bezzle, .vellum, .xd, .fig or .sketch file works too.")
     }
 
     private static func fileURL(_ ref: String) -> URL? {
@@ -145,16 +146,16 @@ final class MCPTools {
         return URL(fileURLWithPath: (ref as NSString).expandingTildeInPath).standardizedFileURL
     }
 
-    /// Opens a design in a window, as the home screen does, and waits for it. An Adobe XD file
-    /// becomes a new design in the Bezzle folder, which is what opens.
+    /// Opens a design in a window, as the home screen does, and waits for it. A file from Adobe XD,
+    /// Figma or Sketch becomes a new design in the Bezzle folder, which is what opens.
     private func open(_ url: URL) async throws -> DocumentStore {
         let url = url.standardizedFileURL
         let ext = url.pathExtension.lowercased()
-        let xd = ext == XDImporter.fileExtension
-        guard BezzleDocument.fileExtensions.contains(ext) || xd else {
-            throw MCPError("\(url.lastPathComponent) is not a design: Bezzle opens .bezzle and .vellum designs, and brings in .xd files.")
+        let foreign = Importer.imports(url)
+        guard BezzleDocument.fileExtensions.contains(ext) || foreign else {
+            throw MCPError("\(url.lastPathComponent) is not a design: Bezzle opens .bezzle and .vellum designs, and brings in .xd, .fig and .sketch files.")
         }
-        if !xd {
+        if !foreign {
             do { _ = try DesignFile.read(url) } catch {
                 throw MCPError("\(url.lastPathComponent) could not be opened: \(error.localizedDescription)")
             }
@@ -168,7 +169,7 @@ final class MCPTools {
         for _ in 0..<200 {
             try await Task.sleep(for: .milliseconds(50))
             let stores = Self.stores
-            if let store = stores.first(where: { $0.isAt(url) }) ?? (xd ? stores.first { !before.contains(ObjectIdentifier($0)) } : nil) {
+            if let store = stores.first(where: { $0.isAt(url) }) ?? (foreign ? stores.first { !before.contains(ObjectIdentifier($0)) } : nil) {
                 // A moment for the canvas to find its size, so zooming works.
                 try await Task.sleep(for: .milliseconds(200))
                 return store
@@ -211,10 +212,10 @@ final class MCPTools {
         if size != nil {
             // Named for its preset, as the home screen names it.
             let preset = try args.string("preset").flatMap { p in Preset.all.first { $0.name.caseInsensitiveCompare(p) == .orderedSame } }
-            board.name = preset?.name ?? (board.isCarousel ? "Carousel" : "Artboard")
+            board.name = preset.map { String(localized: $0.title) } ?? (board.isCarousel ? String(localized: "Carousel") : String(localized: "Artboard"))
             doc.nodes = [board]
         }
-        let url = Library.shared.freeURL(named: name.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled")
+        let url = Library.shared.freeURL(named: name.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "Untitled"))
         do {
             try DesignFile.write(doc, to: url)
         } catch {

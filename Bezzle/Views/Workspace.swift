@@ -14,6 +14,7 @@ struct Workspace: View {
                 .zIndex(1)
             HStack(spacing: 0) {
                 ToolRail(store: store)
+                    .readOnly(store.isReadOnly)
                 if store.showsLayers {
                     LayersPanel(store: store)
                         .frame(width: 236)
@@ -28,10 +29,11 @@ struct Workspace: View {
                     .overlay(alignment: .bottom) {
                         if let report = store.importReport { ImportReportCard(store: store, report: report).transition(.opacity) }
                     }
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 9)
                     .padding(.trailing, 2)
                 Inspector(store: store)
                     .frame(width: Inspector.width)
+                    .readOnly(store.isReadOnly)
             }
         }
         .background(Theme.paper)
@@ -84,6 +86,15 @@ extension FocusedValues {
     @Entry var store: DocumentStore?
 }
 
+extension View {
+    /// Looked at but not changed: a design someone else no longer shares.
+    fileprivate func readOnly(_ readOnly: Bool) -> some View {
+        disabled(readOnly)
+            .opacity(readOnly ? 0.45 : 1)
+            .animation(Theme.spring, value: readOnly)
+    }
+}
+
 // MARK: - Top bar
 
 /// The strip along the top, level with the traffic lights: where you are, and how close.
@@ -97,13 +108,13 @@ struct TopBar: View {
     var body: some View {
         HStack(spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Bezzle")
+                Text(verbatim: "Bezzle")
                     .font(Theme.serif(15, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                     .contentShape(Rectangle())
                     .onTapGesture { openWindow(id: "home") }
                     .help("Home")
-                Text("/")
+                Text(verbatim: "/")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.ink4)
                 if renaming {
@@ -129,11 +140,16 @@ struct TopBar: View {
                         }
                         .help("Rename")
                 }
+                if let mark = store.sharing?.mark {
+                    SharingTag(mark: mark)
+                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                }
             }
+            .animation(Theme.pop, value: store.sharing?.mark)
             Spacer(minLength: 12)
-            MenuButton(id: "zoom", title: "\(Int((store.viewport.zoom * 100).rounded()))%", width: 220) { zoomMenu }
+            MenuButton(id: "zoom", title: .verbatim("\(Int((store.viewport.zoom * 100).rounded()))%"), width: 220) { zoomMenu }
                 .help("Zoom")
-            if CloudSync.isAvailable { ShareButton(store: store) }
+            if CloudSync.isAvailable || store.isReadOnly { ShareButton(store: store) }
             CardButton(title: "Export…", height: 28) { store.exporting = true }
                 .help("Export  ⌘E")
         }
@@ -156,10 +172,10 @@ struct TopBar: View {
             .item("Zoom to Fit", shortcut: "⌘0") { store.zoomToFit() },
             .item("Zoom to Selection", shortcut: "⌘2", enabled: !store.selection.isEmpty) { store.zoomToSelection() },
             .separator,
-            .item("50%", checked: abs(store.viewport.zoom - 0.5) < 0.001) { store.zoom(to: 0.5) },
-            .item("100%", shortcut: "⌘1", checked: abs(store.viewport.zoom - 1) < 0.001) { store.zoom(to: 1) },
-            .item("200%", checked: abs(store.viewport.zoom - 2) < 0.001) { store.zoom(to: 2) },
-            .item("400%", checked: abs(store.viewport.zoom - 4) < 0.001) { store.zoom(to: 4) },
+            .item(.verbatim("50%"), checked: abs(store.viewport.zoom - 0.5) < 0.001) { store.zoom(to: 0.5) },
+            .item(.verbatim("100%"), shortcut: "⌘1", checked: abs(store.viewport.zoom - 1) < 0.001) { store.zoom(to: 1) },
+            .item(.verbatim("200%"), checked: abs(store.viewport.zoom - 2) < 0.001) { store.zoom(to: 2) },
+            .item(.verbatim("400%"), checked: abs(store.viewport.zoom - 4) < 0.001) { store.zoom(to: 4) },
         ]
     }
 }
@@ -173,7 +189,7 @@ struct ToolRail: View {
     var body: some View {
         VStack(spacing: 4) {
             ForEach(Tool.allCases, id: \.self) { tool in
-                RailButton(selected: store.tool == tool, help: "\(tool.title)  \(tool.key)") {
+                RailButton(selected: store.tool == tool, help: .verbatim("\(tool.title)  \(tool.key)")) {
                     ToolGlyph(tool: tool)
                 } action: {
                     store.tool = tool
@@ -186,7 +202,8 @@ struct ToolRail: View {
             } action: {
                 store.showsLayers.toggle()
             }
-            .padding(.bottom, 14)
+            // As far from the bottom as from the left, level with the canvas's bottom edge.
+            .padding(.bottom, 9)
         }
         .padding(.top, 6)
         .frame(width: 56)
@@ -195,7 +212,7 @@ struct ToolRail: View {
 
 private struct RailButton<Glyph: View>: View {
     let selected: Bool
-    let help: String
+    let help: LocalizedStringResource
     @ViewBuilder let glyph: Glyph
     let action: () -> Void
     @State private var hovering = false
@@ -214,10 +231,10 @@ private struct RailButton<Glyph: View>: View {
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
-            .help(help)
+            .help(Text(help))
             .animation(Theme.quick, value: hovering)
             .animation(Theme.quick, value: selected)
-            .accessibilityLabel(help)
+            .accessibilityLabel(Text(help))
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }

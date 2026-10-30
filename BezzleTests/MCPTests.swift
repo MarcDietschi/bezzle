@@ -156,6 +156,50 @@ struct MCPTests {
         #expect(PathData.bounds(path) == CGRect(x: 20, y: 10, width: 100, height: 80))
     }
 
+    @Test func aShadowGoesInsideByNameOrAsked() async {
+        rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))
+        _ = await call("update_layers", ["updates": [["layer": "R", "shadow": "pressed"]]])
+        #expect(bench.node("R")?.shadow.inside == true && bench.node("R")?.shadow.blur == 6)
+        let read = json(await call("get_layers", ["layers": ["R"]]).text)
+        let shadow = (read["layers"] as? [[String: Any]])?.first?["shadow"] as? [String: Any]
+        #expect(shadow?["inset"] as? Bool == true)
+        _ = await call("update_layers", ["updates": [["layer": "R", "shadow": ["inset": false, "y": 3]]]])
+        #expect(bench.node("R")?.shadow.outside == true && bench.node("R")?.shadow.y == 3)
+
+        _ = await call("add_layers", ["parent": "A", "layers": [["kind": "line", "name": "L", "x1": 0, "y1": 0, "x2": 50, "y2": 0]]])
+        let answer = await call("update_layers", ["updates": [["layer": "L", "shadow": ["inset": true]]]])
+        #expect(!answer.failed && answer.text.contains("no inside"), "\(answer.text)")
+        #expect(bench.node("L")?.shadow.outside == true)
+    }
+
+    @Test func aBlurGrowsTowardAnEdgeOrBetweenTwoPoints() async {
+        rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))
+        _ = await call("update_layers", ["updates": [["layer": "R", "blur": ["radius": 12, "ramp": "top"]]]])
+        #expect(bench.node("R")?.blur?.ramp == BlurRamp.toward(2) && bench.node("R")?.blur?.radius == 12)
+        _ = await call("update_layers", ["updates": [["layer": "R", "blur": ["ramp": ["end": ["x": 1, "y": 1]]]]]])
+        #expect(bench.node("R")?.blur?.ramp == BlurRamp(start: BlurRamp.toward(2).start, end: CGPoint(x: 1, y: 1)))
+        let read = json(await call("get_layers", ["layers": ["R"]]).text)
+        let blur = (read["layers"] as? [[String: Any]])?.first?["blur"] as? [String: Any]
+        #expect((blur?["ramp"] as? [String: Any])?["end"] as? [String: Double] == ["x": 1, "y": 1])
+        let wrong = await call("update_layers", ["updates": [["layer": "R", "blur": ["ramp": "sideways"]]]])
+        #expect(wrong.failed || wrong.text.contains("ramp"), "\(wrong.text)")
+        _ = await call("update_layers", ["updates": [["layer": "R", "blur": ["ramp": "none"]]]])
+        #expect(bench.node("R")?.blur?.ramp == nil && bench.node("R")?.blur?.radius == 12)
+    }
+
+    @Test func aLayerIsHeldUpInDepthAndReadBackSo() async {
+        rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))
+        _ = await call("update_layers", ["updates": [["layer": "R", "transform3D": ["x": 20, "y": -30]]]])
+        #expect(bench.node("R")?.transform3D == Transform3D(x: 20, y: -30))
+        let read = json(await call("get_layers", ["layers": ["R"]]).text)
+        let turn = (read["layers"] as? [[String: Any]])?.first?["transform3D"] as? [String: Any]
+        #expect(turn?["y"] as? Double == -30)
+        _ = await call("update_layers", ["updates": [["layer": "R", "transform3D": "none"]]])
+        #expect(bench.node("R")?.transform3D == nil)
+        let answer = await call("update_layers", ["updates": [["layer": "A", "transform3D": ["x": 10]]]])
+        #expect(answer.text.contains("page itself"), "\(answer.text)")
+    }
+
     @Test func theClaudeDesktopExtensionListsEveryTool() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "Extension test \(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }

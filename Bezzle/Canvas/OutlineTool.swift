@@ -115,7 +115,7 @@ final class OutlineTool {
             let (rounded, applied) = base.rounding(radii)
             store.setPoints(rounded, of: id, "Round Corners")
             if let frame = store.doc.absoluteFrame(of: id), let node = store.node(id) {
-                store.measurement = ("Radius \(CanvasView.number(applied[corner.at] ?? radius))", Geometry.bounds(of: frame, rotation: node.rotation))
+                store.measurement = (String(localized: "Radius \(CanvasView.number(applied[corner.at] ?? radius))"), Geometry.bounds(of: frame, rotation: node.rotation))
             }
         case .offset(let id, let outline, let line, let copy, _):
             // As far as the pointer is from the edge: out when outside the shape, in when inside.
@@ -130,7 +130,8 @@ final class OutlineTool {
             }
             drag = .offset(id: id, outline: outline, line: line, copy: made, distance: distance)
             if let made, let frame = store.doc.absoluteFrame(of: made), let node = store.node(made) {
-                store.measurement = ("\(distance > 0 ? "Outset" : "Inset") \(CanvasView.number(abs(distance)))", Geometry.bounds(of: frame, rotation: node.rotation))
+                let shown = CanvasView.number(abs(distance))
+                store.measurement = (distance > 0 ? String(localized: "Outset \(shown)") : String(localized: "Inset \(shown)"), Geometry.bounds(of: frame, rotation: node.rotation))
             } else {
                 store.measurement = nil
             }

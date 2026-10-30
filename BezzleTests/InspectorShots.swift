@@ -24,7 +24,14 @@ struct InspectorShots {
         shape.path = "M 0 0 L 60 0 L 70 40 C 50 60 20 60 0 40 Z"
         shape.pathBox = PathData.bounds(shape.path!)
         shape.frame = shape.pathBox!.offsetBy(dx: 200, dy: 150)
-        board.children = [card, plain, title, shape]
+        var field = Node(kind: .rectangle, name: "Field", frame: CGRect(x: 20, y: 220, width: 200, height: 40))
+        field.cornerRadius = 8
+        field.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.16), x: 0, y: 2, blur: 6, inset: true)
+        var tilted = Node(kind: .rectangle, name: "Tilted", frame: CGRect(x: 240, y: 220, width: 120, height: 60))
+        tilted.transform3D = Presets.heldUp
+        var frosted = Node(kind: .rectangle, name: "Frosted", frame: CGRect(x: 280, y: 100, width: 100, height: 60))
+        frosted.blur = Blur(radius: 12, ramp: .down)
+        board.children = [card, plain, title, shape, field, tilted, frosted]
         var carousel = Node(kind: .artboard, name: "Launch", frame: CGRect(x: 500, y: 0, width: 3240, height: 1350))
         carousel.slideSize = CGSize(width: 1080, height: 1350)
         var doc = BezzleDocument()
@@ -41,7 +48,7 @@ struct InspectorShots {
         func id(_ name: String) -> UUID { store.doc.allNodes.first { $0.name == name }!.id }
         let looks: [(String, [String], Tool)] = [
             ("rectangle", ["Card"], .select), ("ellipse", ["Dot"], .select), ("text", ["Title"], .select),
-            ("path", ["Shape"], .select), ("several", ["Card", "Dot"], .select), ("artboard", ["Board"], .select),
+            ("path", ["Shape"], .select), ("inset", ["Field"], .select), ("3d", ["Tilted"], .select), ("growing", ["Frosted"], .select), ("several", ["Card", "Dot"], .select), ("artboard", ["Board"], .select),
             ("carousel", ["Launch"], .select), ("nothing", [], .select), ("presets", [], .artboard),
         ]
         for appearance in ["light", "dark"] {

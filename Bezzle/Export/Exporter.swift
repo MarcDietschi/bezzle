@@ -36,6 +36,9 @@ struct ExportItem {
     let origin: CGPoint
     /// Set when the artboard is a carousel and this is one of its slides.
     let slide: Slide?
+    /// Set when the artboard is one post of a deck: which, of how many, and what it says first,
+    /// so that the files are told apart by more than their numbers.
+    var post: (number: Int, count: Int, words: String?)?
 
     init(artboard: Node) {
         node = artboard
@@ -61,18 +64,68 @@ struct ExportItem {
         slide = nil
     }
 
-    /// What an artboard goes out as: a carousel a slide at a time, anything else whole.
+    /// What an artboard goes out as: a deck a post at a time, a carousel a slide at a time, and
+    /// anything else whole.
     static func items(for artboard: Node) -> [ExportItem] {
+        if artboard.isDeck {
+            let posts = artboard.posts
+            return posts.enumerated().flatMap { i, p in
+                let shown = artboard.showing(p)
+                return items(for: shown).map { item in
+                    var each = item
+                    each.post = (i + 1, posts.count, headline(of: shown))
+                    return each
+                }
+            }
+        }
         guard artboard.isCarousel else { return [ExportItem(artboard: artboard)] }
         return (1...artboard.slideCount).map { ExportItem(slide: $0, of: artboard) }
     }
 
-    /// A slide's carries its number, with as many digits as the last one has and at least two,
-    /// so that the files sort in order: "Launch 01", "Launch 02"…
+    /// What one post of a deck goes out as: the post, as it is numbered among the others.
+    static func items(for deck: Node, post: Int?) -> [ExportItem] {
+        let posts = deck.posts
+        guard deck.isDeck, let post, let i = posts.firstIndex(of: post) else { return items(for: deck) }
+        let shown = deck.showing(post)
+        return items(for: shown).map { item in
+            var each = item
+            each.post = (i + 1, posts.count, headline(of: shown))
+            return each
+        }
+    }
+
+    /// What a post says first: the words set largest on it, a line of them, short enough for a name.
+    private static func headline(of board: Node) -> String? {
+        var best: (size: CGFloat, text: String)?
+        func visit(_ n: Node) {
+            if n.kind == .text, !n.hidden, let text = n.text, let size = n.style?.size, size > (best?.size ?? 0) {
+                let line = text.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+                if !line.isEmpty { best = (size, line) }
+            }
+            if !n.hidden { n.children.forEach(visit) }
+        }
+        board.children.forEach(visit)
+        guard var words = best?.text else { return nil }
+        words = String(words.map { "/:\\".contains($0) ? "-" : $0 })
+        return words.count > 40 ? String(words.prefix(40)).trimmingCharacters(in: .whitespaces) + "…" : words
+    }
+
+    /// A number with as many digits as the last one has and at least two, so files sort in order.
+    private static func padded(_ number: Int, of count: Int) -> String {
+        let digits = max(2, String(count).count), n = String(number)
+        return String(repeating: "0", count: max(0, digits - n.count)) + n
+    }
+
+    /// A slide's carries its number, so that the files sort in order: "Launch 01", "Launch 02"…;
+    /// a post's its number and what it says first: "Sale 03 Hats".
     var name: String {
-        guard let slide else { return node.name }
-        let digits = max(2, String(slide.count).count), number = String(slide.number)
-        return "\(node.name) \(String(repeating: "0", count: max(0, digits - number.count)))\(number)"
+        var name = node.name
+        if let post {
+            name += " \(Self.padded(post.number, of: post.count))"
+            if let words = post.words { name += " \(words)" }
+        }
+        guard let slide else { return name }
+        return "\(name) \(Self.padded(slide.number, of: slide.count))"
     }
 
     /// The part of the canvas a slide covers.

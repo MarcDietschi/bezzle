@@ -20,6 +20,8 @@ extension MCPTools {
             }
         }
         if named.count == 1 { return named[0].id }
+        // A layer repeated in a grid is the one in its first cell; in a deck's posts, the one in its first post.
+        if named.count > 1, case let firsts = firstCells(named, in: doc), firsts.count == 1 { return firsts[0].id }
         if named.isEmpty { throw MCPError("There is no layer \"\(ref)\". get_design lists them, with their ids.") }
         let places = named.prefix(6).map { "\($0.id.uuidString) (on \(doc.artboard(of: $0.id)?.name ?? "the canvas"))" }
         throw MCPError("\(named.count) layers are called \"\(ref)\": \(places.joined(separator: ", ")). Use an id, or \"Artboard/\(ref)\".")
@@ -68,6 +70,8 @@ extension MCPTools {
         if node.kind == .text, let text = node.text {
             pairs.append(("text", .string(full || text.count <= 80 ? text : String(text.prefix(77)) + "…")))
         }
+        if node.isRepeatGrid { pairs += gridDetails(node, in: doc) }
+        if node.isDeck { pairs += deckDetails(node, front: nil, broken: DocumentStore.broken(node)) }
         if node.isCarousel, let slide = node.slideSize {
             pairs.append(("carousel", .string(Carousel.format(of: slide)?.name ?? "\(Int(slide.width))×\(Int(slide.height))")))
             pairs.append(("slides", .number(node.slideCount)))
@@ -78,15 +82,16 @@ extension MCPTools {
             pairs.append(("fill", fill(node.fill)))
         }
         if node.isContainer {
-            let count = BezzleDocument.layerCount(node.children)
+            let count = BezzleDocument.layerCount(listed(in: node))
             if depth > 0, (budget?.left ?? 1) > 0 {
                 var children: [JSONValue] = []
-                for child in node.children {
+                let listed = listed(in: node)
+                for child in listed {
                     guard (budget?.left ?? 1) > 0 else { break }
                     children.append(describe(child, in: doc, full: full, depth: depth - 1, budget: budget))
                 }
                 pairs.append(("layers", .array(children)))
-                if children.count < node.children.count { pairs.append(("layersNotListed", .number(node.children.count - children.count))) }
+                if children.count < listed.count { pairs.append(("layersNotListed", .number(listed.count - children.count))) }
             } else if count > 0 {
                 pairs.append(("layersInside", .number(count)))
             }
@@ -106,7 +111,10 @@ extension MCPTools {
         }
         let s = node.shadow
         if s.on {
-            pairs.append(("shadow", ["color": .string(hex(s.color)), "x": .number(s.x), "y": .number(s.y), "blur": .number(s.blur)]))
+            pairs.append(("shadow", .compact([
+                ("color", .string(hex(s.color))), ("x", .number(s.x)), ("y", .number(s.y)), ("blur", .number(s.blur)),
+                ("inset", s.inside ? .bool(true) : nil),
+            ])))
         }
         if node.opacity != 1 { pairs.append(("opacity", .number(node.opacity))) }
         if node.kind == .rectangle {
@@ -129,7 +137,11 @@ extension MCPTools {
                 ("radius", .number(blur.radius)), ("background", blur.background ? true : nil),
                 ("brightness", blur.background && blur.brightness != 0 ? .number(blur.brightness) : nil),
                 ("fillOpacity", blur.background && blur.fillOpacity != 0 ? .number(blur.fillOpacity) : nil),
+                ("ramp", blur.ramp.map { .object([("start", point($0.start)), ("end", point($0.end))]) }),
             ])))
+        }
+        if let t = node.transform3D {
+            pairs.append(("transform3D", ["x": .number(t.x), "y": .number(t.y), "z": .number(t.z)]))
         }
         if let blend = node.blend { pairs.append(("blend", .string(blend.rawValue))) }
         if node.isArtboard && !node.clips { pairs.append(("clips", false)) }
@@ -164,6 +176,7 @@ extension MCPTools {
                 ("file", .string(i.asset)), ("mode", .string(i.mode.rawValue)),
                 ("pixelWidth", .number(i.size.width)), ("pixelHeight", .number(i.size.height)),
                 ("offset", i.offset != .zero ? point(i.offset) : nil), ("scale", i.scale != 1 ? .number(i.scale) : nil),
+                ("backgroundRemoved", i.cutout != nil ? .bool(true) : nil),
             ])))
         }
         return .compact(pairs)
@@ -207,7 +220,7 @@ extension MCPTools {
 
     static let propertyKeys: Set<String> = [
         "name", "x", "y", "width", "height", "rotation", "opacity", "hidden", "locked", "fill", "border", "shadow",
-        "cornerRadius", "cornerSmoothing", "text", "font", "blur", "blend", "x1", "y1", "x2", "y2", "path", "evenOdd",
+        "cornerRadius", "cornerSmoothing", "text", "font", "blur", "transform3D", "blend", "x1", "y1", "x2", "y2", "path", "evenOdd",
         "clips", "preset", "carousel", "slides",
     ]
 
@@ -308,13 +321,22 @@ extension MCPTools {
         if let x { node.frame.origin.x = x }
         if let y { node.frame.origin.y = y }
         if let r = try Read.number(value("rotation"), "rotation") {
-            if node.isContainer { warnings.append("\(kind == .group ? "A group" : "An artboard") is never turned itself: rotation left out on \(name). Turn its layers.") } else { node.rotation = CanvasView.normalized(r) }
+            // A repeat grid turns as one, its rows with it.
+            if let turn = node.grid?.turn {
+                node = RepeatGrid.turned(node, by: CanvasView.normalized(r) - turn, about: node.frame.center)
+            } else if node.isContainer { warnings.append("\(kind == .group ? "A group" : "An artboard") is never turned itself: rotation left out on \(name). Turn its layers.") } else { node.rotation = CanvasView.normalized(r) }
         }
 
         // How it looks.
         if has("fill") { node.fill = try fill(value("fill"), on: node.fill) }
         if has("border") { node.border = try border(value("border"), on: node.border) }
-        if has("shadow") { try shadow(value("shadow"), on: &node) }
+        if has("shadow") {
+            try shadow(value("shadow"), on: &node)
+            if kind == .line && node.shadow.inside {
+                node.shadow.inset = nil
+                warnings.append("A line has no inside for a shadow to fall in: inset left out on \(name).")
+            }
+        }
         if let o = try Read.number(value("opacity"), "opacity") { node.opacity = min(max(o, 0), 1) }
         if only([.rectangle], "cornerRadius") { try corners(value("cornerRadius"), on: &node) }
         if only([.rectangle], "cornerSmoothing") {
@@ -322,6 +344,9 @@ extension MCPTools {
             node.cornerSmoothing = s > 0 ? CGFloat(min(s, 1)) : nil
         }
         if has("blur") { try blur(value("blur"), on: &node) }
+        if has("transform3D") {
+            if node.isArtboard { warnings.append("An artboard is the page itself: transform3D left out on \(name). Turn its layers.") } else { try transform3D(value("transform3D"), on: &node) }
+        }
         if has("blend") {
             if let b = try Read.string(value("blend"), "blend"), b.lowercased() != "normal" {
                 guard let mode = BlendMode.allCases.first(where: { $0.rawValue.caseInsensitiveCompare(b) == .orderedSame }) else {
@@ -540,24 +565,26 @@ extension MCPTools {
         if let s = v as? String {
             let word = s.lowercased()
             if word == "none" { node.shadow.on = false; return }
-            if let preset = Presets.shadows.first(where: { $0.name.lowercased() == word || $0.id == "shadow-" + word }) {
+            let presets = Presets.shadows + Presets.innerShadows
+            if let preset = presets.first(where: { $0.name.key.lowercased() == word || $0.id == "shadow-" + word }) {
                 Presets.applyShadow(preset, to: &node)
                 return
             }
             guard (try? color(s, "shadow")) != nil else {
-                throw MCPError("shadow should be \"none\", a preset (\(Presets.shadows.map { $0.name.lowercased() }.joined(separator: ", "))), a colour, or {color, x, y, blur}.")
+                throw MCPError("shadow should be \"none\", a preset (\(presets.map { $0.name.key.lowercased() }.joined(separator: ", "))), a colour, or {color, x, y, blur, inset}.")
             }
             node.shadow.color = try color(s, "shadow")
             node.shadow.on = true
             return
         }
-        guard let o = v as? [String: Any] else { throw MCPError("shadow should be \"none\", a preset name, a colour, or {color, x, y, blur}.") }
-        let unknown = Set(o.keys).subtracting(["on", "color", "x", "y", "blur"])
-        guard unknown.isEmpty else { throw MCPError("shadow has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, x, y and blur.") }
+        guard let o = v as? [String: Any] else { throw MCPError("shadow should be \"none\", a preset name, a colour, or {color, x, y, blur, inset}.") }
+        let unknown = Set(o.keys).subtracting(["on", "color", "x", "y", "blur", "inset"])
+        guard unknown.isEmpty else { throw MCPError("shadow has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, x, y, blur and inset.") }
         if let c = o["color"], !(c is NSNull) { node.shadow.color = try color(c, "shadow.color") }
         if let x = try Read.number(o["x"], "shadow.x") { node.shadow.x = CGFloat(x) }
         if let y = try Read.number(o["y"], "shadow.y") { node.shadow.y = CGFloat(y) }
         if let b = try Read.number(o["blur"], "shadow.blur") { node.shadow.blur = CGFloat(max(b, 0)) }
+        if let inset = try Read.bool(o["inset"], "shadow.inset") { node.shadow.inset = inset ? true : nil }
         node.shadow.on = try Read.bool(o["on"], "shadow.on") ?? true
     }
 
@@ -588,15 +615,47 @@ extension MCPTools {
             if n.doubleValue <= 0 { node.blur = nil } else { Presets.applyBlur(CGFloat(n.doubleValue), to: &node) }
             return
         }
-        guard let o = v as? [String: Any] else { throw MCPError("blur should be \"none\", a radius, or {radius, background, brightness, fillOpacity}.") }
-        let unknown = Set(o.keys).subtracting(["on", "radius", "background", "brightness", "fillOpacity"])
-        guard unknown.isEmpty else { throw MCPError("blur has no \(unknown.sorted().joined(separator: ", ")). It takes on, radius, background, brightness and fillOpacity.") }
+        guard let o = v as? [String: Any] else { throw MCPError("blur should be \"none\", a radius, or {radius, background, brightness, fillOpacity, ramp}.") }
+        let unknown = Set(o.keys).subtracting(["on", "radius", "background", "brightness", "fillOpacity", "ramp"])
+        guard unknown.isEmpty else { throw MCPError("blur has no \(unknown.sorted().joined(separator: ", ")). It takes on, radius, background, brightness, fillOpacity and ramp.") }
         var b = node.blur ?? Blur(radius: Presets.blurs[1].radius)
         if let r = try Read.number(o["radius"], "blur.radius") { b.radius = CGFloat(max(r, 0)) }
         if let bg = try Read.bool(o["background"], "blur.background") { b.background = bg }
         if let x = try Read.number(o["brightness"], "blur.brightness") { b.brightness = min(max(x, -1), 1) }
         if let x = try Read.number(o["fillOpacity"], "blur.fillOpacity") { b.fillOpacity = min(max(x, 0), 1) }
+        if o.keys.contains("ramp") { b.ramp = try ramp(o["ramp"], from: b.ramp) }
         b.on = try Read.bool(o["on"], "blur.on") ?? true
         node.blur = b
+    }
+
+    /// A blur's ramp: "none" for an even blur; the edge it blurs toward, "bottom", "left", "top"
+    /// or "right"; or {start, end} in the layer's box, 0 to 1, sharp at start and blurred at end.
+    private static func ramp(_ v: Any?, from old: BlurRamp?) throws -> BlurRamp? {
+        guard let v, !(v is NSNull) else { return nil }
+        if let s = v as? String {
+            if s.lowercased() == "none" { return nil }
+            guard let edge = ["bottom", "left", "top", "right"].firstIndex(of: s.lowercased()) else {
+                throw MCPError("blur.ramp should be \"none\", \"bottom\", \"left\", \"top\", \"right\", or {start, end}.")
+            }
+            return BlurRamp.toward(edge)
+        }
+        guard let o = v as? [String: Any] else { throw MCPError("blur.ramp should be \"none\", an edge such as \"bottom\", or {start, end}.") }
+        var ramp = old ?? .down
+        if let p = try Read.point(o["start"], "blur.ramp.start") { ramp.start = p }
+        if let p = try Read.point(o["end"], "blur.ramp.end") { ramp.end = p }
+        return ramp
+    }
+
+    private static func transform3D(_ v: Any?, on node: inout Node) throws {
+        guard let v else { node.transform3D = nil; return }
+        if let s = v as? String, s.lowercased() == "none" { node.transform3D = nil; return }
+        guard let o = v as? [String: Any] else { throw MCPError("transform3D should be \"none\" or {x, y, z}.") }
+        let unknown = Set(o.keys).subtracting(["x", "y", "z"])
+        guard unknown.isEmpty else { throw MCPError("transform3D has no \(unknown.sorted().joined(separator: ", ")). It takes x, y and z.") }
+        var t = node.transform3D ?? Transform3D()
+        if let x = try Read.number(o["x"], "transform3D.x") { t.x = x }
+        if let y = try Read.number(o["y"], "transform3D.y") { t.y = y }
+        if let z = try Read.number(o["z"], "transform3D.z") { t.z = CGFloat(z) }
+        node.transform3D = t
     }
 }

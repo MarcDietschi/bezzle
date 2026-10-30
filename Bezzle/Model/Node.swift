@@ -160,6 +160,8 @@ nonisolated struct ImageFill: Codable, Hashable {
     /// Turned over where it is drawn, left to right or top to bottom, as its layer was flipped.
     var flippedX: Bool?
     var flippedY: Bool?
+    /// The picture with its background taken away, drawn in its place. See `Cutout`.
+    var cutout: Cutout?
 
     /// The picture turned over with its layer: it lands on the other side, and faces the other way.
     func flipped(horizontally: Bool) -> ImageFill {
@@ -194,6 +196,22 @@ nonisolated struct Shadow: Codable, Hashable {
     var x: CGFloat = 0
     var y: CGFloat = 3
     var blur: CGFloat = 6
+    /// Falling inside the layer, as if it were pressed into the page, rather than under it; nil is under it.
+    var inset: Bool?
+
+    /// A shadow falling under the layer and out past it.
+    var outside: Bool { on && inset != true }
+    /// A shadow falling inside the layer.
+    var inside: Bool { on && inset == true }
+}
+
+/// A layer held up off the page, as a card is in the hand: tipped back by `x` degrees, its top
+/// going away for more than 0, and swung round by `y`, its right side going away, after it is
+/// turned in the page; then brought `z` points nearer, or pushed away below 0. See `Perspective`.
+nonisolated struct Transform3D: Codable, Hashable {
+    var x: Double = 0
+    var y: Double = 0
+    var z: CGFloat = 0
 }
 
 /// How a layer's colours mix with what lies under it.
@@ -223,21 +241,21 @@ nonisolated enum BlendMode: String, Codable, CaseIterable {
 
     var title: String {
         switch self {
-        case .multiply: "Multiply"
-        case .screen: "Screen"
-        case .overlay: "Overlay"
-        case .darken: "Darken"
-        case .lighten: "Lighten"
-        case .colorDodge: "Colour Dodge"
-        case .colorBurn: "Colour Burn"
-        case .hardLight: "Hard Light"
-        case .softLight: "Soft Light"
-        case .difference: "Difference"
-        case .exclusion: "Exclusion"
-        case .hue: "Hue"
-        case .saturation: "Saturation"
-        case .color: "Colour"
-        case .luminosity: "Luminosity"
+        case .multiply: String(localized: "Multiply")
+        case .screen: String(localized: "Screen")
+        case .overlay: String(localized: "Overlay")
+        case .darken: String(localized: "Darken")
+        case .lighten: String(localized: "Lighten")
+        case .colorDodge: String(localized: "Colour Dodge")
+        case .colorBurn: String(localized: "Colour Burn")
+        case .hardLight: String(localized: "Hard Light")
+        case .softLight: String(localized: "Soft Light")
+        case .difference: String(localized: "Difference")
+        case .exclusion: String(localized: "Exclusion")
+        case .hue: String(localized: "Hue")
+        case .saturation: String(localized: "Saturation")
+        case .color: String(localized: "Colour")
+        case .luminosity: String(localized: "Luminosity")
         }
     }
 }
@@ -251,6 +269,32 @@ nonisolated struct Blur: Codable, Hashable {
     var brightness: Double = 0
     /// Background blur only: how much of the layer's own fill lies over the blur, 0…1.
     var fillOpacity: Double = 0
+    /// A blur that grows across the layer rather than lying even over all of it; nil is even.
+    var ramp: BlurRamp?
+}
+
+/// Where a blur grows across its layer: sharp at `start`, blurred by the whole radius at `end`,
+/// and as it is beyond either. Both are placed in the layer's box as a gradient's ends are, 0,0
+/// its top left and 1,1 its bottom right, so the ramp stretches and turns with the layer.
+nonisolated struct BlurRamp: Codable, Hashable {
+    var start: CGPoint
+    var end: CGPoint
+
+    /// Sharp over most of the layer, blurring toward its bottom edge.
+    static let down = BlurRamp(start: CGPoint(x: 0.5, y: 0.35), end: CGPoint(x: 0.5, y: 1))
+
+    /// The same ramp turned to blur toward another edge: 0 the bottom, then the left, top and right.
+    static func toward(_ edge: Int) -> BlurRamp {
+        func turn(_ p: CGPoint) -> CGPoint {
+            switch edge % 4 {
+            case 1: CGPoint(x: 1 - p.y, y: p.x)
+            case 2: CGPoint(x: 1 - p.x, y: 1 - p.y)
+            case 3: CGPoint(x: p.y, y: 1 - p.x)
+            default: p
+            }
+        }
+        return BlurRamp(start: turn(down.start), end: turn(down.end))
+    }
 }
 
 /// How a text layer finds its size: as wide as its words (made by a click), a box of a set width
@@ -312,13 +356,39 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
 
         var title: String {
             switch self {
-            case .artboard: "Artboard"
-            case .rectangle: "Rectangle"
-            case .ellipse: "Ellipse"
-            case .line: "Line"
-            case .text: "Text"
-            case .group: "Group"
-            case .path: "Path"
+            case .artboard: String(localized: "Artboard")
+            case .rectangle: String(localized: "Rectangle")
+            case .ellipse: String(localized: "Ellipse")
+            case .line: String(localized: "Line")
+            case .text: String(localized: "Text")
+            case .group: String(localized: "Group")
+            case .path: String(localized: "Path")
+            }
+        }
+
+        /// The undo step that adds one, said whole so each language can put its own words around it.
+        var adding: LocalizedStringResource {
+            switch self {
+            case .artboard: "Add Artboard"
+            case .rectangle: "Add Rectangle"
+            case .ellipse: "Add Ellipse"
+            case .line: "Add Line"
+            case .text: "Add Text"
+            case .group: "Add Group"
+            case .path: "Add Path"
+            }
+        }
+
+        /// The undo step that deletes one.
+        var deleting: LocalizedStringResource {
+            switch self {
+            case .artboard: "Delete Artboard"
+            case .rectangle: "Delete Rectangle"
+            case .ellipse: "Delete Ellipse"
+            case .line: "Delete Line"
+            case .text: "Delete Text"
+            case .group: "Delete Group"
+            case .path: "Delete Path"
             }
         }
     }
@@ -358,6 +428,8 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// (A list of one, as a layer cannot hold another directly.)
     var mask: [Node]?
     var blur: Blur?
+    /// Turned in depth; nil lies flat in the page. Never for artboards, which are the page.
+    var transform3D: Transform3D?
     /// Mixes the layer with what lies under it; nil draws it over as it is.
     var blend: BlendMode?
     var hidden = false
@@ -367,6 +439,18 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// Carousels only: the size of each slide. The artboard is as many of them side by side as
     /// it is wide, and is exported cut into them. See `Carousel`.
     var slideSize: CGSize?
+    /// Repeat grids only: a group whose layers are one layer and its copies in rows and columns.
+    /// See `RepeatGrid`.
+    var grid: RepeatGrid?
+    /// Decks only: an artboard of posts lying one behind another, designed once. See `Deck`.
+    var deck: Deck?
+    /// Layers lying straight on a deck only: the post they are in, or none for the design that
+    /// lies behind every post.
+    var post: Int?
+    /// Layers of a deck's posts only: what else the layer keeps of its own, by the names of its
+    /// properties (`LayerField`), whatever the same layer in other posts does. Its words and
+    /// pictures are its own anyway.
+    var own: [String]?
 
     init(kind: Kind, name: String? = nil, frame: CGRect) {
         self.kind = kind

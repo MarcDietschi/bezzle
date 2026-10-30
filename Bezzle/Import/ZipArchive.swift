@@ -1,21 +1,23 @@
 import Foundation
 import Compression
 
-/// Reads files out of a ZIP archive, such as an Adobe XD file, without unpacking it to disk.
+/// Reads files out of a ZIP archive, such as an Adobe XD, Figma or Sketch file, without unpacking it to disk.
 /// Stored and deflated entries are understood, and the 64-bit sizes of large archives.
 struct ZipArchive {
     enum Failure: Error, LocalizedError {
         case notAnArchive
-        case damaged(String)
-        case unsupported(String)
+        /// What is damaged, or not understood, in words, or the file in the archive.
+        case damaged(LocalizedStringResource)
+        case unsupported(LocalizedStringResource)
+        /// The file in the archive.
         case missing(String)
 
         var errorDescription: String? {
             switch self {
-            case .notAnArchive: "This file is not a ZIP archive."
-            case .damaged(let what): "The archive is damaged: \(what)."
-            case .unsupported(let what): "The archive uses something Bezzle cannot read: \(what)."
-            case .missing(let name): "The archive has no \(name)."
+            case .notAnArchive: String(localized: "This file is not a ZIP archive.")
+            case .damaged(let what): String(localized: "The archive is damaged: \(String(localized: what)).")
+            case .unsupported(let what): String(localized: "The archive uses something Bezzle cannot read: \(String(localized: what)).")
+            case .missing(let name): String(localized: "The archive has no \(name).")
             }
         }
     }
@@ -96,9 +98,9 @@ struct ZipArchive {
     func read(_ name: String) throws -> Data {
         guard let entry = entries[name] else { throw Failure.missing(name) }
         let h = entry.headerOffset
-        guard h + 30 <= data.count, data.u32(at: h) == 0x0403_4B50 else { throw Failure.damaged(name) }
+        guard h + 30 <= data.count, data.u32(at: h) == 0x0403_4B50 else { throw Failure.damaged(.verbatim(name)) }
         let start = h + 30 + Int(data.u16(at: h + 26)) + Int(data.u16(at: h + 28))
-        guard start + entry.compressedSize <= data.count else { throw Failure.damaged(name) }
+        guard start + entry.compressedSize <= data.count else { throw Failure.damaged(.verbatim(name)) }
         let packed = data[start..<(start + entry.compressedSize)]
         switch entry.method {
         case 0:
@@ -106,7 +108,7 @@ struct ZipArchive {
         case 8:
             return try Self.inflate(packed, size: entry.size, name: name)
         default:
-            throw Failure.unsupported("compression method \(entry.method) for \(name)")
+            throw Failure.unsupported("compression method \(Int(entry.method)) for \(name)")
         }
     }
 
@@ -120,7 +122,7 @@ struct ZipArchive {
                                           src.bindMemory(to: UInt8.self).baseAddress!, packed.count, nil, COMPRESSION_ZLIB)
             }
         }
-        guard written == size else { throw Failure.damaged(name) }
+        guard written == size else { throw Failure.damaged(.verbatim(name)) }
         return out
     }
 }

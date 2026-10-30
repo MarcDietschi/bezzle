@@ -28,6 +28,9 @@ import SwiftUI
 ///   BEZZLE_XDCHECK=xd-folder:out-folder  import every XD file and compare with XD's own previews (see XDCheck)
 ///   BEZZLE_ICLOUD_SCHEMA=out.txt   teach iCloud's development environment every record type sharing uses,
 ///                                  so they can be deployed to production; write how it went, and quit
+///   BEZZLE_ARRIVING=name[:owner]   show a shared design on its way on the home screen, as an invitation does
+///   BEZZLE_INVITATION_PROBLEM=text show an invitation that could not be opened
+///   BEZZLE_SHARE_SHEET=seconds     open the share sheet in the design's window, as Share… does, for a plain link
 ///   BEZZLE_SNAPSHOT_LAYERS=1       take them through the layer tree instead of the views' drawing
 ///   BEZZLE_DUMP_VIEWS=1            next to each, the canvas's views and their frames in the window
 ///   BEZZLE_HITTEST=name,…          and with it, which view a click in the middle of these layers reaches
@@ -57,6 +60,11 @@ enum DebugHooks {
             return
         }
         if let look = env["BEZZLE_APPEARANCE"] { NSApp.appearance = NSAppearance(named: look == "dark" ? .darkAqua : .aqua) }
+        if let spec = env["BEZZLE_ARRIVING"] {
+            let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
+            CloudSync.shared.pretendArriving(parts[0], from: parts.count > 1 ? parts[1] : nil)
+        }
+        if let problem = env["BEZZLE_INVITATION_PROBLEM"] { CloudSync.shared.invitationProblem = problem }
         if env["BEZZLE_DEMO"] != nil, let url = makeDemo() {
             WindowRouter.shared.open(url)
         } else if let path = env["BEZZLE_OPEN"] {
@@ -68,6 +76,9 @@ enum DebugHooks {
 
     /// When a design window opens.
     static func attach(_ store: DocumentStore) {
+        if let s = env["BEZZLE_SHARE_SHEET"].flatMap(Double.init) {
+            after(s) { CloudSync.shared.presentSheet([URL(string: "https://www.apple.com")!], for: store, at: nil) }
+        }
         if let names = env["BEZZLE_SELECT"] {
             let wanted = names.split(separator: ",").map(String.init)
             after(0.6) { store.selection = store.doc.allNodes.filter { wanted.contains($0.name) }.map(\.id) }
@@ -165,7 +176,7 @@ enum DebugHooks {
         if let spec = env["BEZZLE_PREVIEW"], let colon = spec.firstIndex(of: ":"), let s = Double(spec[..<colon]) {
             let id = String(spec[spec.index(after: colon)...])
             after(s) {
-                if let preset = Presets.shadows.first(where: { $0.id == id }) {
+                if let preset = (Presets.shadows + Presets.innerShadows).first(where: { $0.id == id }) {
                     store.showPreview(id) { Presets.applyShadow(preset, to: &$0) }
                 } else if let preset = Presets.corners.first(where: { $0.id == id }) {
                     store.showPreview(id) { $0.cornerRadius = Presets.cornerRadius(preset.radius, for: $0) }

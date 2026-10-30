@@ -20,13 +20,14 @@ struct MenuEntry: Identifiable {
     var preview: ((Bool) -> Void)?
     var action: () -> Void = {}
 
-    static func item(_ title: String, detail: String? = nil, shortcut: String? = nil, checked: Bool = false, enabled: Bool = true,
-                     font: Font? = nil, preview: ((Bool) -> Void)? = nil, action: @escaping () -> Void) -> MenuEntry {
-        MenuEntry(title: title, detail: detail, shortcut: shortcut, checked: checked, enabled: enabled, font: font, preview: preview, action: action)
+    static func item(_ title: LocalizedStringResource, detail: LocalizedStringResource? = nil, shortcut: String? = nil, checked: Bool = false,
+                     enabled: Bool = true, font: Font? = nil, preview: ((Bool) -> Void)? = nil, action: @escaping () -> Void) -> MenuEntry {
+        MenuEntry(title: String(localized: title), detail: detail.map { String(localized: $0) }, shortcut: shortcut, checked: checked,
+                  enabled: enabled, font: font, preview: preview, action: action)
     }
 
     static var separator: MenuEntry { MenuEntry(kind: .separator) }
-    static func note(_ text: String) -> MenuEntry { MenuEntry(kind: .note, title: text, enabled: false) }
+    static func note(_ text: LocalizedStringResource) -> MenuEntry { MenuEntry(kind: .note, title: String(localized: text), enabled: false) }
 }
 
 @Observable

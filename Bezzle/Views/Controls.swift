@@ -4,7 +4,7 @@ import SwiftUI
 struct MenuButton: View {
     @Environment(MenuHost.self) private var host
     let id: String
-    let title: String
+    let title: LocalizedStringResource
     var width: CGFloat = 240
     var prominent = false
     /// As wide as it is given, its chevron at the far end, as a field is; otherwise as wide as its title.
@@ -51,16 +51,20 @@ struct MenuButton: View {
 /// A choice of a few options: a card that slides along a well.
 struct SegmentedWell<Value: Hashable>: View {
     @Binding var selection: Value
-    let options: [(Value, String)]
+    let options: [(Value, LocalizedStringResource)]
+    /// Work the chosen segment has started, 0…1: its thumb fills with pencil from the left as it
+    /// runs, as the primary button does, and the segment is written in pencil until it is done.
+    var progress: Double?
     @Namespace private var namespace
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(options, id: \.0) { value, title in
                 let selected = value == selection
+                let working = selected && progress != nil
                 Text(title)
                     .font(.system(size: 12, weight: selected ? .medium : .regular))
-                    .foregroundStyle(selected ? Theme.ink : Theme.ink2)
+                    .foregroundStyle(working ? Theme.pencil : selected ? Theme.ink : Theme.ink2)
                     .frame(maxWidth: .infinity)
                     // Inside the well's rim, the whole as tall as any control.
                     .frame(height: Theme.controlHeight - 4)
@@ -68,6 +72,22 @@ struct SegmentedWell<Value: Hashable>: View {
                         if selected {
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
                                 .fill(Theme.card)
+                                .overlay(alignment: .leading) {
+                                    if let progress {
+                                        GeometryReader { geo in
+                                            Rectangle()
+                                                .fill(Theme.pencilWash)
+                                                .overlay(alignment: .trailing) {
+                                                    // The edge of what is done, as a pencil line.
+                                                    Rectangle().fill(Theme.pencil.opacity(0.5)).frame(width: 1.5)
+                                                }
+                                                .frame(width: max(8, geo.size.width * progress))
+                                                .animation(.easeOut(duration: 0.35), value: progress)
+                                        }
+                                        .transition(.opacity)
+                                    }
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                                 .shadow(color: Theme.shadow.opacity(0.12), radius: 2, y: 1)
                                 .matchedGeometryEffect(id: "thumb", in: namespace)
                         }
@@ -79,6 +99,7 @@ struct SegmentedWell<Value: Hashable>: View {
         }
         .padding(2)
         .well(radius: 9)
+        .animation(Theme.spring, value: progress == nil)
     }
 }
 
@@ -105,7 +126,7 @@ struct Switch: View {
 /// The one ink button on screen. Its loading state lives inside it: while work runs, the button
 /// fills with pencil blue from the left as the run progresses.
 struct PrimaryButton: View {
-    let title: String
+    let title: LocalizedStringResource
     var progress: Double?
     var enabled = true
     let action: () -> Void
@@ -155,7 +176,7 @@ struct Pressable: ButtonStyle {
 
 /// A button raised off the paper like a small card, for secondary actions.
 struct CardButton: View {
-    let title: String
+    let title: LocalizedStringResource
     var symbol: String?
     var height: CGFloat = 32
     let action: () -> Void
@@ -188,7 +209,7 @@ struct CardButton: View {
 /// A soft chip of ink on the paper: a secondary action that still reads as a button on its own,
 /// such as "Open…" beside the presets.
 struct ChipButton: View {
-    let title: String
+    let title: LocalizedStringResource
     var height: CGFloat = 28
     let action: () -> Void
     @State private var hovering = false
@@ -216,7 +237,7 @@ struct ChipButton: View {
 /// A quiet round button for small actions on a card.
 struct IconButton: View {
     let symbol: String
-    let help: String
+    let help: LocalizedStringResource
     var size: CGFloat = 26
     let action: () -> Void
     @State private var hovering = false
@@ -230,16 +251,16 @@ struct IconButton: View {
             .contentShape(Circle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
-            .help(help)
+            .help(Text(help))
             .animation(Theme.quick, value: hovering)
-            .accessibilityLabel(help)
+            .accessibilityLabel(Text(help))
             .accessibilityAddTraits(.isButton)
     }
 }
 
 /// A plain text button, for small actions inside another control, such as "Set".
 struct TextButton: View {
-    let title: String
+    let title: LocalizedStringResource
     var color: Color = Theme.ink2
     let action: () -> Void
     @State private var hovering = false

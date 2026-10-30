@@ -53,6 +53,8 @@ struct TilesTests {
     private var options: Renderer.Options {
         var o = Renderer.Options()
         o.artboardShadows = true
+        // As the canvas gives it, so that tiles drawn on other threads have it too, light or dark.
+        o.artboardShadowInk = RGBA(r: 0.23, g: 0.2, b: 0.15)
         return o
     }
 
@@ -160,6 +162,47 @@ struct TilesTests {
         } else {
             #expect(d.mean < 2, "at \(scale): \(d)")
         }
+    }
+
+    /// Drawn on other threads, the tiles come in over the next frames, the frames themselves
+    /// making none, and once all have come they look as the artboard does drawn layer by layer:
+    /// its shadows, its background blur, its text and all.
+    @Test(arguments: [1, 2, 8] as [CGFloat])
+    func tilesDrawnAwayLookLikeTheArtboard(scale: CGFloat) {
+        let b = board()
+        let rect = scale > 4 ? CGRect(x: 36 + 180, y: 52 + 170, width: 120, height: 100) : b.frame.insetBy(dx: -20, dy: -20)
+        let tiles = BoardTiles()
+        tiles.maker = TileMaker(threads: 4)
+        tiles.frames = []
+        var came = 0
+        tiles.arrived = { came += 1 }
+        var inFrame = 0, picture: [UInt8] = []
+        let start = CACurrentMediaTime()
+        var t: CFTimeInterval = 100
+        func frame() {
+            picture = canvas(rect, scale: scale) { ctx in
+                var o = options
+                o.deviceScale = scale
+                o.visible = rect
+                tiles.begin(scale: scale, now: t, artboards: [b.id])
+                _ = tiles.draw(b, in: ctx, visible: rect, shadowPixels: 28 * scale, now: t, deadline: .infinity, live: false, make: { part, step, _ in
+                    inFrame += 1
+                    return Renderer.tile(of: b, rect: part, scale: step, options: o)
+                }, away: { [o] part, step in Renderer.tile(of: b, rect: part, scale: step, options: o) })
+            }
+        }
+        // Until a frame has nothing left to wait for, letting the tiles come in between.
+        repeat {
+            frame()
+            t += 0.5
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        } while CACurrentMediaTime() - start < 10 && tiles.frames.map({ $0.isEmpty || $0.last!.stoodIn + $0.last!.papered > 0 }) != false
+        frame()
+        #expect(inFrame == 0, "the frames drew \(inFrame) tiles themselves")
+        #expect(came > 0)
+        #expect(tiles.frames?.last.map { $0.stoodIn + $0.papered } == 0, "still waiting after 10 seconds")
+        let d = difference(direct(b, rect, scale: scale), picture, width: Int(rect.width * scale), name: "away-\(scale)")
+        #expect(d.pixels <= Int(rect.width * rect.height * scale * scale) / 10_000, "at \(scale): \(d)")
     }
 
     @Test func onlyTheTilesAChangeTouchesAreMadeAgain() {

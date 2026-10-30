@@ -8,9 +8,15 @@ nonisolated enum DesignFile {
     static let documentName = "document.json"
     static let imagesFolder = "images"
 
-    /// What the Open panel offers: Bezzle's own designs, old Vellum ones too, and Adobe XD files to bring in.
+    /// What the Open panel offers: Bezzle's own designs, old Vellum ones too, and files from other apps to bring in.
     static var openableTypes: [UTType] {
-        (BezzleDocument.fileExtensions + [XDImporter.fileExtension]).compactMap { UTType(filenameExtension: $0) }
+        BezzleDocument.fileExtensions.compactMap { UTType(filenameExtension: $0) } + importableTypes
+    }
+
+    /// Adobe XD, Figma and Sketch files. Each is a single file even where its app also knows a
+    /// package of the same name, as Sketch did once.
+    static var importableTypes: [UTType] {
+        Importer.fileExtensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
     }
 
     static func isPackage(_ url: URL) -> Bool {

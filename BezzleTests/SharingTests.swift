@@ -10,18 +10,30 @@ private struct Mac {
     var base = FlatDesign()
     var doc = BezzleDocument()
     var time: Int64 = 1_000
+    /// Takes in only the artboards that changed, as `Collaboration` does while it knows the
+    /// design `base` was made from, rather than the whole design.
+    var incremental = false
+    var baseDoc: BezzleDocument?
 
-    init(_ name: String, doc: BezzleDocument = BezzleDocument()) {
+    init(_ name: String, doc: BezzleDocument = BezzleDocument(), incremental: Bool = false) {
         self.name = name
         self.doc = doc
+        self.incremental = incremental
         commit()
     }
 
     /// Takes in what was changed here, as saving does.
     mutating func commit() {
         time += 1
-        state.absorb(FlatDesign(doc), since: base, by: name, at: time)
-        base = FlatDesign(doc)
+        if incremental, let before = baseDoc {
+            let (old, new) = FlatDesign.changes(from: before, to: doc)
+            state.absorb(new, since: old, by: name, at: time)
+            base.replace(old, with: new)
+        } else {
+            state.absorb(FlatDesign(doc), since: base, by: name, at: time)
+            base = FlatDesign(doc)
+        }
+        baseDoc = doc
     }
 
     mutating func edit(_ change: (inout BezzleDocument) -> Void) {
@@ -35,6 +47,7 @@ private struct Mac {
         commit()
         state.merge(other)
         base = state.flatDesign()
+        baseDoc = nil
         doc = base.document()
         commit()
     }
@@ -328,6 +341,83 @@ struct SharingTests {
         #expect(macs[0].doc.allNodes.allSatisfy { !$0.isGroup || !$0.children.isEmpty })
     }
 
+    /// Taking in only the artboards and loose layers that changed does just what taking in the
+    /// whole design does, step by step, through all the kinds of change people make, artboards
+    /// added and taken away among them, and others' changes coming in between.
+    @Test(arguments: [1, 2, 3, 42, 99, 2026, 7, 8] as [UInt64])
+    func takingInOnlyWhatChangedIsTakingInEverything(seed: UInt64) {
+        var doc = design()
+        var group = Node(kind: .group, name: "Group", frame: CGRect(x: 100, y: 200, width: 10, height: 10))
+        var inner = Node(kind: .group, name: "Inner", frame: CGRect(x: 10, y: 10, width: 10, height: 10))
+        inner.children = [CanvasTests.rect("Deep", CGRect(x: 0, y: 0, width: 30, height: 30))]
+        group.children = [CanvasTests.rect("In", CGRect(x: 0, y: 0, width: 50, height: 50)), inner]
+        var masked = Node(kind: .group, name: "Masked", frame: CGRect(x: 300, y: 300, width: 10, height: 10))
+        masked.children = [CanvasTests.rect("Under", CGRect(x: 0, y: 0, width: 100, height: 100))]
+        masked.mask = [Node(kind: .ellipse, name: "Mask", frame: CGRect(x: 10, y: 10, width: 60, height: 60))]
+        doc.nodes[0].children += [group, masked]
+        for k in 1...3 {
+            var board = Node(kind: .artboard, name: "Board \(k)", frame: CGRect(x: CGFloat(k) * 1000, y: 0, width: 800, height: 600))
+            board.children = [CanvasTests.rect("On \(k)", CGRect(x: 10, y: 10, width: 100, height: 100))]
+            doc.nodes.append(board)
+        }
+        doc.nodes.append(CanvasTests.rect("Loose", CGRect(x: -200, y: 0, width: 20, height: 20)))
+        doc.fitGroups()
+
+        var runs: [[Mac]] = [false, true].map { incremental in
+            var macs = [Mac("a", doc: doc, incremental: incremental), Mac("b", incremental: incremental), Mac("c", incremental: incremental)]
+            sync(&macs)
+            return macs
+        }
+        var random = Seeded(state: seed)
+        var made = 0
+        for step in 0..<300 {
+            let i = Int.random(in: 0..<3, using: &random)
+            let wait = Int64.random(in: 0...40, using: &random)
+            runs[0][i].time += wait
+            runs[0][i].edit { doc in
+                switch Int.random(in: 0..<12, using: &random) {
+                case 0:
+                    made += 1
+                    doc.nodes.insert(Node(kind: .artboard, name: "Board made \(made)", frame: CGRect(x: 0, y: 2000, width: 400, height: 300)),
+                                     at: Int.random(in: 0...doc.nodes.count, using: &random))
+                case 1:
+                    let boards = doc.nodes.indices.filter { doc.nodes[$0].isArtboard }
+                    if boards.count > 1 { doc.nodes.remove(at: boards[Int.random(in: 0..<boards.count, using: &random)]) }
+                default:
+                    Self.change(&doc, &random, &made)
+                }
+            }
+            // The very same change, taken in only where it changed things.
+            runs[1][i].time += wait
+            runs[1][i].doc = runs[0][i].doc
+            runs[1][i].commit()
+            if Int.random(in: 0..<6, using: &random) == 0 {
+                let j = (i + Int.random(in: 1..<3, using: &random)) % 3
+                for r in 0..<2 { runs[r][j].receive(runs[r][i].state) }
+            }
+            for k in 0..<3 {
+                #expect(runs[1][k].state == runs[0][k].state, "Mac \(k) after step \(step)")
+                #expect(runs[1][k].doc == runs[0][k].doc, "Mac \(k)'s design after step \(step)")
+                #expect(runs[1][k].base == FlatDesign(runs[1][k].doc), "Mac \(k)'s layers after step \(step)")
+            }
+            if (0..<3).contains(where: { runs[1][$0].state != runs[0][$0].state }) { return }
+        }
+        for r in 0..<2 { sync(&runs[r]) }
+        #expect(runs[0].map(\.state) == runs[1].map(\.state))
+        #expect(runs[1][0].doc == runs[1][1].doc && runs[1][1].doc == runs[1][2].doc)
+    }
+
+    @Test func takingInNothingChangedFindsNothing() {
+        let doc = design()
+        let (old, new) = FlatDesign.changes(from: doc, to: doc)
+        #expect(old == new)
+        #expect(new.entries.isEmpty)
+        var state = SharedDesign()
+        state.absorb(FlatDesign(doc), since: FlatDesign(), by: "a", at: 1)
+        let changed = state.absorb(new, since: old, by: "a", at: 2)
+        #expect(!changed)
+    }
+
     /// One change of the kinds people make: adding, taking away, moving, restyling, reordering,
     /// moving to another artboard, grouping and ungrouping.
     private static func change(_ doc: inout BezzleDocument, _ random: inout Seeded, _ made: inout Int) {
@@ -522,6 +612,44 @@ struct SharingTests {
         #expect(reopened.doc.allNodes.contains { $0.name == "Late" })
         #expect(reopened.sharing?.zone == session.zone)
         reopened.sharing?.close()
+    }
+
+    @Test func aDesignNoLongerSharedCanOnlyBeLookedAtAndSavedAsACopy() throws {
+        let (bench, session, _) = sharedBench()
+        let store = bench.store
+        defer { try? FileManager.default.removeItem(at: store.url) }
+        session.link.owner = "_someoneElse"
+        #expect(store.sharing?.mark == .sharedBy(nil))
+        session.link.ended = true
+        #expect(store.isReadOnly)
+        #expect(store.sharing?.mark == .ended)
+        let before = store.doc
+        bench.step { store.update([bench.node("R")!.id], "Colour") { $0.fill.color = .black } }
+        #expect(store.doc == before)
+
+        store.saveCopy()
+        DocumentStore.finishSaving()
+        let copy = Library.shared.folder.appendingPathComponent("\(store.name) copy.bezzle")
+        defer { try? FileManager.default.removeItem(at: copy) }
+        #expect(SharingFiles.link(of: copy) == nil)
+        let opened = try DocumentStore(opening: copy)
+        #expect(opened.sharing == nil && !opened.isReadOnly)
+        #expect(opened.doc.allNodes.map(\.name) == store.doc.allNodes.map(\.name))
+        session.close()
+    }
+
+    @Test func aDuplicateOfASharedDesignIsNotShared() throws {
+        let (bench, session, _) = sharedBench()
+        let url = bench.store.url
+        defer { try? FileManager.default.removeItem(at: url) }
+        bench.store.save()
+        DocumentStore.finishSaving()
+        Library.shared.duplicate(url)
+        let copy = url.deletingLastPathComponent().appendingPathComponent(url.deletingPathExtension().lastPathComponent + " copy.bezzle")
+        defer { try? FileManager.default.removeItem(at: copy) }
+        #expect(FileManager.default.fileExists(atPath: copy.path))
+        #expect(SharingFiles.link(of: copy) == nil)
+        session.close()
     }
 
     @Test func aCopyOfASharedDesignIsADesignOfItsOwn() throws {

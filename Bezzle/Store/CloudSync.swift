@@ -1,6 +1,7 @@
 import AppKit
 import CloudKit
 import Observation
+import os
 
 /// Shares designs through iCloud, so people can work on one together without signing up for
 /// anything: each uses the iCloud account their Mac already has.
@@ -31,6 +32,19 @@ final class CloudSync {
     private(set) var busy = false
     /// The last thing that went wrong, until something goes right.
     private(set) var problem: String?
+    /// A shared design being fetched for the first time, just accepted, as the home screen shows it.
+    struct Arrival: Equatable {
+        var title: String
+        var owner: String?
+    }
+
+    /// Those on their way, by zone.
+    private(set) var arriving: [String: Arrival] = [:]
+    /// Why the last invitation could not be accepted, until the next one.
+    var invitationProblem: String?
+
+    /// What sharing does, in the system log: `log show --predicate 'subsystem == "com.erik.Bezzle"'`.
+    nonisolated static let log = Logger(subsystem: "com.erik.Bezzle", category: "Sharing")
 
     @ObservationIgnored private lazy var container = CKContainer(identifier: Self.containerID)
     @ObservationIgnored private var engines: [CKDatabase.Scope: CKSyncEngine] = [:]
@@ -38,8 +52,9 @@ final class CloudSync {
     /// The change record on its way, for each zone, so there is never more than one.
     @ObservationIgnored private var sending: [String: CKRecord.ID] = [:]
     @ObservationIgnored private var queuedPictures: [String: Set<String>] = [:]
-    /// Names of shared designs not here yet, from their invitations.
+    /// Names of shared designs not here yet, and of their owners, from their invitations.
     @ObservationIgnored private var titles: [String: String] = [:]
+    @ObservationIgnored private var owners: [String: String] = [:]
     /// Shared designs to open as soon as they are here, having just been accepted.
     @ObservationIgnored private var toOpen: Set<String> = []
     @ObservationIgnored private var sendTasks: [CKDatabase.Scope: Task<Void, Never>] = [:]
@@ -148,6 +163,7 @@ final class CloudSync {
     /// Starts syncing, at launch.
     func start() {
         guard Self.isAvailable, engines.isEmpty else { return }
+        Self.log.notice("Starting, in iCloud's \(Self.environment, privacy: .public) environment")
         makeEngines()
         NSApplication.shared.registerForRemoteNotifications()
         Task { await checkAccount() }
@@ -174,13 +190,13 @@ final class CloudSync {
         do {
             switch try await container.accountStatus() {
             case .available: accountProblem = nil
-            case .noAccount: accountProblem = "Sign in to iCloud in System Settings to share designs."
-            case .restricted: accountProblem = "iCloud is restricted on this Mac."
-            case .temporarilyUnavailable: accountProblem = "iCloud is not available right now."
-            default: accountProblem = "iCloud could not be reached."
+            case .noAccount: accountProblem = String(localized: "Sign in to iCloud in System Settings to share designs.")
+            case .restricted: accountProblem = String(localized: "iCloud is restricted on this Mac.")
+            case .temporarilyUnavailable: accountProblem = String(localized: "iCloud is not available right now.")
+            default: accountProblem = String(localized: "iCloud could not be reached.")
             }
         } catch {
-            accountProblem = "iCloud could not be reached: \(error.localizedDescription)"
+            accountProblem = String(localized: "iCloud could not be reached: \(error.localizedDescription)")
         }
     }
 
@@ -228,7 +244,7 @@ final class CloudSync {
     }
 
     private func queueChange(_ zone: String, _ link: SharingLink) {
-        guard link.environment == Self.environment, sending[zone] == nil, let engine = engine(for: link) else { return }
+        guard link.environment == Self.environment, !link.ended, sending[zone] == nil, let engine = engine(for: link) else { return }
         let id = CKRecord.ID(recordName: "change-\(UUID().uuidString)", zoneID: zoneID(link))
         sending[zone] = id
         engine.state.add(pendingRecordZoneChanges: [.saveRecord(id)])
@@ -255,7 +271,7 @@ final class CloudSync {
         let images = session.url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
         let new = names.subtracting(session.link.sentPictures).subtracting(queuedPictures[zone] ?? [])
             .filter { FileManager.default.fileExists(atPath: images.appendingPathComponent($0).path) }
-        guard !new.isEmpty, session.link.environment == Self.environment, let engine = engine(for: session.link) else { return }
+        guard !new.isEmpty, session.link.environment == Self.environment, !session.link.ended, let engine = engine(for: session.link) else { return }
         queuedPictures[zone, default: []].formUnion(new)
         let zoneID = zoneID(session.link)
         engine.state.add(pendingRecordZoneChanges: new.map { .saveRecord(CKRecord.ID(recordName: "picture-\($0)", zoneID: zoneID)) })
@@ -265,7 +281,7 @@ final class CloudSync {
     /// The record to send for a pending change, made as it goes, from the design as it is then.
     private func record(for id: CKRecord.ID) -> CKRecord? {
         let zone = id.zoneID.zoneName
-        guard let url = url(of: zone), let link = link(zone), link.environment == Self.environment else { return nil }
+        guard let url = url(of: zone), let link = link(zone), link.environment == Self.environment, !link.ended else { return nil }
         let name = id.recordName
         if name.hasPrefix("change-") {
             DocumentStore.finishSaving()
@@ -281,13 +297,7 @@ final class CloudSync {
             return attach(changes, to: record) ? record : nil
         }
         if name.hasPrefix("picture-") {
-            let picture = String(name.dropFirst("picture-".count))
-            let file = url.appendingPathComponent(DesignFile.imagesFolder).appendingPathComponent(picture)
-            guard FileManager.default.fileExists(atPath: file.path) else { return nil }
-            let record = CKRecord(recordType: Kind.picture, recordID: id)
-            record["name"] = picture
-            record["file"] = CKAsset(fileURL: file)
-            return record
+            return pictureRecord(String(name.dropFirst("picture-".count)), of: url, in: id.zoneID)
         }
         if name == "snapshot" {
             DocumentStore.finishSaving()
@@ -418,14 +428,14 @@ final class CloudSync {
                 // The engine tries these again itself.
                 break
             case .quotaExceeded:
-                problem = "Your iCloud storage is full, so changes can’t be sent."
+                problem = String(localized: "Your iCloud storage is full, so changes can’t be sent.")
                 if isChange, sending[zone] == record.recordID { sending[zone] = nil }
             case .permissionFailure:
-                problem = "You can look at this design but not change it."
+                problem = String(localized: "You can look at this design but not change it.")
                 if isChange, sending[zone] == record.recordID { sending[zone] = nil }
             default:
-                problem = "Changes could not be sent: \(failure.error.localizedDescription)"
-                NSLog("Bezzle could not send %@: %@", record.recordID.recordName, failure.error.localizedDescription)
+                problem = String(localized: "Changes could not be sent: \(failure.error.localizedDescription)")
+                Self.log.error("Could not send \(record.recordID.recordName, privacy: .public): \(failure.error.localizedDescription, privacy: .public)")
                 if isChange, sending[zone] == record.recordID { sending[zone] = nil }
             }
         }
@@ -467,18 +477,30 @@ final class CloudSync {
             case Kind.picture:
                 pictures[zoneID, default: []].append(record)
             case CKRecord.SystemType.share:
-                if let title = (record as? CKShare)?[CKShare.SystemFieldKey.title] as? String { titles[zoneID.zoneName] = title }
+                guard let share = record as? CKShare else { continue }
+                if let title = share[CKShare.SystemFieldKey.title] as? String { titles[zoneID.zoneName] = title }
+                let owner = Self.name(share.owner.userIdentity)
+                owners[zoneID.zoneName] = owner
+                updateLink(zoneID.zoneName) { link in
+                    if link.isOwner { link.shared = true } else if let owner { link.ownerName = owner }
+                }
             default:
                 break
             }
         }
         for zoneID in Set(designs.keys).union(pictures.keys) {
+            Self.log.info("Fetched \(designs[zoneID]?.count ?? 0) changes and \(pictures[zoneID]?.count ?? 0) pictures for \(zoneID.zoneName, privacy: .public)")
             deliver(designs[zoneID] ?? [], to: zoneID, pictures: pictures[zoneID] ?? [])
             updateLink(zoneID.zoneName) { link in
                 link.changeRecords.formUnion(changeRecords[zoneID] ?? [])
                 if let fields = snapshots[zoneID] { link.snapshotFields = fields }
             }
         }
+        // The owner stopped sharing it, from another of their Macs.
+        for deletion in event.deletions where deletion.recordType == CKRecord.SystemType.share {
+            updateLink(deletion.recordID.zoneID.zoneName) { $0.shared = false }
+        }
+        Library.shared.refresh()
         // What was fetched is on disk before the engine notes that it was.
         DocumentStore.finishSaving()
     }
@@ -489,8 +511,10 @@ final class CloudSync {
         let zone = zoneID.zoneName
         guard zone.hasPrefix("design-") else { return }
         var url = url(of: zone)
-        if url == nil, index[zone] == nil, !changes.isEmpty {
+        // Whatever comes first makes it, pictures too, so none of them is lost.
+        if url == nil, index[zone] == nil, !changes.isEmpty || !pictures.isEmpty {
             url = makeDesign(zone, owner: zoneID.ownerName == CKCurrentUserDefaultName ? nil : zoneID.ownerName)
+            Self.log.notice("Made \(url?.lastPathComponent ?? "nothing", privacy: .public) for \(zone, privacy: .public)")
         }
         // One taken off this Mac stays off.
         guard let url else { return }
@@ -510,16 +534,21 @@ final class CloudSync {
             Collaboration.merge(changes, intoDesignAt: url)
             Library.shared.touched(url)
         }
-        if toOpen.remove(zone) != nil { WindowRouter.shared.open(url) }
+        if !changes.isEmpty, toOpen.remove(zone) != nil {
+            arriving[zone] = nil
+            WindowRouter.shared.open(url)
+        }
     }
 
     private func makeDesign(_ zone: String, owner: String?) -> URL? {
         let name = (titles[zone] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
-        let url = Library.shared.freeURL(named: name.isEmpty ? "Shared Design" : name, in: Library.shared.folder)
+        let url = Library.shared.freeURL(named: name.isEmpty ? String(localized: "Shared Design") : name, in: Library.shared.folder)
         do {
             try DesignFile.write(BezzleDocument(), to: url)
             try SharingFiles.write(SharedDesign(), to: url)
-            try SharingFiles.write(SharingLink(zone: zone, owner: owner, environment: Self.environment), to: url)
+            var link = SharingLink(zone: zone, owner: owner, environment: Self.environment)
+            link.ownerName = owners[zone]
+            try SharingFiles.write(link, to: url)
         } catch {
             NSLog("Bezzle could not make %@: %@", url.path, error.localizedDescription)
             return nil
@@ -544,16 +573,23 @@ final class CloudSync {
         return name
     }
 
-    /// The design is no longer shared, or not with this Mac: it stays here as a design of its own.
+    /// The design is no longer shared with this Mac. One of this Mac's own stays as a design of
+    /// its own; someone else's stays as it last was, read only, to look at and save a copy of.
     private func stopSharing(_ zone: String) {
-        if let url = url(of: zone) {
-            if let session = session(zone) {
-                session.store?.save()
-                session.store?.sharing = nil
-                closed(session)
-            }
+        if let url = url(of: zone), let link = link(zone) {
+            let session = session(zone)
+            session?.store?.save()
             DocumentStore.finishSaving()
-            SharingFiles.unlink(url)
+            if link.isOwner {
+                session?.store?.sharing = nil
+                SharingFiles.unlink(url)
+            } else {
+                updateLink(zone) { $0.ended = true }
+                DocumentStore.finishSaving()
+            }
+            if let session { closed(session) }
+            Self.log.notice("No longer sharing \(zone, privacy: .public)")
+            Library.shared.refresh()
         }
         index[zone] = nil
         sending[zone] = nil
@@ -562,74 +598,165 @@ final class CloudSync {
 
     // MARK: Sharing
 
-    /// Shows the share sheet for the design, to invite people or see who has it.
-    func showSharing(for store: DocumentStore, from view: NSView) async {
-        let provider = NSItemProvider()
-        if let session = store.sharing, let share = await existingShare(session) {
+    /// How far a design is in getting everything into iCloud before it can be shared, by where it is.
+    struct Upload: Equatable {
+        var done = 0
+        var total = 0
+    }
+
+    private(set) var preparing: [URL: Upload] = [:]
+    /// The share sheet showing, kept until it goes.
+    @ObservationIgnored private var picker: NSSharingServicePicker?
+
+    /// Shows the share sheet for the design, to invite people or see who has it, once everything
+    /// in it is in iCloud: an invitation never leads anyone to a design with parts still missing.
+    /// What is changed afterwards follows as always.
+    ///
+    /// `place` is where the Share button is in the design's window, from its top left.
+    func showSharing(for store: DocumentStore, at place: () -> CGRect?) async {
+        let key = store.url
+        guard preparing[key] == nil else { return }
+        preparing[key] = Upload()
+        defer { preparing[key] = nil }
+        do {
+            let share = try await prepareShare(store, key: key)
+            let provider = NSItemProvider()
             provider.registerCKShare(share, container: container, allowedSharingOptions: .standard)
-        } else {
-            provider.registerCKShare(container: container, allowedSharingOptions: .standard) { [weak store] in
-                guard let store else { throw CancellationError() }
-                return try await CloudSync.shared.share(store)
-            }
+            presentSheet([provider], for: store, at: place())
+        } catch {
+            Self.log.error("Could not share \(store.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.messageText = String(localized: "“\(store.name)” could not be shared")
+            alert.informativeText = (error as? SharingError)?.message ?? error.localizedDescription
+            if let window = store.canvas?.window { alert.beginSheetModal(for: window, completionHandler: nil) } else { alert.runModal() }
         }
-        let picker = NSSharingServicePicker(items: [provider])
-        picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
     }
 
-    private func existingShare(_ session: Collaboration) async -> CKShare? {
-        let database = session.isOwner ? container.privateCloudDatabase : container.sharedCloudDatabase
-        let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID(session.link))
-        return try? await database.record(for: id) as? CKShare
+    /// Opens the share sheet in the design's window, under `place` there (from the window's top
+    /// left), or failing that at the top of the window.
+    @discardableResult
+    func presentSheet(_ items: [Any], for store: DocumentStore, at place: CGRect?) -> Bool {
+        guard let window = store.canvas?.window, let content = window.contentView else {
+            Self.log.notice("The design’s window went before its share sheet could open")
+            return false
+        }
+        var rect = place ?? CGRect(x: content.bounds.midX - 1, y: 0, width: 2, height: 52)
+        if !content.isFlipped { rect.origin.y = content.bounds.height - rect.maxY }
+        let picker = NSSharingServicePicker(items: items)
+        self.picker = picker
+        Self.log.notice("Showing the share sheet for \(store.name, privacy: .public)")
+        picker.show(relativeTo: rect, of: content, preferredEdge: content.isFlipped ? .maxY : .minY)
+        return true
     }
 
-    /// Shares the design: what the share sheet asks for when someone is first invited. It is sent
-    /// whole with the share, so whoever is invited finds all of it there.
-    func share(_ store: DocumentStore) async throws -> CKShare {
+    private func prepareShare(_ store: DocumentStore, key: URL) async throws -> CKShare {
         await checkAccount()
         if let accountProblem { throw SharingError(message: accountProblem) }
         let session = try makeShared(store)
         guard session.link.environment == Self.environment else {
-            throw SharingError(message: "This design is shared through iCloud’s \(session.link.environment.lowercased()) environment, which this copy of Bezzle does not use.")
+            throw SharingError(message: session.link.environment == "Production"
+                ? String(localized: "This design is shared through iCloud’s production environment, which this copy of Bezzle does not use.")
+                : String(localized: "This design is shared through iCloud’s development environment, which this copy of Bezzle does not use."))
         }
+        guard !session.link.ended else { throw SharingError(message: String(localized: "This design is no longer shared with you. Save a copy of it to share that.")) }
         let zoneID = zoneID(session.link)
         let database = session.isOwner ? container.privateCloudDatabase : container.sharedCloudDatabase
+        if session.isOwner { _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: zoneID)], deleting: []) }
+
+        // Everything first: what was changed here, as a snapshot of the whole, and every picture.
+        store.save()
+        DocumentStore.finishSaving()
+        if session.link.snapshotFields == nil || session.link.hasUnsent {
+            try await saveSnapshot(of: session, to: database, in: zoneID)
+        }
+        let images = session.url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+        let pictures = Collaboration.pictures(in: store.sharedDoc).subtracting(session.link.sentPictures)
+            .filter { FileManager.default.fileExists(atPath: images.appendingPathComponent($0).path) }.sorted()
+        preparing[key] = Upload(done: 0, total: pictures.count)
+        try await upload(pictures, of: session, to: database, in: zoneID) { done in self.preparing[key]?.done = done }
+
+        // Only then the share, the one there is or a new one.
         let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
-        if !session.isOwner {
-            guard let share = try await database.record(for: shareID) as? CKShare else { throw SharingError(message: "The design’s owner has stopped sharing it.") }
-            return share
+        let share: CKShare
+        if let existing = try? await database.record(for: shareID) as? CKShare {
+            share = existing
+        } else {
+            guard session.isOwner else { throw SharingError(message: String(localized: "The design’s owner has stopped sharing it.")) }
+            let new = CKShare(recordZoneID: zoneID)
+            new[CKShare.SystemFieldKey.title] = store.name
+            guard let made = try await database.save(new) as? CKShare else { throw SharingError(message: String(localized: "The design could not be shared.")) }
+            share = made
         }
-        _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: zoneID)], deleting: [])
-        if let share = try? await database.record(for: shareID) as? CKShare { return share }
+        if session.isOwner, !session.link.shared {
+            updateLink(session.zone) { $0.shared = true }
+            Library.shared.refresh()
+        }
+        Self.log.notice("Everything in \(store.name, privacy: .public) is in iCloud; \(pictures.count) pictures went up")
+        return share
+    }
 
-        // The whole design goes up first. A snapshot there already, from another of the owner's
-        // Macs, is merged in and saved over in its own place, never just replaced.
+    /// Saves the whole design as the zone's snapshot. One there already, from another Mac, is
+    /// merged in first and saved over in its own place, never just replaced.
+    private func saveSnapshot(of session: Collaboration, to database: CKDatabase, in zoneID: CKRecordZone.ID) async throws {
         let snapshotID = CKRecord.ID(recordName: "snapshot", zoneID: zoneID)
-        let existing = try? await database.record(for: snapshotID)
-        if let existing {
-            guard let theirs = Self.design(in: existing) else { throw SharingError(message: "This design was shared by a later Bezzle. Update Bezzle to share it.") }
-            session.receive([theirs])
-        }
-        let snapshot = existing ?? CKRecord(recordType: Kind.snapshot, recordID: snapshotID)
-        let upTo = session.state.clock.time
-        snapshot["upTo"] = upTo
-        guard attach(session.state, to: snapshot) else { throw SharingError(message: "The design could not be packed up to send.") }
-        do {
-            let saved = try await database.save(snapshot)
-            updateLink(session.zone) {
-                $0.snapshotFields = Self.systemFields(of: saved)
-                $0.sentUpTo = max($0.sentUpTo, upTo)
+        defer { try? FileManager.default.removeItem(at: outgoing.appendingPathComponent("\(zoneID.zoneName)-snapshot.lzfse")) }
+        for attempt in 1...3 {
+            let existing = try? await database.record(for: snapshotID)
+            if let existing {
+                guard let theirs = Self.design(in: existing) else { throw SharingError(message: String(localized: "This design was shared by a later Bezzle. Update Bezzle to share it.")) }
+                session.receive([theirs])
             }
-        } catch {
-            // The engine sends it in a moment, merging whatever is in the way.
-            engine(for: session.link)?.state.add(pendingRecordZoneChanges: [.saveRecord(snapshotID)])
+            let snapshot = existing ?? CKRecord(recordType: Kind.snapshot, recordID: snapshotID)
+            let upTo = session.state.clock.time
+            snapshot["upTo"] = upTo
+            guard attach(session.state, to: snapshot) else { throw SharingError(message: String(localized: "The design could not be packed up to send.")) }
+            do {
+                let saved = try await database.save(snapshot)
+                updateLink(session.zone) {
+                    $0.snapshotFields = Self.systemFields(of: saved)
+                    $0.sentUpTo = max($0.sentUpTo, upTo)
+                }
+                return
+            } catch let error as CKError where error.code == .serverRecordChanged && attempt < 3 {
+                // Saved from elsewhere just now: merged in on the next go.
+                continue
+            }
         }
-        try? FileManager.default.removeItem(at: outgoing.appendingPathComponent("\(zoneID.zoneName)-snapshot.lzfse"))
+    }
 
-        let share = CKShare(recordZoneID: zoneID)
-        share[CKShare.SystemFieldKey.title] = store.name
-        guard let made = try await database.save(share) as? CKShare else { throw SharingError(message: "The design could not be shared.") }
-        return made
+    /// Sends pictures a few at a time, saying how many are up after each few.
+    private func upload(_ names: [String], of session: Collaboration, to database: CKDatabase, in zoneID: CKRecordZone.ID,
+                        progress: (Int) -> Void) async throws {
+        var done = 0
+        for start in stride(from: 0, to: names.count, by: 8) {
+            let batch = Array(names[start..<min(start + 8, names.count)])
+            let records = batch.compactMap { pictureRecord($0, of: session.url, in: zoneID) }
+            // Pictures never change, so one saved already from elsewhere is simply saved again.
+            let saved = try await database.modifyRecords(saving: records, deleting: [], savePolicy: .allKeys, atomically: false)
+            var sent: [String] = []
+            var failure: Error?
+            for (id, result) in saved.saveResults {
+                switch result {
+                case .success: sent.append(String(id.recordName.dropFirst("picture-".count)))
+                case .failure(let error): failure = error
+                }
+            }
+            updateLink(session.zone) { $0.sentPictures.formUnion(sent) }
+            queuedPictures[session.zone]?.subtract(sent)
+            engine(for: session.link)?.state.remove(pendingRecordZoneChanges: sent.map { .saveRecord(CKRecord.ID(recordName: "picture-\($0)", zoneID: zoneID)) })
+            if let failure { throw failure }
+            done += batch.count
+            progress(done)
+        }
+    }
+
+    private func pictureRecord(_ name: String, of design: URL, in zoneID: CKRecordZone.ID) -> CKRecord? {
+        let file = design.appendingPathComponent(DesignFile.imagesFolder).appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        let record = CKRecord(recordType: Kind.picture, recordID: CKRecord.ID(recordName: "picture-\(name)", zoneID: zoneID))
+        record["name"] = name
+        record["file"] = CKAsset(fileURL: file)
+        return record
     }
 
     /// Makes an open design shared, if it is not yet: everything in it is taken in as this Mac's.
@@ -651,29 +778,80 @@ final class CloudSync {
         return session
     }
 
-    /// Someone clicked an invitation to a shared design.
+    /// Someone clicked an invitation to a shared design. It is accepted, and the design opens as
+    /// soon as its snapshot is here; its pictures and latest changes follow as the engine fetches
+    /// them, which for a design with many pictures takes a while. One of the owner's own, clicked
+    /// on another of their Macs, is in their own iCloud already.
     func accept(_ metadata: CKShare.Metadata) {
-        let zone = metadata.share.recordID.zoneID.zoneName
+        let zoneID = metadata.share.recordID.zoneID, zone = zoneID.zoneName
+        let owner = metadata.participantRole == .owner
+        Self.log.notice("Invitation to \(zone, privacy: .public), as the owner: \(owner)")
         if let url = url(of: zone) {
             WindowRouter.shared.open(url)
             return
         }
         guard Self.isAvailable else { return }
         start()
-        titles[zone] = metadata.share[CKShare.SystemFieldKey.title] as? String
+        let title = (metadata.share[CKShare.SystemFieldKey.title] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "Shared Design")
+        titles[zone] = title
+        owners[zone] = Self.name(metadata.ownerIdentity)
         toOpen.insert(zone)
-        let container = container, engine = engines[.shared]
+        arriving[zone] = Arrival(title: title, owner: owners[zone])
+        invitationProblem = nil
+        WindowRouter.shared.openWindow?(id: "home")
+        let container = container
         Task.detached {
             do {
-                _ = try await container.accept(metadata)
-                try await engine?.fetchChanges()
+                if !owner { _ = try await container.accept(metadata) }
+                let database = owner ? container.privateCloudDatabase : container.sharedCloudDatabase
+                let snapshot = try? await database.record(for: CKRecord.ID(recordName: "snapshot", zoneID: zoneID))
+                await CloudSync.shared.accepted(zoneID, snapshot: snapshot)
             } catch {
-                await MainActor.run {
-                    CloudSync.shared.toOpen.remove(zone)
-                    CloudSync.shared.problem = "The shared design could not be opened: \(error.localizedDescription)"
-                }
+                await CloudSync.shared.notAccepted(zone, error)
             }
         }
+    }
+
+    /// A person's name as an invitation gives it, short.
+    private static func name(_ identity: CKUserIdentity) -> String? {
+        guard let parts = identity.nameComponents else { return nil }
+        let name = PersonNameComponentsFormatter.localizedString(from: parts, style: .short)
+        return name.isEmpty ? nil : name
+    }
+
+    /// An invitation passed on by another copy of Bezzle, as its link.
+    func accept(link: URL) {
+        let container = container
+        Task.detached {
+            do {
+                let metadata = try await container.shareMetadata(for: link)
+                await CloudSync.shared.accept(metadata)
+            } catch {
+                await CloudSync.shared.notAccepted(nil, error)
+            }
+        }
+    }
+
+    private func accepted(_ zoneID: CKRecordZone.ID, snapshot: CKRecord?) {
+        let zone = zoneID.zoneName
+        Self.log.notice("Accepted \(zone, privacy: .public); snapshot: \(snapshot != nil)")
+        if let snapshot, let design = Self.design(in: snapshot) {
+            deliver([design], to: zoneID)
+            updateLink(zone) { $0.snapshotFields = Self.systemFields(of: snapshot) }
+        }
+        let engine = engines[zoneID.ownerName == CKCurrentUserDefaultName ? .private : .shared]
+        Task.detached { try? await engine?.fetchChanges() }
+    }
+
+    private func notAccepted(_ zone: String?, _ error: Error) {
+        Self.log.error("Could not accept \(zone ?? "an invitation", privacy: .public): \(error.localizedDescription, privacy: .public)")
+        if let zone {
+            toOpen.remove(zone)
+            arriving[zone] = nil
+        }
+        invitationProblem = (error as? CKError)?.code == .participantMayNeedVerification
+            ? String(localized: "This invitation is for another Apple Account. Ask to be invited with the one this Mac is signed in to.")
+            : String(localized: "The shared design could not be opened: \(error.localizedDescription)")
     }
 
     /// iCloud was signed out of, or into another account: shared designs stay on this Mac as
@@ -720,7 +898,10 @@ extension CloudSync: CKSyncEngineDelegate {
             }
         case .fetchedDatabaseChanges(let changes):
             // A zone gone: the owner stopped sharing, or this Mac was left out.
-            for deletion in changes.deletions { stopSharing(deletion.zoneID.zoneName) }
+            for deletion in changes.deletions {
+                Self.log.notice("Zone \(deletion.zoneID.zoneName, privacy: .public) is gone")
+                stopSharing(deletion.zoneID.zoneName)
+            }
         case .fetchedRecordZoneChanges(let changes):
             received(changes)
         case .sentRecordZoneChanges(let sent):
@@ -748,6 +929,11 @@ extension CloudSync: CKSyncEngineDelegate {
 
 #if DEBUG
 extension CloudSync {
+    /// For BEZZLE_ARRIVING: a shared design on its way, as an invitation makes one.
+    func pretendArriving(_ title: String, from owner: String?) {
+        arriving["design-preview-\(title)"] = Arrival(title: title, owner: owner)
+    }
+
     /// Saves one record of each kind sharing uses, with every field, in a zone of its own, and
     /// takes the zone away again. iCloud's development environment learns record types from what
     /// is saved; production only has what is deployed to it from there, in the CloudKit Console.

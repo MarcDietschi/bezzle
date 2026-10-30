@@ -57,9 +57,12 @@ nonisolated enum Geometry {
             .map { point($0, of: frame, rotation: rotation) }
     }
 
-    /// The upright rectangle around a layer as it is drawn, turned and all.
+    /// The upright rectangle around a layer as it is drawn, turned and all, in the page and in depth.
     static func bounds(of node: Node) -> CGRect {
-        bounds(of: node.frame, rotation: node.rotation)
+        guard Perspective(node) != nil else { return bounds(of: node.frame, rotation: node.rotation) }
+        let pts = Perspective.corners(of: node)
+        let xs = pts.map(\.x), ys = pts.map(\.y)
+        return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
     }
 
     static func bounds(of frame: CGRect, rotation: Double) -> CGRect {
@@ -77,6 +80,13 @@ nonisolated enum Geometry {
     /// Whether a point of the parent falls on the layer; `tolerance` widens thin things.
     @MainActor
     static func contains(_ node: Node, _ p: CGPoint, tolerance: CGFloat) -> Bool {
+        // Turned in depth: wherever the point lies on the layer drawn flat.
+        if Perspective(node) != nil {
+            guard let flat = Perspective.flat(p, of: node) else { return false }
+            var plain = node
+            plain.transform3D = nil
+            return contains(plain, flat, tolerance: tolerance)
+        }
         if node.isGroup {
             // A group is where what it holds is drawn, and only inside its mask.
             let inner = CGPoint(x: p.x - node.frame.minX, y: p.y - node.frame.minY)
@@ -91,6 +101,15 @@ nonisolated enum Geometry {
         }
         let q = local(p, in: node.frame, rotation: node.rotation)
         let hw = node.frame.width / 2 + tolerance, hh = node.frame.height / 2 + tolerance
+        // A cut-out picture is only where its subject is, and its border round it: a click on
+        // what was its background goes through to what lies under.
+        if let silhouette = node.silhouette {
+            guard abs(q.x) <= hw && abs(q.y) <= hh else { return false }
+            let at = CGPoint(x: q.x + node.frame.width / 2, y: q.y + node.frame.height / 2)
+            if silhouette.contains(at, using: .evenOdd) { return true }
+            let border = node.border.on ? node.border.width * (node.border.position == .center ? 1 : 2) : 0
+            return silhouette.copy(strokingWithWidth: border + tolerance * 2, lineCap: .round, lineJoin: .round, miterLimit: 4).contains(at)
+        }
         switch node.kind {
         case .ellipse:
             guard hw > 0, hh > 0 else { return false }

@@ -64,7 +64,7 @@ private struct NothingSelected: View {
                             .font(.system(size: 12.5))
                             .foregroundStyle(Theme.ink)
                         Spacer()
-                        KeyCap(tool.key)
+                        KeyCap(.verbatim(tool.key))
                     }
                     .frame(height: 30)
                 }
@@ -92,8 +92,8 @@ private struct NothingSelected: View {
 
 /// A key on the keyboard, pressed into the paper.
 struct KeyCap: View {
-    let key: String
-    init(_ key: String) { self.key = key }
+    let key: LocalizedStringResource
+    init(_ key: LocalizedStringResource) { self.key = key }
 
     var body: some View {
         Text(key)
@@ -122,7 +122,7 @@ private struct PresetList: View {
             }
             VStack(spacing: 2) {
                 ForEach(Preset.all) { preset in
-                    PresetRow(name: preset.name, size: preset.size) { store.addArtboard(preset) }
+                    PresetRow(name: preset.title, size: preset.size) { store.addArtboard(preset) }
                 }
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -137,7 +137,7 @@ private struct PresetList: View {
             .padding(.top, 6)
             VStack(spacing: 2) {
                 ForEach(Carousel.formats) { format in
-                    PresetRow(name: format.name, size: format.size, slides: Carousel.startingCount) { store.addCarousel(format) }
+                    PresetRow(name: format.title, size: format.size, slides: Carousel.startingCount) { store.addCarousel(format) }
                         .help(format.platforms)
                 }
             }
@@ -149,7 +149,7 @@ private struct PresetList: View {
 
 /// A size to add, as a small sheet of its proportions; for a carousel, a few of its slides.
 struct PresetRow: View {
-    let name: String
+    let name: LocalizedStringResource
     /// The artboard's size, or a carousel's slide's.
     let size: CGSize
     var slides = 1
@@ -211,7 +211,7 @@ struct FrameGlyph: View {
 extension DocumentStore {
     /// Adds an artboard of a preset size to the right of the others, and brings it into view.
     func addArtboard(_ preset: Preset) {
-        let board = Node(kind: .artboard, name: doc.artboards.isEmpty ? preset.name : doc.nextName(for: .artboard),
+        let board = Node(kind: .artboard, name: doc.artboards.isEmpty ? String(localized: preset.title) : doc.nextName(for: .artboard),
                          frame: CGRect(origin: nextArtboardOrigin, size: preset.size))
         add(board, onto: nil)
         lastPreset = preset.size
@@ -222,9 +222,9 @@ extension DocumentStore {
     /// Adds a carousel of a few slides of a format to the right of the others, and brings it into view.
     func addCarousel(_ format: Carousel.Format) {
         let taken = Set(doc.allNodes.map(\.name))
-        var name = "Carousel", i = 2
+        var name = String(localized: "Carousel"), i = 2
         while taken.contains(name) {
-            name = "Carousel \(i)"
+            name = String(localized: "Carousel \(i)")
             i += 1
         }
         var board = Node(kind: .artboard, name: name, frame: CGRect(origin: nextArtboardOrigin, size: format.size))
@@ -278,10 +278,21 @@ private struct SelectionInspector: View {
                          shapes: kinds.isSubset(of: [.rectangle, .ellipse, .path]))
             }
             Block { transform }
+            if nodes.count == 1, first.isRepeatGrid {
+                RepeatGridBlock(store: store, grid: first)
+            } else if nodes.count == 1, let grid = store.grid(holding: first.id) {
+                GridCellBlock(store: store, node: first, grid: grid)
+            }
+            if nodes.count == 1, store.doc.post(of: first.id)?.post != nil, first.own?.isEmpty == false {
+                PostLayerBlock(store: store, node: first)
+            }
             if kinds == [.rectangle] { Block { corners } }
             if kinds == [.text] { TextBlock(store: store, nodes: nodes) }
             if kinds == [.path] { PathBlock(store: store, nodes: nodes) }
-            if onlyArtboards && nodes.count == 1 { artboardBlock(nodes[0]) }
+            if onlyArtboards && nodes.count == 1 {
+                artboardBlock(nodes[0])
+                if nodes[0].isDeck { DeckBlock(store: store, board: nodes[0]) }
+            }
             if !onlyArtboards {
                 Block {
                     Row(title: "Opacity") {
@@ -296,8 +307,9 @@ private struct SelectionInspector: View {
                 if borders && (kinds.contains(.line) || common { $0.border.on } != false) {
                     borderBlock(lineOnly: kinds == [.line], removable: !kinds.contains(.line))
                 }
-                if common({ $0.shadow.on }) != false { shadowBlock }
+                if common({ $0.shadow.on }) != false { shadowBlock(canInset: !kinds.contains(.line)) }
                 if common({ $0.blur?.on == true }) != false { blurBlock(canBlurBehind: kinds.isSubset(of: [.rectangle, .ellipse, .path])) }
+                if common({ $0.transform3D != nil }) != false { depthBlock }
                 let missing = addable(fill: fills && !kinds.contains(.text), border: borders && !kinds.contains(.line))
                 if !missing.isEmpty {
                     Block { AddBar(items: missing) }
@@ -309,6 +321,8 @@ private struct SelectionInspector: View {
         .animation(Theme.unfold, value: nodes.map(\.border.on))
         .animation(Theme.unfold, value: nodes.map(\.shadow.on))
         .animation(Theme.unfold, value: nodes.map { $0.blur?.on == true })
+        .animation(Theme.unfold, value: nodes.map { $0.blur?.ramp != nil })
+        .animation(Theme.unfold, value: nodes.map { $0.transform3D != nil })
         .animation(Theme.unfold, value: store.editingPath)
         .animation(Theme.unfold, value: store.building != nil)
         .animation(Theme.unfold, value: store.editingPicture)
@@ -317,8 +331,8 @@ private struct SelectionInspector: View {
 
     /// A field for one property of every selected layer: it shows the value they share, and
     /// what is typed into it applies to each, so "+2" adds two to every layer's own.
-    private func layerField(_ label: String, unit: String = "", range: ClosedRange<Double> = 0...10_000, scrub: Double = 1,
-                            decimals: Int = 1, action: String,
+    private func layerField(_ label: LocalizedStringResource, unit: String = "", range: ClosedRange<Double> = 0...10_000, scrub: Double = 1,
+                            decimals: Int = 1, action: LocalizedStringResource,
                             get: @escaping (Node) -> Double, set: @escaping (inout Node, Double) -> Void) -> NumberField {
         NumberField(label: label, value: common(get), unit: unit, range: range, scrub: scrub, decimals: decimals, action: action) { v in
             store.updateSelection(action) { set(&$0, v) }
@@ -347,8 +361,8 @@ private struct SelectionInspector: View {
             Pair(sizeField(f, width: true), sizeField(f, width: false), between: AspectLock(locked: $lockAspect))
             Pair(placeField(f, x: true), placeField(f, x: false))
             if single?.isArtboard != true {
-                Pair(layerField("↻", unit: "°", range: -360...360, scrub: 0.5, action: "Rotate",
-                                get: { $0.rotation }, set: { $0.rotation = CanvasView.normalized($1) }),
+                Pair(layerField(.verbatim("↻"), unit: "°", range: -360...360, scrub: 0.5, action: "Rotate",
+                                get: { $0.grid?.turn ?? $0.rotation }, set: Self.rotate),
                      flipButtons)
             }
         }
@@ -424,16 +438,27 @@ private struct SelectionInspector: View {
         }
     }
 
+    /// A layer turned to a new angle. A repeat grid turns as one, about its middle.
+    static func rotate(_ n: inout Node, to degrees: Double) {
+        if let turn = n.grid?.turn {
+            n = RepeatGrid.turned(n, by: CanvasView.normalized(degrees) - turn, about: n.frame.center)
+        } else {
+            n.rotation = CanvasView.normalized(degrees)
+        }
+    }
+
     /// A layer at a new size. Text wraps its words to a new width, or grows its letters and lines.
     static func resize(_ n: inout Node, to size: CGSize, byHeight: Bool) {
         let old = n.frame
         if n.kind == .text, old.height > 0, old.width > 0 {
             n.resizeText(to: size, byHeight: byHeight)
         } else {
-            // A group's layers stretch with it.
+            // A group's layers stretch with it, and a grid's gaps.
             if n.isGroup {
                 n.children = BezzleDocument.scaled(n.children, from: old.size, to: size)
                 n.mask = n.mask.map { BezzleDocument.scaled($0, from: old.size, to: size) }
+                if old.width > 0 { n.grid?.columnGap *= size.width / old.width }
+                if old.height > 0 { n.grid?.rowGap *= size.height / old.height }
             }
             n.frame.size = size
         }
@@ -505,16 +530,16 @@ private struct SelectionInspector: View {
                     carouselRows(board)
                 } else {
                     Row(title: "Size") {
-                        MenuButton(id: "artboard-size", title: Preset.all.first { $0.size == board.frame.size }?.name ?? "Custom", width: 230, fills: true) {
+                        MenuButton(id: "artboard-size", title: Preset.all.first { $0.size == board.frame.size }?.title ?? "Custom", width: 230, fills: true) {
                             Preset.all.map { p in
-                                MenuEntry.item(p.name, detail: "\(Int(p.size.width)) × \(Int(p.size.height))", checked: p.size == board.frame.size) {
+                                MenuEntry.item(p.title, detail: .verbatim("\(Int(p.size.width)) × \(Int(p.size.height))"), checked: p.size == board.frame.size) {
                                     store.updateSelection("Resize Artboard") { $0.frame.size = p.size }
                                 }
                             }
                             + [.separator]
                             // Its layers stay where they are on it.
                             + Carousel.formats.map { f in
-                                MenuEntry.item("Carousel, \(f.name)", detail: "\(Int(f.size.width)) × \(Int(f.size.height))") {
+                                MenuEntry.item("Carousel, \(f.title)", detail: .verbatim("\(Int(f.size.width)) × \(Int(f.size.height))")) {
                                     store.updateSelection("Make Carousel") { n in
                                         n.slideSize = f.size
                                         n.frame.size = n.carouselSize(count: max(Carousel.startingCount, Int((n.frame.width / f.size.width).rounded())))
@@ -537,9 +562,9 @@ private struct SelectionInspector: View {
         let format = board.slideSize.flatMap(Carousel.format(of:))
         let count = board.slideCount
         Row(title: "Format") {
-            MenuButton(id: "carousel-format", title: format?.name ?? "Custom", width: 250, fills: true) {
+            MenuButton(id: "carousel-format", title: format?.title ?? LocalizedStringResource("carousel.custom-format", defaultValue: "Custom", comment: "A carousel slide size that is none of the formats."), width: 250, fills: true) {
                 Carousel.formats.map { f in
-                    MenuEntry.item(f.name, detail: "\(Int(f.size.width)) × \(Int(f.size.height))", checked: f.size == board.slideSize) {
+                    MenuEntry.item(f.title, detail: .verbatim("\(Int(f.size.width)) × \(Int(f.size.height))"), checked: f.size == board.slideSize) {
                         store.updateSelection("Change Format") { n in
                             let count = n.slideCount
                             n.slideSize = f.size
@@ -568,7 +593,7 @@ private struct SelectionInspector: View {
     }
 
     /// Adds slides at the right of the selected carousel, or takes them away from there.
-    private func changeSlides(_ action: String, _ count: @escaping (Int) -> Int) {
+    private func changeSlides(_ action: LocalizedStringResource, _ count: @escaping (Int) -> Int) {
         store.updateSelection(action) { n in
             guard n.isCarousel else { return }
             n.frame.size = n.carouselSize(count: count(n.slideCount))
@@ -581,19 +606,25 @@ private struct SelectionInspector: View {
     private func addable(fill: Bool, border: Bool) -> [AddBar.Item] {
         var items: [AddBar.Item] = []
         if fill && common({ $0.fill.on }) == false {
-            items.append(.init(id: "add-fill", title: "Fill") { $0.fill.on = true })
+            items.append(.init(id: "add-fill", title: "Fill", help: "Add a fill", action: "Add Fill") { $0.fill.on = true })
         }
         if border && common({ $0.border.on }) == false {
-            items.append(.init(id: "add-border", title: "Border") { n in
+            items.append(.init(id: "add-border", title: "Border", help: "Add a border", action: "Add Border") { n in
                 n.border.on = true
                 if n.border.width == 0 { n.border.width = 1 }
             })
         }
         if common({ $0.shadow.on }) == false {
-            items.append(.init(id: "add-shadow", title: "Shadow") { Presets.applyShadow(Presets.shadows[1], to: &$0) })
+            items.append(.init(id: "add-shadow", title: "Shadow", help: "Add a shadow", action: "Add Shadow") { Presets.applyShadow(Presets.shadows[1], to: &$0) })
         }
         if common({ $0.blur?.on == true }) == false {
-            items.append(.init(id: "add-blur", title: "Blur") { Presets.applyBlur(Presets.blurs[1].radius, to: &$0) })
+            items.append(.init(id: "add-blur", title: "Blur", help: "Add a blur", action: "Add Blur") { Presets.applyBlur(Presets.blurs[1].radius, to: &$0) })
+        }
+        if common({ $0.transform3D != nil }) == false {
+            items.append(.init(id: "add-3d", title: "3D", help: "Add 3D", action: "Add 3D") { $0.transform3D = Presets.heldUp })
+        }
+        if store.canMakeRepeatGrid {
+            items.append(.init(id: "add-repeat", title: "Repeat", help: "Add a repeat", action: "Make Repeat Grid", change: { _ in }, add: { store.makeRepeatGrid() }))
         }
         return items
     }
@@ -611,10 +642,20 @@ private struct SelectionInspector: View {
         return Block {
             // The blend mode is shown with the fill, so it goes when the fill does.
             OptionBlock(title: blends ? "Fill" : "Colour",
-                        remove: removable ? { store.updateSelection("Remove Fill") { $0.fill.on = false; $0.blend = nil } } : nil) {
+                        remove: removable ? { store.updateSelection("Remove Fill") { $0.fill.on = false; $0.blend = nil } } : nil,
+                        removal: blends ? "Remove fill" : "Remove colour") {
                 fillControls(blends: blends, action: "Change Fill", suggest: true)
+                if !nodes.isEmpty, nodes.allSatisfy({ $0.fill.on && $0.fill.image != nil }) {
+                    backgroundRow
+                }
                 if store.editingPicture != nil {
-                    Text("Drag the picture to move it in its frame, or a corner to resize it. Option keeps its middle, and Return ends placing.")
+                    Group {
+                        if nodes.first?.fill.image?.cutout != nil {
+                            Text("Click a subject to keep or drop it. Drag the picture to move it in its frame, or a corner to resize it, and Return ends placing.")
+                        } else {
+                            Text("Drag the picture to move it in its frame, or a corner to resize it. Option keeps its middle, and Return ends placing.")
+                        }
+                    }
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.ink3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -627,6 +668,25 @@ private struct SelectionInspector: View {
         .transition(.unfold)
     }
 
+    /// Whether the selected pictures show whole, or their subject alone. The subject is found
+    /// away from the main thread: meanwhile "Subject alone" fills with pencil as the work goes,
+    /// and the canvas shows it being found. A line under it says why, when nothing stands out.
+    @ViewBuilder private var backgroundRow: some View {
+        let work = store.selection.compactMap { store.cuttingOut[$0]?.done }
+        let alone = !work.isEmpty || common({ $0.fill.image?.cutout != nil }) == true
+        SegmentedWell(selection: Binding(get: { alone }, set: { cut in
+            if cut { store.removeBackground() } else if work.isEmpty { store.restoreBackground() }
+        }), options: [(false, "Whole picture"), (true, "Subject alone")], progress: work.min())
+        .help("Take the background away, leaving what stands out in the picture. Double-click the picture to keep or drop each subject in it. The picture itself is kept, to have it back.")
+        if let trouble = store.cutoutTrouble {
+            Text(trouble)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.ink3)
+                .fixedSize(horizontal: false, vertical: true)
+                .transition(.unfold)
+        }
+    }
+
     /// How the selected layers mix with what lies under them. Each mode shows on the canvas while
     /// it is pointed at in the menu.
     private var blendRow: some View {
@@ -634,10 +694,10 @@ private struct SelectionInspector: View {
         let groups: [[BlendMode?]] = [[nil], [.darken, .multiply, .colorBurn], [.lighten, .screen, .colorDodge],
                                       [.overlay, .softLight, .hardLight], [.difference, .exclusion], [.hue, .saturation, .color, .luminosity]]
         return Row(title: "Blend") {
-            MenuButton(id: "blend-mode", title: blend.map { $0?.title ?? "Normal" } ?? "Several", width: 180, fills: true) {
+            MenuButton(id: "blend-mode", title: blend.map { $0.map { .verbatim($0.title) } ?? "Normal" } ?? "Several", width: 180, fills: true) {
                 groups.enumerated().flatMap { i, modes in
                     (i > 0 ? [MenuEntry.separator] : []) + modes.map { mode in
-                        MenuEntry.item(mode?.title ?? "Normal", checked: blend == .some(mode),
+                        MenuEntry.item(mode.map { .verbatim($0.title) } ?? "Normal", checked: blend == .some(mode),
                                        preview: { on in store.showPreview("blend", on ? { $0.blend = mode } : nil) }) {
                             store.updateSelection("Change Blend Mode") { $0.blend = mode }
                         }
@@ -649,7 +709,7 @@ private struct SelectionInspector: View {
 
     /// What fills the selection, a layer's or an artboard's background. Its swatch opens the fill
     /// menu, where one colour or a gradient is chosen and its colours; text takes one colour.
-    @ViewBuilder private func fillControls(blends: Bool, action: String, suggest: Bool) -> some View {
+    @ViewBuilder private func fillControls(blends: Bool, action: LocalizedStringResource, suggest: Bool) -> some View {
         let color = common { $0.fill.color }
         let suggested = suggest ? suggestions(besides: color) : []
         let preview: (RGBA?) -> Void = { c in store.showPreview("fill-colour", c.map { c in { $0.fill.color = c; $0.fill.on = true } }) }
@@ -665,7 +725,8 @@ private struct SelectionInspector: View {
         let color = common { $0.border.color }
         return Block {
             OptionBlock(title: lineOnly ? "Line" : "Border",
-                        remove: removable ? { store.updateSelection("Remove Border") { $0.border.on = false } } : nil) {
+                        remove: removable ? { store.updateSelection("Remove Border") { $0.border.on = false } } : nil,
+                        removal: lineOnly ? "Remove line" : "Remove border") {
                 PresetStrip(action: "Change Border", items: Presets.borders.map { preset in
                     PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { Presets.isBorder(preset.width, $0.border) }) {
                         Presets.applyBorder(preset.width, to: &$0)
@@ -679,7 +740,7 @@ private struct SelectionInspector: View {
                 }
             } exact: {
                 HStack(spacing: 8) {
-                    layerField("Size", range: 0...1000, scrub: 0.25, action: "Change Border",
+                    layerField(LocalizedStringResource("border.size", defaultValue: "Size", comment: "How thick a border is."), range: 0...1000, scrub: 0.25, action: "Change Border",
                                get: { Double($0.border.width) }, set: { $0.border.width = CGFloat($1); $0.border.on = true })
                     layerField("Dash", range: 0...1000, scrub: 0.25, action: "Change Border", get: { Double($0.border.dash) }) { n, v in
                         n.border.dash = CGFloat(v)
@@ -700,17 +761,26 @@ private struct SelectionInspector: View {
         .transition(.unfold)
     }
 
-    private var shadowBlock: some View {
-        Block {
+    /// A shadow under the layers, or inside them as if they were pressed into the page; a line
+    /// has no inside for one to fall in.
+    private func shadowBlock(canInset: Bool) -> some View {
+        let inset = canInset && common { $0.shadow.inset == true } == true
+        let presets = inset ? Presets.innerShadows : Presets.shadows
+        return Block {
             OptionBlock(title: "Shadow",
-                        remove: { store.updateSelection("Remove Shadow") { $0.shadow.on = false } }) {
-                PresetStrip(action: "Change Shadow", items: Presets.shadows.map { preset in
+                        remove: { store.updateSelection("Remove Shadow") { $0.shadow.on = false } }, removal: "Remove shadow") {
+                if canInset {
+                    SegmentedWell(selection: Binding(get: { inset }, set: { v in
+                        store.updateSelection("Change Shadow") { Presets.setShadowInset(v, on: &$0) }
+                    }), options: [(false, "Outside"), (true, "Inside")])
+                }
+                PresetStrip(action: "Change Shadow", items: presets.map { preset in
                     PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { Presets.isShadow(preset, $0.shadow) }) {
                         Presets.applyShadow(preset, to: &$0)
                     }
                 }) { item in
-                    let preset = Presets.shadows.first { $0.id == item.id }
-                    ShadowGlyph(y: preset?.y ?? 0, blur: preset?.blur ?? 0)
+                    let preset = presets.first { $0.id == item.id }
+                    ShadowGlyph(y: preset?.y ?? 0, blur: preset?.blur ?? 0, inset: inset)
                 }
                 ColorField(id: "shadow", color: common { $0.shadow.color }, action: "Change Shadow") { c in
                     store.updateSelection("Change Shadow") { $0.shadow.color = c }
@@ -724,7 +794,32 @@ private struct SelectionInspector: View {
                     layerField("B", range: 0...1000, scrub: 0.5, action: "Change Shadow",
                                get: { Double($0.shadow.blur) }, set: { $0.shadow.blur = CGFloat($1) })
                 }
-                Caption("Or drag the shadow itself on the canvas.")
+                // Inside, the shadow lies under the layer itself, where dragging moves the layer.
+                if !inset {
+                    Caption("Or drag the shadow itself on the canvas.")
+                        .transition(.unfold)
+                }
+            }
+        }
+        .transition(.unfold)
+    }
+
+    /// Layers held up off the page. Aimed on the pad, where the card faces the pointer, or on the
+    /// canvas by the knob in each one's middle; the exact turn, and how near, under it.
+    private var depthBlock: some View {
+        Block {
+            OptionBlock(title: "3D", remove: { store.updateSelection("Remove 3D") { $0.transform3D = nil } }, removal: "Remove 3D") {
+                AimPad(turn: nodes.first?.transform3D ?? Transform3D())
+            } exact: {
+                HStack(spacing: 8) {
+                    layerField("X", unit: "°", range: -180...180, scrub: 0.5, action: "Turn in Depth",
+                               get: { $0.transform3D?.x ?? 0 }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.x = v })
+                    layerField("Y", unit: "°", range: -180...180, scrub: 0.5, action: "Turn in Depth",
+                               get: { $0.transform3D?.y ?? 0 }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.y = v })
+                    layerField("Z", range: -10_000...10_000, scrub: 1, action: "Turn in Depth",
+                               get: { Double($0.transform3D?.z ?? 0) }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.z = CGFloat(v) })
+                }
+                Caption("On the canvas, drag the knob in its middle to aim it, with Option to bring it nearer. Just outside a side, a drag turns anything in depth.")
             }
         }
         .transition(.unfold)
@@ -734,8 +829,9 @@ private struct SelectionInspector: View {
     /// with an outline to show it through can blur what is behind them.
     private func blurBlock(canBlurBehind: Bool) -> some View {
         let behind = canBlurBehind && common { $0.blur?.background == true } == true
+        let growing = common { $0.blur?.ramp != nil } == true
         return Block {
-            OptionBlock(title: "Blur", remove: { store.updateSelection("Remove Blur") { $0.blur = nil } }) {
+            OptionBlock(title: "Blur", remove: { store.updateSelection("Remove Blur") { $0.blur = nil } }, removal: "Remove blur") {
                 if canBlurBehind {
                     SegmentedWell(selection: Binding(get: { behind }, set: { v in
                         store.updateSelection("Change Blur") { n in
@@ -751,6 +847,26 @@ private struct SelectionInspector: View {
                 }) { item in
                     let i = Presets.blurs.firstIndex { $0.id == item.id } ?? 0
                     BlurGlyph(amount: CGFloat(i) / CGFloat(max(Presets.blurs.count - 1, 1)), behind: behind)
+                }
+                SegmentedWell(selection: Binding(get: { growing }, set: { v in
+                    store.updateSelection("Change Blur") { n in
+                        Presets.applyBlur(n.blur?.radius ?? Presets.blurs[1].radius, to: &n)
+                        let kept = n.blur?.ramp
+                        n.blur?.ramp = v ? kept ?? .down : nil
+                    }
+                }), options: [(false, "All over"), (true, "Growing")])
+                if growing, let first = nodes.first, let ramp = first.blur?.ramp {
+                    Group {
+                        RampPad(ramp: ramp, aspect: first.frame.width / max(first.frame.height, 1))
+                        PresetStrip(action: "Change Blur", items: Presets.ramps.map { preset in
+                            PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { $0.blur?.ramp == BlurRamp.toward(preset.edge) }) {
+                                $0.blur?.ramp = BlurRamp.toward(preset.edge)
+                            }
+                        }) { item in
+                            RampGlyph(edge: Presets.ramps.first { $0.id == item.id }?.edge ?? 0)
+                        }
+                    }
+                    .transition(.unfold)
                 }
             } exact: {
                 Row(title: "Amount") {
@@ -769,6 +885,9 @@ private struct SelectionInspector: View {
                 }
                 if behind {
                     Caption("Light brightens what shows through, or darkens it below zero. Fill is how much of the layer's own colour lies over it.")
+                }
+                if growing {
+                    Caption("A growing blur is sharp at the ring and blurs by the whole amount at the dot.")
                 }
             }
         }
@@ -790,7 +909,7 @@ private struct PathBlock: View {
         Block {
             OptionBlock(title: "Path") {
                 SegmentedWell(selection: Binding(get: { store.selectedPathsClosed ?? false }, set: { closed in store.setClosed(closed) }),
-                              options: [(false, "Open"), (true, "Closed")])
+                              options: [(false, LocalizedStringResource("path.open", defaultValue: "Open", comment: "An open path, as opposed to a closed one.")), (true, "Closed")])
                 // Where the outline crosses itself, or one part lies inside another: only a fill shows it.
                 if nodes.contains(where: \.fill.on) {
                     Row(title: "Overlaps") {
@@ -849,7 +968,7 @@ private struct TextBlock: View {
         return styles.allSatisfy { value($0) == first } ? first : nil
     }
 
-    private func set(_ action: String, _ change: @escaping (inout TextStyle) -> Void) {
+    private func set(_ action: LocalizedStringResource, _ change: @escaping (inout TextStyle) -> Void) {
         store.updateSelection(action) { n in
             var s = n.style ?? TextStyle()
             change(&s)
@@ -868,8 +987,8 @@ private struct TextBlock: View {
     }
 
     /// A field for one part of every selected layer's text style; what is typed applies to each.
-    private func styleField(_ label: String, unit: String = "", range: ClosedRange<Double>, scrub: Double, decimals: Int = 1,
-                            action: String, value: Double?, get: @escaping (TextStyle) -> Double,
+    private func styleField(_ label: LocalizedStringResource, unit: String = "", range: ClosedRange<Double>, scrub: Double, decimals: Int = 1,
+                            action: LocalizedStringResource, value: Double?, get: @escaping (TextStyle) -> Double,
                             set apply: @escaping (inout TextStyle, Double) -> Void) -> NumberField {
         NumberField(label: label, value: value, unit: unit, range: range, scrub: scrub, decimals: decimals, action: action) { v in
             set(action) { apply(&$0, v) }
@@ -884,13 +1003,13 @@ private struct TextBlock: View {
         let size = common { Double($0.size) }
         Block {
             OptionBlock(title: "Text") {
-                MenuButton(id: "font-family", title: family.map(Fonts.displayName) ?? "Several fonts", width: Inspector.content, fills: true) {
+                MenuButton(id: "font-family", title: family.map { .verbatim(Fonts.displayName($0)) } ?? "Several fonts", width: Inspector.content, fills: true) {
                     familyEntries(current: family)
                 }
                 HStack(spacing: 8) {
-                    MenuButton(id: "font-face", title: face ?? "Several", width: 200, fills: true) {
+                    MenuButton(id: "font-face", title: face.map { .verbatim($0) } ?? "Several", width: 200, fills: true) {
                         Fonts.faces(of: family ?? TextStyle.system).map { f in
-                            MenuEntry.item(f, checked: f == face, preview: { on in preview(on ? { $0.face = f } : nil) }) {
+                            MenuEntry.item(.verbatim(f), checked: f == face, preview: { on in preview(on ? { $0.face = f } : nil) }) {
                                 set("Change Font") { $0.face = f }
                             }
                         }
@@ -913,7 +1032,7 @@ private struct TextBlock: View {
                 HStack(spacing: 8) {
                     IconChoice(selection: common(\.align), options: [
                         (.left, "text.alignleft", "Align left"),
-                        (.center, "text.aligncenter", "Centre"),
+                        (.center, "text.aligncenter", LocalizedStringResource("text.align-centre", defaultValue: "Centre", comment: "Centres the text, beside Align left and Align right.")),
                         (.right, "text.alignright", "Align right"),
                     ]) { a in set("Align Text") { $0.align = a } }
                     IconChoice(selection: common(\.underline), options: [(true, "underline", "Underline")]) { _ in
@@ -923,7 +1042,7 @@ private struct TextBlock: View {
                     .frame(width: Inspector.endField)
                 }
                 SegmentedWell(selection: Binding(get: { common(\.sizing) ?? .autoWidth }, set: { v in
-                    let action = switch v {
+                    let action: LocalizedStringResource = switch v {
                     case .autoWidth: "Auto Size"
                     case .autoHeight: "Fixed Width"
                     case .fixed: "Fixed Size"
@@ -931,7 +1050,7 @@ private struct TextBlock: View {
                     set(action) { $0.sizing = v }
                 }), options: [(.autoWidth, "Auto size"), (.autoHeight, "Fixed width"), (.fixed, "Fixed size")])
             } exact: {
-                Pair(styleField("Line", range: 0...4000, scrub: 0.25, action: "Change Line Spacing", value: lineSpacing,
+                Pair(styleField(LocalizedStringResource("text.line-spacing", defaultValue: "Line", comment: "The distance between lines of text, beside the letter spacing."), range: 0...4000, scrub: 0.25, action: "Change Line Spacing", value: lineSpacing,
                                 get: { Double($0.lineSpacing ?? Self.naturalLineHeight($0)) }, set: { $0.lineSpacing = CGFloat($1) }),
                      styleField("Letter", range: -500...2000, scrub: 1, decimals: 0, action: "Change Letter Spacing",
                                 value: common { Double($0.tracking) }, get: { Double($0.tracking) }, set: { $0.tracking = CGFloat($1) }))
@@ -963,7 +1082,7 @@ private struct TextBlock: View {
                 let faces = Fonts.faces(of: f)
                 if !faces.contains(s.face) { s.face = faces.first { $0 == "Regular" } ?? faces.first ?? "Regular" }
             }
-            return MenuEntry.item(Fonts.displayName(f), checked: f == current,
+            return MenuEntry.item(.verbatim(Fonts.displayName(f)), checked: f == current,
                                   font: f != TextStyle.system && Fonts.showsOwnName(f) ? .custom(f, size: 13) : .system(size: 13),
                                   preview: { on in preview(on ? choose : nil) }) {
                 set("Change Font", choose)
@@ -981,7 +1100,7 @@ private struct Header: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(nodes.count == 1 ? nodes[0].name : "\(nodes.count) layers")
+            (nodes.count == 1 ? Text(verbatim: nodes[0].name) : Text("\(nodes.count) layers"))
                 .font(Theme.serif(17, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
@@ -995,17 +1114,89 @@ private struct Header: View {
         .padding(.bottom, 12)
     }
 
+    /// Said whole for each kind of layer, as each language puts its own words around the kind.
     private var detail: String {
         if nodes.count == 1 {
             let n = nodes[0]
-            if let parent = store.doc.parent(of: n.id) { return "\(n.kind.title) on \(parent.name)" }
-            if n.isCarousel {
-                return "Carousel, \(n.slideCount) \(n.slideCount == 1 ? "slide" : "slides"), \(n.children.count) \(n.children.count == 1 ? "layer" : "layers")"
+            if let spec = n.grid {
+                if let parent = store.doc.parent(of: n.id) {
+                    return String(localized: "Repeat grid, \(spec.columns) × \(spec.rows) on \(parent.name)")
+                }
+                return String(localized: "Repeat grid, \(spec.columns) × \(spec.rows)")
             }
-            return n.isArtboard ? "Artboard, \(n.children.count) \(n.children.count == 1 ? "layer" : "layers")" : "\(n.kind.title) on the canvas"
+            if let grid = store.grid(holding: n.id), let found = RepeatGrid.cell(of: n.id, in: grid, doc: store.doc), let spec = grid.grid {
+                return Self.inCell(n.kind, found.cell.row * spec.columns + found.cell.column + 1, of: spec.count)
+            }
+            if let parent = store.doc.parent(of: n.id) { return Self.on(n.kind, parent.name) }
+            guard n.isArtboard else { return Self.onCanvas(n.kind) }
+            // A list of what the artboard is and holds.
+            let layers = store.seenLayers(of: n).count, posts = n.posts.count, slides = n.slideCount
+            var said: [String] = []
+            if n.isDeck {
+                said.append(posts == 1 ? String(localized: "Stack of \(posts) post") : String(localized: "Stack of \(posts) posts"))
+            } else {
+                said.append(n.isCarousel ? String(localized: "Carousel") : String(localized: "Artboard"))
+            }
+            if n.isCarousel {
+                said.append(slides == 1 ? String(localized: "\(slides) slide") : String(localized: "\(slides) slides"))
+            }
+            said.append(layers == 1 ? String(localized: "\(layers) layer") : String(localized: "\(layers) layers"))
+            return said.joined(separator: ", ")
         }
         let kinds = Set(nodes.map(\.kind))
-        return kinds.count == 1 ? "All \(nodes[0].kind.title.lowercased())s" : "Mixed layers"
+        return kinds.count == 1 ? Self.all(nodes[0].kind) : String(localized: "Mixed layers")
+    }
+
+    /// A layer in a repeat grid's cell. (An artboard is never in one, nor on anything.)
+    private static func inCell(_ kind: Node.Kind, _ cell: Int, of count: Int) -> String {
+        switch kind {
+        case .rectangle: String(localized: "Rectangle in cell \(cell) of \(count)")
+        case .ellipse: String(localized: "Ellipse in cell \(cell) of \(count)")
+        case .line: String(localized: "Line in cell \(cell) of \(count)")
+        case .text: String(localized: "Text in cell \(cell) of \(count)")
+        case .group: String(localized: "Group in cell \(cell) of \(count)")
+        case .path: String(localized: "Path in cell \(cell) of \(count)")
+        case .artboard: kind.title
+        }
+    }
+
+    /// A layer on an artboard, or in a group, by its name.
+    private static func on(_ kind: Node.Kind, _ parent: String) -> String {
+        switch kind {
+        case .rectangle: String(localized: "Rectangle on \(parent)")
+        case .ellipse: String(localized: "Ellipse on \(parent)")
+        case .line: String(localized: "Line on \(parent)")
+        case .text: String(localized: "Text on \(parent)")
+        case .group: String(localized: "Group on \(parent)")
+        case .path: String(localized: "Path on \(parent)")
+        case .artboard: kind.title
+        }
+    }
+
+    /// A layer on no artboard. (An artboard says what it holds instead.)
+    private static func onCanvas(_ kind: Node.Kind) -> String {
+        switch kind {
+        case .rectangle: String(localized: "Rectangle on the canvas")
+        case .ellipse: String(localized: "Ellipse on the canvas")
+        case .line: String(localized: "Line on the canvas")
+        case .text: String(localized: "Text on the canvas")
+        case .group: String(localized: "Group on the canvas")
+        case .path: String(localized: "Path on the canvas")
+        case .artboard: kind.title
+        }
+    }
+
+    /// Several layers, all of one kind.
+    private static func all(_ kind: Node.Kind) -> String {
+        switch kind {
+        case .artboard: String(localized: "All artboards")
+        case .rectangle: String(localized: "All rectangles")
+        case .ellipse: String(localized: "All ellipses")
+        case .line: String(localized: "All lines")
+        case .text: String(localized: "All texts")
+        case .group: String(localized: "All groups")
+        case .path: String(localized: "All paths")
+        }
     }
 }
 
@@ -1065,7 +1256,7 @@ private struct AlignBar: View {
         .padding(.bottom, 10)
     }
 
-    private func button(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+    private func button(_ symbol: String, _ help: LocalizedStringResource, action: @escaping () -> Void) -> some View {
         IconButton(symbol: symbol, help: help, size: 28, action: action)
     }
 }
@@ -1079,7 +1270,7 @@ private struct CombineButton: View {
     let action: () -> Void
     @State private var hovering = false
 
-    private var help: String {
+    private var help: LocalizedStringResource {
         switch how {
         case .union: "Union: join the shapes into one  ⌥⌘U"
         case .subtract: "Subtract: cut the front shapes out of the back one  ⌥⌘S"
@@ -1122,7 +1313,7 @@ private struct CombineButton: View {
         .contentShape(Circle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: action)
-        .help(help)
+        .help(Text(help))
         .animation(Theme.quick, value: hovering)
         .animation(Theme.quick, value: on)
         .accessibilityLabel(how?.title ?? "Build")
@@ -1131,7 +1322,7 @@ private struct CombineButton: View {
 }
 
 /// A block of the inspector, set off from the next by a hairline.
-private struct Block<Content: View>: View {
+struct Block<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -1146,8 +1337,8 @@ private struct Block<Content: View>: View {
 
 /// A name on the left, quieter than a block's title, and its control where the second of two
 /// fields side by side begins, so that it lines up with them.
-private struct Row<Content: View>: View {
-    let title: String
+struct Row<Content: View>: View {
+    let title: LocalizedStringResource
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -1166,7 +1357,7 @@ private struct Row<Content: View>: View {
 
 /// Two controls side by side, each in one of the inspector's two columns, and what goes between
 /// them, such as the lock between width and height.
-private struct Pair<First: View, Second: View, Between: View>: View {
+struct Pair<First: View, Second: View, Between: View>: View {
     let first: First
     let second: Second
     let between: Between
@@ -1193,9 +1384,9 @@ extension Pair where Between == Color {
 }
 
 /// A line or two that says how something works, under its controls.
-private struct Caption: View {
-    let text: String
-    init(_ text: String) { self.text = text }
+struct Caption: View {
+    let text: LocalizedStringResource
+    init(_ text: LocalizedStringResource) { self.text = text }
 
     var body: some View {
         Text(text)
@@ -1225,7 +1416,8 @@ private struct AspectLock: View {
 /// A row of small symbol buttons, one of them chosen, in a well.
 struct IconChoice<Value: Hashable>: View {
     let selection: Value?
-    let options: [(Value, String, String)]
+    /// Each value, its symbol, and what it is called.
+    let options: [(Value, String, LocalizedStringResource)]
     let choose: (Value) -> Void
     @Namespace private var namespace
 
@@ -1248,7 +1440,7 @@ struct IconChoice<Value: Hashable>: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture { withAnimation(Theme.spring) { choose(value) } }
-                    .help(help)
+                    .help(Text(help))
             }
         }
         .padding(2)

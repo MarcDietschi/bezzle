@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// A note at the foot of the canvas after a design has been brought in from Adobe XD: how much
+/// A note at the foot of the canvas after a design has been brought in from another app: how much
 /// came across, and what looks a little different here, so it is clear what to check.
 struct ImportReportCard: View {
     let store: DocumentStore
-    let report: XDReport
+    let report: ImportReport
     @State private var expanded = false
 
     private static let shown = 5
@@ -13,10 +13,11 @@ struct ImportReportCard: View {
         let lines = report.notes.sorted { $0.value > $1.value }
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Brought over from Adobe XD")
+                Text("Brought over from \(report.source)")
                     .font(Theme.serif(17, weight: .medium))
                     .foregroundStyle(Theme.ink)
-                Text(verbatim: "\(count(report.artboards, "artboard")) and \(count(report.layers, "layer")).")
+                // Each count is a phrase of its own, so each can be singular or plural.
+                Text("\(String(localized: "\(report.artboards) artboards")) and \(String(localized: "\(report.layers) layers")).")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.ink3)
             }
@@ -33,7 +34,7 @@ struct ImportReportCard: View {
                         Note(text: line.key, count: line.value)
                     }
                     if !report.missingFonts.isEmpty {
-                        Note(text: "Fonts not on this Mac, shown in another: " + report.missingFonts.sorted().joined(separator: ", "), count: nil)
+                        Note(text: String(localized: "Fonts not on this Mac, shown in another: \(report.missingFonts.sorted().joined(separator: ", "))"), count: nil)
                     }
                     if lines.count > Self.shown && !expanded {
                         TextButton(title: "\(lines.count - Self.shown) more…") { withAnimation(Theme.spring) { expanded = true } }
@@ -49,10 +50,6 @@ struct ImportReportCard: View {
         .frame(width: 400, alignment: .leading)
         .card(radius: 14, lifted: true)
         .padding(.bottom, 22)
-    }
-
-    private func count(_ n: Int, _ word: String) -> String {
-        "\(n.formatted()) \(word)\(n == 1 ? "" : "s")"
     }
 }
 

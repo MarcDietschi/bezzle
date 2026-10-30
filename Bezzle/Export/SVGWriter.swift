@@ -4,7 +4,7 @@ import AppKit
 /// stays sharp and can be changed elsewhere: rectangles, ellipses and paths, text that is still
 /// text, gradients, borders inside and outside, shadows and blurs as filters, pictures carried
 /// in the file. A blur of what lies behind a layer, which SVG cannot do, comes as a picture of
-/// what shows through. Layers keep their names as ids.
+/// what shows through, and a layer turned in depth as a picture of it. Layers keep their names as ids.
 struct SVGWriter {
     private var defs: [String] = []
     private var ids: Set<String> = []
@@ -42,6 +42,8 @@ struct SVGWriter {
 
     /// An artboard, or only what reaches `part` of it, on the canvas, such as one slide of a carousel.
     private mutating func artboard(_ board: Node, part: CGRect? = nil) -> String {
+        // A deck goes out as one post: its first, unless it was narrowed to another.
+        let board = board.shownAlone
         let size = board.frame.size
         var out = "<g id=\"\(id(for: board.name))\" transform=\"translate(\(n(board.frame.minX)) \(n(board.frame.minY)))\">\n"
         if board.fill.on {
@@ -66,6 +68,8 @@ struct SVGWriter {
     /// A layer in its parent's coordinates. `options` says where it lies on its artboard.
     private mutating func layer(_ node: Node, _ options: Renderer.Options) -> String {
         guard !node.hidden, node.opacity > 0 else { return "" }
+        if Perspective(node) != nil { return inDepth(node, options) }
+        if let blur = node.blur, blur.on, !blur.background, blur.radius > 0, let ramp = blur.ramp { return growing(node, blur, ramp, options) }
         var attrs = ["id=\"\(id(for: node.name))\""]
         if node.opacity < 1 { attrs.append("opacity=\"\(n(node.opacity))\"") }
         if let blend = node.blend { attrs.append("style=\"mix-blend-mode:\(Self.css(blend))\"") }
@@ -76,12 +80,20 @@ struct SVGWriter {
            let (image, region) = Renderer.backdropPicture(of: node, scale: pictureScale, options: options), let href = Self.dataURI(image) {
             let clip = newID("clip")
             defs.append("<clipPath id=\"\(clip)\"><path d=\"\(PathData.string(Renderer.placedOutline(of: node)))\"\(node.evenOdd == true ? " clip-rule=\"evenodd\"" : "")/></clipPath>")
-            inner += "<image x=\"\(n(region.minX))\" y=\"\(n(region.minY))\" width=\"\(n(CGFloat(image.width) / pictureScale))\" height=\"\(n(CGFloat(image.height) / pictureScale))\" preserveAspectRatio=\"none\" xlink:href=\"\(href)\" clip-path=\"url(#\(clip))\"/>"
+            inner += "<image x=\"\(n(region.minX))\" y=\"\(n(region.minY))\" width=\"\(n(region.width))\" height=\"\(n(region.height))\" preserveAspectRatio=\"none\" xlink:href=\"\(href)\" clip-path=\"url(#\(clip))\"/>"
         }
         var place = "translate(\(n(node.frame.minX)) \(n(node.frame.minY)))"
         if node.rotation != 0 { place += " rotate(\(n(node.rotation)) \(n(node.frame.width / 2)) \(n(node.frame.height / 2)))" }
         inner += "<g transform=\"\(place)\">\(content(node, options))</g>"
         return "<g \(attrs.joined(separator: " "))>\(inner)</g>"
+    }
+
+    /// A layer turned in depth, which SVG cannot do: a picture of it as it shows, still mixed with
+    /// what lies under it as it is.
+    private mutating func inDepth(_ node: Node, _ options: Renderer.Options) -> String {
+        guard let (image, region) = Renderer.depthPicture(of: node, scale: pictureScale, options: options), let href = Self.dataURI(image) else { return "" }
+        let blend = node.blend.map { " style=\"mix-blend-mode:\(Self.css($0))\"" } ?? ""
+        return "<image id=\"\(id(for: node.name))\" x=\"\(n(region.minX))\" y=\"\(n(region.minY))\" width=\"\(n(CGFloat(image.width) / pictureScale))\" height=\"\(n(CGFloat(image.height) / pictureScale))\" preserveAspectRatio=\"none\"\(blend) xlink:href=\"\(href)\"/>"
     }
 
     private mutating func content(_ node: Node, _ options: Renderer.Options) -> String {
@@ -112,7 +124,12 @@ struct SVGWriter {
                 out += node.fill.image != nil ? picture(node.fill, size: node.frame.size, geometry: geometry, rule: rule, alpha: alpha)
                     : geometry + " \(paint(node.fill, size: node.frame.size, alpha: alpha))\(rule)/>"
             }
+            if node.shadow.inside { out += innerShadow(node, geometry: geometry, rule: rule) }
             let closed = node.kind != .path || Self.isClosed(Renderer.outline(of: node))
+            // A cut-out picture's border goes round its subject.
+            if node.border.on, let silhouette = node.silhouette {
+                return out + stroke(node, geometry: "<path d=\"\(PathData.string(silhouette))\" fill-rule=\"evenodd\" clip-rule=\"evenodd\"", closed: true)
+            }
             return out + stroke(node, geometry: geometry, closed: closed)
         }
     }
@@ -165,7 +182,7 @@ struct SVGWriter {
     /// A picture filling a shape: the picture itself, carried in the file, cut to the outline.
     private mutating func picture(_ fill: Fill, size: CGSize, geometry: String, rule: String, alpha: Double) -> String {
         guard let image = fill.image else { return "" }
-        guard let href = dataURI(asset: image.asset) else { return geometry + " fill=\"#D9D9D9\"\(rule)/>" }
+        guard let href = dataURI(asset: image.shown) ?? (image.cutout != nil ? dataURI(asset: image.asset) : nil) else { return geometry + " fill=\"#D9D9D9\"\(rule)/>" }
         let clip = newID("clip")
         defs.append("<clipPath id=\"\(clip)\">\(geometry)\(rule.replacingOccurrences(of: "fill-rule", with: "clip-rule"))/></clipPath>")
         let r = Renderer.imageRect(image, in: size)
@@ -202,12 +219,40 @@ struct SVGWriter {
 
     // MARK: Shadows and blurs
 
+    /// A layer whose blur grows across it, which SVG cannot blur by more in some places than in
+    /// others: the layer sharp, and blurred all over above it, showing more of the blurred one
+    /// the further along the ramp, until past its end there is only that.
+    private mutating func growing(_ node: Node, _ blur: Blur, _ ramp: BlurRamp, _ options: Renderer.Options) -> String {
+        var sharp = node
+        sharp.blur = nil
+        sharp.opacity = 1
+        sharp.blend = nil
+        var soft = sharp
+        soft.blur = blur
+        soft.blur?.ramp = nil
+        soft.shadow.on = soft.shadow.inside
+        let t = Renderer.localTransform(node)
+        func at(_ u: CGPoint) -> CGPoint { CGPoint(x: u.x * node.frame.width, y: u.y * node.frame.height).applying(t) }
+        let a = at(ramp.start), b = at(ramp.end)
+        let r = Renderer.reach(of: node).insetBy(dx: -blur.radius * 3 - 4, dy: -blur.radius * 3 - 4)
+        let gradient = newID("gradient"), mask = newID("mask")
+        defs.append("<linearGradient id=\"\(gradient)\" gradientUnits=\"userSpaceOnUse\" x1=\"\(n(a.x))\" y1=\"\(n(a.y))\" x2=\"\(n(b.x))\" y2=\"\(n(b.y))\"><stop offset=\"0\" stop-color=\"#000000\"/><stop offset=\"1\" stop-color=\"#FFFFFF\"/></linearGradient>")
+        defs.append("<mask id=\"\(mask)\" maskUnits=\"userSpaceOnUse\" x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\"><rect x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\" fill=\"url(#\(gradient))\"/></mask>")
+        var attrs = ["id=\"\(id(for: node.name))\""]
+        if node.opacity < 1 { attrs.append("opacity=\"\(n(node.opacity))\"") }
+        if let blend = node.blend { attrs.append("style=\"mix-blend-mode:\(Self.css(blend))\"") }
+        return "<g \(attrs.joined(separator: " "))>\(layer(sharp, options))<g mask=\"url(#\(mask))\">\(layer(soft, options))</g></g>"
+    }
+
     /// A layer's shadow and blur of its own as one filter, in its parent's coordinates: the
-    /// shadow falls first, and the blur softens the layer with its shadow, as on the canvas.
+    /// shadow falls first, and the blur softens the layer with its shadow, as on the canvas. A
+    /// shape's shadow inside lies over its fill and under its border, and is drawn there; text's
+    /// and a group's falls on all of it, here.
     private mutating func filter(for node: Node) -> String? {
-        let shadow = node.shadow.on ? node.shadow : nil
+        let shadow = node.shadow.outside ? node.shadow : nil
+        let inner = node.shadow.inside && [.text, .group].contains(node.kind) ? node.shadow : nil
         let blur = node.blur.flatMap { $0.on && !$0.background && $0.radius > 0 ? $0 : nil }
-        guard shadow != nil || blur != nil else { return nil }
+        guard shadow != nil || inner != nil || blur != nil else { return nil }
         let id = newID("effect")
         var steps = ""
         var source = "SourceGraphic"
@@ -215,11 +260,40 @@ struct SVGWriter {
             steps += "<feDropShadow in=\"\(source)\" dx=\"\(n(shadow.x))\" dy=\"\(n(shadow.y))\" stdDeviation=\"\(n(shadow.blur / 2))\" flood-color=\"#\(shadow.color.hex)\" flood-opacity=\"\(n(shadow.color.a))\" result=\"shadowed\"/>"
             source = "shadowed"
         }
+        if let inner {
+            steps += Self.cast(inner, dx: inner.x, dy: inner.y) + "<feMerge result=\"shadowed\"><feMergeNode in=\"\(source)\"/><feMergeNode in=\"inner\"/></feMerge>"
+            source = "shadowed"
+        }
         if let blur { steps += "<feGaussianBlur in=\"\(source)\" stdDeviation=\"\(n(blur.radius))\"/>" }
-        let r = Renderer.reach(of: node).insetBy(dx: -4, dy: -4)
+        var r = Renderer.reach(of: node).insetBy(dx: -4, dy: -4)
+        // A shadow inside is cast from all around, which the filter has to reach out to.
+        if let inner { r = r.insetBy(dx: -Renderer.innerReach(inner), dy: -Renderer.innerReach(inner)) }
         // Blurred as the canvas blurs, in sRGB, rather than in SVG's own linear light.
         defs.append("<filter id=\"\(id)\" filterUnits=\"userSpaceOnUse\" x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\" color-interpolation-filters=\"sRGB\">\(steps)</filter>")
         return id
+    }
+
+    /// A shape's shadow inside, in its own coordinates: its outline once more, filtered to nothing
+    /// but the shadow cast into it, turned back by the layer's own turn as on the canvas.
+    private mutating func innerShadow(_ node: Node, geometry: String, rule: String) -> String {
+        let s = node.shadow
+        let fall = Geometry.rotate(CGPoint(x: s.x, y: s.y), by: -node.rotation)
+        let m = Renderer.innerReach(s) + 4
+        let id = newID("effect")
+        defs.append("<filter id=\"\(id)\" filterUnits=\"userSpaceOnUse\" x=\"\(n(-m))\" y=\"\(n(-m))\" width=\"\(n(node.frame.width + 2 * m))\" height=\"\(n(node.frame.height + 2 * m))\" color-interpolation-filters=\"sRGB\">\(Self.cast(s, dx: fall.x, dy: fall.y))</filter>")
+        return geometry + " fill=\"#000000\"\(rule) filter=\"url(#\(id))\"/>"
+    }
+
+    /// Filter steps for a shadow cast into what is drawn from all around it: what lies outside,
+    /// blurred and moved, in the shadow's colour, kept to the inside. The result is the shadow
+    /// alone, named "inner".
+    private static func cast(_ s: Shadow, dx: CGFloat, dy: CGFloat) -> String {
+        "<feComponentTransfer in=\"SourceAlpha\" result=\"around\"><feFuncA type=\"table\" tableValues=\"1 0\"/></feComponentTransfer>"
+            + "<feGaussianBlur in=\"around\" stdDeviation=\"\(n(s.blur / 2))\"/>"
+            + "<feOffset dx=\"\(n(dx))\" dy=\"\(n(dy))\" result=\"cast\"/>"
+            + "<feFlood flood-color=\"#\(s.color.hex)\" flood-opacity=\"\(n(s.color.a))\"/>"
+            + "<feComposite in2=\"cast\" operator=\"in\"/>"
+            + "<feComposite in2=\"SourceAlpha\" operator=\"in\" result=\"inner\"/>"
     }
 
     // MARK: Text

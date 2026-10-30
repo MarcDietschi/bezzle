@@ -166,7 +166,8 @@ struct XDImportTests {
     @Test func bringsAnXDFileAcross() throws {
         let url = try Self.file()
         defer { try? FileManager.default.removeItem(at: url) }
-        let (doc, report) = try XDImporter.read(url)
+        let imported = try XDImporter.read(url)
+        let doc = imported.document, report = imported.report
         let board = try #require(doc.artboards.first)
         #expect(board.frame == CGRect(x: 100, y: 50, width: 375, height: 812))
         #expect(board.fill.color.hex == "000000")
@@ -213,7 +214,7 @@ struct XDImportTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let (design, _) = try XDImporter.importFile(url, into: folder)
+        let (design, _) = try Importer.importFile(url, into: folder)
         #expect(DesignFile.isPackage(design))
         #expect(try DesignFile.read(design).artboards.count == 1)
         // The XD file itself is left alone.

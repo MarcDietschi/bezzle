@@ -40,6 +40,31 @@
 				<string>com.adobe.xd</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Figma document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.figma.document</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Sketch document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.bohemiancoding.sketch.drawing.single</string>
+				<string>com.bohemiancoding.sketch.drawing</string>
+			</array>
+		</dict>
 	</array>
 	<key>CKSharingSupported</key>
 	<true/>
@@ -103,6 +128,42 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>xd</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.composite-content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Figma document</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.figma.document</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fig</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.composite-content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Sketch document</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.bohemiancoding.sketch.drawing.single</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sketch</string>
 				</array>
 			</dict>
 		</dict>

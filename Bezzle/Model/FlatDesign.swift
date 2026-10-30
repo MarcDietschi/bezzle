@@ -74,6 +74,9 @@ nonisolated struct LayerField: @unchecked Sendable {
         LayerField("pathBox", \.pathBox), LayerField("evenOdd", \.evenOdd), LayerField("mask", \.mask),
         LayerField("blur", \.blur), LayerField("blend", \.blend), LayerField("hidden", \.hidden),
         LayerField("locked", \.locked), LayerField("clips", \.clips), LayerField("slideSize", \.slideSize),
+        LayerField("transform3D", \.transform3D),
+        LayerField("grid", \.grid),
+        LayerField("deck", \.deck), LayerField("post", \.post), LayerField("own", \.own),
     ]
 
     /// Each property of a layer, without what it holds, read all at once.
@@ -125,13 +128,46 @@ nonisolated struct FlatDesign: Equatable {
     private mutating func add(_ nodes: [Node], in parent: UUID?, at origin: CGPoint?) {
         order[parent] = nodes.map(\.id)
         for node in nodes {
-            var n = node
-            n.children = []
-            if let origin { n.frame.origin = n.frame.origin + origin }
-            if n.isGroup, let mask = n.mask { n.mask = mask.map { Self.moved($0, by: n.frame.origin) } }
+            let n = Self.alone(node, at: origin)
             entries[node.id] = Entry(parent: parent, node: n)
             if !node.children.isEmpty { add(node.children, in: node.id, at: node.isGroup ? n.frame.origin : nil) }
         }
+    }
+
+    /// A layer as it is kept here: without what it holds, and placed on its artboard.
+    private static func alone(_ node: Node, at origin: CGPoint?) -> Node {
+        var n = node
+        n.children = []
+        if let origin { n.frame.origin = n.frame.origin + origin }
+        if n.isGroup, let mask = n.mask { n.mask = mask.map { Self.moved($0, by: n.frame.origin) } }
+        return n
+    }
+
+    /// What changed from one version of a design to the next, as two small flat designs, the
+    /// one as it was and the other as it is: the artboards and loose layers that changed, with all
+    /// they hold, and the order of all of them. Taken in one against the other, they do just what
+    /// the two whole designs would, for nothing else differs, and what lies on the canvas is known
+    /// to lie there without its layer; and `replace` makes the flat design of the one into that of
+    /// the other. A large design is changed an artboard at a time, and is not gone through whole for it.
+    static func changes(from a: BezzleDocument, to b: BezzleDocument) -> (old: FlatDesign, new: FlatDesign) {
+        var was: [UUID: Node] = [:]
+        for node in a.nodes { was[node.id] = node }
+        let changed = b.nodes.filter { was[$0.id] != $0 }
+        let changedIDs = Set(changed.map(\.id)), there = Set(b.nodes.map(\.id))
+        var old = FlatDesign(), new = FlatDesign()
+        old.add(a.nodes.filter { !there.contains($0.id) || changedIDs.contains($0.id) }, in: nil, at: nil)
+        new.add(changed, in: nil, at: nil)
+        old.order[nil] = a.nodes.map(\.id)
+        new.order[nil] = b.nodes.map(\.id)
+        return (old, new)
+    }
+
+    /// Made into the flat design of a design's next version, given what `changes` found between them.
+    mutating func replace(_ old: FlatDesign, with new: FlatDesign) {
+        for id in old.entries.keys { entries[id] = nil }
+        for parent in old.order.keys { order[parent] = nil }
+        for (id, entry) in new.entries { entries[id] = entry }
+        for (parent, list) in new.order { order[parent] = list }
     }
 
     /// The design these layers make, its groups fitted around what they hold.
@@ -139,6 +175,8 @@ nonisolated struct FlatDesign: Equatable {
         var doc = BezzleDocument()
         var built = Set<UUID>()
         doc.nodes = (order[nil] ?? []).compactMap { build($0, at: nil, &built) }
+        doc.repairGrids()
+        doc.repairDecks()
         doc.fitGroups()
         doc.fitCarousels()
         return doc

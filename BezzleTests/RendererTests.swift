@@ -24,6 +24,102 @@ struct RendererTests {
         #expect(above.r > 250, "over the shape: \(above)")
     }
 
+    /// A white square on white with a shadow inside it, falling down, turned as far as `rotation`.
+    private func pressed(_ kind: Node.Kind = .rectangle, rotation: Double = 0, fill: Bool = true) throws -> CGImage {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        board.fill.color = .white
+        var box = Node(kind: kind, name: "R", frame: CGRect(x: 20, y: 20, width: 60, height: 60))
+        box.fill.color = .white
+        box.fill.on = fill
+        box.rotation = rotation
+        box.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.6), x: 0, y: 6, blur: 4, inset: true)
+        board.children = [box]
+        return try #require(Renderer.image(of: board, scale: 1))
+    }
+
+    @Test func aShadowInsideFallsInsideTheShapeAlone() throws {
+        for kind in [Node.Kind.rectangle, .ellipse] {
+            let image = try pressed(kind)
+            // Just inside the top edge, where the light above casts it; not at the foot, nor outside.
+            #expect(pixel(image, 50, 23).r < 200, "\(kind) inside the top: \(pixel(image, 50, 23))")
+            #expect(pixel(image, 50, 76).r > 250, "\(kind) inside the foot: \(pixel(image, 50, 76))")
+            #expect(pixel(image, 50, 15).r > 250 && pixel(image, 50, 85).r > 250, "\(kind) outside")
+        }
+        // A shape with no fill shows its hollow all the same.
+        #expect(pixel(try pressed(fill: false), 50, 23).r < 200)
+    }
+
+    @Test func aShadowInsideFallsFromAboveHoweverTheLayerIsTurned() throws {
+        for rotation in [90.0, 180, 270] {
+            let image = try pressed(rotation: rotation)
+            #expect(pixel(image, 50, 23).r < 200, "turned \(rotation): \(pixel(image, 50, 23))")
+            #expect(pixel(image, 50, 76).r > 250, "turned \(rotation): \(pixel(image, 50, 76))")
+            #expect(abs(Int(pixel(image, 23, 50).r) - Int(pixel(image, 76, 50).r)) < 4, "turned \(rotation): the sides alike")
+        }
+    }
+
+    @Test func aGroupsShadowInsideFallsOnWhatItHolds() throws {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        board.fill.color = .white
+        var a = Node(kind: .rectangle, name: "A", frame: CGRect(x: 0, y: 0, width: 25, height: 60))
+        a.fill.color = .white
+        var b = a
+        b.id = UUID()
+        b.frame.origin.x = 35
+        var group = Node(kind: .group, name: "G", frame: CGRect(x: 20, y: 20, width: 60, height: 60))
+        group.children = [a, b]
+        group.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.6), x: 0, y: 6, blur: 4, inset: true)
+        board.children = [group]
+        let image = try #require(Renderer.image(of: board, scale: 1))
+        #expect(pixel(image, 30, 23).r < 200, "inside the top of one: \(pixel(image, 30, 23))")
+        #expect(pixel(image, 70, 23).r < 200, "inside the top of the other: \(pixel(image, 70, 23))")
+        // Not in the gap between them, and no dark rim along their feet.
+        #expect(pixel(image, 50, 23).r > 250 && pixel(image, 50, 50).r > 250)
+        #expect(pixel(image, 30, 79).r > 240, "along the foot: \(pixel(image, 30, 79))")
+    }
+
+    @Test func aShadowInsideTextFallsOnTheLetters() throws {
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 200, height: 120))
+        board.fill.color = .white
+        var text = Node(kind: .text, name: "T", frame: CGRect(x: 20, y: 10, width: 10, height: 10))
+        text.text = "HI"
+        text.style?.size = 80
+        text.style?.face = "Black"
+        text.fill.color = .white
+        text.refit()
+        text.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.8), x: 0, y: 4, blur: 2, inset: true)
+        board.children = [text]
+        let image = try #require(Renderer.image(of: board, scale: 1))
+        let rep = NSBitmapImageRep(cgImage: image)
+        var dark = 0, outside = 0
+        for y in 0..<image.height { for x in 0..<image.width where rep.colorAt(x: x, y: y)!.usingColorSpace(.sRGB)!.redComponent < 0.8 {
+            dark += 1
+            if !text.frame.insetBy(dx: -1, dy: -1).contains(CGPoint(x: x, y: y)) { outside += 1 }
+        } }
+        // White letters on white show only by their shadow, and it lies within them.
+        #expect(dark > 40, "\(dark)")
+        #expect(outside == 0, "\(outside)")
+    }
+
+    @Test func whatIsBehindABlurDoesNotTakeAShadowInside() throws {
+        // A group's shadow inside, around glass in the group: what shows through the glass is
+        // the group drawn only up to the glass, which has no whole to cast a shadow into.
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        board.fill.color = .black
+        var paper = Node(kind: .rectangle, name: "Paper", frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        paper.fill.color = .white
+        var glass = Node(kind: .rectangle, name: "Glass", frame: CGRect(x: 40, y: 40, width: 80, height: 80))
+        glass.fill.color = .white
+        glass.blur = Blur(radius: 4, background: true, brightness: 0, fillOpacity: 0)
+        var group = Node(kind: .group, name: "G", frame: CGRect(x: 20, y: 20, width: 160, height: 160))
+        group.children = [paper, glass]
+        group.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.6), x: 0, y: 6, blur: 4, inset: true)
+        board.children = [group]
+        let image = try #require(Renderer.image(of: board, scale: 1))
+        #expect(pixel(image, 100, 100).r > 240, "through the glass: \(pixel(image, 100, 100))")
+        #expect(pixel(image, 100, 23).r < 200, "inside the top of the group: \(pixel(image, 100, 23))")
+    }
+
     @Test func aBackgroundBlurBlursWhatLiesBehindIt() throws {
         var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 40, y: 60, width: 200, height: 100))
         board.fill.color = .white

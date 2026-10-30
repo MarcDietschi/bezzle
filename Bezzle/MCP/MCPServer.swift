@@ -86,7 +86,7 @@ final class MCPServer {
 
     private func fail(_ error: Error) {
         if case NWError.posix(.EADDRINUSE) = error {
-            failure = "Port \(port) is in use"
+            failure = String(localized: "Port \(Int(port)) is in use")
         } else {
             failure = error.localizedDescription
         }

@@ -12,6 +12,8 @@ final class PictureTool {
     private let store: DocumentStore
     /// Draws the canvas again, for what changes here and not in the store: the guides, the fades.
     var redraw: () -> Void = {}
+    /// Told of a click on the picture, rather than a drag, where it was on screen.
+    var clicked: (CGPoint) -> Void = { _ in }
 
     init(store: DocumentStore) {
         self.store = store
@@ -77,7 +79,7 @@ final class PictureTool {
     /// when that would leave an edge of the layer showing.
     private var rest: CGRect?
     /// Springing back to rest once let go: from where to where, since when, and what it last set.
-    private var settling: (id: UUID, from: CGRect, to: CGRect, began: CFTimeInterval, action: String, last: ImageFill?)?
+    private var settling: (id: UUID, from: CGRect, to: CGRect, began: CFTimeInterval, action: LocalizedStringResource, last: ImageFill?)?
     private var settleTimer: Timer?
     /// Whether the picture's middle has caught on the layer's, across and down, for the guides.
     private var caught = (x: false, y: false)
@@ -230,8 +232,12 @@ final class PictureTool {
             rest = nil
             redraw()
         }
-        guard moved, let look else { return }
-        let action = if case .resize = drag { "Resize Picture" } else { "Move Picture" }
+        guard moved, let look else {
+            // A click on the picture: a cut-out picture's subjects are kept or dropped so.
+            if !moved, case .move = drag { clicked(downView) }
+            return
+        }
+        let action: LocalizedStringResource = if case .resize = drag { "Resize Picture" } else { "Move Picture" }
         // Let go past covering, it springs back; the gesture ends once it is there.
         if let rest, !Self.same(rest, look.rect) {
             settling = (look.id, look.rect, rest, CACurrentMediaTime(), action, look.image)
@@ -284,13 +290,13 @@ final class PictureTool {
     // MARK: - Placing
 
     @discardableResult
-    private func set(_ rect: CGRect, _ look: Look, _ action: String) -> ImageFill? {
+    private func set(_ rect: CGRect, _ look: Look, _ action: LocalizedStringResource) -> ImageFill? {
         set(rect, of: look.id, action)
     }
 
     /// Puts the picture at `rect` in its layer, and returns it as it now is.
     @discardableResult
-    private func set(_ rect: CGRect, of id: UUID, _ action: String) -> ImageFill? {
+    private func set(_ rect: CGRect, of id: UUID, _ action: LocalizedStringResource) -> ImageFill? {
         guard let node = store.node(id), let image = node.fill.image else { return nil }
         let placed = image.placed(at: rect, in: node.frame.size)
         store.edit(action) { doc in doc.update(id) { $0.fill.image = placed } }
@@ -376,6 +382,7 @@ final class PictureTool {
         ctx.setAlpha(alpha)
 
         let pixels = max(rect.width, rect.height) * look.viewport.zoom * deviceScale
+        // The whole picture, even one cut out: what lies past the layer is placed with the rest.
         if let picture = store.assets.image(look.image.asset, pixels: pixels) {
             ctx.saveGState()
             ctx.concatenate(toView)

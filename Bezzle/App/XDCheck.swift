@@ -19,7 +19,7 @@ enum XDCheck {
         for file in files {
             let started = Date()
             do {
-                let (url, report) = try XDImporter.importFile(file, into: Library.shared.folder)
+                let (url, report) = try Importer.importFile(file, into: Library.shared.folder)
                 let seconds = Date().timeIntervalSince(started)
                 let doc = try DesignFile.read(url)
                 let assets = Assets(design: url)

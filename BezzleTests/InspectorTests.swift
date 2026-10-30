@@ -90,6 +90,24 @@ struct PresetTests {
         #expect(n.shadow.color.hex == "3B3326")
     }
 
+    @Test func aShadowMovesInsideAndBack() {
+        var n = Node(kind: .rectangle, name: "R", frame: .zero)
+        Presets.applyShadow(Presets.shadows[1], to: &n)
+        // A choice becomes the one across from it: Soft, Pressed.
+        Presets.setShadowInset(true, on: &n)
+        #expect(n.shadow.inside && Presets.isShadow(Presets.innerShadows[1], n.shadow))
+        #expect(!Presets.isShadow(Presets.shadows[1], n.shadow))
+        Presets.setShadowInset(false, on: &n)
+        #expect(n.shadow.outside && Presets.isShadow(Presets.shadows[1], n.shadow))
+        // One set by hand keeps its numbers.
+        n.shadow.y = 7
+        Presets.setShadowInset(true, on: &n)
+        #expect(n.shadow.inside && n.shadow.y == 7 && n.shadow.blur == 12)
+        // Back under the layer it is as a shadow always was, so files and older Bezzles read it alike.
+        Presets.setShadowInset(false, on: &n)
+        #expect(n.shadow.inset == nil)
+    }
+
     @Test func aBlurKeepsWhatItBlurs() {
         var n = Node(kind: .rectangle, name: "R", frame: .zero)
         Presets.applyBlur(8, to: &n)

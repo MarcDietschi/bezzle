@@ -106,7 +106,7 @@ extension DocumentStore {
         }
         guard !cuts.isEmpty else { return false }
         var made: [UUID] = []
-        edit("Cut") { doc in
+        edit(LocalizedStringResource("knife.cut", defaultValue: "Cut", comment: "Undo name: shapes cut apart with the knife.")) { doc in
             for (id, parts) in cuts {
                 guard let n = doc.node(id), let at = doc.path(of: id) else { continue }
                 let o = doc.parentOrigin(of: id), parent = at.parent.map { doc[$0].id }
@@ -143,7 +143,7 @@ extension DocumentStore {
         let shape = Outlines.offset(outline, by: distance, round: round)
         var made = shape.flatMap { n.reshaped(to: $0, origin: doc.parentOrigin(of: id)) }
         made?.id = copy ?? UUID()
-        made?.name = "\(n.name) \(distance >= 0 ? "Outset" : "Inset")"
+        made?.name = distance >= 0 ? String(localized: "\(n.name) Outset") : String(localized: "\(n.name) Inset")
         edit(distance >= 0 ? "Outset" : "Inset") { doc in
             if let copy { _ = doc.detach(copy) }
             guard var made, let at = doc.path(of: id) else { return }
@@ -187,7 +187,7 @@ extension DocumentStore {
                 let keepsFill = n.fill.on && n.kind != .line
                 if keepsFill {
                     shape.id = UUID()
-                    shape.name = "\(n.name) Border"
+                    shape.name = String(localized: "\(n.name) Border")
                     // The layer's shadow falls from the layer, as it did.
                     shape.shadow.on = false
                     shape.frame = shape.frame.offsetBy(dx: o.x, dy: o.y)

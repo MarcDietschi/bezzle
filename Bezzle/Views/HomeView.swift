@@ -18,12 +18,12 @@ struct HomeView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Bezzle")
+                Text(verbatim: "Bezzle")
                     .font(Theme.serif(15, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                 Spacer()
                 CardButton(title: "Open…", height: 28) { openPanel() }
-                    .help("Open a design or an Adobe XD file  ⌘O")
+                    .help("Open a design, or an XD, Figma or Sketch file  ⌘O")
             }
             .padding(.leading, 92)
             .padding(.trailing, 20)
@@ -38,7 +38,7 @@ struct HomeView: View {
                         .rising(appeared, order: 0)
                         .padding(.bottom, 36)
                     SectionHead(title: "New design") {
-                        Text("Or drop a Bezzle or XD file anywhere here")
+                        Text("Or drop a Bezzle, XD, Figma or Sketch file anywhere here")
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.ink3)
                     }
@@ -68,7 +68,7 @@ struct HomeView: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            let designs = urls.filter { (BezzleDocument.fileExtensions + [XDImporter.fileExtension]).contains($0.pathExtension.lowercased()) }
+            let designs = urls.filter { BezzleDocument.fileExtensions.contains($0.pathExtension.lowercased()) || Importer.imports($0) }
             designs.forEach(open)
             return !designs.isEmpty
         } isTargeted: { over in withAnimation(Theme.spring) { dropping = over } }
@@ -99,7 +99,7 @@ struct HomeView: View {
         }
     }
 
-    static func greeting(at date: Date) -> String {
+    static func greeting(at date: Date) -> LocalizedStringResource {
         switch Calendar.current.component(.hour, from: date) {
         case 5..<12: "Good morning."
         case 12..<18: "Good afternoon."
@@ -120,29 +120,43 @@ struct HomeView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = DesignFile.openableTypes
         panel.allowsMultipleSelection = true
-        panel.prompt = "Open"
+        panel.prompt = String(localized: "Open")
         if panel.runModal() == .OK { panel.urls.forEach(open) }
     }
 
     // MARK: Your designs
 
     private var recents: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let sync = CloudSync.shared
+        let arriving = sync.arriving.sorted { $0.value.title < $1.value.title }
+        return VStack(alignment: .leading, spacing: 0) {
             SectionHead(title: "Your designs", count: library.entries.isEmpty ? nil : library.entries.count) {
                 TextButton(title: "Show in Finder") { NSWorkspace.shared.open(library.folder) }
                     .padding(.trailing, -8)
             }
             .rising(appeared, order: 12)
-            if library.entries.isEmpty {
+            if library.entries.isEmpty && arriving.isEmpty && sync.invitationProblem == nil {
                 NoDesigns()
                     .rising(appeared, order: 13)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 20)], alignment: .leading, spacing: 20) {
+                    // A shared design on its way takes its place first, where it will be.
+                    ForEach(arriving, id: \.key) { _, arrival in
+                        ArrivingCard(arrival: arrival)
+                            .transition(.asymmetric(insertion: .scale(scale: 0.94).combined(with: .opacity), removal: .opacity))
+                    }
+                    if let problem = sync.invitationProblem {
+                        UnopenedCard(problem: problem) { sync.invitationProblem = nil }
+                            .transition(.scale(scale: 0.94).combined(with: .opacity))
+                    }
                     ForEach(Array(library.entries.enumerated()), id: \.element.id) { i, entry in
                         DesignCard(entry: entry) { open(entry.url) }
                             .rising(appeared, order: 13 + min(i, 8))
                     }
                 }
+                .animation(Theme.spring, value: sync.arriving)
+                .animation(Theme.spring, value: sync.invitationProblem)
+                .animation(Theme.spring, value: library.entries.map(\.url))
             }
         }
     }
@@ -160,7 +174,7 @@ extension View {
 /// The head of a part of the home screen: its name on the left, set like the others, and one
 /// quiet thing to do on the right.
 private struct SectionHead<Trailing: View>: View {
-    let title: String
+    let title: LocalizedStringResource
     var count: Int?
     @ViewBuilder let trailing: Trailing
 
@@ -170,7 +184,7 @@ private struct SectionHead<Trailing: View>: View {
                 .font(Theme.serif(20, weight: .medium))
                 .foregroundStyle(Theme.ink)
             if let count {
-                Text("\(count)")
+                Text(verbatim: count.formatted())
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(Theme.ink3)
             }
@@ -230,9 +244,19 @@ private struct SizeTable: View {
 
     private func width(of item: Item, at scale: CGFloat) -> CGFloat {
         switch item {
-        case .preset(let p): max(p.size.width * scale, Self.slot)
-        case .custom: Self.customSlot
+        case .preset(let p): max(p.size.width * scale, Self.slot, Self.titleWidths[p.name] ?? 0)
+        case .custom: max(Self.customSlot, Self.customTitleWidth)
         }
+    }
+
+    /// How wide each title is in the language shown, so a long one widens its sheet's slot rather
+    /// than running into the next title.
+    private static let titleWidths: [String: CGFloat] = Dictionary(uniqueKeysWithValues: Preset.all.map { ($0.name, titleWidth($0.title)) })
+    private static let customTitleWidth = titleWidth("Your own size")
+
+    private static func titleWidth(_ title: LocalizedStringResource) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+        return ceil((String(localized: title) as NSString).size(withAttributes: [.font: font]).width)
     }
 
     private func sheets(_ row: [Item], at scale: CGFloat) -> CGFloat {
@@ -309,11 +333,11 @@ private struct SizeTable: View {
                     switch item {
                     case .preset(let preset):
                         PresetSheet(preset: preset, drawn: CGSize(width: preset.size.width * scale, height: preset.size.height * scale), area: area) {
-                            create(preset.size, preset.name)
+                            create(preset.size, String(localized: preset.title))
                         }
                     case .custom:
                         CustomSheet(width: $customWidth, height: $customHeight, scale: scale, area: area) {
-                            create(CGSize(width: customWidth.rounded(), height: customHeight.rounded()), "Artboard")
+                            create(CGSize(width: customWidth.rounded(), height: customHeight.rounded()), String(localized: "Artboard"))
                         }
                     }
                 }
@@ -327,7 +351,7 @@ private struct SizeTable: View {
 /// An artboard's title as the canvas writes it, over its top left corner: the name, and under
 /// it the size. The name takes the pencil's blue while its sheet is selected, as on the canvas.
 private struct SheetTitle<Size: View>: View {
-    let name: String
+    let name: LocalizedStringResource
     let selected: Bool
     @ViewBuilder let size: Size
 
@@ -358,7 +382,7 @@ private struct PresetSheet: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: SizeTable.titleGap) {
-                SheetTitle(name: preset.name, selected: hovering) {
+                SheetTitle(name: preset.title, selected: hovering) {
                     Text(verbatim: "\(Int(preset.size.width)) × \(Int(preset.size.height))")
                 }
                 Paper(size: drawn, selected: hovering)
@@ -370,8 +394,25 @@ private struct PresetSheet: View {
         .buttonStyle(Pressable())
         .onHover { hovering = $0 }
         .animation(Theme.quick, value: hovering)
-        .help("Start a design on a \(preset.name.lowercased()) artboard")
-        .accessibilityLabel("\(preset.name), \(Int(preset.size.width)) by \(Int(preset.size.height))")
+        .help(Text(help))
+        .accessibilityLabel("\(String(localized: preset.title)), \(Int(preset.size.width)) by \(Int(preset.size.height))")
+    }
+
+    /// What a click does, said whole for each size, as languages put a size and an artboard
+    /// together differently.
+    private var help: LocalizedStringResource {
+        switch preset.name {
+        case "Watch": "Start a design on a watch artboard"
+        case "Phone": "Start a design on a phone artboard"
+        case "Phone, large": "Start a design on a large phone artboard"
+        case "Tablet": "Start a design on a tablet artboard"
+        case "Laptop": "Start a design on a laptop artboard"
+        case "Desktop": "Start a design on a desktop artboard"
+        case "Social post": "Start a design on a social post artboard"
+        case "Story": "Start a design on a story artboard"
+        case "A4": "Start a design on an A4 artboard"
+        default: "Start a design on an artboard this size"
+        }
     }
 }
 
@@ -396,7 +437,7 @@ private struct CustomSheet: View {
             SheetTitle(name: "Your own size", selected: hovering) {
                 HStack(spacing: 3) {
                     PlainNumber(value: $width, submit: action)
-                    Text("×")
+                    Text(verbatim: "×")
                     PlainNumber(value: $height, submit: action)
                 }
             }
@@ -535,7 +576,7 @@ private struct DesignCard: View {
                         .aspectRatio(contentMode: .fit)
                         .padding(10)
                         .scaleEffect(hovering ? 1.035 : 1)
-                } else {
+                } else if !Library.shared.isMakingThumbnail(for: entry) {
                     Text("Empty")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.ink3)
@@ -549,9 +590,25 @@ private struct DesignCard: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.ink)
                     .lineLimit(1)
-                Text(entry.modified.formatted(.relative(presentation: .named)))
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.ink3)
+                HStack(spacing: 4) {
+                    if let mark = entry.sharing {
+                        Image(systemName: mark == .ended ? "lock.fill" : "person.2.fill")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(mark == .ended ? Theme.ink3 : Theme.pencil)
+                        Text(mark.title)
+                            .foregroundStyle(mark == .ended ? Theme.ink3 : Theme.pencil)
+                        Text(verbatim: "·")
+                    }
+                    // Kept current on its own: drawn only as the card is, it would change as the
+                    // pointer comes over it, and the new date would ride the lift in.
+                    TimelineView(.periodic(from: .now, by: 30)) { _ in
+                        Text(entry.modified.formatted(.relative(presentation: .named)))
+                            .contentTransition(.identity)
+                    }
+                }
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.ink3)
+                .lineLimit(1)
             }
             .padding(.horizontal, 6)
             .padding(.top, 10)
@@ -595,6 +652,133 @@ private struct TableRim: View {
             .mask(shape)
             .overlay { shape.strokeBorder(Theme.hairline, lineWidth: 0.5) }
             .allowsHitTesting(false)
+    }
+}
+
+/// A design someone shared, on its way from iCloud: a blank sheet settling onto its table while
+/// what is on it is laid in, line by line, as it will be once it is here. It gives way to the
+/// design's own card, in the same place, as soon as there is one.
+private struct ArrivingCard: View {
+    let arrival: CloudSync.Arrival
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                Color(nsColor: CanvasInk.table)
+                TimelineView(.animation) { timeline in
+                    ArrivingSheet(time: timeline.date.timeIntervalSinceReferenceDate)
+                }
+            }
+            .frame(height: 150)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay { TableRim(radius: 9) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(arrival.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 8.5, weight: .semibold))
+                    if let owner = arrival.owner { Text("Arriving from \(owner)") } else { Text("Arriving from iCloud") }
+                }
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.pencil)
+                .lineLimit(1)
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+        }
+        .padding(5)
+        .card(radius: SizeTable.radius)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(arrival.title), arriving")
+    }
+}
+
+/// The sheet on an arriving card, at a moment: it drifts gently as it settles, and the lines on it
+/// fill in one after another, pencil first, then ink, and start again.
+private struct ArrivingSheet: View {
+    let time: TimeInterval
+
+    var body: some View {
+        let drift = sin(time * 1.3)
+        let lines: [CGFloat] = [0.78, 0.56, 0.9, 0.64, 0.42]
+        let cycle = (time / 2.6).truncatingRemainder(dividingBy: 1)
+        VStack(alignment: .leading, spacing: 5) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Theme.ink4)
+                .frame(width: 26, height: 5)
+                .padding(.bottom, 3)
+            ForEach(lines.indices, id: \.self) { i in
+                let start = Double(i) * 0.13
+                let laid = min(max((cycle - start) / 0.3, 0), 1)
+                let eased = 1 - pow(1 - laid, 3)
+                Capsule()
+                    .fill(Theme.ink.opacity(0.06))
+                    .frame(width: 44 * lines[i], height: 3)
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(laid < 1 ? Theme.pencil.opacity(0.55) : Theme.ink4)
+                            .frame(width: 44 * lines[i] * eased, height: 3)
+                    }
+            }
+        }
+        .padding(10)
+        .frame(width: 66, height: 88, alignment: .topLeading)
+        .background(Rectangle().fill(Paper.stock))
+        .shadow(color: CanvasShadow.color.opacity(0.11 + 0.04 * drift), radius: 3.5 - drift, y: 2.2 - drift)
+        .rotationEffect(.degrees(-1.2 + 1.1 * sin(time * 0.8)))
+        .offset(y: -2 * drift)
+    }
+}
+
+/// An invitation that could not be opened, in the place its design would have taken: the sheet
+/// left lying askew, why, and a way to put it away.
+private struct UnopenedCard: View {
+    let problem: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                Color(nsColor: CanvasInk.table)
+                Rectangle()
+                    .fill(Paper.stock.opacity(0.7))
+                    .overlay { Rectangle().strokeBorder(Theme.ink4, style: StrokeStyle(lineWidth: 1, dash: [3, 3])) }
+                    .frame(width: 66, height: 88)
+                    .rotationEffect(.degrees(-7))
+                Image(systemName: "exclamationmark.icloud")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Theme.warning)
+                    .offset(x: 26, y: 30)
+            }
+            .frame(height: 150)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay { TableRim(radius: 9) }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("Could not be opened")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                    Spacer(minLength: 4)
+                    TextButton(title: "Dismiss", action: dismiss)
+                        .padding(.trailing, -6)
+                        .padding(.vertical, -4)
+                }
+                Text(problem)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.ink3)
+                    .lineLimit(1)
+                    .help(problem)
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+        }
+        .padding(5)
+        .card(radius: SizeTable.radius)
     }
 }
 

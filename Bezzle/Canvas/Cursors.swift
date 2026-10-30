@@ -111,6 +111,22 @@ enum Cursors {
         return cursor
     }
 
+    /// A ball with an arrow running round it: turning in depth.
+    static let turn: NSCursor = NSCursor(image: draw(size: 26) { ctx in
+        ctx.translateBy(x: 13, y: 13)
+        let ball = CGPath(ellipseIn: CGRect(x: -6, y: -6, width: 12, height: 12), transform: nil)
+            .copy(strokingWithWidth: 1.6, lineCap: .butt, lineJoin: .miter, miterLimit: 4)
+        // Its middle, round the front from left to right, with the arrow's head at the right.
+        let band = CGMutablePath()
+        band.addEllipse(in: CGRect(x: -9.5, y: -3, width: 19, height: 6))
+        let round = band.copy(strokingWithWidth: 1.6, lineCap: .butt, lineJoin: .miter, miterLimit: 4)
+        let head = CGMutablePath()
+        head.move(to: CGPoint(x: 10.5, y: 4)); head.addLine(to: CGPoint(x: 5.5, y: 3.4)); head.addLine(to: CGPoint(x: 8.6, y: -0.6)); head.closeSubpath()
+        let whole = CGMutablePath()
+        whole.addPath(ball); whole.addPath(round); whole.addPath(head)
+        outlined(whole, in: ctx)
+    }, hotSpot: NSPoint(x: 13, y: 13))
+
     /// A pen nib, its point at the top left where the click lands, with a small mark beside it.
     static func pen(_ mark: PenMark) -> NSCursor {
         if let c = penCache[mark] { return c }

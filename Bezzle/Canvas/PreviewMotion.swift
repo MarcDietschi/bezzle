@@ -79,6 +79,15 @@ private extension Node {
         n.shadow = shadow.blended(to: other.shadow, t)
         if let a = blur, let b = other.blur, a.on == b.on, a.background == b.background {
             n.blur?.radius = mix(a.radius, b.radius, t)
+            if let ra = a.ramp, let rb = b.ramp {
+                n.blur?.ramp = BlurRamp(start: CGPoint(x: mix(ra.start.x, rb.start.x, t), y: mix(ra.start.y, rb.start.y, t)),
+                                        end: CGPoint(x: mix(ra.end.x, rb.end.x, t), y: mix(ra.end.y, rb.end.y, t)))
+            }
+        }
+        // Turning in depth, or laid flat again, it swings there; flat is turned by nothing.
+        if t < 1, transform3D != nil || other.transform3D != nil {
+            let a = transform3D ?? Transform3D(), b = other.transform3D ?? Transform3D()
+            n.transform3D = Transform3D(x: mix(a.x, b.x, t), y: mix(a.y, b.y, t), z: mix(a.z, b.z, t))
         }
         if kind == .text, let a = style, let b = other.style, a != b {
             // Text keeps its frame fitted to its size, as it is when the size is set.
@@ -118,11 +127,14 @@ private extension Border {
 private extension Shadow {
     func blended(to other: Shadow, _ t: Double) -> Shadow {
         guard on || other.on else { return other }
-        // Off, a shadow is one lying flat under the layer, with nothing to it.
+        // Off, a shadow is one lying flat against the layer, with nothing to it. One going from
+        // under the layer to inside it comes in from nothing, rather than sliding across.
+        let inset = other.on ? other.inset : self.inset
         func lit(_ s: Shadow, as like: Shadow) -> Shadow {
-            s.on ? s : Shadow(on: true, color: like.color.with(alpha: 0), x: 0, y: 0, blur: 0)
+            s.on && (s.inset == true) == (inset == true) ? s : Shadow(on: true, color: like.color.with(alpha: 0), x: 0, y: 0, blur: 0)
         }
         let a = lit(self, as: other), b = lit(other, as: self)
-        return Shadow(on: true, color: a.color.mixed(b.color, t), x: mix(a.x, b.x, t), y: mix(a.y, b.y, t), blur: mix(a.blur, b.blur, t))
+        return Shadow(on: true, color: a.color.mixed(b.color, t), x: mix(a.x, b.x, t), y: mix(a.y, b.y, t), blur: mix(a.blur, b.blur, t),
+                      inset: inset)
     }
 }

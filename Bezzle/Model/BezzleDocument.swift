@@ -229,6 +229,7 @@ nonisolated struct BezzleDocument: Codable, Equatable {
     @MainActor
     static func turned(_ node: Node, by degrees: Double, about pivot: CGPoint) -> Node {
         var n = node
+        if n.isRepeatGrid { return RepeatGrid.turned(n, by: degrees, about: pivot) }
         if n.isGroup {
             let inner = CGPoint(x: pivot.x - n.frame.minX, y: pivot.y - n.frame.minY)
             n.children = n.children.map { turned($0, by: degrees, about: inner) }
@@ -247,6 +248,7 @@ nonisolated struct BezzleDocument: Codable, Equatable {
     @MainActor
     static func flipped(_ node: Node, horizontally: Bool, about axis: CGFloat) -> Node {
         var n = node
+        if n.isRepeatGrid { return RepeatGrid.flipped(n, horizontally: horizontally, about: axis) }
         if n.isGroup {
             let inner = axis - (horizontally ? n.frame.minX : n.frame.minY)
             n.children = n.children.map { flipped($0, horizontally: horizontally, about: inner) }
@@ -288,6 +290,9 @@ nonisolated struct BezzleDocument: Codable, Equatable {
             if n.isGroup {
                 n.children = scaled(node.children, from: f.size, to: n.frame.size)
                 n.mask = node.mask.map { scaled($0, from: f.size, to: n.frame.size) }
+                // A grid's gaps grow with its cells.
+                n.grid?.columnGap *= sx
+                n.grid?.rowGap *= sy
             }
             // Text as wide as its words grows its letters, as it does when resized on its own.
             if n.kind == .text, n.style?.sizing == .autoWidth {

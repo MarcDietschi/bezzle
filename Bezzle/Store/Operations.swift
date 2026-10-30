@@ -5,8 +5,8 @@ extension DocumentStore {
     // MARK: Adding and removing
 
     /// Adds a layer whose frame is in canvas points, onto `artboard` or the canvas, and selects it.
-    func add(_ node: Node, onto artboard: UUID?, action: String? = nil) {
-        edit(action ?? "Add \(node.kind.title)") { doc in
+    func add(_ node: Node, onto artboard: UUID?, action: LocalizedStringResource? = nil) {
+        edit(action ?? node.kind.adding) { doc in
             doc.attach(node, to: node.isArtboard ? nil : artboard)
         }
         selection = [node.id]
@@ -15,7 +15,7 @@ extension DocumentStore {
     func deleteSelection() {
         let ids = selection
         guard !ids.isEmpty else { return }
-        edit(ids.count == 1 ? "Delete \(node(ids[0])?.kind.title ?? "Layer")" : "Delete Layers") { doc in
+        edit(ids.count == 1 ? node(ids[0])?.kind.deleting ?? "Delete Layer" : "Delete Layers") { doc in
             for id in ids { _ = doc.detach(id) }
         }
         selection = []
@@ -57,11 +57,11 @@ extension DocumentStore {
     // MARK: Changing layers
 
     /// Changes every selected layer the same way. Text layers are refitted to their words afterwards.
-    func updateSelection(_ action: String, _ change: (inout Node) -> Void) {
+    func updateSelection(_ action: LocalizedStringResource, _ change: (inout Node) -> Void) {
         update(selection, action, change)
     }
 
-    func update(_ ids: [UUID], _ action: String, _ change: (inout Node) -> Void) {
+    func update(_ ids: [UUID], _ action: LocalizedStringResource, _ change: (inout Node) -> Void) {
         edit(action) { doc in
             for id in ids {
                 doc.update(id) { node in
@@ -112,9 +112,9 @@ extension DocumentStore {
 
     func selectAll() {
         if let first = selection.first, let parent = doc.parent(of: first) {
-            selection = parent.children.filter { !$0.hidden && !$0.locked }.map(\.id)
+            selection = (parent.isArtboard ? seenLayers(of: parent) : parent.children).filter { !$0.hidden && !$0.locked }.map(\.id)
         } else if let board = focusedArtboard, !board.children.isEmpty, selection.isEmpty {
-            selection = board.children.filter { !$0.hidden && !$0.locked }.map(\.id)
+            selection = seenLayers(of: board).filter { !$0.hidden && !$0.locked }.map(\.id)
         } else {
             selection = doc.nodes.filter { !$0.hidden && !$0.locked }.map(\.id)
         }
@@ -127,7 +127,7 @@ extension DocumentStore {
     func arrange(_ how: Arrange) {
         let ids = selection
         guard !ids.isEmpty else { return }
-        let name = switch how {
+        let name: LocalizedStringResource = switch how {
         case .front: "Bring to Front"
         case .forward: "Bring Forward"
         case .backward: "Send Backward"
@@ -381,7 +381,8 @@ extension Node {
     func freshCopy() -> Node {
         var n = self
         n.id = UUID()
-        n.children = children.map { $0.freshCopy() }
+        // A grid's cells stay copies of its first, each with what it holds; so do a deck's posts.
+        n.children = isRepeatGrid ? RepeatGrid.freshCells(of: self) : isDeck ? Deck.freshPosts(of: self) : children.map { $0.freshCopy() }
         return n
     }
 }

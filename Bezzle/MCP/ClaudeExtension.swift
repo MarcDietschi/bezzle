@@ -28,8 +28,8 @@ enum ClaudeExtension {
     /// Asks where to save the extension, saves it there and shows it in the Finder.
     static func save() {
         let panel = NSSavePanel()
-        panel.title = "Save Claude Desktop Extension"
-        panel.message = "Open the file, or drag it into Claude Desktop's Settings ▸ Extensions, to install it."
+        panel.title = String(localized: "Save Claude Desktop Extension")
+        panel.message = String(localized: "Open the file, or drag it into Claude Desktop's Settings ▸ Extensions, to install it.")
         panel.nameFieldStringValue = fileName
         panel.allowedContentTypes = [UTType(filenameExtension: "mcpb") ?? .zip]
         panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
@@ -51,7 +51,7 @@ enum ClaudeExtension {
         try files.createDirectory(at: folder.appending(path: "server"), withIntermediateDirectories: true)
 
         guard let bridge = Bundle.main.url(forResource: "ClaudeBridge", withExtension: "js") else {
-            throw MCPError("The bridge script is missing from Bezzle.")
+            throw MCPError(String(localized: "The bridge script is missing from Bezzle."))
         }
         try files.copyItem(at: bridge, to: folder.appending(path: "server/index.js"))
         let tools = MCPTools()
@@ -66,7 +66,7 @@ enum ClaudeExtension {
         zip.arguments = ["-c", "-k", "--norsrc", "--noextattr", "--noqtn", folder.path, url.path]
         try zip.run()
         zip.waitUntilExit()
-        guard zip.terminationStatus == 0 else { throw MCPError("Bezzle couldn't make the extension file.") }
+        guard zip.terminationStatus == 0 else { throw MCPError(String(localized: "Bezzle couldn't make the extension file.")) }
     }
 
     private static func manifest(_ tools: MCPTools) -> JSONValue {
@@ -110,12 +110,12 @@ enum ClaudeExtension {
         let size = 512
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
                                          samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                                         bytesPerRow: 0, bitsPerPixel: 0) else { throw MCPError("Bezzle couldn't draw its icon.") }
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { throw MCPError(String(localized: "Bezzle couldn't draw its icon.")) }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         NSApp.applicationIconImage.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
         NSGraphicsContext.restoreGraphicsState()
-        guard let png = rep.representation(using: .png, properties: [:]) else { throw MCPError("Bezzle couldn't draw its icon.") }
+        guard let png = rep.representation(using: .png, properties: [:]) else { throw MCPError(String(localized: "Bezzle couldn't draw its icon.")) }
         return png
     }
 }

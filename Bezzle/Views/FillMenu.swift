@@ -16,8 +16,8 @@ enum FillKind: Hashable {
     }
 
     /// The kinds to choose between. A picture is only one while the layer has one.
-    static func choices(with current: FillKind) -> [(FillKind, String)] {
-        var choices: [(FillKind, String)] = [(.solid, "Solid"), (.linear, "Linear"), (.radial, "Radial")]
+    static func choices(with current: FillKind) -> [(FillKind, LocalizedStringResource)] {
+        var choices: [(FillKind, LocalizedStringResource)] = [(.solid, "Solid"), (.linear, "Linear"), (.radial, "Radial")]
         if current == .picture { choices.append((.picture, "Picture")) }
         return choices
     }
@@ -142,7 +142,7 @@ struct FillField: View {
     let fill: Fill
     /// The colour every selected layer has, if they share one.
     let color: RGBA?
-    let action: String
+    let action: LocalizedStringResource
     var suggestions: [RGBA] = []
     var preview: ((RGBA?) -> Void)? = nil
     let apply: (RGBA) -> Void
@@ -236,7 +236,7 @@ struct FillMenu: View {
     @Environment(DocumentStore.self) private var store
     @Environment(MenuHost.self) private var menus
     @Environment(GradientSession.self) private var session
-    let action: String
+    let action: LocalizedStringResource
 
     static func size(for kind: FillKind) -> CGSize {
         switch kind {
@@ -330,7 +330,7 @@ struct FillMenu: View {
     }
 
     /// Gives every selected gradient these colours.
-    private func set(_ stops: [GradientStop], _ action: String) {
+    private func set(_ stops: [GradientStop], _ action: LocalizedStringResource) {
         store.updateSelection(action) { n in
             guard n.fill.gradient != nil else { return }
             n.fill.gradient?.stops = stops

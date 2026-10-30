@@ -65,6 +65,24 @@ struct ExportTests {
         #expect(alpha(white, 0, 0) == 255)
     }
 
+    @Test func aShadowInsideStaysInside() throws {
+        var doc = design()
+        doc.update(id("Lifted", in: doc)) { $0.shadow.inset = true }
+        doc.update(id("Badge", in: doc)) { $0.shadow = Shadow(on: true, color: .shadow, x: 0, y: 2, blur: 4, inset: true) }
+        // Going out, it widens nothing.
+        let lifted = try #require(ExportItem(layer: id("Lifted", in: doc), in: doc))
+        let rect = lifted.bounds(assets: nil)
+        #expect(abs(rect.width - 60) < 1 && abs(rect.height - 40) < 1, "\(rect)")
+        // In SVG, cast from all around and kept to the inside, with nothing dropped under.
+        let board = ExportItem(artboard: doc.nodes[0])
+        let svg = SVGWriter.document(for: board, bounds: board.bounds(assets: nil), assets: nil)
+        let parser = XMLParser(data: Data(svg.utf8))
+        #expect(parser.parse(), "\(parser.parserError.map { "\($0)" } ?? "")")
+        #expect(!svg.contains("<feDropShadow"))
+        #expect(svg.components(separatedBy: "tableValues=\"1 0\"").count == 3, "one for the shape, one for the group")
+        #expect(svg.contains("<feMergeNode in=\"inner\"/>"))
+    }
+
     @Test func aGroupGoesOutWhole() throws {
         let doc = design()
         let badge = try #require(ExportItem(layer: id("Badge", in: doc), in: doc))
