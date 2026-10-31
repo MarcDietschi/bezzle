@@ -6,6 +6,8 @@ COPY = {
     "en-US": {
         "hero": ("All the tools.\nNone of the bills.",
                  "Apps, websites, social posts and print in one native Mac app. No subscription, no account, nothing held back."),
+        "controls": ("CONTROLS", "Every setting.\nAt a glance.",
+                     "Each look is a card that sums itself up in one line. Drag it sideways to change it, click for the details, pull it down to take it off."),
         "best": ("ONE APP FOR EVERYTHING", "The best of every design app.\nIn one.",
                  "Opens your Adobe XD, Figma and Sketch files with artboards, layers, text and pictures intact."),
         "deck": ("SOCIAL DECKS", "One design.\nA hundred posts.",
@@ -31,6 +33,8 @@ COPY = {
     "de-DE": {
         "hero": ("Alle Werkzeuge.\nKein Abo.",
                  "Apps, Websites, Social Posts und Print in einer nativen Mac-App. Kein Abo, kein Konto, nichts gesperrt."),
+        "controls": ("STEUERUNG", "Jede Einstellung.\nAuf einen Blick.",
+                     "Jede Eigenschaft ist eine Karte, die sich in einer Zeile zusammenfasst. Zur Seite ziehen ändert sie, ein Klick zeigt die Details, nach unten ziehen entfernt sie."),
         "best": ("EINE APP FÜR ALLES", "Das Beste aller Design-Apps.\nIn einer.",
                  "Öffnet deine Dateien aus Adobe XD, Figma und Sketch, mit Zeichenflächen, Ebenen, Texten und Bildern."),
         "deck": ("SOCIAL POSTS", "Ein Design.\nHundert Posts.",
@@ -56,6 +60,8 @@ COPY = {
     "fr-FR": {
         "hero": ("Tous les outils.\nAucun abonnement.",
                  "Apps, sites web, posts pour les réseaux et print, dans une seule app Mac native. Sans abonnement, sans compte, rien de verrouillé."),
+        "controls": ("COMMANDES", "Chaque réglage.\nD’un coup d’œil.",
+                     "Chaque aspect est une carte résumée en une ligne. Fais-la glisser sur le côté pour la régler, clique pour les détails, tire-la vers le bas pour l’enlever."),
         "best": ("UNE APP POUR TOUT", "Le meilleur de chaque app de design.\nEn une seule.",
                  f"Ouvre tes fichiers Adobe XD, Figma et Sketch avec plans de travail, calques, textes et images intacts."),
         "deck": ("RÉSEAUX SOCIAUX", "Un design.\nCent publications.",
@@ -81,6 +87,8 @@ COPY = {
     "it": {
         "hero": ("Tutti gli strumenti.\nNessun abbonamento.",
                  "App, siti web, post social e stampa in un’unica app nativa per Mac. Niente abbonamento, niente account, niente di bloccato."),
+        "controls": ("CONTROLLI", "Ogni impostazione.\nA colpo d’occhio.",
+                     "Ogni aspetto è una scheda riassunta in una riga. Trascinala di lato per cambiarla, fai clic per i dettagli, tirala giù per toglierla."),
         "best": ("UN’APP PER TUTTO", "Il meglio di ogni app di design.\nIn una sola.",
                  "Apre i tuoi file Adobe XD, Figma e Sketch con tavole da disegno, livelli, testi e immagini intatti."),
         "deck": ("POST SOCIAL", "Un design.\nCento post.",
