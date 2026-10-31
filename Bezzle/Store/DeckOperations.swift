@@ -153,8 +153,11 @@ extension DocumentStore {
             var board = doc[path]
             board.children.removeAll { $0.post == post }
             board.deck?.posts.removeAll { $0 == post }
+            // With one post left it is no stack any more, but an artboard like any.
+            if board.posts.count == 1 { Self.unstack(&board, keeping: board.posts[0]) }
             doc[path] = board
         }
+        if doc.node(deckID)?.isDeck != true { fronts[deckID] = nil }
         selection = selection.filter { doc.node($0) != nil }
     }
 
@@ -176,15 +179,20 @@ extension DocumentStore {
         edit("Keep Only This Post") { doc in
             guard let path = doc.path(of: deckID) else { return }
             var board = doc[path]
-            board.children = board.layers(of: keep).map { layer in
-                var n = layer.forgettingOwn()
-                n.post = nil
-                return n
-            }
-            board.deck = nil
+            Self.unstack(&board, keeping: keep)
             doc[path] = board
         }
         fronts[deckID] = nil
+    }
+
+    /// A deck made an artboard like any again, holding one of its posts' layers as they are.
+    private static func unstack(_ board: inout Node, keeping post: Int?) {
+        board.children = board.layers(of: post).map { layer in
+            var n = layer.forgettingOwn()
+            n.post = nil
+            return n
+        }
+        board.deck = nil
     }
 
     /// Makes each of a deck's posts an artboard of its own, in a row to the right of it; the deck

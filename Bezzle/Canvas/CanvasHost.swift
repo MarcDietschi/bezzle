@@ -37,6 +37,9 @@ enum CanvasMenus {
                 .item("Send to Back", shortcut: "⇧⌘[") { store.arrange(.back) },
                 .separator,
             ]
+            if store.canGroup { entries.append(.item(DocumentStore.grouping, shortcut: "⌘G") { store.group() }) }
+            if store.canUngroup { entries.append(.item("Ungroup", shortcut: "⇧⌘G") { store.ungroup() }) }
+            if store.canGroup || store.canUngroup { entries.append(.separator) }
             let nodes = store.selectedNodes
             let locked = nodes.allSatisfy(\.locked)
             entries.append(.item(locked ? "Unlock" : "Lock", shortcut: "⌘L") { store.setLocked(!locked, store.selection) })

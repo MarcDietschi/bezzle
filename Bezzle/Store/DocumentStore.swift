@@ -39,6 +39,13 @@ enum Tool: String, CaseIterable {
 struct Guide: Equatable {
     var from: CGPoint
     var to: CGPoint
+    /// For a gap as wide as another, rather than edges lined up: the space between the two sides
+    /// facing across it, which the canvas fills, `from` and `to` running across its middle.
+    var field: CGRect? = nil
+    /// Whether the gap is beside what is being moved, rather than one it is as wide as.
+    var mine = false
+
+    var gap: Bool { field != nil }
 }
 
 /// One open design: the document itself, what is selected, how it is looked at, and the undo
@@ -72,6 +79,8 @@ final class DocumentStore {
             // The pen works on the points being edited; any other drawing tool leaves them.
             if tool != .select && tool != .pen { editingPath = nil }
             if tool != .select { editingPicture = nil; building = nil }
+            // The inspector offers the artboard sizes to draw while nothing is selected.
+            if tool == .artboard { selection = [] }
             guides = []
         }
     }
@@ -129,6 +138,10 @@ final class DocumentStore {
     var lastPreset: CGSize?
     /// A change shown on the canvas but not made: what a preset under the pointer would do.
     var preview: Preview?
+    /// The inspector's card that is open, and the one the pointer is on, whose part of the
+    /// selected layers the canvas outlines. See `AspectCard`.
+    var openAspect: Aspect?
+    var pointedAspect: Aspect?
 
     struct Preview {
         /// Which control shows it, so only that control takes it away again.
@@ -143,7 +156,8 @@ final class DocumentStore {
     private(set) var url: URL
     /// Set by the window; Undo and Redo in the Edit menu use it.
     @ObservationIgnored weak var undoManager: UndoManager?
-    @ObservationIgnored private var gestureStart: Snapshot?
+    /// Watched, so the inspector can lift the card a drag changes for as long as it goes on.
+    private var gestureStart: Snapshot?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     /// The canvas on screen, for starting to type into a text layer from elsewhere.
     @ObservationIgnored weak var canvas: CanvasView?
@@ -244,6 +258,9 @@ final class DocumentStore {
 
     var inGesture: Bool { gestureStart != nil }
 
+    /// The design as the drag going on began, to tell what it has changed so far.
+    var gestureBefore: BezzleDocument? { gestureStart?.doc }
+
     private func record(_ before: Snapshot, _ action: LocalizedStringResource) {
         guard let undoManager else { return }
         // The history never sees an opened shape become a path: undoing the first change to its
@@ -289,7 +306,7 @@ final class DocumentStore {
     func editAsPath(_ id: UUID) {
         guard let shape = node(id), !shape.locked, let path = shape.asPath() else { return }
         selection = [id]
-        doc.update(id) { $0 = path }
+        doc = changing(id, to: path, in: doc)
         openedShape = (id, shape, path)
         editingPath = id
     }
@@ -298,9 +315,19 @@ final class DocumentStore {
     private func withShapeBack(_ doc: BezzleDocument) -> BezzleDocument {
         guard let (id, shape, path) = openedShape, let n = doc.node(id), n.kind == .path,
               n.path == path.path, n.pathBox == path.pathBox else { return doc }
-        var back = doc
-        back.update(id) { $0 = $0.asShape(shape) }
-        return back
+        return changing(id, to: n.asShape(shape), in: doc)
+    }
+
+    /// `doc` with a layer opened as a path or made the shape again, and with it the same layer in
+    /// the other cells of a repeat grid or the other posts of a deck. Neither is a step of the
+    /// history, but the copies must follow all the same: a change carried over from a copy left
+    /// a shape would make the layer a shape again everywhere.
+    private func changing(_ id: UUID, to node: Node, in doc: BezzleDocument) -> BezzleDocument {
+        var next = doc
+        next.update(id) { $0 = node }
+        next.syncGrids(since: doc)
+        next.syncDecks(since: doc, fronts: fronts)
+        return next
     }
 
     private func closeShape() {
@@ -519,7 +546,7 @@ final class DocumentStore {
         // else changed it meanwhile.
         if let opened = openedShape {
             if let mine = old.node(opened.id), next.node(opened.id) == withShapeBack(old).node(opened.id) {
-                next.update(opened.id) { $0 = mine }
+                next = changing(opened.id, to: mine, in: next)
             } else {
                 openedShape = nil
                 editingPath = nil

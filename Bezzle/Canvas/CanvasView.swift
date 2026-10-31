@@ -17,7 +17,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         case rotate(center: CGPoint, startAngle: CGFloat, originals: [UUID: Node], absolute: [UUID: CGRect])
         case lineEnd(id: UUID, fixed: CGPoint, targets: SnapTargets)
         case create(tool: Tool, start: CGPoint, id: UUID?, board: UUID?, targets: SnapTargets)
-        case corner(id: UUID, frame: CGRect, rotation: Double, corner: Handle)
+        /// `radii` are the corners as they were, for when Option rounds only the one dragged.
+        case corner(id: UUID, frame: CGRect, rotation: Double, corner: Handle, radii: [CGFloat])
         case shadow(id: UUID, start: CGPoint, original: CGPoint, started: Bool)
     }
 
@@ -37,6 +38,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var spaceHeld = false
     /// Whether the pointer is on the selected rectangle, so the dots that round its corners show.
     private var showsCornerDots = false
+    /// Even gaps while something is moved, and the widths of those beside it last time.
+    private let gapMarks = GapMarks()
+    private var gapsCaught: Set<Int> = []
     /// Whether the pointer is on the selected layer's shadow, so its outline shows.
     private var onShadow = false
     private var lastViewPoint: CGPoint = .zero
@@ -162,7 +166,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         store.canvasSize = newSize
         if !laidOut, newSize.width > 0, newSize.height > 0 {
             laidOut = true
-            if store.doc.viewport == nil { store.zoomToFit() }
+            if store.doc.viewport == nil { store.lookFirst() }
         } else if old.width > 0 {
             // The view keeps its centre when the window is resized.
             var v = store.viewport
@@ -202,7 +206,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     @objc private func easeStep(_ link: CADisplayLink) {
         needsDisplay = true
-        if !previewMotion.isMoving && !deckTool.isAnimating {
+        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating {
             link.invalidate()
             easing = nil
         }
@@ -416,10 +420,25 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             let (a, b) = node.lineEnds
             let c = CGPoint(x: node.frame.midX, y: node.frame.midY)
             points = [a, b].map { Perspective.shown(Geometry.rotated($0, about: c, by: node.rotation), of: node) }
+        } else if node.isGroup, case let (box, turn) = turnedBox(of: node), turn != 0 {
+            points = Geometry.corners(of: box, rotation: turn).map { Perspective.shown($0, of: node) }
         } else {
             points = Perspective.corners(of: node)
         }
         return points.map { store.viewport.toView(store.doc.shown($0, inParentOf: id)) }
+    }
+
+    /// Each group's turned box (`BezzleDocument.turnedBox`) as last worked out, by layer, for the
+    /// version of the document it was worked out for: the pointer asks for it at every move.
+    private var boxesWorkedOut: (version: Int, boxes: [UUID: (frame: CGRect, rotation: Double)]) = (-1, [:])
+
+    private func turnedBox(of node: Node) -> (frame: CGRect, rotation: Double) {
+        guard node.isGroup else { return (node.frame, node.rotation) }
+        if boxesWorkedOut.version != store.version { boxesWorkedOut = (store.version, [:]) }
+        if let box = boxesWorkedOut.boxes[node.id] { return box }
+        let box = BezzleDocument.turnedBox(of: node)
+        boxesWorkedOut.boxes[node.id] = box
+        return box
     }
 
     /// Where a point of a layer, given on the canvas as it would lie flat, shows: turned in depth
@@ -477,8 +496,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var handleFrame: (frame: CGRect, rotation: Double, single: Node?)? {
         let ids = store.selection
         guard !ids.isEmpty else { return nil }
-        if ids.count == 1, let node = store.node(ids[0]), let frame = store.doc.absoluteFrame(of: ids[0]) {
-            return (frame, node.rotation, node)
+        if ids.count == 1, let node = store.node(ids[0]) {
+            // A group whose layers are turned is seen turned with them.
+            let (box, turn) = turnedBox(of: node)
+            let o = store.doc.parentOrigin(of: node.id)
+            return (box.offsetBy(dx: o.x, dy: o.y), turn, node)
         }
         guard let bounds = store.selectionBounds else { return nil }
         return (bounds, 0, nil)
@@ -543,17 +565,20 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if onShadow || { if case .shadow(_, _, _, true) = interaction { return true } else { return false } }() { drawShadowOutline(ctx) }
     }
 
-    /// The dots inside a selected rectangle's corners, along the diagonal as far in as the corners
-    /// are round, and never nearer a corner than ten points on screen. Only for a rectangle big
-    /// enough on screen for them not to crowd it.
+    /// A rectangle's corners in the order `Node.radii` keeps them.
+    private static let cornerOrder: [Handle] = [.topLeft, .topRight, .bottomRight, .bottomLeft]
+
+    /// The dots inside a selected rectangle's corners, each along the diagonal as far in as its
+    /// corner is round, and never nearer a corner than ten points on screen. Only for a rectangle
+    /// big enough on screen for them not to crowd it.
     private func cornerDots() -> [(Handle, CGPoint)] {
         guard store.tool == .select, store.editingText == nil, store.selection.count == 1, let node = store.node(store.selection[0]),
               node.kind == .rectangle, !node.locked, !inDepth(node), let frame = store.doc.absoluteFrame(of: node.id) else { return [] }
         let zoom = store.viewport.zoom
         guard frame.width * zoom >= 48, frame.height * zoom >= 48 else { return [] }
         let half = min(frame.width, frame.height) / 2
-        let inset = min(max(min(max(node.cornerRadius, 0), half), 10 / zoom), half)
-        return [Handle.topLeft, .topRight, .bottomRight, .bottomLeft].map { h in
+        return zip(Self.cornerOrder, node.radii).map { h, radius in
+            let inset = min(max(min(max(radius, 0), half), 10 / zoom), half)
             let sx: CGFloat = h.unit.x == 0 ? 1 : -1, sy: CGFloat = h.unit.y == 0 ? 1 : -1
             let local = CGPoint(x: (h.unit.x - 0.5) * frame.width + sx * inset, y: (h.unit.y - 0.5) * frame.height + sy * inset)
             let v = Geometry.rotate(local, by: node.rotation)
@@ -617,16 +642,20 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func drawGuides(_ ctx: CGContext) {
-        guard !store.guides.isEmpty else { return }
-        ctx.saveGState()
-        ctx.setStrokeColor(CanvasInk.pencil.cgColor)
-        ctx.setLineWidth(1)
-        for g in store.guides {
-            ctx.move(to: crisp(store.viewport.toView(g.from)))
-            ctx.addLine(to: crisp(store.viewport.toView(g.to)))
+        if store.guides.contains(where: { !$0.gap }) {
+            ctx.saveGState()
+            ctx.setStrokeColor(CanvasInk.pencil.cgColor)
+            ctx.setLineWidth(1)
+            for g in store.guides where !g.gap {
+                ctx.move(to: crisp(store.viewport.toView(g.from)))
+                ctx.addLine(to: crisp(store.viewport.toView(g.to)))
+            }
+            ctx.strokePath()
+            ctx.restoreGState()
         }
-        ctx.strokePath()
-        ctx.restoreGState()
+        gapMarks.show(store.guides)
+        gapMarks.draw(ctx, viewport: store.viewport, scale: deviceScale)
+        if gapMarks.isAnimating { keepEasing() }
     }
 
     private func drawMarquee(_ ctx: CGContext) {
@@ -691,17 +720,26 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return group.children.reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance) }?.id
     }
 
-    /// What a click picks: something in the group the selection is in, or else what is under it as usual.
+    /// What a click picks: something in the group the selection is in, or else what is under it as
+    /// usual. Anything lying over that group is picked as usual, as it is what the click meets.
     private func pick(_ p: CGPoint) -> UUID? {
-        if let group = enteredGroup, let id = hit(p, in: group) { return id }
+        if let group = enteredGroup, uncovered(group, at: p), let id = hit(p, in: group) { return id }
         if let id = pickInOtherCell(p) { return id }
         return hit(p)
+    }
+
+    /// Whether a click at a canvas point meets this group before anything else: at every level from
+    /// the canvas down, what lies on top there is the group or what holds it.
+    private func uncovered(_ group: Node, at p: CGPoint) -> Bool {
+        let chain = store.doc.ancestors(of: group.id).filter { !$0.isArtboard } + [group]
+        guard hit(p) == chain[0].id else { return false }
+        return zip(chain, chain.dropFirst()).allSatisfy { outer, inner in hit(p, in: outer) == inner.id }
     }
 
     /// Inside a cell of a repeat grid, a click on another cell picks what lies there as deep in it
     /// as the selection lies in its own, as if that cell had been entered the same way.
     private func pickInOtherCell(_ p: CGPoint) -> UUID? {
-        guard let group = enteredGroup, let grid = store.grid(holding: group.id), grid.id != group.id,
+        guard let group = enteredGroup, let grid = store.grid(holding: group.id), grid.id != group.id, uncovered(grid, at: p),
               let here = RepeatGrid.cell(of: group.id, in: grid, doc: store.doc),
               let root = hit(p, in: grid), let there = RepeatGrid.cell(of: root, in: grid, doc: store.doc),
               let other = store.node(group.id.mixed(RepeatGrid.key(here.cell)).mixed(RepeatGrid.key(there.cell))) else { return nil }
@@ -996,7 +1034,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             interaction = .rotate(center: c, startAngle: atan2(p.y - c.y, p.x - c.x), originals: originals, absolute: absolute)
         case .corner(let corner):
             guard let id = ids.first, let node = store.node(id), let frame = absolute[id] else { return }
-            interaction = .corner(id: id, frame: frame, rotation: node.rotation, corner: corner)
+            interaction = .corner(id: id, frame: frame, rotation: node.rotation, corner: corner, radii: node.radii)
         case .turnInDepth:
             // Not a gesture yet, as for a shadow.
             store.cancelGesture()
@@ -1074,6 +1112,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                     originals = fresh
                     store.selection = copies
                 }
+                // A copy catches on the layers it was made from, which stay where they were.
+                let targets = duplicate ? SnapTargets(doc: store.seenDoc, moving: Set(originals.keys)) : targets
                 interaction = .move(start: start, originals: originals, bounds: bounds, targets: targets, started: true, duplicate: duplicate)
                 NSCursor.arrow.set()
                 drag(to: v, flags: flags)
@@ -1089,6 +1129,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 guides = g
             }
             dx = dx.rounded(); dy = dy.rounded()
+            if snapping { guides += targets.gapGuides(for: bounds.offsetBy(dx: dx, dy: dy)) }
+            // Even gaps caught are felt as well as seen, once each time they catch.
+            let caught = Set(guides.filter(\.mine).map { Int(hypot($0.to.x - $0.from.x, $0.to.y - $0.from.y).rounded()) })
+            if caught != gapsCaught {
+                if !caught.isEmpty { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+                gapsCaught = caught
+            }
             store.edit("Move") { doc in
                 for (id, frame) in originals {
                     let o = doc.parentOrigin(of: id)
@@ -1130,7 +1177,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                     doc.update(id) { node in
                         node = original
                         node.frame = next.offsetBy(dx: -o.x, dy: -o.y)
-                        if node.isGroup {
+                        if node.isGroup, !node.isRepeatGrid, originals.count == 1, rotation != 0 {
+                            // A group seen turned stretches along its turn, its box as the handles show it.
+                            node = BezzleDocument.scaled(original, turned: rotation, from: bounds.offsetBy(dx: -o.x, dy: -o.y), to: next.offsetBy(dx: -o.x, dy: -o.y))
+                        } else if node.isGroup {
                             node.children = BezzleDocument.scaled(original.children, from: original.frame.size, to: node.frame.size)
                             node.mask = original.mask.map { BezzleDocument.scaled($0, from: original.frame.size, to: node.frame.size) }
                         }
@@ -1204,8 +1254,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
         case .rotate(let center, let startAngle, let originals, let absolute):
             var delta = Double((atan2(p.y - center.y, p.x - center.x) - startAngle) * 180 / .pi)
+            // How far one layer is turned already, a group or a grid as it is seen turned.
+            let base = originals.count == 1 ? originals.values.first.map { $0.grid?.turn ?? ($0.isGroup ? BezzleDocument.turn(of: $0) : $0.rotation) } ?? 0 : 0
             if shift {
-                let base = originals.count == 1 ? originals.values.first!.rotation : 0
                 delta = ((base + delta) / 15).rounded() * 15 - base
             }
             store.edit("Rotate") { doc in
@@ -1218,7 +1269,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                     }
                 }
             }
-            let shown = originals.count == 1 ? Self.normalized(originals.values.first!.rotation + delta) : Self.normalized(delta)
+            let shown = Self.normalized(base + delta)
             store.measurement = ("\(Self.number(shown))°", store.selectionBounds ?? .zero)
 
         case .lineEnd(let id, let fixed, let targets):
@@ -1235,13 +1286,19 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             store.guides = guides
             store.measurement = ("\(Self.number(hypot(end.x - fixed.x, end.y - fixed.y)))", Geometry.rect(from: fixed, to: end))
 
-        case .corner(let id, let frame, let rotation, let corner):
+        case .corner(let id, let frame, let rotation, let corner, let original):
             // How far in along the diagonal the pointer is, measured on each side.
             let local = Geometry.local(p, in: frame, rotation: rotation)
             let sx: CGFloat = corner.unit.x == 0 ? 1 : -1, sy: CGFloat = corner.unit.y == 0 ? 1 : -1
             let along = ((local.x - (corner.unit.x - 0.5) * frame.width) * sx + (local.y - (corner.unit.y - 0.5) * frame.height) * sy) / 2
             let radius = min(max(along, 0), min(frame.width, frame.height) / 2).rounded()
-            store.edit("Change Corners") { doc in doc.update(id) { $0.cornerRadius = radius } }
+            // Every corner alike, or with Option, pressed before or during the drag, only this one.
+            var radii = Array(repeating: radius, count: 4)
+            if option, let i = Self.cornerOrder.firstIndex(of: corner) {
+                radii = original
+                radii[i] = radius
+            }
+            store.edit("Change Corners") { doc in doc.update(id) { $0.radii = radii } }
             store.measurement = (String(localized: "Radius \(Self.number(radius))"), Geometry.bounds(of: frame, rotation: rotation))
 
         case .shadow(let id, let start, let original, let started):
@@ -1347,6 +1404,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
         interaction = .none
         store.guides = []
+        gapsCaught = []
         store.measurement = nil
         updateHover(v)
         updateCursor(v, flags: event.modifierFlags)
@@ -1381,7 +1439,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 doc.update(nodeID!) { n in
                     switch n.kind {
                     case .artboard:
-                        let size = store.lastPreset ?? Preset.all[0].size
+                        let size = store.lastPreset ?? Preset.standard.size
                         n.frame = CGRect(origin: start, size: size)
                     case .line:
                         n.setLineEnds(start - o, CGPoint(x: start.x + 100, y: start.y) - o)

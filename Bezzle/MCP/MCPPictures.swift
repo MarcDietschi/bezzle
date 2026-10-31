@@ -74,21 +74,27 @@ extension MCPTools {
         if ids.isEmpty { items = doc.artboards.flatMap(ExportItem.items(for:)) }
         guard !items.isEmpty else { throw MCPError("There is nothing to export: \(store.name) has no artboards.") }
 
-        let folder: URL
+        var folder: URL
         if let path = try args.string("folder") {
             folder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
-        } else if let last = UserDefaults.standard.string(forKey: "exportFolder") {
+        } else if let last = UserDefaults.standard.string(forKey: "exportFolder"), FileManager.default.isWritableFile(atPath: last) {
             folder = URL(fileURLWithPath: last, isDirectory: true)
         } else {
             folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         }
+        // In the sandbox, ~ is Bezzle's own folder and Downloads a link from it; the files are
+        // named by where they really are.
+        folder = folder.resolvingSymlinksInPath()
+        // The App Store's Bezzle may only write where the user has let it.
+        let sandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+        let hint = sandboxed ? " Bezzle can write to Downloads, and to folders once chosen in its Export panel." : ""
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
-            throw MCPError("\(folder.path) could not be made: \(error.localizedDescription)")
+            throw MCPError("\(folder.path) could not be made: \(error.localizedDescription)\(hint)")
         }
         let written = Exporter.export(items, format: format, scale: scale, name: store.name, to: folder, assets: store.assets)
-        guard !written.isEmpty else { throw MCPError("Nothing could be written to \(folder.path).") }
+        guard !written.isEmpty else { throw MCPError("Nothing could be written to \(folder.path).\(hint)") }
         return [.text(JSONValue.compact([
             ("files", .array(written.map { .string($0.path) })),
             ("warnings", .array(warnings.map { .string($0) })),

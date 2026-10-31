@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 
 /// Every layer, topmost first: artboards with what lies on them, and loose layers on the canvas.
-/// A click selects, a double click renames, a drag moves a layer up or down or onto another artboard.
+/// A click selects, a double click renames, a drag moves a layer up or down, or onto a group or
+/// an artboard's name to put it in there, open or shut.
 /// While something on one artboard is selected, the list is a page of that artboard's layers
 /// alone, with the way back to every layer at the top. The artboard itself is picked among the rest.
 struct LayersPanel: View {
@@ -15,7 +16,7 @@ struct LayersPanel: View {
     /// or on the canvas, can finish the renaming with it.
     @State private var draft = ""
     @State private var dragging: UUID?
-    @State private var dropSlot: Int?
+    @State private var dropSpot: DropSpot?
     @State private var anchor: UUID?
     /// The artboard whose layers the list shows on their own; nil for every layer.
     @State private var page: UUID?
@@ -42,6 +43,13 @@ struct LayersPanel: View {
     /// another. Read as the pages slide, so the one going knows where to go.
     final class Turn {
         var way: CGFloat = 0
+    }
+
+    /// Where a dragged layer goes when let go: into the gap above a row, the rows' count for the
+    /// end, or onto a row that holds layers, and so in on top of them.
+    private enum DropSpot: Equatable {
+        case gap(Int)
+        case onto(Int)
     }
 
     struct Row: Identifiable {
@@ -180,7 +188,7 @@ struct LayersPanel: View {
                             .gesture(drag(row, rows: rows))
                         }
                     }
-                    .overlay(alignment: .topLeading) { dropLine(rows) }
+                    .overlay(alignment: .topLeading) { dropMark(rows) }
                     .padding(.horizontal, 8)
                     .padding(.bottom, Self.bottomPadding)
                     .coordinateSpace(name: "layers")
@@ -329,18 +337,45 @@ struct LayersPanel: View {
         DragGesture(minimumDistance: 4, coordinateSpace: .named("layers"))
             .onChanged { value in
                 if dragging == nil { dragging = row.id }
-                let slot = Int((value.location.y / Self.rowHeight).rounded())
-                dropSlot = min(max(slot, 0), rows.count)
+                dropSpot = spot(at: value.location.y, for: row, rows: rows)
             }
             .onEnded { _ in
-                if let slot = dropSlot { drop(row, at: slot, rows: rows) }
+                if let spot = dropSpot { drop(row, at: spot, rows: rows) }
                 dragging = nil
-                dropSlot = nil
+                dropSpot = nil
             }
     }
 
-    /// Where a dropped layer goes: between the rows above and below the gap it was let go over.
-    private func destination(for row: Row, slot: Int, rows: [Row]) -> (parent: UUID?, index: Int, depth: Int)? {
+    /// The middle half of a row that can take the layer is onto it; anywhere else is the gap nearest.
+    private func spot(at y: CGFloat, for row: Row, rows: [Row]) -> DropSpot {
+        let at = y / Self.rowHeight
+        let i = Int(at.rounded(.down))
+        if rows.indices.contains(i), abs(at - CGFloat(i) - 0.5) < 0.25, canHold(rows[i], row) { return .onto(i) }
+        return .gap(min(max(Int(at.rounded()), 0), rows.count))
+    }
+
+    /// Whether `id` is the dragged layer or lies in it: nothing goes into itself, or into what it holds.
+    private func within(_ id: UUID, _ row: Row) -> Bool {
+        id == row.id || store.doc.ancestors(of: id).contains { $0.id == row.id }
+    }
+
+    /// Whether the layer a row shows can take the dragged one: an artboard or a group, though no
+    /// repeat grid, as its cells follow its first. Artboards themselves go into nothing.
+    private func canHold(_ target: Row, _ row: Row) -> Bool {
+        !row.node.isArtboard && target.node.isContainer && !target.node.isRepeatGrid && !within(target.id, row)
+    }
+
+    /// Where a dropped layer goes: on top of what is in the row it was let go onto, or between
+    /// the rows above and below the gap it was let go over.
+    private func destination(for row: Row, spot: DropSpot, rows: [Row]) -> (parent: UUID?, index: Int, depth: Int)? {
+        let slot: Int
+        switch spot {
+        case .onto(let i):
+            guard rows.indices.contains(i), canHold(rows[i], row) else { return nil }
+            return (rows[i].id, rows[i].node.children.count, rows[i].depth + 1)
+        case .gap(let i):
+            slot = i
+        }
         var above = slot > 0 ? rows[slot - 1] : nil
         // Artboards only go between the layers on the canvas itself.
         if row.node.isArtboard {
@@ -348,35 +383,45 @@ struct LayersPanel: View {
         }
         guard let above else { return board.map { ($0.id, $0.children.count, 0) } ?? (nil, store.doc.nodes.count, 0) }
         if above.id == row.id { return nil }
-        // Nothing goes into itself, or into what it holds.
-        func within(_ id: UUID) -> Bool { id == row.id || store.doc.ancestors(of: id).contains { $0.id == row.id } }
         if !row.node.isArtboard && above.node.isContainer && !isShut(above.node) {
             // Just under an open artboard's or group's name: on top of what is in it.
-            return within(above.id) || above.node.isRepeatGrid ? nil : (above.id, above.node.children.count, above.depth + 1)
+            return within(above.id, row) || above.node.isRepeatGrid ? nil : (above.id, above.node.children.count, above.depth + 1)
         }
         if let parent = above.parent, let container = store.node(parent),
            let i = container.children.firstIndex(where: { $0.id == above.id }) {
-            return row.node.isArtboard || within(parent) || container.isRepeatGrid ? nil : (parent, i, above.depth)
+            return row.node.isArtboard || within(parent, row) || container.isRepeatGrid ? nil : (parent, i, above.depth)
         }
         guard let i = store.doc.nodes.firstIndex(where: { $0.id == above.id }) else { return nil }
         return (nil, i, 0)
     }
 
-    private func drop(_ row: Row, at slot: Int, rows: [Row]) {
-        guard let (parent, index, _) = destination(for: row, slot: slot, rows: rows) else { return }
+    private func drop(_ row: Row, at spot: DropSpot, rows: [Row]) {
+        guard let (parent, index, _) = destination(for: row, spot: spot, rows: rows) else { return }
         if !store.selection.contains(row.id) { store.selection = [row.id] }
         store.move(row.id, to: parent, at: index)
+        // A group or artboard let go onto opens if shut, to show the layer where it went.
+        if case .onto = spot { withAnimation(Theme.unfold) { reveal() } }
     }
 
-    @ViewBuilder private func dropLine(_ rows: [Row]) -> some View {
-        if let slot = dropSlot, let id = dragging, let row = rows.first(where: { $0.id == id }),
-           let (_, _, depth) = destination(for: row, slot: slot, rows: rows) {
-            Capsule()
-                .fill(Theme.pencil)
-                .frame(height: 2)
-                .padding(.leading, 10 + CGFloat(depth) * 18)
-                .offset(y: CGFloat(slot) * Self.rowHeight - 1)
-                .allowsHitTesting(false)
+    /// A line in the gap the layer would go into, or a ring around the row it would go into.
+    @ViewBuilder private func dropMark(_ rows: [Row]) -> some View {
+        if let spot = dropSpot, let id = dragging, let row = rows.first(where: { $0.id == id }),
+           let (_, _, depth) = destination(for: row, spot: spot, rows: rows) {
+            switch spot {
+            case .gap(let slot):
+                Capsule()
+                    .fill(Theme.pencil)
+                    .frame(height: 2)
+                    .padding(.leading, 10 + CGFloat(depth) * 18)
+                    .offset(y: CGFloat(slot) * Self.rowHeight - 1)
+                    .allowsHitTesting(false)
+            case .onto(let i):
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Theme.pencil, lineWidth: 2)
+                    .frame(height: Self.rowHeight)
+                    .offset(y: CGFloat(i) * Self.rowHeight)
+                    .allowsHitTesting(false)
+            }
         }
     }
 }

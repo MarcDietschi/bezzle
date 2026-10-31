@@ -2,3 +2,5 @@ build/
 xcuserdata/
 .DS_Store
 *.profraw
+# The subject matte, too large for git: made by Scripts/subject-matte/make.sh
+Bezzle/Canvas/BiRefNet.mlpackage/

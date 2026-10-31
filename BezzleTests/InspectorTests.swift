@@ -166,3 +166,54 @@ struct CanvasHandleTests {
         #expect(bench.store.doc == before)
     }
 }
+
+struct CardTests {
+    @Test func aDialClicksToItsStops() {
+        let range = 0.0...100.0
+        let held = Dial.settle(48.5, in: range, stops: [25, 50])
+        #expect(held.value == 50 && held.stop == 50)
+        let free = Dial.settle(40, in: range, stops: [25, 50])
+        #expect(free.value == 40 && free.stop == nil)
+        // Past either end it stays at the end, and a stop outside the range never holds it.
+        #expect(Dial.settle(-20, in: range, stops: [-20]).value == 0)
+        #expect(Dial.settle(130, in: range, stops: [25, 50]).value == 100)
+        // Between two near stops, the nearer one holds it.
+        #expect(Dial.settle(50.8, in: range, stops: [49, 52]).stop == 52)
+    }
+
+    @Test func aCardGivesLessTheFurtherItIsPulled() {
+        #expect(Dial.give(0, limit: 90) == 0)
+        #expect(Dial.give(10, limit: 90) < Dial.give(40, limit: 90))
+        #expect(Dial.give(10_000, limit: 90) <= 90)
+        // Far enough past the bottom to take a card away, it has given most of the way.
+        #expect(Dial.give(Dial.tearsAt, limit: 90) > 30)
+    }
+
+    @Test func aShadowLiftsThroughThePresets() {
+        var n = CanvasTests.rect("R", CGRect(x: 0, y: 0, width: 50, height: 50))
+        for (i, preset) in Presets.shadows.enumerated() {
+            Presets.setElevation(Double(i + 1), on: &n)
+            #expect(Presets.isShadow(preset, n.shadow))
+            #expect(abs(Presets.elevation(of: n.shadow) - Double(i + 1)) < 1e-9)
+        }
+        // Between two presets, a blend of them.
+        Presets.setElevation(2.5, on: &n)
+        #expect(n.shadow.y > Presets.shadows[1].y && n.shadow.y < Presets.shadows[2].y)
+        #expect(n.shadow.blur > Presets.shadows[1].blur && n.shadow.blur < Presets.shadows[2].blur)
+        #expect(abs(Presets.elevation(of: n.shadow) - 2.5) < 0.02)
+        // Down to nothing it stays on, flat; inside, it goes by the presets inside.
+        Presets.setElevation(0, on: &n)
+        #expect(n.shadow.on && n.shadow.y == 0 && n.shadow.blur == 0 && n.shadow.color.a == 0)
+        n.shadow.inset = true
+        Presets.setElevation(2, on: &n)
+        #expect(Presets.isShadow(Presets.innerShadows[1], n.shadow))
+    }
+
+    @Test func aShadowKeepsItsColourAsItLifts() {
+        var n = CanvasTests.rect("R", CGRect(x: 0, y: 0, width: 50, height: 50))
+        n.shadow = Shadow(on: true, color: RGBA(r: 0.2, g: 0.1, b: 0.6, a: 0.3), x: 3, y: 4, blur: 12)
+        Presets.setElevation(3, on: &n)
+        #expect(n.shadow.color.r == 0.2 && n.shadow.color.b == 0.6 && n.shadow.x == 3)
+        #expect(n.shadow.y == Presets.shadows[2].y)
+    }
+}

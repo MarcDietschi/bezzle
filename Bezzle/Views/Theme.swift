@@ -73,6 +73,8 @@ enum CanvasInk {
     static let table = Theme.dynamicNS(0xE5E1D9, 0x0F0E0D)
     /// Selection, handles and guides. One blue that reads on white artboards and on the dark table alike.
     static let pencil = Theme.hex(0x3A63D8)
+    /// Gaps as wide as each other, set apart from the guides in pencil.
+    static let gap = Theme.hex(0xE0457B)
     static let label = Theme.dynamicNS(0x1C1B19, 0xEDEAE4, lightAlpha: 0.50, darkAlpha: 0.50)
     static let labelSelected = Theme.dynamicNS(0x3559C7, 0x8FA8F2)
     static let shadow = Theme.dynamicNS(0x3A3226, 0x000000)

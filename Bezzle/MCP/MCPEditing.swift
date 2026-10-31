@@ -111,7 +111,7 @@ extension MCPTools {
         var names = Set(doc.allNodes.map(\.name))
         var nextBoard = Self.nextArtboardOrigin(in: doc)
         let parentSize = parent.flatMap { doc.node($0)?.frame.size }
-        let defaultBoard = store.lastPreset ?? Preset.all[0].size
+        let defaultBoard = store.lastPreset ?? Preset.standard.size
         var made: [Node] = []
         for spec in specs {
             made.append(try Self.make(spec, parentSize: parentSize, boardSize: defaultBoard, names: &names, warnings: &warnings, nextBoard: &nextBoard))
@@ -215,7 +215,7 @@ extension MCPTools {
         let store = try await store(args)
         guard let path = try args.string("file") else { throw MCPError("Give the picture's file.") }
         let file = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        guard FileManager.default.fileExists(atPath: file.path) else { throw MCPError("There is no file at \(file.path).") }
+        guard FileManager.default.fileExists(atPath: file.path) else { throw MCPError("There is no file at \(file.path).\(Self.unreachable)") }
         guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
               let info = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let w = info[kCGImagePropertyPixelWidth] as? Int, let h = info[kCGImagePropertyPixelHeight] as? Int, w > 0, h > 0
@@ -384,30 +384,18 @@ extension MCPTools {
         let ids = try Self.layers(args, in: store)
         let doc = store.doc
         guard !ids.contains(where: { doc.node($0)?.isArtboard == true }) else { throw MCPError("Artboards cannot be grouped.") }
-        let parents = Set(ids.map { doc.parent(of: $0)?.id })
-        guard parents.count == 1, let parent = parents.first else { throw MCPError("Group layers that lie in the same artboard or group. move_layers brings them together.") }
-        let name = try args.string("name")
-        var group = Node(kind: .group, name: name ?? doc.nextName(for: .group), frame: .zero)
-        try change(store, LocalizedStringResource("undo.group", defaultValue: "Group", comment: "Undo name: layers put into a group.")) { doc in
-            let path = parent.flatMap { doc.path(of: $0) }
-            var siblings = path.map { doc[$0].children } ?? doc.nodes
-            let chosen = Set(ids)
-            guard let top = siblings.lastIndex(where: { chosen.contains($0.id) }) else { return }
-            // In the group, its layers keep where they are: it starts at its parent's top left and
-            // is fitted round them.
-            group.children = siblings.filter { chosen.contains($0.id) }
-            siblings.removeAll { chosen.contains($0.id) }
-            siblings.insert(group, at: top + 1 - group.children.count)
-            if let path {
-                var holder = doc[path]
-                holder.children = siblings
-                doc[path] = holder
-            } else {
-                doc.nodes = siblings
-            }
+        guard !ids.contains(where: { doc.ancestors(of: $0).contains(where: \.isRepeatGrid) }) else {
+            throw MCPError("Layers in a repeat grid cannot be grouped: the grid's cells follow its first.")
         }
-        store.selection = [group.id]
-        return described([group.id], in: store, depth: 1)
+        guard DocumentStore.groupable(ids, in: doc) != nil else {
+            throw MCPError("Group layers that lie on the same artboard, or all on the canvas. move_layers brings them together.")
+        }
+        let name = try args.string("name")
+        var group: UUID?
+        try change(store, DocumentStore.grouping) { doc in group = DocumentStore.group(ids, in: &doc, name: name) }
+        guard let group else { return described(ids, in: store) }
+        store.selection = [group]
+        return described([group], in: store, depth: 1)
     }
 
     func ungroupLayers(_ args: Arguments) async throws -> [Content] {
@@ -416,30 +404,13 @@ extension MCPTools {
         guard ids.allSatisfy({ store.doc.node($0)?.isGroup == true }) else { throw MCPError("Only groups can be ungrouped.") }
         var freed: [UUID] = []
         var warnings: [String] = []
-        try change(store, "Ungroup") { doc in
-            for id in ids {
-                guard let path = doc.path(of: id), let group = doc.node(id) else { continue }
-                if group.mask?.isEmpty == false { warnings.append("\(group.name)'s mask went with it.") }
-                if group.opacity != 1 || group.blend != nil || group.blur != nil || group.shadow.on {
-                    warnings.append("\(group.name)'s opacity, blend, blur and shadow went with it.")
-                }
-                // A group is never turned, so its layers only move by where it is.
-                let layers = group.children.map { child -> Node in
-                    var c = child
-                    c.frame = c.frame.offsetBy(dx: group.frame.minX, dy: group.frame.minY)
-                    return c
-                }
-                let i = path.indices.last!
-                if let parent = path.parent {
-                    var holder = doc[parent]
-                    holder.children.replaceSubrange(i...i, with: layers)
-                    doc[parent] = holder
-                } else {
-                    doc.nodes.replaceSubrange(i...i, with: layers)
-                }
-                freed += layers.map(\.id)
+        for group in ids.compactMap({ store.doc.node($0) }) {
+            if group.mask?.isEmpty == false { warnings.append("\(group.name)'s mask went with it.") }
+            if group.opacity != 1 || group.blend != nil || group.blur != nil || group.shadow.on {
+                warnings.append("\(group.name)'s opacity, blend, blur and shadow went with it.")
             }
         }
+        try change(store, "Ungroup") { doc in freed = DocumentStore.ungroup(ids, in: &doc) }
         store.selection = freed
         return described(freed, in: store, warnings: warnings)
     }

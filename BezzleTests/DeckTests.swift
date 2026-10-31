@@ -41,6 +41,36 @@ struct DeckTests {
         bench.a.posts.compactMap { layer(name, in: $0, bench) }
     }
 
+    @Test func groupingInThePostInFrontGroupsTheSameInEveryPost() {
+        let bench = deck()
+        let front = bench.store.front(of: bench.a)
+        bench.store.selection = ["Back", "Title"].compactMap { layer($0, in: front, bench)?.id }
+        #expect(bench.store.canGroup)
+        bench.step { bench.store.group() }
+        let a = bench.a
+        for post in a.posts {
+            #expect(a.layers(of: post).map(\.name) == ["Group 1"])
+            #expect(a.layers(of: post).first?.children.map(\.name) == ["Back", "Title"])
+        }
+        #expect(all("Group 1", bench).compactMap { $0.children.last?.text } == ["Tip 1", "Tip 2", "Tip 3"])
+    }
+
+    @Test func aShapeOpenedInThePostInFrontTakesNewPointsInEveryPost() {
+        let bench = deck()
+        // "Back" fills A, which lies from 100,100 to 500,400 on the canvas.
+        bench.click(CGPoint(x: 300, y: 300))
+        bench.click(CGPoint(x: 300, y: 300), clicks: 2)
+        #expect(bench.store.editingPath != nil)
+        bench.drag(CGPoint(x: 500, y: 400), CGPoint(x: 530, y: 420), flags: .command)
+        #expect(all("Back", bench).count == 3)
+        #expect(all("Back", bench).allSatisfy { $0.kind == .path && $0.frame.size == CGSize(width: 430, height: 320) })
+        #expect(all("Title", bench).map(\.text) == ["Tip 1", "Tip 2", "Tip 3"])
+        // Left as it was, it is the rectangle again in every post.
+        bench.undoLast()
+        bench.key(53)
+        #expect(all("Back", bench).allSatisfy { $0.kind == .rectangle && $0.frame.size == CGSize(width: 400, height: 300) })
+    }
+
     @Test func anArtboardBecomesADeckOfTwoPosts() {
         let bench = bench()
         let a = bench.a.id
@@ -125,6 +155,27 @@ struct DeckTests {
         bench.step { bench.store.movePost(posts[2], in: a, to: 0) }
         #expect(all("Title", bench).map(\.text) == ["Tip 3", "Tip 1"])
         #expect(bench.a.children.filter { $0.post == posts[2] }.map(\.id) == ids)
+    }
+
+    @Test func aStackLeftWithOnePostIsAnArtboardAgain() {
+        let bench = deck()
+        let a = bench.a.id
+        let posts = bench.a.posts
+        bench.step { bench.store.removePost(posts[0], from: a) }
+        #expect(bench.a.isDeck)
+        let title = try! #require(layer("Title", in: posts[2], bench))
+        bench.store.selection = [title.id]
+        bench.step { bench.store.removePost(posts[1], from: a) }
+        // No stack: the last post's layers, as they were, and nothing behind them.
+        #expect(!bench.a.isDeck)
+        #expect(bench.a.children.map(\.name) == ["Back", "Title"])
+        #expect(bench.a.children.allSatisfy { $0.post == nil })
+        #expect(bench.node("Title")?.text == "Tip 3")
+        #expect(bench.store.selection == [title.id])
+        #expect(bench.store.fronts[a] == nil)
+        // Undone, the stack of two is back.
+        bench.undoLast()
+        #expect(bench.a.isDeck && bench.a.posts.count == 2)
     }
 
     @Test func turningKeepsTheSameLayerSelected() {

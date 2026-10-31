@@ -118,6 +118,36 @@ enum Presets {
         }
     }
 
+    /// How high a shadow lifts its layer: 0 for none, 1 for the first preset and each whole step
+    /// the next, and between two presets a blend of them, measured by how far the shadow falls.
+    /// A shadow inside goes by the presets inside.
+    static func elevation(of s: Shadow) -> Double {
+        let falls = [0] + (s.inset == true ? innerShadows : shadows).map(\.y)
+        let y = max(s.y, 0)
+        for i in 1..<falls.count where y <= falls[i] {
+            return Double(i - 1) + Double((y - falls[i - 1]) / max(falls[i] - falls[i - 1], .ulpOfOne))
+        }
+        return Double(falls.count - 1)
+    }
+
+    /// The highest elevation, the last preset's.
+    static var topElevation: Double { Double(shadows.count) }
+
+    /// Lifts the layer's shadow to an elevation, keeping its colour, how far it falls sideways and
+    /// whether it falls inside. A whole elevation is that preset exactly.
+    static func setElevation(_ elevation: Double, on n: inout Node) {
+        let presets = n.shadow.inset == true ? innerShadows : shadows
+        let steps: [(y: CGFloat, blur: CGFloat, alpha: Double)] = [(0, 0, 0)] + presets.map { ($0.y, $0.blur, $0.alpha) }
+        let e = min(max(elevation, 0), Double(steps.count - 1))
+        let i = min(Int(e), steps.count - 2), t = e - Double(i)
+        let a = steps[i], b = steps[i + 1]
+        let between = { (x: CGFloat, y: CGFloat) in t == 0 ? x : t == 1 ? y : ((x + (y - x) * t) * 10).rounded() / 10 }
+        n.shadow.on = true
+        n.shadow.y = between(a.y, b.y)
+        n.shadow.blur = between(a.blur, b.blur)
+        n.shadow.color = n.shadow.color.with(alpha: t == 0 ? a.alpha : t == 1 ? b.alpha : a.alpha + (b.alpha - a.alpha) * t)
+    }
+
     /// Border weights, and a dashed line of the weight there is.
     static let borders: [(id: String, name: LocalizedStringResource, width: CGFloat?)] = [
         ("border-thin", "Thin", 1), ("border-medium", "Medium", 2), ("border-bold", "Bold", 4), ("border-dashed", "Dashed", nil),
@@ -254,84 +284,15 @@ struct BorderGlyph: View {
     }
 }
 
-// MARK: - A block for something a layer has
-
-/// One thing a layer has, such as its border: its name, a × to take it away while the pointer is
-/// on the block, what can be picked, and under that the exact numbers.
-struct OptionBlock<Content: View, Exact: View>: View {
-    let title: LocalizedStringResource
-    var remove: (() -> Void)?
-    /// Says what the × takes away, such as "Remove shadow".
-    var removal: LocalizedStringResource
-    @ViewBuilder let content: Content
-    @ViewBuilder let exact: Exact
-    @State private var hovering = false
-
-    init(title: LocalizedStringResource, remove: (() -> Void)? = nil, removal: LocalizedStringResource = "Remove", @ViewBuilder content: () -> Content,
-         @ViewBuilder exact: () -> Exact) {
-        self.title = title
-        self.remove = remove
-        self.removal = removal
-        self.content = content()
-        self.exact = exact()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Spacer(minLength: 0)
-                if let remove {
-                    RemoveButton(help: removal, action: remove)
-                        .opacity(hovering ? 1 : 0)
-                        .allowsHitTesting(hovering)
-                }
-            }
-            // Every row the same distance from the next, picked or exact.
-            VStack(alignment: .leading, spacing: 8) {
-                content
-                if Exact.self != EmptyView.self { exact }
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .animation(Theme.quick, value: hovering)
-    }
-}
-
-extension OptionBlock where Exact == EmptyView {
-    init(title: LocalizedStringResource, remove: (() -> Void)? = nil, removal: LocalizedStringResource = "Remove", @ViewBuilder content: () -> Content) {
-        self.init(title: title, remove: remove, removal: removal, content: content) { EmptyView() }
-    }
-}
-
-private struct RemoveButton: View {
-    let help: LocalizedStringResource
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Image(systemName: "xmark")
-            .font(.system(size: 9.5, weight: .semibold))
-            .foregroundStyle(hovering ? Theme.ink : Theme.ink3)
-            .frame(width: 20, height: 20)
-            .background { Circle().fill(Theme.ink.opacity(hovering ? 0.07 : 0)) }
-            .contentShape(Circle())
-            .onHover { hovering = $0 }
-            .onTapGesture(perform: action)
-            .help(Text(help))
-    }
-}
-
 // MARK: - Adding what is not there
 
-/// What the selection does not have yet and could: pointing at one shows it on the canvas, and
-/// a click adds it, already looking right.
+/// What the selection does not have yet and could, as dashed cards: pointing at one shows it on
+/// the canvas, and a click adds it, already looking right, and opens its card.
 struct AddBar: View {
     struct Item: Identifiable {
         let id: String
+        /// The card it becomes, opened as it is added.
+        let aspect: Aspect
         let title: LocalizedStringResource
         /// Says what a click does, such as "Add a shadow".
         let help: LocalizedStringResource
@@ -351,10 +312,13 @@ struct AddBar: View {
             ForEach(items) { item in
                 AddChip(title: item.title, help: item.help) { inside in
                     store.showPreview(item.id, inside ? item.change : nil)
+                    if inside { store.pointedAspect = item.aspect } else if store.pointedAspect == item.aspect { store.pointedAspect = nil }
                 } add: {
                     store.showPreview(item.id, nil)
+                    store.pointedAspect = nil
                     withAnimation(Theme.unfold) {
                         if let add = item.add { add() } else { store.updateSelection(item.action, item.change) }
+                        store.openAspect = item.aspect
                     }
                 }
             }

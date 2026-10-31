@@ -303,6 +303,60 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         }
     }
 
+    /// How far a group is seen turned in the page: as far as most of what it holds, by area, a
+    /// quarter turn lying the same way. That is the turn of its largest layer so turned, between
+    /// -180° and 180°; 0 when it lies upright or a quarter turn from it.
+    @MainActor
+    static func turn(of group: Node) -> Double {
+        // By hundredths of a degree, round a quarter turn.
+        var areas: [Int: CGFloat] = [:], largest: [Int: (area: CGFloat, rotation: Double)] = [:]
+        func visit(_ n: Node) {
+            if n.isGroup { (n.mask ?? n.children).forEach(visit); return }
+            let area = max(n.frame.width, 1) * max(n.frame.height, 1)
+            let r = n.rotation.truncatingRemainder(dividingBy: 90)
+            let key = Int(((r < 0 ? r + 90 : r) * 100).rounded()) % 9000
+            areas[key, default: 0] += area
+            if area > largest[key]?.area ?? 0 { largest[key] = (area, n.rotation) }
+        }
+        (group.mask ?? group.children).forEach(visit)
+        guard let key = areas.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) })?.key,
+              key != 0, let rotation = largest[key]?.rotation else { return 0 }
+        return CanvasView.normalized(rotation)
+    }
+
+    /// How a layer lies in its parent, as its selection shows: its frame, upright, and how far that
+    /// is turned about its middle. A group is never turned itself, but is seen turned as far as its
+    /// layers are (`turn(of:)`), in the box round them along that turn. Anything else, a repeat grid
+    /// too (which shows its own turn), is its frame and rotation.
+    @MainActor
+    static func turnedBox(of node: Node) -> (frame: CGRect, rotation: Double) {
+        guard node.isGroup, !node.isRepeatGrid else { return (node.frame, node.rotation) }
+        let turn = turn(of: node)
+        guard turn != 0 else { return (node.frame, 0) }
+        let pivot = node.frame.center
+        let upright = turned(node, by: -turn, about: pivot)
+        guard let box = (upright.mask ?? upright.children).map({ Geometry.bounds(of: $0) }).reduce(nil as CGRect?, { $0?.union($1) ?? $1 }) else {
+            return (node.frame, 0)
+        }
+        let middle = Geometry.rotated(CGPoint(x: node.frame.minX + box.midX, y: node.frame.minY + box.midY), about: pivot, by: turn)
+        return (CGRect(center: middle, size: box.size), turn)
+    }
+
+    /// A group seen turned by `turn` stretched from its box `old` to `new`, both upright in its
+    /// parent and turned by `turn` about their middles: turned upright about the old box's middle,
+    /// stretched there as any group is, and turned back about the new box's. Its frame is fitted
+    /// round what it holds afterwards.
+    @MainActor
+    static func scaled(_ group: Node, turned turn: Double, from old: CGRect, to new: CGRect) -> Node {
+        var g = turned(group, by: -turn, about: old.center)
+        // Upright, what it holds fills the old box; measured from that box, it fills the new one.
+        let dx = group.frame.minX - old.minX, dy = group.frame.minY - old.minY
+        func moved(_ nodes: [Node]) -> [Node] { nodes.map { var n = $0; n.frame = n.frame.offsetBy(dx: dx, dy: dy); return n } }
+        g.frame = new
+        g.children = scaled(moved(g.children), from: old.size, to: new.size)
+        g.mask = g.mask.map { scaled(moved($0), from: old.size, to: new.size) }
+        return turned(g, by: turn, about: new.center)
+    }
 
     /// Brings every group's frame back to the box around what it holds, without moving anything
     /// on the canvas, and takes away groups left empty.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bezzle's website (mfrports.github.io/bezzle-app): the home page, Support and Privacy, in English,
+"""Bezzle's website (mfrports.github.io/bezzle-web): the home page, Support and Privacy, in English,
 German, French and Italian. Writes everything to public/, ready for GitHub Pages.
 Pictures come from the App Store screenshots in ../screenshots."""
 import html, os, re, shutil, subprocess, sys
@@ -9,7 +9,7 @@ OUT = os.path.join(HERE, "public")
 SHOTS = os.path.join(os.path.dirname(HERE), "screenshots")
 ICON = os.path.join(os.path.dirname(os.path.dirname(HERE)), "Branding", "bezzle-icon.png")
 STORE = "https://apps.apple.com/app/id6829008596"
-ISSUES = "https://github.com/mfrports/bezzle-app/issues/new"
+ISSUES = "https://github.com/mfrports/bezzle-web/issues/new"
 NB = " "
 LANGS = [("en-US", "en", "", "EN"), ("de-DE", "de", "de/", "DE"), ("fr-FR", "fr", "fr/", "FR"), ("it", "it", "it/", "IT")]
 
@@ -203,7 +203,7 @@ def page(lang, prefix, title, desc, body, here):
     up = "../" if prefix else ""
     switch = " ".join(
         f'<a href="{up}{p}{here}"{" aria-current=page" if l == lang else ""} hreflang="{l}">{label}</a>' for _, l, p, label in LANGS)
-    alts = "".join(f'<link rel="alternate" hreflang="{l}" href="https://mfrports.github.io/bezzle-app/{p}{here}">' for _, l, p, _ in LANGS)
+    alts = "".join(f'<link rel="alternate" hreflang="{l}" href="https://mfrports.github.io/bezzle-web/{p}{here}">' for _, l, p, _ in LANGS)
     t = T[lang]
     return f"""<!DOCTYPE html>
 <html lang="{lang}">
@@ -214,7 +214,7 @@ def page(lang, prefix, title, desc, body, here):
 <meta name="description" content="{html.escape(desc)}">
 <meta property="og:title" content="{html.escape(title)}">
 <meta property="og:description" content="{html.escape(desc)}">
-<meta property="og:image" content="https://mfrports.github.io/bezzle-app/img/{LANGS[[x[1] for x in LANGS].index(lang)][0]}/1.jpg">
+<meta property="og:image" content="https://mfrports.github.io/bezzle-web/img/{LANGS[[x[1] for x in LANGS].index(lang)][0]}/1.jpg">
 {alts}
 <link rel="icon" href="{up}img/favicon.png">
 <link rel="stylesheet" href="{up}style.css">
@@ -252,7 +252,7 @@ def home(lang, locale, up):
       <a class="button" href="{STORE}">{e(t["cta"])}</a>
       <small>{e(t["cta_small"])}</small>
     </div>
-    <img class="window" src="{up}img/window.png" width="1600" height="1000" alt="">
+    <img class="window" src="{img}/window.png" width="1600" height="1000" alt="">
   </div>
   <section>
     <h2>{e(t["free_h"])}</h2>
@@ -317,10 +317,13 @@ def main():
     open(os.path.join(OUT, ".nojekyll"), "w").close()
     subprocess.run(["sips", "-Z", "256", ICON, "--out", os.path.join(OUT, "img", "icon-256.png")], check=True, capture_output=True)
     subprocess.run(["sips", "-Z", "64", ICON, "--out", os.path.join(OUT, "img", "favicon.png")], check=True, capture_output=True)
-    subprocess.run(["sips", "-Z", "1600", os.path.join(os.path.dirname(HERE), "screenshots-src", "assets", "hero.png"),
-                    "--out", os.path.join(OUT, "img", "window.png")], check=True, capture_output=True)
     for locale, lang, prefix, _ in LANGS:
         os.makedirs(os.path.join(OUT, "img", locale))
+        # The window shows the app in the page's language, captured with -AppleLanguages.
+        assets = os.path.join(os.path.dirname(HERE), "screenshots-src", "assets")
+        hero = os.path.join(assets, locale, "hero.png")
+        subprocess.run(["sips", "-Z", "1600", hero if os.path.exists(hero) else os.path.join(assets, "hero.png"),
+                        "--out", os.path.join(OUT, "img", locale, "window.png")], check=True, capture_output=True)
         for i in range(1, 9):
             subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "84", "-Z", "1440",
                             os.path.join(SHOTS, locale, f"{i}.png"), "--out", os.path.join(OUT, "img", locale, f"{i}.jpg")],
@@ -333,9 +336,9 @@ def main():
         open(os.path.join(folder, "support.html"), "w").write(page(lang, prefix, f'{t["support_h"]} · Bezzle', t["support_sub"], support(lang), "support.html"))
         open(os.path.join(folder, "privacy.html"), "w").write(page(lang, prefix, f'{t["privacy_h"]} · Bezzle', t["privacy"][0][1], privacy(lang), "privacy.html"))
     open(os.path.join(OUT, "README.md"), "w").write(
-        "# Bezzle\n\nThe website of [Bezzle](https://mfrports.github.io/bezzle-app/), the free design app for Mac: "
+        "# Bezzle\n\nThe website of [Bezzle](https://mfrports.github.io/bezzle-web/), the free design app for Mac: "
         "home page, support and privacy policy in English, German, French and Italian.\n\n"
-        "To report a problem or suggest something, [open an issue](https://github.com/mfrports/bezzle-app/issues/new).\n")
+        "To report a problem or suggest something, [open an issue](https://github.com/mfrports/bezzle-web/issues/new).\n")
     print("site written to", OUT)
 
 

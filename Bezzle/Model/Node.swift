@@ -493,6 +493,21 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
         let left = a.x <= b.x ? a : b, right = a.x <= b.x ? b : a
         rising = left.y > right.y
     }
+
+    /// A rectangle's four radii: top left, top right, bottom right, bottom left.
+    var radii: [CGFloat] {
+        get { corners.flatMap { $0.count == 4 ? $0 : nil } ?? Array(repeating: cornerRadius, count: 4) }
+        set {
+            // Kept as one radius while they are alike, and as the largest beside them when not.
+            if Set(newValue).count == 1 {
+                cornerRadius = newValue[0]
+                corners = nil
+            } else {
+                cornerRadius = newValue.max() ?? 0
+                corners = newValue
+            }
+        }
+    }
 }
 
 // MARK: - Codable for CoreGraphics values

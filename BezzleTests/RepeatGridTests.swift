@@ -33,6 +33,47 @@ struct RepeatGridTests {
 
     private func absolute(_ bench: Bench, _ n: Node) -> CGRect { bench.store.doc.absoluteFrame(of: n.id)! }
 
+    /// A 100 × 100 rectangle "R" at 110,110 on the canvas, repeated in two columns, the second
+    /// from 222,110. Its shape is opened as a path by double clicks at `x` in one cell.
+    private func openedSquares(at x: CGFloat) -> (Bench, UUID) {
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))])
+        bench.store.selection = [bench.node("R")!.id]
+        bench.step { bench.store.makeRepeatGrid() }
+        let id = bench.store.selection[0]
+        bench.step { bench.store.edit("Repeat Grid") { $0.update(id) { $0.grid?.columns = 2 } } }
+        bench.store.selection = []
+        let p = CGPoint(x: x, y: 160)
+        // The grid, then the cell, then its points.
+        bench.click(p)
+        bench.click(p, clicks: 2)
+        bench.click(p, clicks: 2)
+        return (bench, id)
+    }
+
+    @Test(arguments: [160.0, 272.0]) func aShapeOpenedInAnyCellTakesNewPointsInEveryCell(x: CGFloat) throws {
+        let (bench, id) = openedSquares(at: x)
+        let opened = try #require(bench.store.editingPath)
+        #expect(grid(bench, id).children.allSatisfy { $0.kind == .path })
+        let f = try #require(bench.store.doc.absoluteFrame(of: opened))
+        bench.drag(CGPoint(x: f.maxX, y: f.maxY), CGPoint(x: f.maxX + 30, y: f.maxY + 20), flags: .command)
+        let cells = grid(bench, id).children
+        #expect(cells.count == 2)
+        #expect(cells.allSatisfy { $0.kind == .path && $0.frame.size == CGSize(width: 130, height: 120) })
+        // Undone, it is the square again, in every cell.
+        bench.undoLast()
+        #expect(grid(bench, id).children.allSatisfy { $0.kind == .rectangle && $0.frame.size == CGSize(width: 100, height: 100) })
+    }
+
+    @Test func aShapeOpenedInACellAndLeftAsItWasIsTheShapeInEveryCell() {
+        let (bench, id) = openedSquares(at: 272)
+        #expect(bench.store.editingPath != nil)
+        bench.key(53)
+        #expect(bench.store.editingPath == nil)
+        let cells = grid(bench, id).children
+        #expect(cells.count == 2)
+        #expect(cells.allSatisfy { $0.kind == .rectangle && $0.frame.size == CGSize(width: 100, height: 100) })
+    }
+
     @Test func keysSayWhichCellTheyAre() {
         #expect(RepeatGrid.key(.first) == .none)
         for cell in [RepeatGrid.Cell(column: 1, row: 0), RepeatGrid.Cell(column: 0, row: 7), RepeatGrid.Cell(column: 99, row: 99)] {

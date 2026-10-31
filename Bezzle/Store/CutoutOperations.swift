@@ -93,9 +93,14 @@ extension DocumentStore {
         for id in ids { cuttingOut[id] = CutoutWork() }
         defer { for id in ids { cuttingOut[id] = nil } }
 
+        // The learned matte, unless every picture was cut out with it before.
+        let fine = { (asset: String) in folder.appendingPathComponent(Self.cutoutName(of: asset, picks: picks, learned: true)) }
+        let matte = layers.keys.allSatisfy({ FileManager.default.fileExists(atPath: fine($0).path) }) ? nil : await SubjectModel.shared.matte()
+
         var made: [String: Cutout] = [:], trouble: CutoutMaker.Failure?
         for asset in layers.keys.sorted() {
-            let name = Self.cutoutName(of: asset, picks: picks)
+            let learned = matte != nil || FileManager.default.fileExists(atPath: fine(asset).path)
+            let name = Self.cutoutName(of: asset, picks: picks, learned: learned)
             let source = folder.appendingPathComponent(asset), target = folder.appendingPathComponent(name)
             // Each step told to the layers it fills, as it is taken.
             let showing = layers[asset] ?? []
@@ -112,7 +117,7 @@ extension DocumentStore {
                 let outline = try await Task.detached(priority: .userInitiated) {
                     FileManager.default.fileExists(atPath: target.path)
                         ? try Self.outline(of: target)
-                        : try Self.makeCutout(of: source, picks: picks, to: target, told: told)
+                        : try Self.makeCutout(of: source, picks: picks, to: target, matting: matte, told: told)
                 }.value
                 made[asset] = Cutout(asset: name, picks: picks, outline: outline)
             } catch {
@@ -150,15 +155,17 @@ extension DocumentStore {
 
     /// What the cutout of a picture is called: the same each time it is cut out with the same
     /// picks, so taking the background away again finds it made, however often it was given back.
-    nonisolated static func cutoutName(of asset: String, picks: [CGPoint]?) -> String {
-        let stem = (asset as NSString).deletingPathExtension
-        guard let picks, !picks.isEmpty else { return "\(stem)-cutout.png" }
+    /// Cut out with the learned matte, it is named for the model's version, so one cut without it
+    /// is never taken for one cut with it.
+    nonisolated static func cutoutName(of asset: String, picks: [CGPoint]?, learned: Bool = false) -> String {
+        let stem = (asset as NSString).deletingPathExtension + (learned ? "-cutout-m\(SubjectMatte.version)" : "-cutout")
+        guard let picks, !picks.isEmpty else { return "\(stem).png" }
         // FNV-1a over the picks to a ten-thousandth, the same on every Mac and every run.
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325
         for byte in picks.map({ String(format: "%.4f,%.4f", $0.x, $0.y) }).joined(separator: ";").utf8 {
             hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3
         }
-        return "\(stem)-cutout-\(String(hash, radix: 16)).png"
+        return "\(stem)-\(String(hash, radix: 16)).png"
     }
 
     /// The outline of a cutout, from how solid it is as it was kept: the same however it came to be
@@ -174,7 +181,7 @@ extension DocumentStore {
 
     /// The picture at `source` cut out, and kept as a PNG at `target`: written beside it first, so
     /// a cutout cut short is never taken for one made. Returns the outline of what it leaves.
-    nonisolated static func makeCutout(of source: URL, picks: [CGPoint]?, to target: URL,
+    nonisolated static func makeCutout(of source: URL, picks: [CGPoint]?, to target: URL, matting: (any CutoutMaker.Matting)? = nil,
                                        told: (CutoutMaker.Progress) -> Void = { _ in }) throws -> String {
         // At its own size, turned upright as it is drawn.
         guard let file = CGImageSourceCreateWithURL(source as CFURL, nil),
@@ -185,7 +192,7 @@ extension DocumentStore {
                   kCGImageSourceThumbnailMaxPixelSize: max(w, h),
               ] as CFDictionary)
         else { throw CutoutMaker.Failure.unreadable }
-        let cut = try CutoutMaker.cut(picture, picks: picks, told: told)
+        let cut = try CutoutMaker.cut(picture, picks: picks, matting: matting, told: told)
         let writing = target.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: writing) }
         guard let out = CGImageDestinationCreateWithURL(writing as CFURL, UTType.png.identifier as CFString, 1, nil) else {

@@ -273,6 +273,62 @@ struct CutoutTests {
         #expect(told == told.sorted() && told.count >= 4)
     }
 
+    /// As a learned matte might have `balls()`, at half its size: both balls, each with a soft rim
+    /// beyond what Vision finds, and something else that stands out, high in the middle.
+    struct Balls: CutoutMaker.Matting {
+        func matte(of picture: CGImage) throws -> CutoutMaker.Plane {
+            let m = CutoutMaker.Plane(600, 300)
+            for y in 0..<300 {
+                for x in 0..<600 {
+                    let px = (Double(x) + 0.5) * 2, py = (Double(y) + 0.5) * 2
+                    let ball = min(hypot(px - 300, py - 300), hypot(px - 900, py - 300))
+                    let rim = min(max((190 - ball) / 20, 0), 1)
+                    m.p[y * 600 + x] = Float(max(rim, hypot(px - 600, py - 60) < 40 ? 1 : 0))
+                }
+            }
+            return m
+        }
+    }
+
+    @Test func aLearnedMatteDrawsTheEdgesKeptToWhatWasPicked() throws {
+        let matting = Balls()
+        let left = try #require(CutoutMaker.subjects(of: Self.balls()).parts.min { $0.point.x < $1.point.x })
+        var told: [Double] = []
+        let cut = try CutoutMaker.cut(Self.balls(), picks: [left.point], matting: matting) { told.append($0.done) }
+        #expect(pixel(cut, 300, 300)[3] == 255)
+        // The rim is see-through as the matte has it, fading out past the ball's outline.
+        let rim = pixel(cut, 300, 300 - 178)[3]
+        #expect(rim > 10 && rim < 245)
+        // The other ball and the something else were not picked, nor are they near what was.
+        #expect(pixel(cut, 900, 300)[3] == 0)
+        #expect(pixel(cut, 600, 60)[3] == 0)
+        #expect(told == told.sorted() && told.count >= 3)
+        // Unpicked, both balls are left, and still not what is away from them both.
+        let both = try CutoutMaker.cut(Self.balls(), matting: matting)
+        #expect(pixel(both, 300, 300)[3] == 255 && pixel(both, 900, 300)[3] == 255)
+        #expect(pixel(both, 600, 60)[3] == 0)
+    }
+
+    @Test func theAppComesWithTheLearnedMatteAndItFindsTheSubject() async throws {
+        // Made by Scripts/subject-matte/make.sh: without it, the app cuts pictures out less finely.
+        let url = try #require(Bundle.main.url(forResource: "BiRefNet", withExtension: "mlmodelc"))
+        let model = try await SubjectMatte(contentsOf: url)
+        let matte = try model.matte(of: Self.ball())
+        #expect(matte.w == SubjectMatte.side && matte.h == SubjectMatte.side)
+        // The ball is round the middle, a little above it; the corners are backdrop.
+        #expect(matte.p[1000 * matte.w + 1024] > 0.9)
+        #expect(matte.p[40 * matte.w + 40] < 0.1)
+        let cut = try CutoutMaker.cut(Self.ball(), matting: model)
+        #expect(pixel(cut, 450, 364)[3] == 255 && pixel(cut, 12, 12)[3] == 0)
+    }
+
+    @Test func cutoutsMadeWithTheLearnedMatteAreNamedForIt() {
+        #expect(DocumentStore.cutoutName(of: "photo.png", picks: nil) == "photo-cutout.png")
+        #expect(DocumentStore.cutoutName(of: "photo.png", picks: nil, learned: true) == "photo-cutout-m\(SubjectMatte.version).png")
+        let picked = DocumentStore.cutoutName(of: "photo.png", picks: [CGPoint(x: 0.5, y: 0.5)], learned: true)
+        #expect(picked.hasPrefix("photo-cutout-m\(SubjectMatte.version)-") && picked != DocumentStore.cutoutName(of: "photo.png", picks: [CGPoint(x: 0.5, y: 0.5)]))
+    }
+
     @Test func aClickOnAPicturePlacedIsToldAndADragIsNot() {
         var photo = CanvasTests.rect("Photo", CGRect(x: 50, y: 50, width: 100, height: 100))
         photo.fill.image = ImageFill(asset: "photo.png", mode: .cover, size: CGSize(width: 200, height: 100))

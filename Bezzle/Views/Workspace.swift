@@ -23,6 +23,10 @@ struct Workspace: View {
                 CanvasHost(store: store, menus: menus)
                     .overlay { TableEdge().allowsHitTesting(false) }
                     .overlay {
+                        CardMarks(store: store)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .overlay {
                         GradientHandles(store: store)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }

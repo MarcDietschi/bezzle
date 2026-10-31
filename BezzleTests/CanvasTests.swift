@@ -63,6 +63,11 @@ final class Bench {
         }
     }
 
+    /// Lets go of a drag held on with `release: false`.
+    func release(_ p: CGPoint, flags: NSEvent.ModifierFlags = []) {
+        step { canvas.mouseUp(with: event(.leftMouseUp, p, flags: flags)) }
+    }
+
     /// The pointer moving over the canvas with nothing pressed.
     func move(_ p: CGPoint) {
         canvas.mouseMoved(with: event(.mouseMoved, p, clicks: 0))
@@ -134,6 +139,16 @@ struct CanvasTests {
         #expect(bench.a.children.isEmpty)
     }
 
+    @Test func theArtboardToolLetsGoOfTheSelection() {
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50))])
+        bench.click(CGPoint(x: 130, y: 130))
+        #expect(bench.store.selection == [bench.node("R")!.id])
+        bench.store.tool = .rectangle
+        #expect(!bench.store.selection.isEmpty)
+        bench.store.tool = .artboard
+        #expect(bench.store.selection.isEmpty)
+    }
+
     @Test func shiftDrawsASquareAndAClickMakesOneOfAHundred() {
         let bench = Bench()
         bench.store.tool = .ellipse
@@ -183,6 +198,78 @@ struct CanvasTests {
         #expect(bench.a.children.count == 1)
     }
 
+    /// The gaps marked on the canvas, each as wide as it is.
+    private static func marked(_ bench: Bench) -> [CGFloat] {
+        bench.store.guides.filter(\.gap).map { hypot($0.to.x - $0.from.x, $0.to.y - $0.from.y) }
+    }
+
+    @Test func aLayerMovedBetweenTwoCatchesHalfwayAndShowsTheEvenGaps() {
+        // On the canvas, Left from 120 to 160 across and Right from 320 to 360, both 200 to 240 down.
+        let bench = Bench(extra: [CanvasTests.rect("Left", CGRect(x: 20, y: 100, width: 40, height: 40)),
+                                  CanvasTests.rect("Right", CGRect(x: 220, y: 100, width: 40, height: 40)),
+                                  CanvasTests.rect("M", CGRect(x: 150, y: 180, width: 40, height: 40))])
+        // From 250,280 to two points short of halfway across, and three below the others' tops.
+        bench.drag(CGPoint(x: 270, y: 300), CGPoint(x: 238, y: 223), release: false)
+        #expect(bench.node("M")?.frame.origin == CGPoint(x: 120, y: 100))
+        #expect(Self.marked(bench) == [60, 60])
+        bench.release(CGPoint(x: 238, y: 223))
+        #expect(bench.store.guides.isEmpty)
+    }
+
+    @Test func aLayerMovedBesideARowKeepsTheGapTheRowHas() {
+        // A from 120 to 160 across, B from 180 to 220: twenty apart.
+        let bench = Bench(extra: [CanvasTests.rect("A", CGRect(x: 20, y: 100, width: 40, height: 40)),
+                                  CanvasTests.rect("B", CGRect(x: 80, y: 100, width: 40, height: 40)),
+                                  CanvasTests.rect("M", CGRect(x: 200, y: 200, width: 40, height: 40))])
+        // To two points past twenty after B.
+        bench.drag(CGPoint(x: 320, y: 320), CGPoint(x: 262, y: 220), release: false)
+        #expect(bench.node("M")?.frame.origin == CGPoint(x: 140, y: 100))
+        #expect(Self.marked(bench).sorted() == [20, 20])
+        bench.release(CGPoint(x: 262, y: 220))
+        // With Command, nothing catches.
+        bench.drag(CGPoint(x: 260, y: 220), CGPoint(x: 263, y: 221), flags: .command, release: false)
+        #expect(bench.node("M")?.frame.origin == CGPoint(x: 143, y: 101))
+        #expect(Self.marked(bench).isEmpty)
+    }
+
+    @Test func aLayerMovedUnderOneOfARowKeepsTheGapTheRowHasAcross() {
+        // A from 120 to 160 across and B from 180 to 220, both 120 to 160 down: twenty apart.
+        let bench = Bench(extra: [CanvasTests.rect("A", CGRect(x: 20, y: 20, width: 40, height: 40)),
+                                  CanvasTests.rect("B", CGRect(x: 80, y: 20, width: 40, height: 40)),
+                                  CanvasTests.rect("C", CGRect(x: 300, y: 200, width: 40, height: 40))])
+        // Under A, a point to its right and two points further down than twenty.
+        bench.drag(CGPoint(x: 420, y: 320), CGPoint(x: 141, y: 202), release: false)
+        #expect(bench.node("C")?.frame.origin == CGPoint(x: 20, y: 80))
+        let gaps = bench.store.guides.filter(\.gap)
+        #expect(Self.marked(bench) == [20, 20])
+        // Its own gap runs down from A, and the one it matches across from A to B.
+        #expect(gaps.first { $0.mine }.map { $0.from.x == $0.to.x } == true)
+        #expect(gaps.first { !$0.mine }.map { $0.from.y == $0.to.y } == true)
+    }
+
+    @Test func anArtboardMovedBesideOthersKeepsTheGapBetweenThem() {
+        // A from 100 to 500 across and B from 600 to 1000: a hundred apart. C lies off below.
+        let bench = Bench()
+        bench.step { bench.store.edit("Add") { $0.nodes.append(Node(kind: .artboard, name: "C", frame: CGRect(x: 1200, y: 600, width: 400, height: 300))) } }
+        // By its name, above its top left, to two past a hundred after B and three below the others.
+        bench.drag(CGPoint(x: 1205, y: 589), CGPoint(x: 1107, y: 92), flags: [], release: false)
+        #expect(bench.node("C")?.frame.origin == CGPoint(x: 1100, y: 100))
+        #expect(Self.marked(bench) == [100, 100])
+        #expect(bench.store.guides.filter(\.mine).count == 1)
+    }
+
+    @Test func aCopyDraggedOutWithOptionKeepsTheGapToTheOriginal() {
+        // A from 120 to 160 across, B from 180 to 220: a copy of B catches twenty after it.
+        let bench = Bench(extra: [CanvasTests.rect("A", CGRect(x: 20, y: 100, width: 40, height: 40)),
+                                  CanvasTests.rect("B", CGRect(x: 80, y: 100, width: 40, height: 40))])
+        bench.click(CGPoint(x: 200, y: 220))
+        bench.drag(CGPoint(x: 200, y: 220), CGPoint(x: 263, y: 221), flags: .option, release: false)
+        let copies = bench.a.children.filter { $0.name == "B" }
+        #expect(copies.count == 2)
+        #expect(copies.last?.frame.origin == CGPoint(x: 140, y: 100))
+        #expect(Self.marked(bench).sorted() == [20, 20])
+    }
+
     @Test func resizingFromTheCornerHandle() {
         let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50))])
         bench.click(CGPoint(x: 130, y: 130))
@@ -192,6 +279,26 @@ struct CanvasTests {
         bench.drag(CGPoint(x: 200, y: 180), CGPoint(x: 230, y: 190), flags: [.shift, .command])
         let f = try! #require(bench.node("R")?.frame)
         #expect(abs(f.width / f.height - 90.0 / 70.0) < 0.02)
+    }
+
+    @Test func aCornerDotRoundsEveryCornerOrWithOptionOnlyItsOwn() {
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 50, y: 50, width: 200, height: 200))])
+        // On the canvas, from 150,150 to 350,350.
+        bench.click(CGPoint(x: 250, y: 250))
+        // Sharp, the top left dot sits ten points in: in to thirty rounds every corner.
+        bench.drag(CGPoint(x: 160, y: 160), CGPoint(x: 180, y: 180))
+        #expect(bench.node("R")?.radii == [30, 30, 30, 30])
+        #expect(bench.node("R")?.corners == nil)
+        // The top right dot, now thirty in, with Option: only that corner.
+        bench.drag(CGPoint(x: 320, y: 180), CGPoint(x: 300, y: 200), flags: .option)
+        #expect(bench.node("R")?.radii == [30, 50, 30, 30])
+        #expect(bench.node("R")?.cornerRadius == 50)
+        // Each dot sits as far in as its own corner is round: the bottom left one is still thirty in.
+        bench.drag(CGPoint(x: 180, y: 320), CGPoint(x: 190, y: 310))
+        #expect(bench.node("R")?.radii == [40, 40, 40, 40])
+        #expect(bench.node("R")?.corners == nil)
+        bench.undoLast()
+        #expect(bench.node("R")?.radii == [30, 50, 30, 30])
     }
 
     /// "Good morning" at 24 points, 36 between lines, on artboard A at 40,40.

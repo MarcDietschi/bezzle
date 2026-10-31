@@ -109,6 +109,51 @@ struct StoreTests {
         #expect(bench.store.doc.nodes.first?.name == "R")
     }
 
+    @Test func groupingPutsTheSelectionInAGroupWhereTheFrontmostWas() {
+        let bench = Bench(extra: [CanvasTests.rect("R1", CGRect(x: 10, y: 10, width: 20, height: 20)),
+                                  CanvasTests.rect("R2", CGRect(x: 60, y: 40, width: 20, height: 20)),
+                                  CanvasTests.rect("R3", CGRect(x: 200, y: 200, width: 10, height: 10))])
+        let frames = bench.a.children.map { bench.store.doc.absoluteFrame(of: $0.id) }
+        bench.store.selection = [bench.node("R3")!.id, bench.node("R1")!.id]
+        #expect(bench.store.canGroup && !bench.store.canUngroup)
+        bench.step { bench.store.group() }
+        let group = try! #require(bench.node("Group 1"))
+        #expect(bench.a.children.map(\.name) == ["R2", "Group 1"])
+        #expect(group.children.map(\.name) == ["R1", "R3"])
+        #expect(group.frame == CGRect(x: 10, y: 10, width: 200, height: 200))
+        #expect(bench.store.selection == [group.id])
+        #expect(bench.store.canUngroup)
+        bench.step { bench.store.ungroup() }
+        #expect(bench.a.children.map(\.name) == ["R2", "R1", "R3"])
+        #expect(bench.store.selection.map { bench.store.node($0)?.name } == ["R1", "R3"])
+        let after = ["R1", "R2", "R3"].map { bench.store.doc.absoluteFrame(of: bench.node($0)!.id) }
+        #expect(after == frames)
+        bench.undoLast()
+        bench.undoLast()
+        #expect(bench.a.children.map(\.name) == ["R1", "R2", "R3"])
+    }
+
+    @Test func groupingLayersFromDifferentGroupsGathersThemInWhatHoldsThemAll() {
+        var pair = Node(kind: .group, name: "Pair", frame: CGRect(x: 10, y: 10, width: 60, height: 20))
+        pair.children = [CanvasTests.rect("Inner", CGRect(x: 0, y: 0, width: 20, height: 20)),
+                         CanvasTests.rect("Other", CGRect(x: 40, y: 0, width: 20, height: 20))]
+        let bench = Bench(extra: [pair, CanvasTests.rect("Loose", CGRect(x: 100, y: 100, width: 20, height: 20))])
+        let inner = bench.node("Inner")!.id, loose = bench.node("Loose")!.id
+        let before = [inner, loose].map { bench.store.doc.absoluteFrame(of: $0) }
+        bench.store.selection = [loose, inner]
+        bench.step { bench.store.group() }
+        #expect(bench.a.children.map(\.name) == ["Pair", "Group 1"])
+        #expect(bench.node("Pair")?.children.map(\.name) == ["Other"])
+        #expect(bench.node("Group 1")?.children.map(\.name) == ["Inner", "Loose"])
+        #expect([inner, loose].map { bench.store.doc.absoluteFrame(of: $0) } == before)
+        // Not across artboards, and not an artboard itself.
+        bench.step { bench.store.add(CanvasTests.rect("OnB", CGRect(x: 0, y: 0, width: 10, height: 10)), onto: bench.b.id) }
+        bench.store.selection = [inner, bench.node("OnB")!.id]
+        #expect(!bench.store.canGroup)
+        bench.store.selection = [bench.a.id]
+        #expect(!bench.store.canGroup)
+    }
+
     @Test func copyAndPasteMakesFreshLayersOffsetFromTheOriginals() {
         let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 20, height: 20))])
         bench.store.canvasSize = CGSize(width: 1200, height: 800)

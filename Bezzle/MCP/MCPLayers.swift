@@ -594,14 +594,7 @@ extension MCPTools {
             node.corners = nil
         } else if let list = v as? [Any] {
             guard list.count == 4 else { throw MCPError("cornerRadius as a list is four radii: top left, top right, bottom right, bottom left.") }
-            let radii = try list.map { CGFloat(max(try Read.number($0, "cornerRadius") ?? 0, 0)) }
-            if Set(radii).count == 1 {
-                node.cornerRadius = radii[0]
-                node.corners = nil
-            } else {
-                node.cornerRadius = radii.max() ?? 0
-                node.corners = radii
-            }
+            node.radii = try list.map { CGFloat(max(try Read.number($0, "cornerRadius") ?? 0, 0)) }
         } else {
             node.cornerRadius = CGFloat(max(try Read.number(v, "cornerRadius") ?? 0, 0))
             node.corners = nil

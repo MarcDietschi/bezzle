@@ -65,7 +65,7 @@ extension MCPTools {
         if let files = try args.strings("pictures") {
             guard [.rectangle, .ellipse, .path].contains(first.kind) else { throw MCPError("Pictures fill rectangles, ellipses and paths; \(first.name) is a \(first.kind.rawValue).") }
             let urls = DocumentStore.pictureFiles(in: files.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
-            guard !urls.isEmpty else { throw MCPError("None of those is a picture Bezzle can read.") }
+            guard !urls.isEmpty else { throw MCPError("None of those is a picture Bezzle can read.\(Self.unreachable)") }
             let pictures = urls.compactMap { store.importPicture($0) }
             guard !pictures.isEmpty else { throw MCPError("The pictures could not be copied into the design.") }
             _ = try onSelection(store, [grid.id], "Fill Cells with Pictures") { copy in copy.fill(slot, in: grid.id, withPictures: pictures) }

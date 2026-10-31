@@ -3,7 +3,7 @@
 checking Apple's limits, and that no text uses a dash as punctuation."""
 import json, os, re, sys
 
-SITE = "https://mfrports.github.io/bezzle-app"
+SITE = "https://mfrports.github.io/bezzle-web"
 NB = " "  # French puts a narrow space before : ; ! ?
 
 L = {}

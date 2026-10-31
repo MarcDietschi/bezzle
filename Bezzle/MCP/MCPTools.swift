@@ -138,12 +138,19 @@ final class MCPTools {
         Library.shared.refresh()
         if let entry = Library.shared.entries.first(where: { $0.name.caseInsensitiveCompare(ref) == .orderedSame }) { return entry.url }
         if let url = Self.fileURL(ref), FileManager.default.fileExists(atPath: url.path) { return url }
-        throw MCPError("There is no design called \"\(ref)\". list_designs shows them all; a path to a .bezzle, .vellum, .xd, .fig or .sketch file works too.")
+        throw MCPError("There is no design called \"\(ref)\". list_designs shows them all; a path to a .bezzle, .vellum, .xd, .fig or .sketch file works too.\(Self.unreachable)")
     }
 
     private static func fileURL(_ ref: String) -> URL? {
         guard ref.contains("/") else { return nil }
         return URL(fileURLWithPath: (ref as NSString).expandingTildeInPath).standardizedFileURL
+    }
+
+    /// The App Store's Bezzle is sandboxed: past Downloads and Pictures, it sees only what the
+    /// user let it into. Added to what the AI hears when a file it named can't be found.
+    static var unreachable: String {
+        ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] == nil ? ""
+            : " Bezzle can only open files in Downloads and Pictures, and ones opened in it from the Finder or its Open panel."
     }
 
     /// Opens a design in a window, as the home screen does, and waits for it. A file from Adobe XD,

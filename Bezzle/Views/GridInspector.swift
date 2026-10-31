@@ -1,64 +1,55 @@
 import SwiftUI
 
-/// A repeat grid's part of the inspector: a field of cells to point at for the size wanted, how
-/// many columns and rows exactly and how far apart, and what its cells hold.
-struct RepeatGridBlock: View {
+/// A repeat grid's card: a field of cells to point at for the size wanted, how many columns and
+/// rows exactly and how far apart, and what its cells hold.
+struct RepeatGridCard: View {
     let store: DocumentStore
     let grid: Node
+    var live = false
 
     var body: some View {
         let spec = grid.grid ?? RepeatGrid()
-        Block {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Text("Repeat Grid")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    Spacer(minLength: 0)
-                    TextButton(title: "Ungroup Grid") { store.ungroupGrid(grid.id) }
-                        .help("Make it a group of its cells, each a layer of its own  ⇧⌘R")
-                }
-                CellPicker(store: store, grid: grid)
-                VStack(alignment: .leading, spacing: 8) {
-                    Row(title: "Columns") { counter(spec.columns, columns: true) { $0.columns = $1 } }
-                    Row(title: "Rows") { counter(spec.rows, columns: false) { $0.rows = $1 } }
-                    Row(title: "Gaps") {
-                        gapField(.verbatim("↔"), spec.columnGap, help: "Between columns") { $0.columnGap = $1 }
-                        gapField(.verbatim("↕"), spec.rowGap, help: "Between rows") { $0.rowGap = $1 }
-                    }
-                }
-                Caption("Or pull the handles on its right and bottom edges, and drag between two cells to space them; Shift spaces them both ways.")
-            }
-        }
         let slots = store.slots(of: grid)
-        if !slots.isEmpty {
-            Block {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Content")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    ForEach(slots) { slot in
-                        HStack(spacing: 8) {
-                            KindGlyph(kind: slot.kind)
-                                .foregroundStyle(Theme.ink3)
-                            Text(slot.name)
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(Theme.ink)
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            MenuButton(id: "grid-fill-\(slot.id.uuidString)", title: slot.kind == .text ? "Words" : "Pictures", width: 250, fills: true) {
-                                GridContentMenu.entries(store: store, grid: grid.id, slot: slot.id)
-                            }
-                            .frame(width: Inspector.column)
-                        }
-                        .frame(height: Theme.controlHeight)
-                    }
+        AspectCard(aspect: .grid, title: "Repeat Grid", summary: "\(spec.columns) × \(spec.rows)", live: live) {
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 11.5, weight: .medium))
+        } picks: {
+            CellPicker(store: store, grid: grid)
+            Row(title: "Columns") { counter(spec.columns, columns: true) { $0.columns = $1 } }
+            Row(title: "Rows") { counter(spec.rows, columns: false) { $0.rows = $1 } }
+            Row(title: "Gaps") {
+                gapField(.verbatim("↔"), spec.columnGap, help: "Between columns") { $0.columnGap = $1 }
+                gapField(.verbatim("↕"), spec.rowGap, help: "Between rows") { $0.rowGap = $1 }
+            }
+            Caption("Or pull the handles on its right and bottom edges, and drag between two cells to space them; Shift spaces them both ways.")
+            if !slots.isEmpty {
+                Text("Content")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .padding(.top, 6)
+                ForEach(slots) { slot in
                     HStack(spacing: 8) {
-                        ChipButton(title: "Import Data…") { store.chooseData(for: grid.id) }
-                        Spacer(minLength: 0)
+                        KindGlyph(kind: slot.kind)
+                            .foregroundStyle(Theme.ink3)
+                        Text(slot.name)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.ink)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        MenuButton(id: "grid-fill-\(slot.id.uuidString)", title: slot.kind == .text ? "Words" : "Pictures", width: 250, fills: true) {
+                            GridContentMenu.entries(store: store, grid: grid.id, slot: slot.id)
+                        }
+                        .frame(width: Inspector.column)
                     }
-                    Caption("Each cell's words and pictures are its own. Drop a text or CSV file on the grid, or a folder of pictures on a shape in it, to fill every cell at once; a CSV's columns go to the text layers named like them.")
+                    .frame(height: Theme.controlHeight)
                 }
+                Caption("Each cell's words and pictures are its own. Drop a text or CSV file on the grid, or a folder of pictures on a shape in it, to fill every cell at once; a CSV's columns go to the text layers named like them.")
+            }
+            HStack(spacing: 8) {
+                if !slots.isEmpty { ChipButton(title: "Import Data…") { store.chooseData(for: grid.id) } }
+                Spacer(minLength: 0)
+                TextButton(title: "Ungroup Grid") { store.ungroupGrid(grid.id) }
+                    .help("Make it a group of its cells, each a layer of its own  ⇧⌘R")
             }
         }
     }
@@ -93,7 +84,7 @@ struct RepeatGridBlock: View {
 
 /// A layer in a cell of a repeat grid: which cell it is in, and what fills the same layer in the
 /// others.
-struct GridCellBlock: View {
+struct GridCellCard: View {
     let store: DocumentStore
     let node: Node
     let grid: Node
@@ -101,23 +92,22 @@ struct GridCellBlock: View {
     var body: some View {
         let spec = grid.grid ?? RepeatGrid()
         let slot = store.slot(of: node.id)
-        Block {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Text("In a Repeat Grid")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    Spacer(minLength: 0)
-                    TextButton(title: "Select Grid") { store.selection = [grid.id] }
-                }
-                if let slot, node.kind == .text || [.rectangle, .ellipse, .path].contains(node.kind) {
-                    Row(title: node.kind == .text ? "Words" : "Pictures") {
-                        MenuButton(id: "cell-fill-\(slot.uuidString)", title: "Fill Cells", width: 250, fills: true) {
-                            GridContentMenu.entries(store: store, grid: grid.id, slot: slot, from: node.id)
-                        }
+        let cell = RepeatGrid.cell(of: node.id, in: grid, doc: store.doc).map { $0.cell.row * spec.columns + $0.cell.column + 1 }
+        AspectCard(aspect: .cell, title: "In a Repeat Grid", summary: cell.map { String(localized: "Cell \($0) of \(spec.count)") } ?? "") {
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 11.5, weight: .medium))
+        } picks: {
+            if let slot, node.kind == .text || [.rectangle, .ellipse, .path].contains(node.kind) {
+                Row(title: node.kind == .text ? "Words" : "Pictures") {
+                    MenuButton(id: "cell-fill-\(slot.uuidString)", title: "Fill Cells", width: 250, fills: true) {
+                        GridContentMenu.entries(store: store, grid: grid.id, slot: slot, from: node.id)
                     }
                 }
-                Caption(Self.note(for: node, cells: spec.count))
+            }
+            Caption(Self.note(for: node, cells: spec.count))
+            HStack {
+                Spacer(minLength: 0)
+                TextButton(title: "Select Grid") { store.selection = [grid.id] }
             }
         }
     }

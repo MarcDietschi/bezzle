@@ -46,14 +46,18 @@ struct InspectorShots {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleShots-\(UUID().uuidString).bezzle")
         let store = DocumentStore(url: url, document: doc)
         func id(_ name: String) -> UUID { store.doc.allNodes.first { $0.name == name }!.id }
-        let looks: [(String, [String], Tool)] = [
-            ("rectangle", ["Card"], .select), ("ellipse", ["Dot"], .select), ("text", ["Title"], .select),
-            ("path", ["Shape"], .select), ("inset", ["Field"], .select), ("3d", ["Tilted"], .select), ("growing", ["Frosted"], .select), ("several", ["Card", "Dot"], .select), ("artboard", ["Board"], .select),
-            ("carousel", ["Launch"], .select), ("nothing", [], .select), ("presets", [], .artboard),
+        // Each look with every card folded, and with the card named open.
+        let looks: [(String, [String], Tool, Aspect?)] = [
+            ("rectangle", ["Card"], .select, nil), ("rectangle-frame", ["Card"], .select, .frame), ("rectangle-shadow", ["Card"], .select, .shadow),
+            ("rectangle-blur", ["Card"], .select, .blur), ("ellipse", ["Dot"], .select, .fill), ("text", ["Title"], .select, .text),
+            ("path", ["Shape"], .select, .path), ("inset", ["Field"], .select, .shadow), ("3d", ["Tilted"], .select, .depth),
+            ("growing", ["Frosted"], .select, .blur), ("several", ["Card", "Dot"], .select, .arrange), ("artboard", ["Board"], .select, .artboard),
+            ("carousel", ["Launch"], .select, .artboard), ("nothing", [], .select, nil), ("presets", [], .artboard, nil),
         ]
         for appearance in ["light", "dark"] {
-            for (name, picked, tool) in looks {
+            for (name, picked, tool, open) in looks {
                 store.tool = tool
+                store.openAspect = open
                 store.selection = picked.map(id)
                 try await shot(store, to: folder.appendingPathComponent("\(name)-\(appearance).png"), dark: appearance == "dark")
             }

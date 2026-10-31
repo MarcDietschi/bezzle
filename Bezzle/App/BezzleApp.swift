@@ -130,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Library.moveInFromVellum()
+        FileAccess.reopen()
         if BezzleApp.isTesting { NSApp.setActivationPolicy(.prohibited) }
         #if DEBUG
         // AppKit otherwise swallows an exception on the main thread and carries on, half done.
@@ -145,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HandOver.whenRunningAlone {
             MCPServer.shared.launch()
             CloudSync.shared.start()
+            Welcome.makeOnFirstLaunch()
         }
     }
 
@@ -206,6 +208,13 @@ struct BezzleCommands: Commands {
                 .disabled(store?.selection.isEmpty ?? true)
         }
         CommandMenu("Object") {
+            Button { store?.group() } label: { Text(DocumentStore.grouping) }
+                .keyboardShortcut("g")
+                .disabled(store?.canGroup != true)
+            Button("Ungroup") { store?.ungroup() }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(store?.canUngroup != true)
+            Divider()
             Button("Bring to Front") { store?.arrange(.front) }.keyboardShortcut("]", modifiers: [.command, .shift])
             Button("Bring Forward") { store?.arrange(.forward) }.keyboardShortcut("]")
             Button("Send Backward") { store?.arrange(.backward) }.keyboardShortcut("[")
@@ -298,6 +307,9 @@ struct BezzleCommands: Commands {
             Button("Outline Border") { store?.outlineBorders() }
                 .keyboardShortcut("o", modifiers: [.command, .option])
                 .disabled(store?.canOutlineBorders != true)
+        }
+        CommandGroup(replacing: .help) {
+            Button("Welcome to Bezzle") { Welcome.open() }
         }
         CommandGroup(before: .windowSize) {
             Button("Zoom In") { store?.zoomStep(in: true) }.keyboardShortcut("=")

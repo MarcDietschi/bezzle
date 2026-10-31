@@ -6,6 +6,7 @@ import SwiftUI
 /// cannot take screenshots. All through environment variables:
 ///   BEZZLE_LIBRARY=folder          where designs are kept (always set for test runs)
 ///   BEZZLE_DEMO=1                  make a sample design in the library and open it
+///   BEZZLE_WELCOME=1               make the welcome tour in the library and open it, as a first launch does
 ///   BEZZLE_OPEN=path               open this design
 ///   BEZZLE_SELECT=name,name…       select the layers with these names
 ///   BEZZLE_TOOL=rectangle          pick a tool
@@ -65,7 +66,9 @@ enum DebugHooks {
             CloudSync.shared.pretendArriving(parts[0], from: parts.count > 1 ? parts[1] : nil)
         }
         if let problem = env["BEZZLE_INVITATION_PROBLEM"] { CloudSync.shared.invitationProblem = problem }
-        if env["BEZZLE_DEMO"] != nil, let url = makeDemo() {
+        if env["BEZZLE_WELCOME"] != nil, let url = Welcome.make() {
+            WindowRouter.shared.open(url)
+        } else if env["BEZZLE_DEMO"] != nil, let url = makeDemo() {
             WindowRouter.shared.open(url)
         } else if let path = env["BEZZLE_OPEN"] {
             WindowRouter.shared.open(URL(fileURLWithPath: path))

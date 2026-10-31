@@ -210,6 +210,8 @@ struct ExportSheet: View {
         if let last = UserDefaults.standard.string(forKey: "exportFolder") { panel.directoryURL = URL(fileURLWithPath: last) }
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         UserDefaults.standard.set(folder.path, forKey: "exportFolder")
+        // So that the AI's exports can go there too, after a restart.
+        FileAccess.keep(folder)
         working = true
         let written = Exporter.export(items, format: format, scale: CGFloat(scaleUsed.wrappedValue), name: store.name, to: folder, assets: store.assets)
         working = false

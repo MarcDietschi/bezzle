@@ -943,6 +943,8 @@ final class DeckTool {
             spread?.cards[post] = nil
             spread?.hovered = nil
             reflow()
+            // The last post left is an artboard like any again: its card goes back down onto it.
+            if store.node(s.deck)?.isDeck != true { closeSpread(choosing: spread?.posts.first) }
         case .add:
             guard let last = s.posts.last, let l = spreadLayout(s) else { return }
             store.fronts[s.deck] = last

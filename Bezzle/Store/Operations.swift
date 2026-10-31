@@ -184,6 +184,100 @@ extension DocumentStore {
         }
     }
 
+    // MARK: Grouping
+
+    static let grouping = LocalizedStringResource("undo.group", defaultValue: "Group", comment: "Undo name: layers put into a group.")
+
+    var canGroup: Bool { Self.groupable(selection, in: doc) != nil }
+
+    /// The selected groups, as Ungroup takes them apart. A repeat grid has its own way out.
+    private var ungroupable: [UUID] {
+        selection.filter { doc.node($0).map { $0.isGroup && !$0.isRepeatGrid } == true }
+    }
+
+    var canUngroup: Bool { !ungroupable.isEmpty }
+
+    /// Puts the selection into a new group, which is then what is selected.
+    func group() {
+        var made: UUID?
+        edit(Self.grouping) { doc in made = Self.group(selection, in: &doc) }
+        if let made { selection = [made] }
+    }
+
+    /// Takes the selected groups apart; what was in them is then selected, beside anything else that was.
+    func ungroup() {
+        let ids = ungroupable
+        guard !ids.isEmpty else { return }
+        var freed: [UUID] = []
+        edit("Ungroup") { doc in freed = Self.ungroup(ids, in: &doc) }
+        selection = selection.filter { !ids.contains($0) && doc.node($0) != nil } + freed
+    }
+
+    /// The layers among `ids` that would go into a group: all but those inside another of them.
+    /// Nil when there are none, or one is an artboard or lies in a repeat grid, or they lie on
+    /// more than one artboard, or some on one and some on the canvas.
+    static func groupable(_ ids: [UUID], in doc: BezzleDocument) -> [UUID]? {
+        let chosen = Set(ids)
+        let ids = ids.filter { id in doc.node(id) != nil && !doc.ancestors(of: id).contains { chosen.contains($0.id) } }
+        guard !ids.isEmpty, Set(ids.map { doc.artboard(of: $0)?.id }).count == 1,
+              ids.allSatisfy({ id in doc.node(id)?.isArtboard == false && !doc.ancestors(of: id).contains(where: \.isRepeatGrid) }) else { return nil }
+        return ids
+    }
+
+    /// Puts layers into a new group, in the artboard or group that holds them all, where the
+    /// frontmost of them was, and returns its id. Each stays where it is on the canvas, and in
+    /// the same order back to front.
+    @discardableResult
+    static func group(_ ids: [UUID], in doc: inout BezzleDocument, name: String? = nil) -> UUID? {
+        guard let ids = groupable(ids, in: doc) else { return nil }
+        // Back to front, as they are drawn.
+        let paths = ids.compactMap { id in doc.path(of: id).map { (id: id, at: $0.indices) } }
+            .sorted { $0.at.lexicographicallyPrecedes($1.at) }
+        guard let front = paths.last else { return nil }
+        // Where the deepest artboard or group that holds them all is.
+        var shared = Array(front.at.dropLast())
+        for p in paths {
+            let parent = p.at.dropLast()
+            shared = Array(zip(shared, parent).prefix { $0 == $1 }.map(\.0))
+        }
+        let holder = shared.isEmpty ? nil : doc.ancestors(of: front.id)[shared.count - 1].id
+        // Just above what holds the frontmost there, once those lying there themselves are out.
+        let place = front.at[shared.count]
+        let leaving = paths.filter { $0.at.count == shared.count + 1 && $0.at[shared.count] <= place }.count
+        var group = Node(kind: .group, name: name ?? doc.nextName(for: .group), frame: .zero)
+        // Taken out onto the canvas, and so into a group lying at the canvas's top left, they keep
+        // where they are; it is fitted round them afterwards.
+        group.children = paths.compactMap { doc.detach($0.id) }
+        doc.attach(group, to: holder, at: place + 1 - leaving)
+        return group.id
+    }
+
+    /// Takes the layers out of groups, each into its group's place, where they are, and returns them.
+    @discardableResult
+    static func ungroup(_ ids: [UUID], in doc: inout BezzleDocument) -> [UUID] {
+        var freed: [UUID] = []
+        for id in ids {
+            guard let path = doc.path(of: id), let group = doc.node(id), group.isGroup else { continue }
+            // A group is never turned, so its layers only move by where it is.
+            let layers = group.children.map { child -> Node in
+                var c = child
+                c.frame = c.frame.offsetBy(dx: group.frame.minX, dy: group.frame.minY)
+                return c
+            }
+            let i = path.indices.last!
+            if let parent = path.parent {
+                var holder = doc[parent]
+                holder.children.replaceSubrange(i...i, with: layers)
+                doc[parent] = holder
+            } else {
+                doc.nodes.replaceSubrange(i...i, with: layers)
+            }
+            freed += layers.map(\.id)
+        }
+        // A group taken apart after the one it was in.
+        return freed.filter { doc.node($0) != nil }
+    }
+
     // MARK: Aligning
 
     enum Align { case left, centerX, right, top, centerY, bottom }
@@ -361,6 +455,13 @@ extension DocumentStore {
             return
         }
         viewport.fit(bounds, in: canvasSize)
+    }
+
+    /// Where a design with no view of its own saved opens: on everything at once, or, for the
+    /// welcome tour, on its first sheet as big as it fits.
+    func lookFirst() {
+        guard let cover = doc.node(Welcome.coverID), cover.isArtboard else { zoomToFit(); return }
+        viewport.fit(cover.frame, in: canvasSize, padding: 48)
     }
 
     func zoomToSelection() {

@@ -65,7 +65,7 @@ extension MCPTools {
             guard let kind = store.doc.node(shape)?.kind, [.rectangle, .ellipse, .path].contains(kind) else { throw MCPError("Pictures fill rectangles, ellipses and paths.") }
             let urls = DocumentStore.pictureFiles(in: files.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
             let pictures = urls.compactMap { store.importPicture($0) }
-            guard !pictures.isEmpty else { throw MCPError("None of those is a picture Bezzle can read.") }
+            guard !pictures.isEmpty else { throw MCPError("None of those is a picture Bezzle can read.\(Self.unreachable)") }
             _ = try onSelection(store, store.selection, "Make Posts") { $0.spread(pictures, from: shape) }
         }
 

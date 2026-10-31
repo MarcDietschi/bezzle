@@ -67,7 +67,7 @@ final class Library {
     }
 
     /// Unit tests and debug runs with a library of their own also keep their own list of recent designs.
-    private static var isolated: Bool {
+    static var isolated: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || ProcessInfo.processInfo.environment["BEZZLE_LIBRARY"] != nil
     }
 
@@ -78,6 +78,7 @@ final class Library {
 
     private init() {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        FileAccess.reopen()
         refresh()
     }
 
@@ -121,6 +122,7 @@ final class Library {
         paths.removeAll { $0 == path }
         paths.insert(path, at: 0)
         defaults.set(Array(paths.prefix(40)), forKey: recentsKey)
+        FileAccess.keep(url)
     }
 
     /// Takes a design off the home screen; one in the Bezzle folder goes to the Trash.
@@ -189,6 +191,9 @@ final class Library {
     /// The design's thumbnail; nil for an empty design, or while it is first made. A thumbnail is
     /// made in the background, as reading a large design and its pictures takes seconds, and
     /// kept on disk, so the home screen has it at once the next time.
+    /// How large a design's picture on the home screen is made: as large as the latest is shown.
+    nonisolated static let thumbnailSize = CGSize(width: 560, height: 320)
+
     func thumbnail(for entry: Entry, size: CGSize) -> CGImage? {
         if let (date, image) = thumbnails[entry.url], date == entry.modified { return image }
         if let (_, image) = thumbnails[entry.url], !homeShowing || Date().timeIntervalSince(madeAt[entry.url] ?? .distantPast) < 10 {
@@ -259,7 +264,8 @@ final class Library {
     }
 
     private nonisolated static func thumbnailFile(_ url: URL, modified: Date) -> URL {
-        thumbnailFolder.appendingPathComponent("\(thumbnailName(url))-\(Int64(modified.timeIntervalSince1970 * 1000)).png")
+        // Its size in the name, so ones kept at another size are made again.
+        thumbnailFolder.appendingPathComponent("\(thumbnailName(url))-\(Int64(modified.timeIntervalSince1970 * 1000))-\(Int(thumbnailSize.width)).png")
     }
 
     private static func keptThumbnail(_ entry: Entry) -> CGImage? {
@@ -286,9 +292,61 @@ final class Library {
 
 /// Artboard sizes to start from.
 struct Preset: Identifiable, Hashable {
+    /// What a size is for, broadly: a screen, a post, or paper and slides.
+    enum Kind: CaseIterable {
+        case devices, social, print
+
+        var title: LocalizedStringResource {
+            switch self {
+            case .devices: "Devices"
+            case .social: "Social media"
+            case .print: "Print & slides"
+            }
+        }
+    }
+
+    /// The families sizes come in: a maker's devices or a platform's formats, in the order they
+    /// are offered.
+    enum Group: String, CaseIterable {
+        case iPhone, android, iPad, mac, web, watch
+        case instagram, tiktok, youtube, facebook, linkedin, x, pinterest
+        case print, slides
+
+        var title: LocalizedStringResource {
+            switch self {
+            case .iPhone: "iPhone"
+            case .android: "Android"
+            case .iPad: "iPad"
+            case .mac: "Mac"
+            case .web: "Web"
+            case .watch: "Apple Watch"
+            case .instagram: "Instagram"
+            case .tiktok: "TikTok"
+            case .youtube: "YouTube"
+            case .facebook: "Facebook"
+            case .linkedin: "LinkedIn"
+            case .x: "X"
+            case .pinterest: "Pinterest"
+            case .print: "Print"
+            case .slides: "Slides"
+            }
+        }
+
+        var kind: Kind {
+            switch self {
+            case .iPhone, .android, .iPad, .mac, .web, .watch: .devices
+            case .instagram, .tiktok, .youtube, .facebook, .linkedin, .x, .pinterest: .social
+            case .print, .slides: .print
+            }
+        }
+
+        static func all(of kind: Kind) -> [Group] { allCases.filter { $0.kind == kind } }
+    }
+
     /// Shown in the user's language.
     let title: LocalizedStringResource
     let size: CGSize
+    let group: Group
     /// The English name, which the AI is told and which stays the same whatever the language.
     var name: String { title.key }
     var id: String { name }
@@ -296,15 +354,75 @@ struct Preset: Identifiable, Hashable {
     static func == (a: Preset, b: Preset) -> Bool { a.name == b.name && a.size == b.size }
     func hash(into hasher: inout Hasher) { hasher.combine(name) }
 
+    /// Devices at the size their screens are drawn in, in points, newest first (as of autumn
+    /// 2026); Android phones at their usual resolution, as wide as their browsers measure. Platforms' formats as they ask for them, in pixels; print in
+    /// points, as a PDF has them.
     static let all: [Preset] = [
-        Preset(title: "Phone", size: CGSize(width: 393, height: 852)),
-        Preset(title: "Phone, large", size: CGSize(width: 440, height: 956)),
-        Preset(title: "Tablet", size: CGSize(width: 834, height: 1194)),
-        Preset(title: "Laptop", size: CGSize(width: 1440, height: 900)),
-        Preset(title: "Desktop", size: CGSize(width: 1920, height: 1080)),
-        Preset(title: "Watch", size: CGSize(width: 208, height: 248)),
-        Preset(title: "Social post", size: CGSize(width: 1080, height: 1080)),
-        Preset(title: "Story", size: CGSize(width: 1080, height: 1920)),
-        Preset(title: "A4", size: CGSize(width: 595, height: 842)),
+        Preset(title: "iPhone Duo, open", size: CGSize(width: 626, height: 890), group: .iPhone),
+        Preset(title: "iPhone Duo, closed", size: CGSize(width: 466, height: 678), group: .iPhone),
+        Preset(title: "iPhone 18 Pro Max", size: CGSize(width: 440, height: 956), group: .iPhone),
+        Preset(title: "iPhone 18 Pro", size: CGSize(width: 402, height: 874), group: .iPhone),
+        Preset(title: "iPhone Air", size: CGSize(width: 420, height: 912), group: .iPhone),
+        Preset(title: "iPhone 17", size: CGSize(width: 402, height: 874), group: .iPhone),
+        Preset(title: "iPhone 17e", size: CGSize(width: 390, height: 844), group: .iPhone),
+        Preset(title: "iPhone 16", size: CGSize(width: 393, height: 852), group: .iPhone),
+        Preset(title: "Samsung Galaxy S26 Ultra", size: CGSize(width: 384, height: 832), group: .android),
+        Preset(title: "Samsung Galaxy S26", size: CGSize(width: 360, height: 780), group: .android),
+        Preset(title: "Google Pixel 11 Pro XL", size: CGSize(width: 448, height: 997), group: .android),
+        Preset(title: "Google Pixel 11", size: CGSize(width: 412, height: 923), group: .android),
+        Preset(title: "iPad Pro 13″", size: CGSize(width: 1032, height: 1376), group: .iPad),
+        Preset(title: "iPad Pro 11″", size: CGSize(width: 834, height: 1210), group: .iPad),
+        Preset(title: "iPad Air 13″", size: CGSize(width: 1024, height: 1366), group: .iPad),
+        Preset(title: "iPad Air 11″", size: CGSize(width: 820, height: 1180), group: .iPad),
+        Preset(title: "iPad", size: CGSize(width: 820, height: 1180), group: .iPad),
+        Preset(title: "iPad mini", size: CGSize(width: 744, height: 1133), group: .iPad),
+        Preset(title: "MacBook Air 13″", size: CGSize(width: 1470, height: 956), group: .mac),
+        Preset(title: "MacBook Air 15″", size: CGSize(width: 1710, height: 1112), group: .mac),
+        Preset(title: "MacBook Pro 14″", size: CGSize(width: 1512, height: 982), group: .mac),
+        Preset(title: "MacBook Pro 16″", size: CGSize(width: 1728, height: 1117), group: .mac),
+        Preset(title: "iMac 24″", size: CGSize(width: 2240, height: 1260), group: .mac),
+        Preset(title: "Studio Display", size: CGSize(width: 2560, height: 1440), group: .mac),
+        Preset(title: "Desktop", size: CGSize(width: 1920, height: 1080), group: .web),
+        Preset(title: "Laptop", size: CGSize(width: 1440, height: 900), group: .web),
+        Preset(title: "Laptop, small", size: CGSize(width: 1280, height: 832), group: .web),
+        Preset(title: "Web tablet", size: CGSize(width: 768, height: 1024), group: .web),
+        Preset(title: "Apple Watch 46 mm", size: CGSize(width: 208, height: 248), group: .watch),
+        Preset(title: "Apple Watch 42 mm", size: CGSize(width: 187, height: 223), group: .watch),
+        Preset(title: "Apple Watch Ultra 3", size: CGSize(width: 211, height: 257), group: .watch),
+        Preset(title: "Instagram post, 4:5", size: CGSize(width: 1080, height: 1350), group: .instagram),
+        Preset(title: "Instagram post, square", size: CGSize(width: 1080, height: 1080), group: .instagram),
+        Preset(title: "Instagram post, landscape", size: CGSize(width: 1080, height: 566), group: .instagram),
+        Preset(title: "Instagram story & reel", size: CGSize(width: 1080, height: 1920), group: .instagram),
+        Preset(title: "TikTok video", size: CGSize(width: 1080, height: 1920), group: .tiktok),
+        Preset(title: "YouTube thumbnail", size: CGSize(width: 1280, height: 720), group: .youtube),
+        Preset(title: "YouTube Shorts", size: CGSize(width: 1080, height: 1920), group: .youtube),
+        Preset(title: "YouTube banner", size: CGSize(width: 2560, height: 1440), group: .youtube),
+        Preset(title: "Facebook post", size: CGSize(width: 1080, height: 1350), group: .facebook),
+        Preset(title: "Facebook link", size: CGSize(width: 1200, height: 630), group: .facebook),
+        Preset(title: "Facebook story", size: CGSize(width: 1080, height: 1920), group: .facebook),
+        Preset(title: "Facebook cover", size: CGSize(width: 851, height: 315), group: .facebook),
+        Preset(title: "LinkedIn post", size: CGSize(width: 1200, height: 627), group: .linkedin),
+        Preset(title: "LinkedIn post, square", size: CGSize(width: 1080, height: 1080), group: .linkedin),
+        Preset(title: "LinkedIn banner", size: CGSize(width: 1584, height: 396), group: .linkedin),
+        Preset(title: "X post", size: CGSize(width: 1600, height: 900), group: .x),
+        Preset(title: "X header", size: CGSize(width: 1500, height: 500), group: .x),
+        Preset(title: "Pinterest pin", size: CGSize(width: 1000, height: 1500), group: .pinterest),
+        Preset(title: "Business card", size: CGSize(width: 241, height: 156), group: .print),
+        Preset(title: "Postcard", size: CGSize(width: 298, height: 420), group: .print),
+        Preset(title: "A5", size: CGSize(width: 420, height: 595), group: .print),
+        Preset(title: "A4", size: CGSize(width: 595, height: 842), group: .print),
+        Preset(title: "A3", size: CGSize(width: 842, height: 1191), group: .print),
+        Preset(title: "US Letter", size: CGSize(width: 612, height: 792), group: .print),
+        Preset(title: "US Legal", size: CGSize(width: 612, height: 1008), group: .print),
+        Preset(title: "Slide", size: CGSize(width: 1920, height: 1080), group: .slides),
+        Preset(title: "Slide, 4:3", size: CGSize(width: 1024, height: 768), group: .slides),
     ]
+
+    /// The size an artboard is when nothing says otherwise.
+    static let standard = all.first { $0.name == "iPhone 18 Pro" } ?? all[0]
+
+    static func all(in group: Group) -> [Preset] { all.filter { $0.group == group } }
+
+    /// The size an artboard's size is, if any; two of the same size go by the first.
+    static func matching(_ size: CGSize) -> Preset? { all.first { $0.size == size } }
 }

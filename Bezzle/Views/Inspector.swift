@@ -6,9 +6,13 @@ import AppKit
 struct Inspector: View {
     let store: DocumentStore
     static let width: CGFloat = 280
-    static let gutter: CGFloat = 18
-    /// What lies between the gutters.
-    static let content = width - gutter * 2
+    static let gutter: CGFloat = 16
+    /// A card's width, between the gutters: the whole way a card's dial turns.
+    static let card = width - gutter * 2
+    /// Between a card's edges and what it holds.
+    static let cardInset: CGFloat = 12
+    /// What lies inside a card.
+    static let content = card - cardInset * 2
     /// Two fields side by side, with room between them for the lock that ties width to height. A
     /// named row's control starts where the second of them does, so the two line up down the panel.
     static let columnGap: CGFloat = 20
@@ -120,9 +124,19 @@ private struct PresetList: View {
                     .foregroundStyle(Theme.ink2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            VStack(spacing: 2) {
-                ForEach(Preset.all) { preset in
-                    PresetRow(name: preset.title, size: preset.size) { store.addArtboard(preset) }
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Preset.Group.allCases, id: \.self) { group in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(group.title)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .tracking(0.9)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Theme.ink3)
+                            .padding(.bottom, 2)
+                        ForEach(Preset.all(in: group)) { preset in
+                            PresetRow(name: preset.title, size: preset.size) { store.addArtboard(preset) }
+                        }
+                    }
                 }
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -243,694 +257,51 @@ extension DocumentStore {
     }
 }
 
-// MARK: - Selection
-
-private struct SelectionInspector: View {
-    let store: DocumentStore
-    @State private var lockAspect = false
-
-    private var nodes: [Node] { store.selectedNodes }
-
-    /// The value all the selected layers share, or nil when they differ.
-    private func common<T: Equatable>(_ value: (Node) -> T) -> T? {
-        guard let first = nodes.first.map(value) else { return nil }
-        return nodes.allSatisfy { value($0) == first } ? first : nil
-    }
-
-    var body: some View {
-        let nodes = nodes
-        // On its way out after a delete, the panel can be asked once more for layers that are gone.
-        if let first = nodes.first {
-            content(nodes, first: first)
-                .onChange(of: store.selection) { lockAspect = false }
-        }
-    }
-
-    @ViewBuilder private func content(_ nodes: [Node], first: Node) -> some View {
-        let kinds = Set(nodes.map(\.kind))
-        let onlyArtboards = kinds == [.artboard]
-        // Lines are all border and text is all colour, so those cannot be taken away from them.
-        let fills = kinds.isDisjoint(with: [.artboard, .line, .group]), borders = kinds.isDisjoint(with: [.artboard, .text, .group])
-        VStack(alignment: .leading, spacing: 0) {
-            Header(nodes: nodes, store: store)
-            if !onlyArtboards {
-                AlignBar(store: store, count: nodes.count, onBoard: nodes.count > 1 || store.doc.parent(of: first.id) != nil,
-                         shapes: kinds.isSubset(of: [.rectangle, .ellipse, .path]))
-            }
-            Block { transform }
-            if nodes.count == 1, first.isRepeatGrid {
-                RepeatGridBlock(store: store, grid: first)
-            } else if nodes.count == 1, let grid = store.grid(holding: first.id) {
-                GridCellBlock(store: store, node: first, grid: grid)
-            }
-            if nodes.count == 1, store.doc.post(of: first.id)?.post != nil, first.own?.isEmpty == false {
-                PostLayerBlock(store: store, node: first)
-            }
-            if kinds == [.rectangle] { Block { corners } }
-            if kinds == [.text] { TextBlock(store: store, nodes: nodes) }
-            if kinds == [.path] { PathBlock(store: store, nodes: nodes) }
-            if onlyArtboards && nodes.count == 1 {
-                artboardBlock(nodes[0])
-                if nodes[0].isDeck { DeckBlock(store: store, board: nodes[0]) }
-            }
-            if !onlyArtboards {
-                Block {
-                    Row(title: "Opacity") {
-                        layerField("", unit: "%", range: 0...100, scrub: 0.5, decimals: 0, action: "Change Opacity",
-                                   get: { $0.opacity * 100 }, set: { $0.opacity = $1 / 100 })
-                    }
-                }
-                // Only what the layers have; the rest waits in the bar below.
-                if fills && (kinds.contains(.text) || common { $0.fill.on } != false) {
-                    fillBlock(removable: !kinds.contains(.text))
-                }
-                if borders && (kinds.contains(.line) || common { $0.border.on } != false) {
-                    borderBlock(lineOnly: kinds == [.line], removable: !kinds.contains(.line))
-                }
-                if common({ $0.shadow.on }) != false { shadowBlock(canInset: !kinds.contains(.line)) }
-                if common({ $0.blur?.on == true }) != false { blurBlock(canBlurBehind: kinds.isSubset(of: [.rectangle, .ellipse, .path])) }
-                if common({ $0.transform3D != nil }) != false { depthBlock }
-                let missing = addable(fill: fills && !kinds.contains(.text), border: borders && !kinds.contains(.line))
-                if !missing.isEmpty {
-                    Block { AddBar(items: missing) }
-                        .transition(.unfold)
-                }
-            }
-        }
-        .animation(Theme.unfold, value: nodes.map(\.fill.on))
-        .animation(Theme.unfold, value: nodes.map(\.border.on))
-        .animation(Theme.unfold, value: nodes.map(\.shadow.on))
-        .animation(Theme.unfold, value: nodes.map { $0.blur?.on == true })
-        .animation(Theme.unfold, value: nodes.map { $0.blur?.ramp != nil })
-        .animation(Theme.unfold, value: nodes.map { $0.transform3D != nil })
-        .animation(Theme.unfold, value: store.editingPath)
-        .animation(Theme.unfold, value: store.building != nil)
-        .animation(Theme.unfold, value: store.editingPicture)
-        .animation(Theme.unfold, value: store.livePoints.isEmpty)
-    }
-
-    /// A field for one property of every selected layer: it shows the value they share, and
-    /// what is typed into it applies to each, so "+2" adds two to every layer's own.
-    private func layerField(_ label: LocalizedStringResource, unit: String = "", range: ClosedRange<Double> = 0...10_000, scrub: Double = 1,
-                            decimals: Int = 1, action: LocalizedStringResource,
-                            get: @escaping (Node) -> Double, set: @escaping (inout Node, Double) -> Void) -> NumberField {
-        NumberField(label: label, value: common(get), unit: unit, range: range, scrub: scrub, decimals: decimals, action: action) { v in
-            store.updateSelection(action) { set(&$0, v) }
-        } each: { f in
-            store.updateSelection(action) { n in set(&n, f(get(n))) }
-        }
-    }
-
-    // MARK: Position and size
-
-    /// The selection's frame in its artboard: the layer's own for one, the box around them all for several.
-    private var frame: CGRect? {
-        if nodes.count == 1 { return nodes[0].frame }
-        guard let bounds = store.selectionBounds else { return nil }
-        let parents = Set(nodes.map { store.doc.parent(of: $0.id)?.id })
-        if parents.count == 1, let p = parents.first ?? nil, let parent = store.doc.absoluteFrame(of: p) {
-            return bounds.offsetBy(dx: -parent.minX, dy: -parent.minY)
-        }
-        return bounds
-    }
-
-    @ViewBuilder private var transform: some View {
-        let f = frame
-        let single = nodes.count == 1 ? nodes[0] : nil
-        VStack(alignment: .leading, spacing: 8) {
-            Pair(sizeField(f, width: true), sizeField(f, width: false), between: AspectLock(locked: $lockAspect))
-            Pair(placeField(f, x: true), placeField(f, x: false))
-            if single?.isArtboard != true {
-                Pair(layerField(.verbatim("↻"), unit: "°", range: -360...360, scrub: 0.5, action: "Rotate",
-                                get: { $0.grid?.turn ?? $0.rotation }, set: Self.rotate),
-                     flipButtons)
-            }
-        }
-    }
-
-    private func sizeField(_ f: CGRect?, width: Bool) -> NumberField {
-        NumberField(label: width ? "W" : "H", value: f.map { Double(width ? $0.width : $0.height) }, range: 0...100_000, action: "Resize") { v in
-            if width { setSize(width: v) } else { setSize(height: v) }
-        } each: { e in resizeEach(e, width: width) }
-    }
-
-    private func placeField(_ f: CGRect?, x: Bool) -> NumberField {
-        NumberField(label: x ? "X" : "Y", value: f.map { Double(x ? $0.minX : $0.minY) }, action: "Move") { v in
-            if x { move(x: v) } else { move(y: v) }
-        } each: { e in moveEach(e, x: x) }
-    }
-
-    private var flipButtons: some View {
-        HStack(spacing: 2) {
-            IconButton(symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", help: "Flip horizontally", size: Theme.controlHeight) {
-                store.flip(horizontally: true)
-            }
-            IconButton(symbol: "arrow.up.and.down.righttriangle.up.righttriangle.down", help: "Flip vertically", size: Theme.controlHeight) {
-                store.flip(horizontally: false)
-            }
-        }
-        .opacity(store.canFlip ? 1 : 0.35)
-        .allowsHitTesting(store.canFlip)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func move(x: Double? = nil, y: Double? = nil) {
-        guard let f = frame else { return }
-        let dx = x.map { CGFloat($0) - f.minX } ?? 0, dy = y.map { CGFloat($0) - f.minY } ?? 0
-        store.updateSelection("Move") { $0.frame = $0.frame.offsetBy(dx: dx, dy: dy) }
-    }
-
-    /// The size of each selected layer's artboard, for shares such as "50%".
-    private var wholes: [UUID: CGSize] {
-        Dictionary(uniqueKeysWithValues: store.selection.compactMap { id in store.doc.parent(of: id).map { (id, $0.frame.size) } })
-    }
-
-    /// A typed change to each layer's own place: "+10" moves every one by ten, "50%" puts each
-    /// halfway across its artboard.
-    private func moveEach(_ f: EachValue, x: Bool) {
-        let wholes = wholes
-        store.updateSelection("Move") { n in
-            let whole = wholes[n.id]
-            if x {
-                n.frame.origin.x = CGFloat(f(Double(n.frame.minX), whole: whole.map { Double($0.width) })).rounded()
-            } else {
-                n.frame.origin.y = CGFloat(f(Double(n.frame.minY), whole: whole.map { Double($0.height) })).rounded()
-            }
-        }
-    }
-
-    /// A typed change to each layer's own size: "×2" doubles every one, "50%" makes each half as
-    /// wide as its artboard. With the proportions kept, the other side follows.
-    private func resizeEach(_ f: EachValue, width: Bool) {
-        let wholes = wholes, lock = lockAspect
-        store.updateSelection("Resize") { n in
-            let old = n.frame.size, whole = wholes[n.id]
-            var size = old
-            if width {
-                size.width = CGFloat(f(Double(old.width), whole: whole.map { Double($0.width) })).rounded()
-            } else {
-                size.height = CGFloat(f(Double(old.height), whole: whole.map { Double($0.height) })).rounded()
-            }
-            if lock, old.width > 0, old.height > 0 {
-                if width { size.height = (size.width * old.height / old.width).rounded() } else { size.width = (size.height * old.width / old.height).rounded() }
-            }
-            Self.resize(&n, to: size, byHeight: !width)
-        }
-    }
-
-    /// A layer turned to a new angle. A repeat grid turns as one, about its middle.
-    static func rotate(_ n: inout Node, to degrees: Double) {
-        if let turn = n.grid?.turn {
-            n = RepeatGrid.turned(n, by: CanvasView.normalized(degrees) - turn, about: n.frame.center)
-        } else {
-            n.rotation = CanvasView.normalized(degrees)
-        }
-    }
-
-    /// A layer at a new size. Text wraps its words to a new width, or grows its letters and lines.
-    static func resize(_ n: inout Node, to size: CGSize, byHeight: Bool) {
-        let old = n.frame
-        if n.kind == .text, old.height > 0, old.width > 0 {
-            n.resizeText(to: size, byHeight: byHeight)
-        } else {
-            // A group's layers stretch with it, and a grid's gaps.
-            if n.isGroup {
-                n.children = BezzleDocument.scaled(n.children, from: old.size, to: size)
-                n.mask = n.mask.map { BezzleDocument.scaled($0, from: old.size, to: size) }
-                if old.width > 0 { n.grid?.columnGap *= size.width / old.width }
-                if old.height > 0 { n.grid?.rowGap *= size.height / old.height }
-            }
-            n.frame.size = size
-        }
-    }
-
-    private func setSize(width: Double? = nil, height: Double? = nil) {
-        guard let f = frame, f.width >= 0, f.height >= 0 else { return }
-        var w = width.map { CGFloat($0) } ?? f.width, h = height.map { CGFloat($0) } ?? f.height
-        if lockAspect, f.width > 0, f.height > 0 {
-            if width != nil { h = (w * f.height / f.width).rounded() } else { w = (h * f.width / f.height).rounded() }
-        }
-        let target = CGRect(x: f.minX, y: f.minY, width: w, height: h)
-        if nodes.count == 1 {
-            store.updateSelection("Resize") { Self.resize(&$0, to: CGSize(width: w, height: h), byHeight: height != nil) }
-        } else {
-            let ids = store.selection
-            let parentOrigins = Dictionary(uniqueKeysWithValues: ids.map { ($0, store.doc.parentOrigin(of: $0)) })
-            let shared = Set(ids.map { store.doc.parent(of: $0)?.id }).count == 1
-            store.updateSelection("Resize") { n in
-                // The box is in the shared artboard's coordinates, or on the canvas.
-                let o = shared ? .zero : parentOrigins[n.id] ?? .zero
-                let own = n.frame.offsetBy(dx: o.x, dy: o.y)
-                n.frame = Geometry.snapToPixels(Geometry.map(own, from: f, to: target)).offsetBy(dx: -o.x, dy: -o.y)
-            }
-        }
-    }
-
-    // MARK: Corners
-
-    /// How round the corners are, and whether they are plain arcs or squircles that run smoothly
-    /// into the sides, and how smoothly.
-    private var corners: some View {
-        let smooth = nodes.allSatisfy { ($0.cornerSmoothing ?? 0) > 0 }
-        return OptionBlock(title: "Corners") {
-            HStack(spacing: 8) {
-                PresetStrip(action: "Change Corners", items: Presets.corners.map { preset in
-                    PresetItem(id: preset.id, name: preset.name,
-                          active: nodes.allSatisfy { abs($0.cornerRadius - Presets.cornerRadius(preset.radius, for: $0)) < 0.5 }) {
-                        $0.cornerRadius = Presets.cornerRadius(preset.radius, for: $0)
-                    }
-                }) { item in
-                    CornerGlyph(radius: Presets.corners.first { $0.id == item.id }?.radius, smooth: smooth)
-                }
-                layerField("R", range: 0...10_000, action: "Change Corners", get: { Double($0.cornerRadius) }, set: { $0.cornerRadius = CGFloat($1) })
-                    .frame(width: Inspector.endField)
-            }
-            HStack(spacing: 8) {
-                SegmentedWell(selection: Binding(get: { smooth }, set: { on in
-                    store.updateSelection(on ? "Smooth Corners" : "Round Corners") { $0.cornerSmoothing = on ? Presets.squircle : nil }
-                }), options: [(false, "Round"), (true, "Squircle")])
-                layerField("", unit: "%", range: 0...100, scrub: 0.5, decimals: 0, action: "Smooth Corners",
-                           get: { Double(($0.cornerSmoothing ?? 0) * 100) }, set: { $0.cornerSmoothing = $1 > 0 ? CGFloat($1 / 100) : nil })
-                    .frame(width: Inspector.endField)
-            }
-        }
-    }
-
-    // MARK: Artboard
-
-    @ViewBuilder private func artboardBlock(_ board: Node) -> some View {
-        Block {
-            OptionBlock(title: "Background") {
-                fillControls(blends: true, action: "Change Background", suggest: false)
-            }
-        }
-        Block {
-            VStack(alignment: .leading, spacing: 8) {
-                if board.isCarousel {
-                    carouselRows(board)
-                } else {
-                    Row(title: "Size") {
-                        MenuButton(id: "artboard-size", title: Preset.all.first { $0.size == board.frame.size }?.title ?? "Custom", width: 230, fills: true) {
-                            Preset.all.map { p in
-                                MenuEntry.item(p.title, detail: .verbatim("\(Int(p.size.width)) × \(Int(p.size.height))"), checked: p.size == board.frame.size) {
-                                    store.updateSelection("Resize Artboard") { $0.frame.size = p.size }
-                                }
-                            }
-                            + [.separator]
-                            // Its layers stay where they are on it.
-                            + Carousel.formats.map { f in
-                                MenuEntry.item("Carousel, \(f.title)", detail: .verbatim("\(Int(f.size.width)) × \(Int(f.size.height))")) {
-                                    store.updateSelection("Make Carousel") { n in
-                                        n.slideSize = f.size
-                                        n.frame.size = n.carouselSize(count: max(Carousel.startingCount, Int((n.frame.width / f.size.width).rounded())))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Row(title: "Clip content") {
-                    Switch(isOn: Binding(get: { board.clips }, set: { v in store.updateSelection(v ? "Clip Content" : "Show Overflow") { $0.clips = v } }))
-                }
-            }
-        }
-    }
-
-    /// A carousel's slide size and how many slides it has. Its layers stay where they are on it
-    /// when either changes: those past the last slide stay too, out of sight, until it grows again.
-    @ViewBuilder private func carouselRows(_ board: Node) -> some View {
-        let format = board.slideSize.flatMap(Carousel.format(of:))
-        let count = board.slideCount
-        Row(title: "Format") {
-            MenuButton(id: "carousel-format", title: format?.title ?? LocalizedStringResource("carousel.custom-format", defaultValue: "Custom", comment: "A carousel slide size that is none of the formats."), width: 250, fills: true) {
-                Carousel.formats.map { f in
-                    MenuEntry.item(f.title, detail: .verbatim("\(Int(f.size.width)) × \(Int(f.size.height))"), checked: f.size == board.slideSize) {
-                        store.updateSelection("Change Format") { n in
-                            let count = n.slideCount
-                            n.slideSize = f.size
-                            n.frame.size = n.carouselSize(count: count)
-                        }
-                    }
-                }
-                + [.separator, MenuEntry.item("Plain artboard") { store.updateSelection("Make Artboard") { $0.slideSize = nil } }]
-            }
-        }
-        Row(title: "Slides") {
-            IconButton(symbol: "minus", help: "One slide fewer", size: Theme.controlHeight) { changeSlides("Remove Slide") { $0 - 1 } }
-                .opacity(count > Carousel.counts.lowerBound ? 1 : 0.35)
-                .allowsHitTesting(count > Carousel.counts.lowerBound)
-            NumberField(label: "", value: Double(count), range: Double(Carousel.counts.lowerBound)...Double(Carousel.counts.upperBound),
-                        scrub: 0.05, decimals: 0, action: "Change Slides") { v in
-                changeSlides("Change Slides") { _ in Int(v.rounded()) }
-            }
-            IconButton(symbol: "plus", help: "One slide more", size: Theme.controlHeight) { changeSlides("Add Slide") { $0 + 1 } }
-                .opacity(count < Carousel.counts.upperBound ? 1 : 0.35)
-                .allowsHitTesting(count < Carousel.counts.upperBound)
-        }
-        if let format {
-            Caption("For \(format.platforms). Up to \(Carousel.counts.upperBound) slides.")
-        }
-    }
-
-    /// Adds slides at the right of the selected carousel, or takes them away from there.
-    private func changeSlides(_ action: LocalizedStringResource, _ count: @escaping (Int) -> Int) {
-        store.updateSelection(action) { n in
-            guard n.isCarousel else { return }
-            n.frame.size = n.carouselSize(count: count(n.slideCount))
-        }
-    }
-
-    // MARK: Fill, border, shadow
-
-    /// What a layer could have and does not yet, as the bar at the foot of the panel offers it.
-    private func addable(fill: Bool, border: Bool) -> [AddBar.Item] {
-        var items: [AddBar.Item] = []
-        if fill && common({ $0.fill.on }) == false {
-            items.append(.init(id: "add-fill", title: "Fill", help: "Add a fill", action: "Add Fill") { $0.fill.on = true })
-        }
-        if border && common({ $0.border.on }) == false {
-            items.append(.init(id: "add-border", title: "Border", help: "Add a border", action: "Add Border") { n in
-                n.border.on = true
-                if n.border.width == 0 { n.border.width = 1 }
-            })
-        }
-        if common({ $0.shadow.on }) == false {
-            items.append(.init(id: "add-shadow", title: "Shadow", help: "Add a shadow", action: "Add Shadow") { Presets.applyShadow(Presets.shadows[1], to: &$0) })
-        }
-        if common({ $0.blur?.on == true }) == false {
-            items.append(.init(id: "add-blur", title: "Blur", help: "Add a blur", action: "Add Blur") { Presets.applyBlur(Presets.blurs[1].radius, to: &$0) })
-        }
-        if common({ $0.transform3D != nil }) == false {
-            items.append(.init(id: "add-3d", title: "3D", help: "Add 3D", action: "Add 3D") { $0.transform3D = Presets.heldUp })
-        }
-        if store.canMakeRepeatGrid {
-            items.append(.init(id: "add-repeat", title: "Repeat", help: "Add a repeat", action: "Make Repeat Grid", change: { _ in }, add: { store.makeRepeatGrid() }))
-        }
-        return items
-    }
-
-    /// The design's colours that the selection is not already: one click away beside a colour.
-    private func suggestions(besides color: RGBA?) -> [RGBA] {
-        // A colour field shows the first few, of what can be hundreds.
-        let own = color?.hex
-        return Array(store.designColors.lazy.filter { $0.hex != own }.prefix(12))
-    }
-
-    private func fillBlock(removable: Bool) -> some View {
-        // Text takes one colour; its letters are not drawn with a gradient.
-        let blends = !nodes.contains { $0.kind == .text }
-        return Block {
-            // The blend mode is shown with the fill, so it goes when the fill does.
-            OptionBlock(title: blends ? "Fill" : "Colour",
-                        remove: removable ? { store.updateSelection("Remove Fill") { $0.fill.on = false; $0.blend = nil } } : nil,
-                        removal: blends ? "Remove fill" : "Remove colour") {
-                fillControls(blends: blends, action: "Change Fill", suggest: true)
-                if !nodes.isEmpty, nodes.allSatisfy({ $0.fill.on && $0.fill.image != nil }) {
-                    backgroundRow
-                }
-                if store.editingPicture != nil {
-                    Group {
-                        if nodes.first?.fill.image?.cutout != nil {
-                            Text("Click a subject to keep or drop it. Drag the picture to move it in its frame, or a corner to resize it, and Return ends placing.")
-                        } else {
-                            Text("Drag the picture to move it in its frame, or a corner to resize it. Option keeps its middle, and Return ends placing.")
-                        }
-                    }
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.ink3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .transition(.unfold)
-                }
-            } exact: {
-                blendRow
-            }
-        }
-        .transition(.unfold)
-    }
-
-    /// Whether the selected pictures show whole, or their subject alone. The subject is found
-    /// away from the main thread: meanwhile "Subject alone" fills with pencil as the work goes,
-    /// and the canvas shows it being found. A line under it says why, when nothing stands out.
-    @ViewBuilder private var backgroundRow: some View {
-        let work = store.selection.compactMap { store.cuttingOut[$0]?.done }
-        let alone = !work.isEmpty || common({ $0.fill.image?.cutout != nil }) == true
-        SegmentedWell(selection: Binding(get: { alone }, set: { cut in
-            if cut { store.removeBackground() } else if work.isEmpty { store.restoreBackground() }
-        }), options: [(false, "Whole picture"), (true, "Subject alone")], progress: work.min())
-        .help("Take the background away, leaving what stands out in the picture. Double-click the picture to keep or drop each subject in it. The picture itself is kept, to have it back.")
-        if let trouble = store.cutoutTrouble {
-            Text(trouble)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.ink3)
-                .fixedSize(horizontal: false, vertical: true)
-                .transition(.unfold)
-        }
-    }
-
-    /// How the selected layers mix with what lies under them. Each mode shows on the canvas while
-    /// it is pointed at in the menu.
-    private var blendRow: some View {
-        let blend = common { $0.blend }
-        let groups: [[BlendMode?]] = [[nil], [.darken, .multiply, .colorBurn], [.lighten, .screen, .colorDodge],
-                                      [.overlay, .softLight, .hardLight], [.difference, .exclusion], [.hue, .saturation, .color, .luminosity]]
-        return Row(title: "Blend") {
-            MenuButton(id: "blend-mode", title: blend.map { $0.map { .verbatim($0.title) } ?? "Normal" } ?? "Several", width: 180, fills: true) {
-                groups.enumerated().flatMap { i, modes in
-                    (i > 0 ? [MenuEntry.separator] : []) + modes.map { mode in
-                        MenuEntry.item(mode.map { .verbatim($0.title) } ?? "Normal", checked: blend == .some(mode),
-                                       preview: { on in store.showPreview("blend", on ? { $0.blend = mode } : nil) }) {
-                            store.updateSelection("Change Blend Mode") { $0.blend = mode }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// What fills the selection, a layer's or an artboard's background. Its swatch opens the fill
-    /// menu, where one colour or a gradient is chosen and its colours; text takes one colour.
-    @ViewBuilder private func fillControls(blends: Bool, action: LocalizedStringResource, suggest: Bool) -> some View {
-        let color = common { $0.fill.color }
-        let suggested = suggest ? suggestions(besides: color) : []
-        let preview: (RGBA?) -> Void = { c in store.showPreview("fill-colour", c.map { c in { $0.fill.color = c; $0.fill.on = true } }) }
-        let apply: (RGBA) -> Void = { c in store.updateSelection(action) { $0.fill.color = c; $0.fill.on = true } }
-        if blends {
-            FillField(fill: nodes[0].fill, color: color, action: action, suggestions: suggested, preview: preview, apply: apply)
-        } else {
-            ColorField(id: "fill", color: color, suggestions: suggested, action: action, preview: preview, apply: apply)
-        }
-    }
-
-    private func borderBlock(lineOnly: Bool, removable: Bool) -> some View {
-        let color = common { $0.border.color }
-        return Block {
-            OptionBlock(title: lineOnly ? "Line" : "Border",
-                        remove: removable ? { store.updateSelection("Remove Border") { $0.border.on = false } } : nil,
-                        removal: lineOnly ? "Remove line" : "Remove border") {
-                PresetStrip(action: "Change Border", items: Presets.borders.map { preset in
-                    PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { Presets.isBorder(preset.width, $0.border) }) {
-                        Presets.applyBorder(preset.width, to: &$0)
-                    }
-                }) { item in
-                    BorderGlyph(width: Presets.borders.first { $0.id == item.id }?.width ?? nil)
-                }
-                ColorField(id: "border", color: color, suggestions: suggestions(besides: color), action: "Change Border",
-                           preview: { c in store.showPreview("border-colour", c.map { c in { $0.border.color = c; $0.border.on = true } }) }) { c in
-                    store.updateSelection("Change Border") { $0.border.color = c; $0.border.on = true }
-                }
-            } exact: {
-                HStack(spacing: 8) {
-                    layerField(LocalizedStringResource("border.size", defaultValue: "Size", comment: "How thick a border is."), range: 0...1000, scrub: 0.25, action: "Change Border",
-                               get: { Double($0.border.width) }, set: { $0.border.width = CGFloat($1); $0.border.on = true })
-                    layerField("Dash", range: 0...1000, scrub: 0.25, action: "Change Border", get: { Double($0.border.dash) }) { n, v in
-                        n.border.dash = CGFloat(v)
-                        if n.border.gap == 0 { n.border.gap = CGFloat(v) }
-                    }
-                    layerField("Gap", range: 0...1000, scrub: 0.25, action: "Change Border",
-                               get: { Double($0.border.gap) }, set: { $0.border.gap = CGFloat($1) })
-                }
-                if !lineOnly {
-                    IconChoice(selection: common { $0.border.position }, options: [
-                        (.inside, "square.inset.filled", "Inside"),
-                        (.center, "square.dashed", "Centred on the edge"),
-                        (.outside, "square.fill", "Outside"),
-                    ]) { p in store.updateSelection("Change Border") { $0.border.position = p } }
-                }
-            }
-        }
-        .transition(.unfold)
-    }
-
-    /// A shadow under the layers, or inside them as if they were pressed into the page; a line
-    /// has no inside for one to fall in.
-    private func shadowBlock(canInset: Bool) -> some View {
-        let inset = canInset && common { $0.shadow.inset == true } == true
-        let presets = inset ? Presets.innerShadows : Presets.shadows
-        return Block {
-            OptionBlock(title: "Shadow",
-                        remove: { store.updateSelection("Remove Shadow") { $0.shadow.on = false } }, removal: "Remove shadow") {
-                if canInset {
-                    SegmentedWell(selection: Binding(get: { inset }, set: { v in
-                        store.updateSelection("Change Shadow") { Presets.setShadowInset(v, on: &$0) }
-                    }), options: [(false, "Outside"), (true, "Inside")])
-                }
-                PresetStrip(action: "Change Shadow", items: presets.map { preset in
-                    PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { Presets.isShadow(preset, $0.shadow) }) {
-                        Presets.applyShadow(preset, to: &$0)
-                    }
-                }) { item in
-                    let preset = presets.first { $0.id == item.id }
-                    ShadowGlyph(y: preset?.y ?? 0, blur: preset?.blur ?? 0, inset: inset)
-                }
-                ColorField(id: "shadow", color: common { $0.shadow.color }, action: "Change Shadow") { c in
-                    store.updateSelection("Change Shadow") { $0.shadow.color = c }
-                }
-            } exact: {
-                HStack(spacing: 8) {
-                    layerField("X", range: -1000...1000, scrub: 0.5, action: "Change Shadow",
-                               get: { Double($0.shadow.x) }, set: { $0.shadow.x = CGFloat($1) })
-                    layerField("Y", range: -1000...1000, scrub: 0.5, action: "Change Shadow",
-                               get: { Double($0.shadow.y) }, set: { $0.shadow.y = CGFloat($1) })
-                    layerField("B", range: 0...1000, scrub: 0.5, action: "Change Shadow",
-                               get: { Double($0.shadow.blur) }, set: { $0.shadow.blur = CGFloat($1) })
-                }
-                // Inside, the shadow lies under the layer itself, where dragging moves the layer.
-                if !inset {
-                    Caption("Or drag the shadow itself on the canvas.")
-                        .transition(.unfold)
-                }
-            }
-        }
-        .transition(.unfold)
-    }
-
-    /// Layers held up off the page. Aimed on the pad, where the card faces the pointer, or on the
-    /// canvas by the knob in each one's middle; the exact turn, and how near, under it.
-    private var depthBlock: some View {
-        Block {
-            OptionBlock(title: "3D", remove: { store.updateSelection("Remove 3D") { $0.transform3D = nil } }, removal: "Remove 3D") {
-                AimPad(turn: nodes.first?.transform3D ?? Transform3D())
-            } exact: {
-                HStack(spacing: 8) {
-                    layerField("X", unit: "°", range: -180...180, scrub: 0.5, action: "Turn in Depth",
-                               get: { $0.transform3D?.x ?? 0 }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.x = v })
-                    layerField("Y", unit: "°", range: -180...180, scrub: 0.5, action: "Turn in Depth",
-                               get: { $0.transform3D?.y ?? 0 }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.y = v })
-                    layerField("Z", range: -10_000...10_000, scrub: 1, action: "Turn in Depth",
-                               get: { Double($0.transform3D?.z ?? 0) }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.z = CGFloat(v) })
-                }
-                Caption("On the canvas, drag the knob in its middle to aim it, with Option to bring it nearer. Just outside a side, a drag turns anything in depth.")
-            }
-        }
-        .transition(.unfold)
-    }
-
-    /// A blur of the layer itself, or of what lies behind it, as frosted glass does; only shapes
-    /// with an outline to show it through can blur what is behind them.
-    private func blurBlock(canBlurBehind: Bool) -> some View {
-        let behind = canBlurBehind && common { $0.blur?.background == true } == true
-        let growing = common { $0.blur?.ramp != nil } == true
-        return Block {
-            OptionBlock(title: "Blur", remove: { store.updateSelection("Remove Blur") { $0.blur = nil } }, removal: "Remove blur") {
-                if canBlurBehind {
-                    SegmentedWell(selection: Binding(get: { behind }, set: { v in
-                        store.updateSelection("Change Blur") { n in
-                            Presets.applyBlur(n.blur?.radius ?? Presets.blurs[1].radius, to: &n)
-                            n.blur?.background = v
-                        }
-                    }), options: [(false, "The layer"), (true, "What's behind")])
-                }
-                PresetStrip(action: "Change Blur", items: Presets.blurs.map { preset in
-                    PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { $0.blur?.on == true && $0.blur?.radius == preset.radius }) {
-                        Presets.applyBlur(preset.radius, to: &$0)
-                    }
-                }) { item in
-                    let i = Presets.blurs.firstIndex { $0.id == item.id } ?? 0
-                    BlurGlyph(amount: CGFloat(i) / CGFloat(max(Presets.blurs.count - 1, 1)), behind: behind)
-                }
-                SegmentedWell(selection: Binding(get: { growing }, set: { v in
-                    store.updateSelection("Change Blur") { n in
-                        Presets.applyBlur(n.blur?.radius ?? Presets.blurs[1].radius, to: &n)
-                        let kept = n.blur?.ramp
-                        n.blur?.ramp = v ? kept ?? .down : nil
-                    }
-                }), options: [(false, "All over"), (true, "Growing")])
-                if growing, let first = nodes.first, let ramp = first.blur?.ramp {
-                    Group {
-                        RampPad(ramp: ramp, aspect: first.frame.width / max(first.frame.height, 1))
-                        PresetStrip(action: "Change Blur", items: Presets.ramps.map { preset in
-                            PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { $0.blur?.ramp == BlurRamp.toward(preset.edge) }) {
-                                $0.blur?.ramp = BlurRamp.toward(preset.edge)
-                            }
-                        }) { item in
-                            RampGlyph(edge: Presets.ramps.first { $0.id == item.id }?.edge ?? 0)
-                        }
-                    }
-                    .transition(.unfold)
-                }
-            } exact: {
-                Row(title: "Amount") {
-                    layerField("", range: 0...500, scrub: 0.25, action: "Change Blur",
-                               get: { Double($0.blur?.radius ?? 0) }, set: { Presets.applyBlur(CGFloat($1), to: &$0) })
-                }
-                if behind {
-                    Row(title: "Light") {
-                        layerField("", unit: "%", range: -100...100, scrub: 0.5, decimals: 0, action: "Change Blur",
-                                   get: { ($0.blur?.brightness ?? 0) * 100 }, set: { $0.blur?.brightness = $1 / 100 })
-                    }
-                    Row(title: "Fill") {
-                        layerField("", unit: "%", range: 0...100, scrub: 0.5, decimals: 0, action: "Change Blur",
-                                   get: { ($0.blur?.fillOpacity ?? 0) * 100 }, set: { $0.blur?.fillOpacity = $1 / 100 })
-                    }
-                }
-                if behind {
-                    Caption("Light brightens what shows through, or darkens it below zero. Fill is how much of the layer's own colour lies over it.")
-                }
-                if growing {
-                    Caption("A growing blur is sharp at the ring and blurs by the whole amount at the dot.")
-                }
-            }
-        }
-        .transition(.unfold)
-    }
-}
-
 // MARK: - Path
 
 /// What a path is, and while its points are being edited, where the picked ones are and how
 /// the outline runs through them.
-private struct PathBlock: View {
+struct PathCard: View {
     let store: DocumentStore
     let nodes: [Node]
 
     var body: some View {
         let single = nodes.count == 1 && !nodes[0].locked ? nodes[0] : nil
         let editing = single != nil && store.editingPath == single?.id
-        Block {
-            OptionBlock(title: "Path") {
-                SegmentedWell(selection: Binding(get: { store.selectedPathsClosed ?? false }, set: { closed in store.setClosed(closed) }),
-                              options: [(false, LocalizedStringResource("path.open", defaultValue: "Open", comment: "An open path, as opposed to a closed one.")), (true, "Closed")])
-                // Where the outline crosses itself, or one part lies inside another: only a fill shows it.
-                if nodes.contains(where: \.fill.on) {
-                    Row(title: "Overlaps") {
-                        SegmentedWell(selection: Binding(get: { nodes.allSatisfy { $0.evenOdd == true } }, set: { cut in
-                            store.updateSelection(cut ? "Cut Out Overlaps" : "Fill In Overlaps") { $0.evenOdd = cut ? true : nil }
-                        }), options: [(false, "Fill in"), (true, "Cut out")])
-                    }
-                    .transition(.unfold)
+        AspectCard(aspect: .path, title: "Path", summary: summary(editing: editing)) {
+            KindGlyph(kind: .path)
+        } picks: {
+            SegmentedWell(selection: Binding(get: { store.selectedPathsClosed ?? false }, set: { closed in store.setClosed(closed) }),
+                          options: [(false, LocalizedStringResource("path.open", defaultValue: "Open", comment: "An open path, as opposed to a closed one.")), (true, "Closed")])
+            // Where the outline crosses itself, or one part lies inside another: only a fill shows it.
+            if nodes.contains(where: \.fill.on) {
+                Row(title: "Overlaps") {
+                    SegmentedWell(selection: Binding(get: { nodes.allSatisfy { $0.evenOdd == true } }, set: { cut in
+                        store.updateSelection(cut ? "Cut Out Overlaps" : "Fill In Overlaps") { $0.evenOdd = cut ? true : nil }
+                    }), options: [(false, "Fill in"), (true, "Cut out")])
                 }
-                if single != nil {
-                    CardButton(title: editing ? "Done" : "Edit Points", height: 28) {
-                        if editing { store.editingPath = nil } else { store.editPoints() }
-                    }
-                    // Return on a path filled with a picture places the picture instead.
-                    .help(editing ? "Stop editing points  ↩" : store.canEditPicture ? "Move, add and take away points" : "Move, add and take away points  ↩")
-                }
-                if editing { points.transition(.unfold) }
-            } exact: {
-                EmptyView()
+                .transition(.unfold)
             }
+            if single != nil {
+                CardButton(title: editing ? "Done" : "Edit Points", height: 28) {
+                    if editing { store.editingPath = nil } else { store.editPoints() }
+                }
+                // Return on a path filled with a picture places the picture instead.
+                .help(editing ? "Stop editing points  ↩" : store.canEditPicture ? "Move, add and take away points" : "Move, add and take away points  ↩")
+            }
+            if editing { points.transition(.unfold) }
         }
+    }
+
+    /// Open or closed, and whether its points are being edited.
+    private func summary(editing: Bool) -> String {
+        var said = switch store.selectedPathsClosed {
+        case true?: String(localized: "Closed")
+        case false?: String(localized: LocalizedStringResource("path.open", defaultValue: "Open", comment: "An open path, as opposed to a closed one."))
+        case nil: SelectionInspector.several
+        }
+        if editing { said += " · \(String(localized: "Editing points"))" }
+        return said
     }
 
     @ViewBuilder private var points: some View {
@@ -957,10 +328,11 @@ private struct PathBlock: View {
 
 // MARK: - Text
 
-private struct TextBlock: View {
+struct TextCard: View {
     @Environment(MenuHost.self) private var menus
     let store: DocumentStore
     let nodes: [Node]
+    var live = false
 
     private func common<T: Equatable>(_ value: (TextStyle) -> T) -> T? {
         let styles = nodes.map { $0.style ?? TextStyle() }
@@ -1001,60 +373,68 @@ private struct TextBlock: View {
         let family = common(\.family)
         let face = common(\.face)
         let size = common { Double($0.size) }
-        Block {
-            OptionBlock(title: "Text") {
-                MenuButton(id: "font-family", title: family.map { .verbatim(Fonts.displayName($0)) } ?? "Several fonts", width: Inspector.content, fills: true) {
-                    familyEntries(current: family)
-                }
-                HStack(spacing: 8) {
-                    MenuButton(id: "font-face", title: face.map { .verbatim($0) } ?? "Several", width: 200, fills: true) {
-                        Fonts.faces(of: family ?? TextStyle.system).map { f in
-                            MenuEntry.item(.verbatim(f), checked: f == face, preview: { on in preview(on ? { $0.face = f } : nil) }) {
-                                set("Change Font") { $0.face = f }
-                            }
+        let first = nodes.first?.style ?? TextStyle()
+        let summary = [family.map { Fonts.displayName($0) } ?? String(localized: "Several fonts"),
+                       size.map { "\(SelectionInspector.said($0)) pt" } ?? SelectionInspector.several].joined(separator: " · ")
+        let dial = Dial(value: Double(first.size), range: 1...max(200, Double(first.size) * 1.5), stops: Presets.textSizes.map(Double.init),
+                        step: 1, action: "Change Size") { v in set("Change Size") { $0.size = CGFloat(v.rounded()) } }
+        AspectCard(aspect: .text, title: "Text", summary: summary, dial: dial, live: live) {
+            Text(verbatim: "Aa")
+                .font(family.flatMap { $0 != TextStyle.system && Fonts.showsOwnName($0) ? Font.custom($0, size: 12.5) : nil } ?? .system(size: 12.5, weight: .medium))
+                .lineLimit(1)
+                .fixedSize()
+        } picks: {
+            MenuButton(id: "font-family", title: family.map { .verbatim(Fonts.displayName($0)) } ?? "Several fonts", width: Inspector.content, fills: true) {
+                familyEntries(current: family)
+            }
+            HStack(spacing: 8) {
+                MenuButton(id: "font-face", title: face.map { .verbatim($0) } ?? "Several", width: 200, fills: true) {
+                    Fonts.faces(of: family ?? TextStyle.system).map { f in
+                        MenuEntry.item(.verbatim(f), checked: f == face, preview: { on in preview(on ? { $0.face = f } : nil) }) {
+                            set("Change Font") { $0.face = f }
                         }
                     }
-                    styleField("", unit: "pt", range: 1...2000, scrub: 0.25, action: "Change Size", value: size,
-                               get: { Double($0.size) }, set: { $0.size = CGFloat($1) })
-                        .frame(width: Inspector.endField)
                 }
-                PresetStrip(action: "Change Size", items: Presets.textSizes.map { points in
-                    PresetItem(id: "text-size-\(Int(points))", name: "\(Int(points)) points", active: size == Double(points)) { n in
-                        var style = n.style ?? TextStyle()
-                        style.size = points
-                        n.style = style
-                    }
-                }) { item in
-                    let points = Presets.textSizes.first { "text-size-\(Int($0))" == item.id } ?? 12
-                    Text(verbatim: "\(Int(points))")
-                        .font(.system(size: 9.5 + CGFloat(Presets.textSizes.firstIndex(of: points) ?? 0) * 0.75, weight: .medium).monospacedDigit())
-                }
-                HStack(spacing: 8) {
-                    IconChoice(selection: common(\.align), options: [
-                        (.left, "text.alignleft", "Align left"),
-                        (.center, "text.aligncenter", LocalizedStringResource("text.align-centre", defaultValue: "Centre", comment: "Centres the text, beside Align left and Align right.")),
-                        (.right, "text.alignright", "Align right"),
-                    ]) { a in set("Align Text") { $0.align = a } }
-                    IconChoice(selection: common(\.underline), options: [(true, "underline", "Underline")]) { _ in
-                        let on = common(\.underline) ?? false
-                        set(on ? "Remove Underline" : "Underline") { $0.underline = !on }
-                    }
+                styleField("", unit: "pt", range: 1...2000, scrub: 0.25, action: "Change Size", value: size,
+                           get: { Double($0.size) }, set: { $0.size = CGFloat($1) })
                     .frame(width: Inspector.endField)
-                }
-                SegmentedWell(selection: Binding(get: { common(\.sizing) ?? .autoWidth }, set: { v in
-                    let action: LocalizedStringResource = switch v {
-                    case .autoWidth: "Auto Size"
-                    case .autoHeight: "Fixed Width"
-                    case .fixed: "Fixed Size"
-                    }
-                    set(action) { $0.sizing = v }
-                }), options: [(.autoWidth, "Auto size"), (.autoHeight, "Fixed width"), (.fixed, "Fixed size")])
-            } exact: {
-                Pair(styleField(LocalizedStringResource("text.line-spacing", defaultValue: "Line", comment: "The distance between lines of text, beside the letter spacing."), range: 0...4000, scrub: 0.25, action: "Change Line Spacing", value: lineSpacing,
-                                get: { Double($0.lineSpacing ?? Self.naturalLineHeight($0)) }, set: { $0.lineSpacing = CGFloat($1) }),
-                     styleField("Letter", range: -500...2000, scrub: 1, decimals: 0, action: "Change Letter Spacing",
-                                value: common { Double($0.tracking) }, get: { Double($0.tracking) }, set: { $0.tracking = CGFloat($1) }))
             }
+            PresetStrip(action: "Change Size", items: Presets.textSizes.map { points in
+                PresetItem(id: "text-size-\(Int(points))", name: "\(Int(points)) points", active: size == Double(points)) { n in
+                    var style = n.style ?? TextStyle()
+                    style.size = points
+                    n.style = style
+                }
+            }) { item in
+                let points = Presets.textSizes.first { "text-size-\(Int($0))" == item.id } ?? 12
+                Text(verbatim: "\(Int(points))")
+                    .font(.system(size: 9.5 + CGFloat(Presets.textSizes.firstIndex(of: points) ?? 0) * 0.75, weight: .medium).monospacedDigit())
+            }
+            HStack(spacing: 8) {
+                IconChoice(selection: common(\.align), options: [
+                    (.left, "text.alignleft", "Align left"),
+                    (.center, "text.aligncenter", LocalizedStringResource("text.align-centre", defaultValue: "Centre", comment: "Centres the text, beside Align left and Align right.")),
+                    (.right, "text.alignright", "Align right"),
+                ]) { a in set("Align Text") { $0.align = a } }
+                IconChoice(selection: common(\.underline), options: [(true, "underline", "Underline")]) { _ in
+                    let on = common(\.underline) ?? false
+                    set(on ? "Remove Underline" : "Underline") { $0.underline = !on }
+                }
+                .frame(width: Inspector.endField)
+            }
+            SegmentedWell(selection: Binding(get: { common(\.sizing) ?? .autoWidth }, set: { v in
+                let action: LocalizedStringResource = switch v {
+                case .autoWidth: "Auto Size"
+                case .autoHeight: "Fixed Width"
+                case .fixed: "Fixed Size"
+                }
+                set(action) { $0.sizing = v }
+            }), options: [(.autoWidth, "Auto size"), (.autoHeight, "Fixed width"), (.fixed, "Fixed size")])
+        } exact: {
+            Pair(styleField(LocalizedStringResource("text.line-spacing", defaultValue: "Line", comment: "The distance between lines of text, beside the letter spacing."), range: 0...4000, scrub: 0.25, action: "Change Line Spacing", value: lineSpacing,
+                            get: { Double($0.lineSpacing ?? Self.naturalLineHeight($0)) }, set: { $0.lineSpacing = CGFloat($1) }),
+                 styleField("Letter", range: -500...2000, scrub: 1, decimals: 0, action: "Change Letter Spacing",
+                            value: common { Double($0.tracking) }, get: { Double($0.tracking) }, set: { $0.tracking = CGFloat($1) }))
         }
     }
 
@@ -1093,178 +473,10 @@ private struct TextBlock: View {
 
 // MARK: - Pieces
 
-/// The selection's name and what it is.
-private struct Header: View {
-    let nodes: [Node]
-    let store: DocumentStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            (nodes.count == 1 ? Text(verbatim: nodes[0].name) : Text("\(nodes.count) layers"))
-                .font(Theme.serif(17, weight: .medium))
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
-            Text(detail)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.ink3)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, Inspector.gutter)
-        .padding(.top, 12)
-        .padding(.bottom, 12)
-    }
-
-    /// Said whole for each kind of layer, as each language puts its own words around the kind.
-    private var detail: String {
-        if nodes.count == 1 {
-            let n = nodes[0]
-            if let spec = n.grid {
-                if let parent = store.doc.parent(of: n.id) {
-                    return String(localized: "Repeat grid, \(spec.columns) × \(spec.rows) on \(parent.name)")
-                }
-                return String(localized: "Repeat grid, \(spec.columns) × \(spec.rows)")
-            }
-            if let grid = store.grid(holding: n.id), let found = RepeatGrid.cell(of: n.id, in: grid, doc: store.doc), let spec = grid.grid {
-                return Self.inCell(n.kind, found.cell.row * spec.columns + found.cell.column + 1, of: spec.count)
-            }
-            if let parent = store.doc.parent(of: n.id) { return Self.on(n.kind, parent.name) }
-            guard n.isArtboard else { return Self.onCanvas(n.kind) }
-            // A list of what the artboard is and holds.
-            let layers = store.seenLayers(of: n).count, posts = n.posts.count, slides = n.slideCount
-            var said: [String] = []
-            if n.isDeck {
-                said.append(posts == 1 ? String(localized: "Stack of \(posts) post") : String(localized: "Stack of \(posts) posts"))
-            } else {
-                said.append(n.isCarousel ? String(localized: "Carousel") : String(localized: "Artboard"))
-            }
-            if n.isCarousel {
-                said.append(slides == 1 ? String(localized: "\(slides) slide") : String(localized: "\(slides) slides"))
-            }
-            said.append(layers == 1 ? String(localized: "\(layers) layer") : String(localized: "\(layers) layers"))
-            return said.joined(separator: ", ")
-        }
-        let kinds = Set(nodes.map(\.kind))
-        return kinds.count == 1 ? Self.all(nodes[0].kind) : String(localized: "Mixed layers")
-    }
-
-    /// A layer in a repeat grid's cell. (An artboard is never in one, nor on anything.)
-    private static func inCell(_ kind: Node.Kind, _ cell: Int, of count: Int) -> String {
-        switch kind {
-        case .rectangle: String(localized: "Rectangle in cell \(cell) of \(count)")
-        case .ellipse: String(localized: "Ellipse in cell \(cell) of \(count)")
-        case .line: String(localized: "Line in cell \(cell) of \(count)")
-        case .text: String(localized: "Text in cell \(cell) of \(count)")
-        case .group: String(localized: "Group in cell \(cell) of \(count)")
-        case .path: String(localized: "Path in cell \(cell) of \(count)")
-        case .artboard: kind.title
-        }
-    }
-
-    /// A layer on an artboard, or in a group, by its name.
-    private static func on(_ kind: Node.Kind, _ parent: String) -> String {
-        switch kind {
-        case .rectangle: String(localized: "Rectangle on \(parent)")
-        case .ellipse: String(localized: "Ellipse on \(parent)")
-        case .line: String(localized: "Line on \(parent)")
-        case .text: String(localized: "Text on \(parent)")
-        case .group: String(localized: "Group on \(parent)")
-        case .path: String(localized: "Path on \(parent)")
-        case .artboard: kind.title
-        }
-    }
-
-    /// A layer on no artboard. (An artboard says what it holds instead.)
-    private static func onCanvas(_ kind: Node.Kind) -> String {
-        switch kind {
-        case .rectangle: String(localized: "Rectangle on the canvas")
-        case .ellipse: String(localized: "Ellipse on the canvas")
-        case .line: String(localized: "Line on the canvas")
-        case .text: String(localized: "Text on the canvas")
-        case .group: String(localized: "Group on the canvas")
-        case .path: String(localized: "Path on the canvas")
-        case .artboard: kind.title
-        }
-    }
-
-    /// Several layers, all of one kind.
-    private static func all(_ kind: Node.Kind) -> String {
-        switch kind {
-        case .artboard: String(localized: "All artboards")
-        case .rectangle: String(localized: "All rectangles")
-        case .ellipse: String(localized: "All ellipses")
-        case .line: String(localized: "All lines")
-        case .text: String(localized: "All texts")
-        case .group: String(localized: "All groups")
-        case .path: String(localized: "All paths")
-        }
-    }
-}
-
-/// Lines layers up with each other, or a single one with its artboard. Under it, for shapes, the
-/// ways to make several one.
-private struct AlignBar: View {
-    let store: DocumentStore
-    let count: Int
-    let onBoard: Bool
-    let shapes: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 0) {
-                Group {
-                    button("align.horizontal.left", "Align left") { store.align(.left) }
-                    button("align.horizontal.center", "Align centres") { store.align(.centerX) }
-                    button("align.horizontal.right", "Align right") { store.align(.right) }
-                    button("align.vertical.top", "Align tops") { store.align(.top) }
-                    button("align.vertical.center", "Align middles") { store.align(.centerY) }
-                    button("align.vertical.bottom", "Align bottoms") { store.align(.bottom) }
-                }
-                .opacity(onBoard ? 1 : 0.35)
-                .allowsHitTesting(onBoard)
-                Spacer(minLength: 0)
-                Group {
-                    button("distribute.horizontal", "Space evenly across") { store.distribute(horizontally: true) }
-                    button("distribute.vertical", "Space evenly down") { store.distribute(horizontally: false) }
-                }
-                .opacity(count >= 3 ? 1 : 0.35)
-                .allowsHitTesting(count >= 3)
-            }
-            if shapes {
-                HStack(spacing: 0) {
-                    ForEach(DocumentStore.Combine.allCases, id: \.self) { how in
-                        CombineButton(how: how) { store.combine(how) }
-                    }
-                    Color.clear.frame(width: 8, height: 1)
-                    CombineButton(how: nil, on: store.building != nil) {
-                        if store.building != nil { store.building = nil } else { store.startBuilding() }
-                    }
-                }
-                .opacity(store.canCombine ? 1 : 0.35)
-                .allowsHitTesting(store.canCombine)
-                if store.building != nil {
-                    Text("Drag across pieces to join them into one shape, or click one to make it its own. Hold ⌥ to wipe pieces away.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.ink3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 4)
-                        .padding(.top, 4)
-                        .transition(.unfold)
-                }
-            }
-        }
-        .padding(.horizontal, Inspector.gutter - 4)
-        .padding(.bottom, 10)
-    }
-
-    private func button(_ symbol: String, _ help: LocalizedStringResource, action: @escaping () -> Void) -> some View {
-        IconButton(symbol: symbol, help: help, size: 28, action: action)
-    }
-}
-
 /// A way of making shapes one, drawn as what it does to two overlapping squares: what is left
 /// of them shaded, their outlines over it. With no `how`, building with the pieces: a stroke
 /// across all three, as the drag that joins them goes.
-private struct CombineButton: View {
+struct CombineButton: View {
     let how: DocumentStore.Combine?
     var on = false
     let action: () -> Void
@@ -1318,20 +530,6 @@ private struct CombineButton: View {
         .animation(Theme.quick, value: on)
         .accessibilityLabel(how?.title ?? "Build")
         .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
-    }
-}
-
-/// A block of the inspector, set off from the next by a hairline.
-struct Block<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Hairline()
-            content
-                .padding(.horizontal, Inspector.gutter)
-                .padding(.vertical, 14)
-        }
     }
 }
 
@@ -1397,7 +595,7 @@ struct Caption: View {
 }
 
 /// The aspect lock between width and height: two links that close when on.
-private struct AspectLock: View {
+struct AspectLock: View {
     @Binding var locked: Bool
     @State private var hovering = false
 
