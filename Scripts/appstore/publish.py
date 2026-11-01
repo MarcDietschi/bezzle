@@ -104,17 +104,18 @@ def step_listing():
     print("  categories")
     upsert_localizations(f"/v1/appInfos/{info['id']}/appInfoLocalizations", "appInfoLocalizations", "appInfo", "appInfos", info["id"],
                          lambda v: {"name": v["name"], "subtitle": v["subtitle"], "privacyPolicyUrl": v["privacyPolicyUrl"]})
-    # Age rating: nothing objectionable, so every question is answered "no" or "none". Overrides and
-    # regional ratings are not questions and stay as they are.
+    # Age rating: a question still unanswered gets "no" or "none". What is answered already, as the user
+    # did by hand on 2026-11-01, is left alone. Overrides and regional ratings are not questions.
     rating = api("GET", f"/v1/appInfos/{info['id']}/ageRatingDeclaration")["data"]
     yes_or_no = {"advertising", "ageAssurance", "gambling", "healthOrWellnessTopics", "lootBox", "messagingAndChat",
                  "parentalControls", "socialMedia", "socialMediaAgeRestricted", "unrestrictedWebAccess", "userGeneratedContent"}
     not_questions = {"kidsAgeBand", "ageRatingOverride", "ageRatingOverrideV2", "koreaAgeRatingOverride",
                      "gracRatingClassificationNumber", "developerAgeRatingInfoUrl"}
-    answers = {key: (False if key in yes_or_no or isinstance(value, bool) else "NONE")
-               for key, value in rating["attributes"].items() if key not in not_questions}
+    # Only questions nobody has answered yet: answers given in App Store Connect by hand stay as they are.
+    answers = {key: (False if key in yes_or_no else "NONE")
+               for key, value in rating["attributes"].items() if key not in not_questions and value is None}
     # Questions Apple adds come back unanswered (null), so their type is learnt from its reply.
-    for _ in range(5):
+    for _ in range(5 if answers else 0):
         reply = api("PATCH", f"/v1/ageRatingDeclarations/{rating['id']}",
                     {"data": {"type": "ageRatingDeclarations", "id": rating["id"], "attributes": answers}}, ok=(200, 409))
         wrong = re.findall(r"attribute '(\w+)'\. Expected a BOOLEAN", " ".join(e.get("detail", "") for e in reply.get("errors", [])))

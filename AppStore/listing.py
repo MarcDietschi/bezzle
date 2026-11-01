@@ -11,54 +11,54 @@ L = {}
 L["en-US"] = dict(
     name="Bezzle: UI & Graphic Design",
     subtitle="Every pro tool, for everyone",
-    promotionalText="Bezzle is free. Not a trial, not freemium: every tool, every export and iCloud co-editing, with no subscription and no account. Just open it and design.",
-    keywords="mockup,wireframe,vector,social media,carousel,poster,layout,artboard,ux,web,logo,icon,flyer,cutout",
+    promotionalText="Bezzle is free. Not a trial, not freemium: components, prototypes, hand-off, live co-editing and every export, with no subscription and no account. Just design.",
+    keywords="prototype,mockup,wireframe,vector,ui kit,icons,social media,carousel,poster,web,logo,flyer,cutout,ux",
     description="""Bezzle is a complete design studio for your Mac, and it is free. Not a trial, not freemium: no subscription, no account, no feature held back. Every tool and every export is yours from the first launch.
 
-It brings together the best ideas of the design apps you know: artboards and repeat grids, smooth squircle corners, real vector tools, co-editing and the speed of a native Mac app. Each one is made simpler here. Then Bezzle adds what none of them have: decks for social media, one-click cutouts, 3D you turn by hand and an AI assistant that designs with you.
+It brings together the best ideas of the design apps you know, from artboards and components to prototypes and co-editing, and makes each one simpler. Then it adds what none of them have: layouts that compose themselves for every size, dark mode in one click, decks for social media, one-click cutouts and an AI assistant that designs with you.
 
 OPEN WHAT YOU ALREADY HAVE
-• Opens Adobe XD, Figma (.fig) and Sketch files, with artboards, layers, text, pictures, gradients and shadows.
-• A short report shows what came in, so nothing changes without you knowing.
+• Opens Adobe XD, Figma (.fig) and Sketch files with artboards, layers, masks, text, pictures and layout grids.
+• Brings any website in as layers you can edit, at desktop, tablet and phone widths.
 
-APPS, WEBSITES, POSTS AND PRINT
-• Artboards for phones, tablets, laptops, desktops, watches, social posts, stories and A4, side by side at true scale.
-• Pen, knife, shape builder and boolean operations, and corners you round by dragging them, right on the canvas.
-• Squircle corners, gradients you drag on the canvas, background blurs, blurs that ramp across a layer, and shadows inside and out.
-• Pictures fill any shape. Double-click to move and scale them inside it.
+DESIGN ANYTHING
+• Apps, websites, social posts, slides and print on artboards for every device, side by side at true scale.
+• Pen, knife, shape builder, booleans, masks and corners you round by dragging them, right on the canvas.
+• Several fills, borders and shadows per layer, gradients, blurs, and pictures in shapes, borders and even letters.
+• Mixed styles in one text, text that follows any curve, rulers, guides and layout grids.
 
-REPEAT GRIDS
-• Drag a handle and one card becomes a list or a gallery. Change any cell and every cell follows.
-• Drop a folder of photos, a text file or a spreadsheet onto a grid, and each cell gets its own content.
-• Sample names, cities, prices, dates and headlines let you judge a layout before the real content arrives.
+COMPONENTS AND STYLES
+• Every copy is the component. Change one and all follow, while each keeps its own words and photos. With variants.
+• Give a color, a text style, a shadow or corners a name and use it everywhere. Take components and styles from your other designs.
+• UI kits for iOS, macOS, Android and Bezzle, and thousands of Lucide, Phosphor and Material icons.
 
-DECKS FOR SOCIAL MEDIA
-• Keep dozens of posts on one artboard, stacked like cards. Restyle one and all of them follow.
-• Each post keeps its own words and photos. Spread the stack out to reorder, export or remove posts.
-• Carousels for Instagram, LinkedIn and TikTok: one wide design, exported as one picture per slide.
+EVERY SIZE, LIGHT AND DARK
+• Drag an artboard to a new size and Bezzle composes the layout again, with the design in mind.
+• One click gives an artboard its dark look, drawn from your colors. Fine-tune any of them by hand.
 
-REMOVE BACKGROUND
-• One click lifts people, pets and products out of their photo, hair and all, right on your Mac.
-• The shadow falls from the subject's real outline, and the original photo is always kept.
+PROTOTYPES AND HAND-OFF
+• Link a button to a screen. The motion comes from your layout, and the prototype plays in a real device.
+• Inspect shows developers every distance, color and font, with CSS and SwiftUI for each layer and assets to drag out.
 
-3D WITHOUT THE MATH
-• Grab just outside a side and turn any layer in depth, in true perspective. No axes, no numbers.
-• Or aim it with a small pad in the inspector. Exact degrees are there when you need them.
+DECKS, GRIDS AND PHOTOS
+• Keep dozens of social posts on one artboard as a deck. Carousels for Instagram, LinkedIn and TikTok.
+• Repeat grids turn one card into a list. Drop in a folder of photos or a spreadsheet and every cell fills itself.
+• Remove the background of people, pets and products in one click, hair and all, and develop photos right in the design.
+• Turn any layer in 3D by hand, in true perspective.
 
 DESIGN TOGETHER
-• Share a design over iCloud with anyone who has a Mac. Nobody has to create an account.
-• Changes merge property by property, so several people can work at once and no edit is ever overwritten.
+• Share over iCloud with anyone who has a Mac, no account needed. See everyone's pencil live as they work.
+• Edits merge property by property, so nothing is ever overwritten. Talk it over in margin notes and go back to any version.
 
 YOUR AI CAN DESIGN, TOO
-• Bezzle has a built-in MCP server. Add it to Claude Desktop with one click, or connect any MCP assistant.
-• The assistant builds screens, fills grids, makes decks, removes backgrounds and exports, and every step is in Undo.
+• A built-in MCP server lets Claude or any MCP assistant build screens, decks and prototypes, and write changes back from code. Every step is in Undo.
 
 EXPORT
-• PNG, JPEG, SVG and PDF from 1x to 4x: one artboard, one layer, or every post of a deck at once.
+• PNG, JPEG, WebP, AVIF, SVG and PDF from 1x to 4x, with export presets and every post of a deck at once.
 
 MADE FOR THE MAC
-• Native and fast, in light and dark, with designs that save themselves as you work.
-• Your designs stay on your Mac or in your own iCloud. No tracking, no ads.
+• Native and fast, with tabs, light and dark mode, and designs that save themselves.
+• Your designs stay on your Mac or in your own iCloud, and live sessions are end-to-end encrypted. No tracking, no ads.
 
 Free, with everything included. Just design.""",
 )
@@ -66,54 +66,54 @@ Free, with everything included. Just design.""",
 L["de-DE"] = dict(
     name="Bezzle: UI- & Grafikdesign",
     subtitle="Jedes Profi-Werkzeug für alle",
-    promotionalText="Bezzle ist kostenlos. Keine Testversion, kein Freemium: alle Werkzeuge, alle Exporte und gemeinsames Arbeiten über iCloud, ohne Abo und ohne Konto.",
-    keywords="mockup,wireframe,vektor,social media,karussell,poster,layout,ux,web,logo,icon,flyer,freistellen",
+    promotionalText="Bezzle ist kostenlos. Keine Testversion, kein Freemium: Komponenten, Prototypen, Übergabe, Live-Zusammenarbeit und alle Exporte, ohne Abo und ohne Konto.",
+    keywords="prototyp,mockup,wireframe,vektor,ui kit,icons,social media,karussell,poster,web,logo,freistellen",
     description="""Bezzle ist ein komplettes Designstudio für deinen Mac, und es ist kostenlos. Keine Testversion, kein Freemium: kein Abo, kein Konto, keine zurückgehaltene Funktion. Alle Werkzeuge und alle Exporte gehören dir vom ersten Start an.
 
-Bezzle vereint die besten Ideen der Design-Apps, die du kennst: Zeichenflächen und Wiederholraster, weiche Squircle-Ecken, echte Vektorwerkzeuge, gemeinsames Arbeiten und das Tempo einer nativen Mac-App. Jedes davon ist hier einfacher. Dazu kommt, was keine von ihnen hat: Stapel für Social Media, Freistellen mit einem Klick, 3D, das du von Hand drehst, und ein KI-Assistent, der mitgestaltet.
+Bezzle vereint die besten Ideen der Design-Apps, die du kennst, von Zeichenflächen und Komponenten bis zu Prototypen und gemeinsamem Arbeiten, und macht jede davon einfacher. Dazu kommt, was keine von ihnen hat: Layouts, die sich für jede Größe neu komponieren, Dunkelmodus mit einem Klick, Stapel für Social Media, Freistellen mit einem Klick und ein KI-Assistent, der mitgestaltet.
 
 ÖFFNE, WAS DU SCHON HAST
-• Öffnet Dateien aus Adobe XD, Figma (.fig) und Sketch, mit Zeichenflächen, Ebenen, Texten, Bildern, Verläufen und Schatten.
-• Ein kurzer Bericht zeigt, was übernommen wurde, damit sich nichts ohne dein Wissen ändert.
+• Öffnet Dateien aus Adobe XD, Figma (.fig) und Sketch, mit Zeichenflächen, Ebenen, Masken, Texten, Bildern und Layoutrastern.
+• Holt jede Website als bearbeitbare Ebenen herein, in Desktop-, Tablet- und Smartphone-Breite.
 
-APPS, WEBSITES, POSTS UND PRINT
-• Zeichenflächen für Smartphones, Tablets, Laptops, Desktops, Uhren, Social Posts, Storys und A4, nebeneinander im echten Maßstab.
-• Zeichenstift, Messer, Formgenerator und boolesche Operationen, dazu Ecken, die du direkt auf der Arbeitsfläche rund ziehst.
-• Squircle-Ecken, Verläufe, die du auf der Arbeitsfläche ziehst, Hintergrundunschärfe, Unschärfe mit Verlauf und Schatten innen wie außen.
-• Bilder füllen jede Form. Ein Doppelklick, und du verschiebst und skalierst sie darin.
+GESTALTE ALLES
+• Apps, Websites, Social Posts, Präsentationen und Print auf Zeichenflächen für jedes Gerät, nebeneinander im echten Maßstab.
+• Zeichenstift, Messer, Formgenerator, boolesche Operationen, Masken und Ecken, die du direkt auf der Arbeitsfläche rund ziehst.
+• Mehrere Füllungen, Konturen und Schatten pro Ebene, Verläufe, Unschärfen und Bilder in Formen, Konturen und sogar Buchstaben.
+• Gemischte Stile in einem Text, Text auf beliebigen Kurven, Lineale, Hilfslinien und Layoutraster.
 
-WIEDERHOLRASTER
-• Am Griff ziehen, und aus einer Karte wird eine Liste oder Galerie. Ändere eine Zelle, und alle folgen.
-• Zieh einen Ordner mit Fotos, eine Textdatei oder eine Tabelle auf ein Raster, und jede Zelle erhält ihren eigenen Inhalt.
-• Beispielnamen, Städte, Preise, Daten und Titel zeigen dir das Layout, bevor die echten Inhalte da sind.
+KOMPONENTEN UND STILE
+• Jede Kopie ist die Komponente. Ändere eine, und alle folgen, jede mit eigenen Texten und Fotos. Mit Varianten.
+• Gib einer Farbe, einem Textstil, einem Schatten oder Ecken einen Namen und nutze ihn überall. Übernimm Komponenten und Stile aus deinen anderen Designs.
+• UI-Kits für iOS, macOS, Android und Bezzle, dazu Tausende Icons von Lucide, Phosphor und Material.
 
-STAPEL FÜR SOCIAL MEDIA
-• Dutzende Posts auf einer Zeichenfläche, gestapelt wie Karten. Ändere den Look von einem, und alle folgen.
-• Jeder Post behält seine eigenen Texte und Fotos. Fächere den Stapel auf, um Posts zu ordnen, zu exportieren oder zu entfernen.
-• Karussells für Instagram, LinkedIn und TikTok: ein breites Design, exportiert als ein Bild pro Slide.
+JEDE GRÖSSE, HELL UND DUNKEL
+• Zieh eine Zeichenfläche auf eine neue Größe, und Bezzle komponiert das Layout neu, mit Blick auf das Design.
+• Ein Klick gibt einer Zeichenfläche ihren dunklen Look, abgeleitet aus deinen Farben. Jede davon kannst du von Hand anpassen.
 
-HINTERGRUND ENTFERNEN
-• Ein Klick stellt Menschen, Tiere und Produkte frei, samt Haaren, direkt auf deinem Mac.
-• Der Schatten folgt der echten Kontur des Motivs, und das Originalfoto bleibt immer erhalten.
+PROTOTYPEN UND ÜBERGABE
+• Verbinde einen Button mit einem Screen. Die Bewegung ergibt sich aus deinem Layout, und der Prototyp läuft in einem echten Gerät.
+• Untersuchen zeigt der Entwicklung jeden Abstand, jede Farbe und Schrift, mit CSS und SwiftUI für jede Ebene und Assets zum Herausziehen.
 
-3D OHNE MATHEMATIK
-• Greif knapp neben einer Seite und dreh jede Ebene in die Tiefe, in echter Perspektive. Keine Achsen, keine Zahlen.
-• Oder richte sie mit einem kleinen Feld im Inspektor aus. Genaue Gradzahlen gibt es, wenn du sie brauchst.
+STAPEL, RASTER UND FOTOS
+• Dutzende Social Posts auf einer Zeichenfläche als Stapel. Karussells für Instagram, LinkedIn und TikTok.
+• Wiederholraster machen aus einer Karte eine Liste. Zieh einen Ordner mit Fotos oder eine Tabelle hinein, und jede Zelle füllt sich.
+• Stelle Menschen, Tiere und Produkte mit einem Klick frei, samt Haaren, und entwickle Fotos direkt im Design.
+• Dreh jede Ebene von Hand in 3D, in echter Perspektive.
 
 GEMEINSAM GESTALTEN
-• Teile ein Design über iCloud mit allen, die einen Mac haben. Niemand muss ein Konto anlegen.
-• Änderungen werden Eigenschaft für Eigenschaft zusammengeführt. So arbeiten mehrere Leute gleichzeitig, und keine Änderung wird überschrieben.
+• Teile über iCloud mit allen, die einen Mac haben, ohne Konto. Sieh live den Stift aller, während sie arbeiten.
+• Änderungen werden Eigenschaft für Eigenschaft zusammengeführt, nichts wird überschrieben. Besprecht euch in Randnotizen und geh zu jeder Version zurück.
 
 DEINE KI GESTALTET MIT
-• Bezzle hat einen eingebauten MCP-Server. Füge ihn mit einem Klick zu Claude Desktop hinzu oder verbinde einen anderen MCP-Assistenten.
-• Der Assistent baut Screens, füllt Raster, erstellt Stapel, stellt frei und exportiert, und jeder Schritt lässt sich widerrufen.
+• Ein eingebauter MCP-Server lässt Claude oder einen anderen MCP-Assistenten Screens, Stapel und Prototypen bauen und Änderungen aus dem Code zurückschreiben. Jeder Schritt lässt sich widerrufen.
 
 EXPORT
-• PNG, JPEG, SVG und PDF in 1x bis 4x: eine Zeichenfläche, eine Ebene oder alle Posts eines Stapels auf einmal.
+• PNG, JPEG, WebP, AVIF, SVG und PDF in 1x bis 4x, mit Export-Vorlagen und allen Posts eines Stapels auf einmal.
 
 GEMACHT FÜR DEN MAC
-• Nativ und schnell, hell und dunkel, und Designs, die sich beim Arbeiten selbst sichern.
-• Deine Designs bleiben auf deinem Mac oder in deiner eigenen iCloud. Kein Tracking, keine Werbung.
+• Nativ und schnell, mit Tabs, hell und dunkel, und Designs, die sich selbst sichern.
+• Deine Designs bleiben auf deinem Mac oder in deiner eigenen iCloud, und Live-Sitzungen sind Ende-zu-Ende-verschlüsselt. Kein Tracking, keine Werbung.
 
 Kostenlos, mit allem drin. Einfach gestalten.""",
 )
@@ -121,54 +121,54 @@ Kostenlos, mit allem drin. Einfach gestalten.""",
 L["fr-FR"] = dict(
     name="Bezzle : Design UI & graphique",
     subtitle="Tous les outils pro, pour tous",
-    promotionalText=f"Bezzle est gratuit. Ni version d’essai ni freemium{NB}: tous les outils, tous les exports et la création à plusieurs via iCloud, sans abonnement et sans compte.",
-    keywords="maquette,wireframe,vectoriel,réseaux sociaux,carrousel,affiche,ux,web,logo,icône,détourage",
+    promotionalText=f"Bezzle est gratuit. Ni version d’essai ni freemium{NB}: composants, prototypes, inspection, création à plusieurs en direct et tous les exports, sans abonnement ni compte.",
+    keywords="prototype,maquette,wireframe,vectoriel,kit ui,icônes,réseaux sociaux,carrousel,affiche,détourage",
     description=f"""Bezzle est un studio de design complet pour ton Mac, et il est gratuit. Ni version d’essai ni freemium{NB}: pas d’abonnement, pas de compte, aucune fonction réservée. Tous les outils et tous les exports sont à toi dès le premier lancement.
 
-Bezzle réunit les meilleures idées des apps de design que tu connais{NB}: plans de travail et grilles de répétition, coins squircle tout en douceur, vrais outils vectoriels, création à plusieurs et la rapidité d’une app Mac native. Chacune y devient plus simple. Puis Bezzle ajoute ce qu’aucune n’a{NB}: des piles pour les réseaux sociaux, le détourage en un clic, la 3D que tu tournes à la main et un assistant IA qui crée avec toi.
+Bezzle réunit les meilleures idées des apps de design que tu connais, des plans de travail et composants aux prototypes et à la création à plusieurs, et rend chacune plus simple. Puis il ajoute ce qu’aucune n’a{NB}: des mises en page qui se recomposent pour chaque taille, le mode sombre en un clic, des piles pour les réseaux sociaux, le détourage en un clic et un assistant IA qui crée avec toi.
 
 OUVRE CE QUE TU AS DÉJÀ
-• Ouvre les fichiers Adobe XD, Figma (.fig) et Sketch, avec plans de travail, calques, textes, images, dégradés et ombres.
-• Un court rapport montre ce qui a été repris, pour que rien ne change sans que tu le saches.
+• Ouvre les fichiers Adobe XD, Figma (.fig) et Sketch avec plans de travail, calques, masques, textes, images et grilles de mise en page.
+• Importe n’importe quel site web en calques modifiables, en largeur bureau, tablette et téléphone.
 
-APPS, SITES WEB, POSTS ET PRINT
-• Des plans de travail pour téléphones, tablettes, portables, écrans, montres, posts, stories et A4, côte à côte à l’échelle réelle.
-• Plume, cutter, générateur de formes et opérations booléennes, et des coins que tu arrondis en les tirant, directement sur la toile.
-• Coins squircle, dégradés que tu tires sur la toile, flou d’arrière-plan, flou progressif et ombres intérieures comme extérieures.
-• Les images remplissent n’importe quelle forme. Double-clique pour les déplacer et les redimensionner à l’intérieur.
+CRÉE TOUT CE QUE TU VEUX
+• Apps, sites web, posts, présentations et print sur des plans de travail pour chaque appareil, côte à côte à l’échelle réelle.
+• Plume, cutter, générateur de formes, opérations booléennes, masques et coins que tu arrondis en les tirant, sur la toile.
+• Plusieurs remplissages, contours et ombres par calque, dégradés, flous et images dans les formes, les contours et même les lettres.
+• Plusieurs styles dans un même texte, du texte qui suit n’importe quelle courbe, règles, repères et grilles.
 
-GRILLES DE RÉPÉTITION
-• Tire une poignée et une carte devient une liste ou une galerie. Modifie une cellule et toutes suivent.
-• Glisse un dossier de photos, un fichier texte ou un tableur sur une grille, et chaque cellule reçoit son propre contenu.
-• Des noms, villes, prix, dates et titres d’exemple te permettent de juger une mise en page avant le vrai contenu.
+COMPOSANTS ET STYLES
+• Chaque copie est le composant. Modifie-en une et toutes suivent, chacune avec ses textes et ses photos. Avec variantes.
+• Donne un nom à une couleur, un style de texte, une ombre ou des coins et utilise-le partout. Reprends composants et styles de tes autres designs.
+• Des kits UI pour iOS, macOS, Android et Bezzle, et des milliers d’icônes Lucide, Phosphor et Material.
 
-DES PILES POUR LES RÉSEAUX SOCIAUX
-• Des dizaines de posts sur un seul plan de travail, empilés comme des cartes. Change le style de l’un et tous suivent.
-• Chaque post garde ses propres textes et photos. Étale la pile pour réordonner, exporter ou retirer des posts.
-• Des carrousels pour Instagram, LinkedIn et TikTok{NB}: un seul design large, exporté en une image par slide.
+TOUTES LES TAILLES, CLAIR ET SOMBRE
+• Donne une nouvelle taille à un plan de travail et Bezzle recompose la mise en page, en respectant le design.
+• Un clic donne à un plan de travail sa version sombre, tirée de tes couleurs. Ajuste chacune à la main si tu veux.
 
-SUPPRIMER L’ARRIÈRE-PLAN
-• Un clic détoure personnes, animaux et produits, cheveux compris, directement sur ton Mac.
-• L’ombre suit le vrai contour du sujet, et la photo d’origine est toujours conservée.
+PROTOTYPES ET INSPECTION
+• Relie un bouton à un écran. L’animation découle de ta mise en page, et le prototype se joue dans un vrai appareil.
+• Inspecter montre aux développeurs chaque distance, couleur et police, avec CSS et SwiftUI pour chaque calque et des assets à glisser.
 
-LA 3D SANS CALCUL
-• Saisis juste à côté d’un bord et fais pivoter n’importe quel calque en profondeur, en vraie perspective. Ni axes ni chiffres.
-• Ou oriente-le avec un petit pavé dans l’inspecteur. Les degrés exacts sont là quand tu en as besoin.
+PILES, GRILLES ET PHOTOS
+• Des dizaines de posts sur un seul plan de travail, en pile. Des carrousels pour Instagram, LinkedIn et TikTok.
+• Les grilles de répétition font d’une carte une liste. Glisse un dossier de photos ou un tableur et chaque cellule se remplit.
+• Détoure personnes, animaux et produits en un clic, cheveux compris, et développe tes photos directement dans le design.
+• Fais pivoter n’importe quel calque en 3D à la main, en vraie perspective.
 
-CRÉER À PLUSIEURS
-• Partage un design via iCloud avec toute personne qui a un Mac. Personne n’a besoin de créer de compte.
-• Les modifications se fusionnent propriété par propriété{NB}: plusieurs personnes travaillent en même temps et rien n’est jamais écrasé.
+CRÉER ENSEMBLE
+• Partage via iCloud avec toute personne qui a un Mac, sans compte. Vois le crayon de chacun en direct pendant qu’il travaille.
+• Les modifications se fusionnent propriété par propriété, rien n’est jamais écrasé. Discutez dans des notes en marge et reviens à n’importe quelle version.
 
 TON IA CRÉE AVEC TOI
-• Bezzle intègre un serveur MCP. Ajoute-le à Claude Desktop en un clic, ou connecte n’importe quel assistant MCP.
-• L’assistant construit des écrans, remplit des grilles, crée des piles, détoure et exporte, et chaque étape peut être annulée.
+• Un serveur MCP intégré permet à Claude ou à tout assistant MCP de construire écrans, piles et prototypes, et de reporter les changements faits dans le code. Chaque étape peut être annulée.
 
 EXPORT
-• PNG, JPEG, SVG et PDF de 1x à 4x{NB}: un plan de travail, un calque ou tous les posts d’une pile d’un coup.
+• PNG, JPEG, WebP, AVIF, SVG et PDF de 1x à 4x, avec des préréglages d’export et tous les posts d’une pile d’un coup.
 
 FAIT POUR LE MAC
-• Natif et rapide, en clair comme en sombre, avec des designs qui s’enregistrent tout seuls pendant que tu travailles.
-• Tes designs restent sur ton Mac ou dans ton propre iCloud. Aucun pistage, aucune pub.
+• Natif et rapide, avec onglets, en clair comme en sombre, et des designs qui s’enregistrent tout seuls.
+• Tes designs restent sur ton Mac ou dans ton propre iCloud, et les sessions en direct sont chiffrées de bout en bout. Aucun pistage, aucune pub.
 
 Gratuit, tout compris. Il ne reste qu’à créer.""",
 )
@@ -176,54 +176,54 @@ Gratuit, tout compris. Il ne reste qu’à créer.""",
 L["it"] = dict(
     name="Bezzle: Design UI e grafica",
     subtitle="Ogni strumento pro, per tutti",
-    promotionalText="Bezzle è gratis. Non è una prova né un freemium: tutti gli strumenti, tutti gli export e il lavoro di squadra via iCloud, senza abbonamento e senza account.",
-    keywords="mockup,wireframe,vettoriale,social media,carosello,poster,layout,web,logo,icona,volantino,scontorno",
+    promotionalText="Bezzle è gratis. Non è una prova né un freemium: componenti, prototipi, ispezione, lavoro di squadra dal vivo e tutti gli export, senza abbonamento e senza account.",
+    keywords="prototipo,mockup,wireframe,vettoriale,ui kit,icone,social media,carosello,poster,logo,scontorno",
     description="""Bezzle è uno studio di design completo per il tuo Mac, ed è gratis. Non è una prova né un freemium: niente abbonamento, niente account, nessuna funzione riservata. Tutti gli strumenti e tutti gli export sono tuoi dal primo avvio.
 
-Bezzle riunisce le idee migliori delle app di design che conosci: tavole da disegno e griglie ripetute, angoli squircle morbidi, veri strumenti vettoriali, lavoro di squadra e la velocità di un’app nativa per Mac. Qui ognuna diventa più semplice. Poi Bezzle aggiunge ciò che nessuna ha: pile per i social, scontorno con un clic, 3D che ruoti a mano e un assistente IA che progetta con te.
+Bezzle riunisce le idee migliori delle app di design che conosci, dalle tavole e dai componenti ai prototipi e al lavoro di squadra, e rende ognuna più semplice. Poi aggiunge ciò che nessuna ha: layout che si ricompongono per ogni formato, modalità scura con un clic, pile per i social, scontorno con un clic e un assistente IA che progetta con te.
 
 APRI CIÒ CHE HAI GIÀ
-• Apre file Adobe XD, Figma (.fig) e Sketch, con tavole, livelli, testi, immagini, sfumature e ombre.
-• Un breve resoconto mostra cosa è stato importato, così nulla cambia a tua insaputa.
+• Apre file Adobe XD, Figma (.fig) e Sketch, con tavole, livelli, maschere, testi, immagini e griglie di layout.
+• Importa qualsiasi sito web come livelli modificabili, in larghezza desktop, tablet e smartphone.
 
-APP, SITI WEB, POST E STAMPA
-• Tavole per smartphone, tablet, portatili, desktop, orologi, post, storie e A4, una accanto all’altra in scala reale.
-• Penna, taglierino, generatore di forme e operazioni booleane, e angoli che arrotondi trascinandoli, direttamente sulla tela.
-• Angoli squircle, sfumature che trascini sulla tela, sfocatura dello sfondo, sfocatura graduale e ombre interne ed esterne.
-• Le immagini riempiono qualsiasi forma. Fai doppio clic per spostarle e ridimensionarle al suo interno.
+PROGETTA DI TUTTO
+• App, siti web, post, presentazioni e stampa su tavole per ogni dispositivo, una accanto all’altra in scala reale.
+• Penna, taglierino, generatore di forme, operazioni booleane, maschere e angoli che arrotondi trascinandoli, sulla tela.
+• Più riempimenti, bordi e ombre per livello, sfumature, sfocature e immagini in forme, bordi e perfino lettere.
+• Stili diversi nello stesso testo, testo che segue qualsiasi curva, righelli, guide e griglie di layout.
 
-GRIGLIE RIPETUTE
-• Trascina una maniglia e una scheda diventa una lista o una galleria. Cambi una cella e tutte seguono.
-• Trascina su una griglia una cartella di foto, un file di testo o un foglio di calcolo, e ogni cella riceve il suo contenuto.
-• Nomi, città, prezzi, date e titoli di esempio ti fanno valutare un layout prima che arrivino i contenuti veri.
+COMPONENTI E STILI
+• Ogni copia è il componente. Ne cambi una e tutte seguono, ognuna con i suoi testi e le sue foto. Con varianti.
+• Dai un nome a un colore, uno stile di testo, un’ombra o degli angoli e usalo ovunque. Prendi componenti e stili dai tuoi altri design.
+• UI kit per iOS, macOS, Android e Bezzle, e migliaia di icone Lucide, Phosphor e Material.
 
-PILE PER I SOCIAL
-• Decine di post su un’unica tavola, impilati come carte. Cambi lo stile di uno e tutti seguono.
-• Ogni post tiene i suoi testi e le sue foto. Apri la pila a ventaglio per riordinare, esportare o togliere post.
-• Caroselli per Instagram, LinkedIn e TikTok: un unico design largo, esportato come un’immagine per slide.
+OGNI FORMATO, CHIARO E SCURO
+• Porta una tavola a una nuova misura e Bezzle ricompone il layout, con il design in mente.
+• Un clic dà a una tavola la sua versione scura, ricavata dai tuoi colori. Puoi ritoccarli tutti a mano.
 
-RIMUOVI SFONDO
-• Un clic scontorna persone, animali e prodotti, capelli compresi, direttamente sul tuo Mac.
-• L’ombra segue il vero contorno del soggetto, e la foto originale resta sempre.
+PROTOTIPI E HAND-OFF
+• Collega un pulsante a una schermata. Il movimento nasce dal layout, e il prototipo si riproduce in un vero dispositivo.
+• Ispeziona mostra a chi sviluppa ogni distanza, colore e font, con CSS e SwiftUI per ogni livello e asset da trascinare fuori.
 
-3D SENZA CALCOLI
-• Afferra appena fuori da un lato e ruota qualsiasi livello in profondità, in vera prospettiva. Niente assi, niente numeri.
-• Oppure orientalo con un piccolo riquadro nell’ispettore. I gradi esatti ci sono quando servono.
+PILE, GRIGLIE E FOTO
+• Decine di post social su un’unica tavola, in una pila. Caroselli per Instagram, LinkedIn e TikTok.
+• Le griglie ripetute fanno di una scheda una lista. Trascinaci una cartella di foto o un foglio di calcolo e ogni cella si riempie.
+• Scontorna persone, animali e prodotti con un clic, capelli compresi, e sviluppa le foto direttamente nel design.
+• Ruota qualsiasi livello in 3D a mano, in vera prospettiva.
 
 PROGETTARE INSIEME
-• Condividi un design via iCloud con chiunque abbia un Mac. Nessuno deve creare un account.
-• Le modifiche si uniscono proprietà per proprietà: più persone lavorano insieme e nessuna modifica viene sovrascritta.
+• Condividi via iCloud con chiunque abbia un Mac, senza account. Guarda dal vivo la matita di ognuno mentre lavora.
+• Le modifiche si uniscono proprietà per proprietà, nulla viene sovrascritto. Parlatene nelle note a margine e torna a qualsiasi versione.
 
 LA TUA IA PROGETTA CON TE
-• Bezzle ha un server MCP integrato. Aggiungilo a Claude Desktop con un clic o collega qualsiasi assistente MCP.
-• L’assistente crea schermate, riempie griglie, prepara pile, scontorna ed esporta, e ogni passo si può annullare.
+• Un server MCP integrato permette a Claude o a qualsiasi assistente MCP di creare schermate, pile e prototipi, e di riportare le modifiche fatte nel codice. Ogni passo si può annullare.
 
 EXPORT
-• PNG, JPEG, SVG e PDF da 1x a 4x: una tavola, un livello o tutti i post di una pila in una volta.
+• PNG, JPEG, WebP, AVIF, SVG e PDF da 1x a 4x, con preset di export e tutti i post di una pila in una volta.
 
 FATTO PER IL MAC
-• Nativo e veloce, chiaro e scuro, con design che si salvano da soli mentre lavori.
-• I tuoi design restano sul tuo Mac o nel tuo iCloud. Nessun tracciamento, nessuna pubblicità.
+• Nativo e veloce, con schede, chiaro e scuro, e design che si salvano da soli.
+• I tuoi design restano sul tuo Mac o nel tuo iCloud, e le sessioni dal vivo sono cifrate end-to-end. Nessun tracciamento, nessuna pubblicità.
 
 Gratis, tutto incluso. Non resta che progettare.""",
 )
@@ -267,7 +267,9 @@ meta = {
         "the inspector (or Object > Remove Background) to cut out its subject on device with the Vision framework. "
         "File > Import from XD, Figma or Sketch opens design files from those apps.\n\n"
         "Sharing uses CloudKit: Share... invites others through the system share sheet; their changes merge into the design. "
-        "Nothing is sent anywhere else. The app collects no data.\n\n"
+        "While several people have a shared design open, the app also connects to a relay at bezzle-live.bezzle-live.workers.dev "
+        "(Cloudflare) over a WebSocket, so that they see each other's pointers and changes at once. Everything sent there is "
+        "end-to-end encrypted with a key that only the people in the share have. Nothing is sent anywhere else. The app collects no data.\n\n"
         "Why the app has com.apple.security.network.server: Bezzle runs a local MCP (Model Context Protocol) server so that "
         "AI assistants on the same Mac (Claude Desktop, Claude Code, Codex) can create and edit designs in the app. It is an "
         "HTTP server built with Network.framework (NWListener) that listens on 127.0.0.1 port 7412 and is limited to the "

@@ -1,0 +1,429 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-01T21:05:00Z"
+  },
+  "title": "Bezzle App Store Screenshots",
+  "launch": {
+    "view": "canvas",
+    "page": "en"
+  },
+  "pages": [
+    {
+      "id": "en",
+      "name": "English"
+    },
+    {
+      "id": "de",
+      "name": "Deutsch"
+    },
+    {
+      "id": "fr",
+      "name": "Français"
+    },
+    {
+      "id": "it",
+      "name": "Italiano"
+    }
+  ],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "01 All the tools",
+      "page": "en"
+    },
+    "02-adapt.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "02 Every size",
+      "page": "en"
+    },
+    "03-components.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "03 Components",
+      "page": "en"
+    },
+    "04-dark.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "04 Light and dark",
+      "page": "en"
+    },
+    "05-prototype.dc.html": {
+      "x": 6080,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "05 Prototypes",
+      "page": "en"
+    },
+    "06-inspect.dc.html": {
+      "x": 0,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "06 Inspect",
+      "page": "en"
+    },
+    "07-deck.dc.html": {
+      "x": 1520,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "07 Social decks",
+      "page": "en"
+    },
+    "08-together.dc.html": {
+      "x": 3040,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "08 Together",
+      "page": "en"
+    },
+    "09-cutout.dc.html": {
+      "x": 4560,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "09 Remove background",
+      "page": "en"
+    },
+    "10-ai.dc.html": {
+      "x": 6080,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "10 AI assistants",
+      "page": "en"
+    },
+    "de-01-hero.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "01 All the tools",
+      "page": "de"
+    },
+    "de-02-adapt.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "02 Every size",
+      "page": "de"
+    },
+    "de-03-components.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "03 Components",
+      "page": "de"
+    },
+    "de-04-dark.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "04 Light and dark",
+      "page": "de"
+    },
+    "de-05-prototype.dc.html": {
+      "x": 6080,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "05 Prototypes",
+      "page": "de"
+    },
+    "de-06-inspect.dc.html": {
+      "x": 0,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "06 Inspect",
+      "page": "de"
+    },
+    "de-07-deck.dc.html": {
+      "x": 1520,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "07 Social decks",
+      "page": "de"
+    },
+    "de-08-together.dc.html": {
+      "x": 3040,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "08 Together",
+      "page": "de"
+    },
+    "de-09-cutout.dc.html": {
+      "x": 4560,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "09 Remove background",
+      "page": "de"
+    },
+    "de-10-ai.dc.html": {
+      "x": 6080,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "10 AI assistants",
+      "page": "de"
+    },
+    "fr-01-hero.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "01 All the tools",
+      "page": "fr"
+    },
+    "fr-02-adapt.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "02 Every size",
+      "page": "fr"
+    },
+    "fr-03-components.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "03 Components",
+      "page": "fr"
+    },
+    "fr-04-dark.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "04 Light and dark",
+      "page": "fr"
+    },
+    "fr-05-prototype.dc.html": {
+      "x": 6080,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "05 Prototypes",
+      "page": "fr"
+    },
+    "fr-06-inspect.dc.html": {
+      "x": 0,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "06 Inspect",
+      "page": "fr"
+    },
+    "fr-07-deck.dc.html": {
+      "x": 1520,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "07 Social decks",
+      "page": "fr"
+    },
+    "fr-08-together.dc.html": {
+      "x": 3040,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "08 Together",
+      "page": "fr"
+    },
+    "fr-09-cutout.dc.html": {
+      "x": 4560,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "09 Remove background",
+      "page": "fr"
+    },
+    "fr-10-ai.dc.html": {
+      "x": 6080,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "10 AI assistants",
+      "page": "fr"
+    },
+    "it-01-hero.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "01 All the tools",
+      "page": "it"
+    },
+    "it-02-adapt.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "02 Every size",
+      "page": "it"
+    },
+    "it-03-components.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "03 Components",
+      "page": "it"
+    },
+    "it-04-dark.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "04 Light and dark",
+      "page": "it"
+    },
+    "it-05-prototype.dc.html": {
+      "x": 6080,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "05 Prototypes",
+      "page": "it"
+    },
+    "it-06-inspect.dc.html": {
+      "x": 0,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "06 Inspect",
+      "page": "it"
+    },
+    "it-07-deck.dc.html": {
+      "x": 1520,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "07 Social decks",
+      "page": "it"
+    },
+    "it-08-together.dc.html": {
+      "x": 3040,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "08 Together",
+      "page": "it"
+    },
+    "it-09-cutout.dc.html": {
+      "x": 4560,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "09 Remove background",
+      "page": "it"
+    },
+    "it-10-ai.dc.html": {
+      "x": 6080,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "10 AI assistants",
+      "page": "it"
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "02-adapt.dc.html",
+    "03-components.dc.html",
+    "04-dark.dc.html",
+    "05-prototype.dc.html",
+    "06-inspect.dc.html",
+    "07-deck.dc.html",
+    "08-together.dc.html",
+    "09-cutout.dc.html",
+    "10-ai.dc.html",
+    "de-01-hero.dc.html",
+    "de-02-adapt.dc.html",
+    "de-03-components.dc.html",
+    "de-04-dark.dc.html",
+    "de-05-prototype.dc.html",
+    "de-06-inspect.dc.html",
+    "de-07-deck.dc.html",
+    "de-08-together.dc.html",
+    "de-09-cutout.dc.html",
+    "de-10-ai.dc.html",
+    "fr-01-hero.dc.html",
+    "fr-02-adapt.dc.html",
+    "fr-03-components.dc.html",
+    "fr-04-dark.dc.html",
+    "fr-05-prototype.dc.html",
+    "fr-06-inspect.dc.html",
+    "fr-07-deck.dc.html",
+    "fr-08-together.dc.html",
+    "fr-09-cutout.dc.html",
+    "fr-10-ai.dc.html",
+    "it-01-hero.dc.html",
+    "it-02-adapt.dc.html",
+    "it-03-components.dc.html",
+    "it-04-dark.dc.html",
+    "it-05-prototype.dc.html",
+    "it-06-inspect.dc.html",
+    "it-07-deck.dc.html",
+    "it-08-together.dc.html",
+    "it-09-cutout.dc.html",
+    "it-10-ai.dc.html"
+  ],
+  "notes": {
+    "set": {
+      "x": 0,
+      "y": -300,
+      "text": "Mac App Store, 2880 × 1800",
+      "kind": "title1",
+      "maxW": 7520,
+      "page": "en"
+    },
+    "set-de": {
+      "x": 0,
+      "y": -300,
+      "text": "Mac App Store, 2880 × 1800",
+      "kind": "title1",
+      "maxW": 7520,
+      "page": "de"
+    },
+    "set-fr": {
+      "x": 0,
+      "y": -300,
+      "text": "Mac App Store, 2880 × 1800",
+      "kind": "title1",
+      "maxW": 7520,
+      "page": "fr"
+    },
+    "set-it": {
+      "x": 0,
+      "y": -300,
+      "text": "Mac App Store, 2880 × 1800",
+      "kind": "title1",
+      "maxW": 7520,
+      "page": "it"
+    }
+  },
+  "designSystems": []
+}

@@ -97,7 +97,10 @@ struct TabBar: View {
             TabStrip(tabs: tabs)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let store = tabs.selected?.store {
+                // Never squeezed: with longer words (German, French, Italian) the zoom pill lost its
+                // number first. The tabs make room instead.
                 DesignBarControls(store: store)
+                    .fixedSize()
             } else if tabs.selected == nil {
                 HStack(spacing: 10) {
                     if !Library.shared.entries.isEmpty {

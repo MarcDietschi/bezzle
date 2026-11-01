@@ -1,4 +1,4 @@
-// shot PID TITLE W H OUT.png : puts the titled window on the virtual display at W×H, raises it, captures it at 2x.
+// shot PID TITLE W H OUT.png : puts the titled window on the virtual display at W×H and captures it at 2x, without raising it.
 import AppKit
 import ApplicationServices
 let a = CommandLine.arguments
@@ -16,7 +16,7 @@ var p = CGPoint(x: -1600 + (1600 - w) / 2, y: max(0, (1000 - h) / 2)), s = CGSiz
 AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &s)!)
 AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &p)!)
 AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &s)!)
-AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+// Never raised: screencapture -l photographs the window wherever it is, and raising would take focus.
 usleep(UInt32((Double(ProcessInfo.processInfo.environment["SETTLE"] ?? "1.2") ?? 1.2) * 1_000_000))
 let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as! [[String: Any]]
 guard let info = list.first(where: { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowName as String] as? String) == title && ($0[kCGWindowLayer as String] as? Int) == 0 }) else { exit(1) }
