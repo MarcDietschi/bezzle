@@ -267,10 +267,17 @@ meta = {
         "the inspector (or Object > Remove Background) to cut out its subject on device with the Vision framework. "
         "File > Import from XD, Figma or Sketch opens design files from those apps.\n\n"
         "Sharing uses CloudKit: Share... invites others through the system share sheet; their changes merge into the design. "
-        "Nothing is sent anywhere else.\n\n"
-        "Bezzle runs a small MCP server for AI assistants on 127.0.0.1 only (loopback, never reachable from the network), "
-        "so an assistant such as Claude Desktop on the same Mac can edit the open design when the user connects it "
-        "(Bezzle > Connect an AI Assistant). It can be turned off in the same menu. The app collects no data.")},
+        "Nothing is sent anywhere else. The app collects no data.\n\n"
+        "Why the app has com.apple.security.network.server: Bezzle runs a local MCP (Model Context Protocol) server so that "
+        "AI assistants on the same Mac (Claude Desktop, Claude Code, Codex) can create and edit designs in the app. It is an "
+        "HTTP server built with Network.framework (NWListener) that listens on 127.0.0.1 port 7412 and is limited to the "
+        "loopback interface, so it never accepts connections from other computers; requests whose Host or Origin is not this "
+        "Mac are refused. It starts with the app and can be turned off with Bezzle > Allow AI Control. "
+        "Bezzle > Connect an AI Assistant connects an assistant to it. Without the entitlement the sandbox blocks the listener "
+        "and this feature cannot work.\n\n"
+        "To see the server answer, keep Bezzle open and run this in Terminal:\n"
+        "curl -s http://127.0.0.1:7412/mcp -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'\n"
+        "It replies with the list of design tools an assistant can use.")},
 }
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.json")
 json.dump(meta, open(out, "w"), indent=1, ensure_ascii=False)

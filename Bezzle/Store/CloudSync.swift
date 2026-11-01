@@ -160,9 +160,14 @@ final class CloudSync {
 
     // MARK: Starting
 
+    /// Copies started with a library of their own (BEZZLE_LIBRARY), for tests and screenshots, do
+    /// not sync: they run under the same identity and iCloud as the copy someone is working in,
+    /// and would share its sync engine's saved state and its pushes, and stir up what it has open.
+    static let keepsOut = ProcessInfo.processInfo.environment["BEZZLE_LIBRARY"] != nil
+
     /// Starts syncing, at launch.
     func start() {
-        guard Self.isAvailable, engines.isEmpty else { return }
+        guard Self.isAvailable, !Self.keepsOut, engines.isEmpty else { return }
         Self.log.notice("Starting, in iCloud's \(Self.environment, privacy: .public) environment")
         makeEngines()
         NSApplication.shared.registerForRemoteNotifications()
@@ -798,7 +803,7 @@ final class CloudSync {
         toOpen.insert(zone)
         arriving[zone] = Arrival(title: title, owner: owners[zone])
         invitationProblem = nil
-        WindowRouter.shared.openWindow?(id: "home")
+        WindowRouter.shared.showHome()
         let container = container
         Task.detached {
             do {

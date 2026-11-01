@@ -145,7 +145,7 @@ struct ExportTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let items = ["Card", "Badge"].compactMap { ExportItem(layer: id($0, in: doc), in: doc) }
-        for format in ExportFormat.allCases {
+        for format in ExportFormat.offered {
             let written = Exporter.export(items, format: format, scale: 2, name: "Design", to: folder)
             #expect(written.count == (format == .pdf ? 1 : 2), "\(format): \(written.map(\.lastPathComponent))")
             for url in written { #expect((try? Data(contentsOf: url))?.isEmpty == false) }
@@ -156,4 +156,134 @@ struct ExportTests {
         let page = try #require(pdf.page(at: 1)).getBoxRect(.mediaBox)
         #expect(abs(page.width - 40) < 0.5 && abs(page.height - 30) < 0.5)
     }
+
+    // MARK: WebP and AVIF
+
+    /// The picture a file holds, as ImageIO reads it, drawn into a bitmap of the same size.
+    private func pixels(of url: URL) throws -> (CGContext, Int, Int) {
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let ctx = try #require(Renderer.bitmap(CGSize(width: image.width, height: image.height)))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return (ctx, image.width, image.height)
+    }
+
+    private func rgba(_ ctx: CGContext, _ x: Int, _ y: Int) -> [Int] {
+        let p = ctx.data!.assumingMemoryBound(to: UInt8.self) + y * ctx.bytesPerRow + x * 4
+        return (0..<4).map { Int(p[$0]) }
+    }
+
+    private func folder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bezzle-export-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    @Test func losslessWebPKeepsEveryPixel() throws {
+        let doc = design()
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let board = ExportItem(artboard: doc.nodes[0])
+        let url = try #require(Exporter.export([board], format: .webp, scale: 1, quality: 1, name: "Design", to: folder).first)
+        #expect(url.lastPathComponent == "Board.webp")
+        let (theirs, w, h) = try pixels(of: url)
+        #expect(w == 300 && h == 200)
+        let image = try #require(Renderer.image(of: doc.nodes[0], scale: 1))
+        let ours = try #require(Renderer.bitmap(CGSize(width: w, height: h)))
+        ours.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var differ = 0
+        for y in 0..<h { for x in 0..<w where rgba(ours, x, y) != rgba(theirs, x, y) { differ += 1 } }
+        #expect(differ == 0, "\(differ) pixels differ")
+    }
+
+    @Test func lossyWebPAndAVIFKeepTheLookAndWhatIsSeeThrough() throws {
+        let doc = design()
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A layer alone on nothing: its shadow fades into what is clear.
+        let lifted = try #require(ExportItem(layer: id("Lifted", in: doc), in: doc))
+        let (drawn, _) = try #require(lifted.picture(scale: 2, opaque: false, assets: nil))
+        let ours = try #require(Renderer.bitmap(CGSize(width: drawn.width, height: drawn.height)))
+        ours.draw(drawn, in: CGRect(x: 0, y: 0, width: drawn.width, height: drawn.height))
+        for format in [ExportFormat.webp, .avif] where format.isAvailable {
+            let url = try #require(Exporter.export([lifted], format: format, scale: 2, quality: 0.8, name: "Design", to: folder).first)
+            #expect(url.lastPathComponent == "Lifted@2x.\(format.fileExtension)")
+            let (theirs, w, h) = try pixels(of: url)
+            #expect(w == drawn.width && h == drawn.height)
+            // Clear in the corner, and solid red in the middle, near enough.
+            #expect(rgba(theirs, 0, 0)[3] < 8, "\(format): \(rgba(theirs, 0, 0))")
+            let middle = rgba(theirs, w / 2, h / 2), was = rgba(ours, w / 2, h / 2)
+            #expect(zip(middle, was).allSatisfy { abs($0 - $1) <= 8 }, "\(format): \(middle) for \(was)")
+            var total = 0
+            for y in 0..<h { for x in 0..<w { total += zip(rgba(theirs, x, y), rgba(ours, x, y)).map { abs($0 - $1) }.max()! } }
+            #expect(Double(total) / Double(w * h) < 3, "\(format): mean difference \(Double(total) / Double(w * h))")
+        }
+    }
+
+    // MARK: Marked for export
+
+    @Test func sizesReadAsTheyAreTyped() throws {
+        #expect(ExportSize("2") == .scale(2) && ExportSize("2x") == .scale(2) && ExportSize("@3x") == .scale(3) && ExportSize("2×") == .scale(2))
+        #expect(ExportSize("1,5x") == .scale(1.5) && ExportSize(" 0.5 x") == .scale(0.5))
+        #expect(ExportSize("512w") == .width(512) && ExportSize("64 h") == .height(64))
+        #expect(ExportSize("") == nil && ExportSize("x") == nil && ExportSize("0") == nil && ExportSize("99999w") == nil && ExportSize("2q") == nil)
+        #expect(ExportSize.scale(2).suffix == "@2x" && ExportSize.scale(1).suffix == "" && ExportSize.scale(1.5).suffix == "@1.5x")
+        #expect(ExportSize.width(512).suffix == "-512w" && ExportSize.height(64).shown == "64h" && ExportSize.scale(0.5).shown == "0.5×")
+        // Stored as typed.
+        let presets = [ExportPreset(size: .scale(2), format: .webp), ExportPreset(size: .width(512), suffix: "-large")]
+        let json = String(decoding: try JSONEncoder().encode(presets), as: UTF8.self)
+        #expect(json.contains("\"2x\"") && json.contains("\"512w\""))
+        #expect(try JSONDecoder().decode([ExportPreset].self, from: Data(json.utf8)) == presets)
+    }
+
+    @Test func theNextPresetIsTheNextSizeUp() {
+        #expect(ExportPreset.next(after: []) == ExportPreset())
+        let one = [ExportPreset()]
+        #expect(ExportPreset.next(after: one) == ExportPreset(size: .scale(2)))
+        #expect(ExportPreset.next(after: one + [ExportPreset(size: .scale(2))]) == ExportPreset(size: .scale(3)))
+        #expect(ExportPreset.next(after: [ExportPreset(size: .scale(2), format: .webp)]) == ExportPreset(size: .scale(3), format: .webp))
+        #expect(ExportPreset.next(after: [ExportPreset(format: .svg)]).format == .svg)
+    }
+
+    @Test func aMarkedLayerGoesOutAsItsPresetsSay() throws {
+        var doc = design()
+        doc.update(id("Card", in: doc)) {
+            $0.name = "icons/Card"
+            $0.exports = [ExportPreset(), ExportPreset(size: .scale(2)), ExportPreset(size: .scale(3)),
+                          ExportPreset(size: .width(100), format: .webp, suffix: "-wide"), ExportPreset(format: .svg)]
+        }
+        doc.update(id("Board", in: doc)) { $0.exports = [ExportPreset(format: .pdf)] }
+        doc.update(id("Shape", in: doc)) { $0.exports = [ExportPreset(format: .jpeg)]; $0.hidden = true }
+        let items = ExportItem.marked(in: doc, seen: doc)
+        // The artboard, then the card; not the shape, which is hidden.
+        #expect(items.map(\.node.name) == ["Board", "icons/Card"])
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let written = Exporter.export(presetsOf: items, quality: 0.9, to: folder)
+        let names = written.map { $0.path.replacingOccurrences(of: folder.path + "/", with: "") }
+        #expect(names == ["Board.pdf", "icons/Card.png", "icons/Card@2x.png", "icons/Card@3x.png", "icons/Card-wide.webp", "icons/Card.svg"])
+        let (_, w1, h1) = try pixels(of: folder.appendingPathComponent("icons/Card@3x.png"))
+        #expect(w1 == 120 && h1 == 90)
+        let (_, w2, h2) = try pixels(of: folder.appendingPathComponent("icons/Card-wide.webp"))
+        #expect(w2 == 100 && h2 == 75)
+        // Again, keeping both: the new files are numbered, and what was there is found first.
+        let files = Exporter.files(presetsOf: items)
+        #expect(Exporter.clashes(files, in: folder).count == 6)
+        let again = Exporter.export(presetsOf: items, quality: 0.9, to: folder)
+        #expect(again.map(\.lastPathComponent).contains("Card@2x 2.png"))
+        // And replacing: the same names, the files drawn anew.
+        let card = folder.appendingPathComponent("icons/Card@3x.png")
+        try Data().write(to: card)
+        let replaced = Exporter.export(presetsOf: items, quality: 0.9, to: folder, replacing: true)
+        #expect(replaced.map(\.lastPathComponent) == written.map(\.lastPathComponent))
+        #expect(try pixels(of: card).1 == 120)
+        // Two files of one export never land on one name, replacing or not.
+        let twice = ExportFile(items: [items[1]], format: .png, size: .scale(1), name: "Twice")
+        let places = Exporter.destinations(of: [twice, twice], in: folder, replacing: true).compactMap { $0?.lastPathComponent }
+        #expect(places == ["Twice.png", "Twice 2.png"])
+        // Nothing reaches outside the folder chosen.
+        let file = ExportFile(items: [items[1]], format: .png, size: .scale(1), name: "../../up/../Card")
+        #expect(Exporter.place(of: file, in: folder).path.hasPrefix(folder.path + "/up/"))
+    }
 }
+

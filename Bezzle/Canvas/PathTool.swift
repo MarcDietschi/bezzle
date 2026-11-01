@@ -190,6 +190,7 @@ final class PathTool {
         }
         // Before the path is a layer, what lies on the artboard counts too.
         if session?.id == nil, store.editingPath == nil, let board = store.doc.artboard(at: p) {
+            targets.catchOnHelpers(of: board)
             for child in board.children where !child.hidden {
                 let b = Geometry.bounds(of: child).offsetBy(dx: board.frame.minX, dy: board.frame.minY)
                 for x in [b.minX, b.midX, b.maxX] { targets.xs.append(SnapTargets.Line(value: x, box: b)) }
@@ -201,21 +202,36 @@ final class PathTool {
         return targets
     }
 
+    /// How many steps a point is cut into where a point lands that nothing caught: whole points,
+    /// and zoomed in, halves, quarters, tenths and finer, so a step is never more than two points
+    /// on the screen and a point never seems to jump. With Command, hundredths: anywhere at all.
+    private func steps(free: Bool) -> CGFloat {
+        free ? 100 : Self.steps.first { zoom / $0 <= 2 } ?? 100
+    }
+    private static let steps: [CGFloat] = [1, 2, 4, 10, 20, 100]
+
+    private func landed(_ v: CGFloat, free: Bool) -> CGFloat {
+        let per = steps(free: free)
+        return (v * per).rounded() / per
+    }
+
     /// Where a point goes for the pointer at `p`: in 45° steps from the last with Shift, or else
-    /// caught by what lies around (not with Command); on whole points.
+    /// caught by what lies around; with Command, nothing catches it.
     private func place(_ p: CGPoint, from last: CGPoint?, own: BezierPath?, showGuides: Bool) -> CGPoint {
-        var q = p
+        let free = flags.contains(.command)
         var guides: [Guide] = []
+        defer { if showGuides, store.guides != guides { store.guides = guides } }
         if flags.contains(.shift), let last {
-            q = Geometry.lineEnd(from: last, to: p, constrain: true)
-        } else if !flags.contains(.command) {
-            let t = targets(at: p, own: own)
-            let (s, x, y) = t.snap(point: p, threshold: 5 / zoom)
-            q = s
-            guides = t.guides(for: CGRect(origin: q, size: .zero), x: x, y: y)
+            // As far along the line as the steps go, so it stays at its angle.
+            let q = Geometry.lineEnd(from: last, to: p, constrain: true)
+            return CGPoint(x: last.x + landed(q.x - last.x, free: free), y: last.y + landed(q.y - last.y, free: free))
         }
-        if showGuides, store.guides != guides { store.guides = guides }
-        return CGPoint(x: q.x.rounded(), y: q.y.rounded())
+        guard !free else { return CGPoint(x: landed(p.x, free: true), y: landed(p.y, free: true)) }
+        let t = targets(at: p, own: own)
+        let (q, x, y) = t.snap(point: p, threshold: 5 / zoom)
+        guides = t.guides(for: CGRect(origin: q, size: .zero), x: x, y: y)
+        // Right on what caught it; elsewhere on the steps.
+        return CGPoint(x: x != nil ? q.x : landed(q.x, free: false), y: y != nil ? q.y : landed(q.y, free: false))
     }
 
     func penDown(at v: CGPoint, event: NSEvent) {
@@ -455,15 +471,23 @@ final class PathTool {
             var dx = p.x - start.x, dy = p.y - start.y
             if shift { if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 } }
             let from = base[grabbed].point
+            let free = flags.contains(.command)
             var guides: [Guide] = []
-            if !flags.contains(.command) {
+            var caught: (x: CGFloat?, y: CGFloat?) = (nil, nil)
+            if !free {
                 let (q, x, y) = targets.snap(point: CGPoint(x: from.x + dx, y: from.y + dy), threshold: 5 / zoom)
-                let sx = shift && dx == 0 ? nil : x, sy = shift && dy == 0 ? nil : y
-                if sx != nil { dx = q.x - from.x }
-                if sy != nil { dy = q.y - from.y }
-                guides = targets.guides(for: CGRect(origin: CGPoint(x: from.x + dx, y: from.y + dy), size: .zero), x: sx, y: sy)
+                caught = (shift && dx == 0 ? nil : x, shift && dy == 0 ? nil : y)
+                if caught.x != nil { dx = q.x - from.x }
+                if caught.y != nil { dy = q.y - from.y }
             }
-            let d = CGPoint(x: dx.rounded(), y: dy.rounded())
+            // The point held lands right on what caught it, or on the steps for the zoom; the
+            // others picked go as far as it does. Held by Shift, it stays where it was that way.
+            if caught.x == nil, dx != 0 { dx = landed(from.x + dx, free: free) - from.x }
+            if caught.y == nil, dy != 0 { dy = landed(from.y + dy, free: free) - from.y }
+            if !free {
+                guides = targets.guides(for: CGRect(origin: CGPoint(x: from.x + dx, y: from.y + dy), size: .zero), x: caught.x, y: caught.y)
+            }
+            let d = CGPoint(x: dx, y: dy)
             var next = base
             for q in moving.union([grabbed]) where next.contains(q) { next[q] = base[q].offset(by: d) }
             store.setPoints(next, of: id, action)

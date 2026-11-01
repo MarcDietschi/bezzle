@@ -5,7 +5,24 @@ import AppKit
 /// which card is open, and which the pointer is on, for the canvas to outline what that card changes.
 enum Aspect: Hashable {
     case arrange, frame, artboard, background, deck, grid, cell, post, text, path
-    case corners, opacity, fill, border, shadow, blur, depth
+    case corners, opacity, blur, depth, export
+    /// A mask, or a layer inside one. See `MaskCard`.
+    case mask
+    case layout, guides
+    /// A picture's development: its light, colours and detail. See `PhotoCard`.
+    case photo
+    /// One of the layers' fills, borders or shadows, by its slot: 0 for the first, at the bottom,
+    /// and each over it one more. See `Look`.
+    case fill(Int), border(Int), shadow(Int)
+
+    /// The card for one slot of a look.
+    static func of(_ look: Look, _ slot: Int) -> Aspect {
+        switch look {
+        case .fill: .fill(slot)
+        case .border: .border(slot)
+        case .shadow: .shadow(slot)
+        }
+    }
 }
 
 /// The amount a sideways drag across a card sets, such as how far its shadow lifts the layer.
@@ -64,6 +81,12 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
     var live = false
     /// A control in the folded line itself, such as the arrows that turn a stack's posts.
     var accessory: AnyView?
+    /// Another of the same kind, such as a second shadow, offered by a + beside the × while the
+    /// card is open: pointing at it shows it on the canvas, and a click adds it and opens its card.
+    var more: AddBar.Item?
+    /// For a card in a pile of its kind: told how far it is dragged up or down as it is picked up
+    /// and moved, and nil when it is let go. See `SelectionInspector.pile`.
+    var restack: ((CGFloat?) -> Void)?
     let glyph: Glyph
     let picks: Picks
     let exact: Exact
@@ -72,17 +95,20 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
     @State private var turn: Turn?
     @State private var caught: Double?
 
-    /// A press on the folded line, and the drag it may become.
+    /// A press on the folded line, and the drag it may become: sideways it turns the dial, up or
+    /// down it moves the card in its pile.
     private struct Turn {
         var from: Double
         var last: Double
         var on = false
         var pull: CGFloat = 0
         var tearing = false
+        var restacking = false
     }
 
     init(aspect: Aspect, title: LocalizedStringResource, summary: String, dial: Dial? = nil, remove: (() -> Void)? = nil,
          removal: LocalizedStringResource = "Remove", live: Bool = false, accessory: AnyView? = nil,
+         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil,
          @ViewBuilder glyph: () -> Glyph, @ViewBuilder picks: () -> Picks, @ViewBuilder exact: () -> Exact) {
         self.aspect = aspect
         self.title = title
@@ -92,6 +118,8 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
         self.removal = removal
         self.live = live
         self.accessory = accessory
+        self.more = more
+        self.restack = restack
         self.glyph = glyph()
         self.picks = picks()
         self.exact = exact()
@@ -102,7 +130,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
     var body: some View {
         let open = opens && store.openAspect == aspect
         let turning = turn?.on == true
-        let lifted = open || live || turning
+        let lifted = open || live || turning || turn?.restacking == true
         VStack(alignment: .leading, spacing: 0) {
             head(open: open, turning: turning)
             if open {
@@ -172,6 +200,10 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
                 dial.apply(min(max(dial.value + by, dial.range.lowerBound), dial.range.upperBound))
             }
             if let accessory { accessory }
+            if let more, open {
+                MoreButton(item: more)
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
+            }
             if let remove, open {
                 RemoveButton(help: removal, action: remove)
                     .transition(.opacity.combined(with: .scale(scale: 0.6)))
@@ -186,7 +218,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
         }
         .contentShape(Rectangle())
         .gesture(pressing)
-        .pointerStyle(dial == nil ? PointerStyle.default : .frameResize(position: .trailing))
+        .pointerStyle(turn?.restacking == true ? .grabActive : dial == nil ? PointerStyle.default : .frameResize(position: .trailing))
     }
 
     /// How much there is, as pencil filling the line from the left: faint while the pointer is
@@ -209,18 +241,34 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 
     /// A press: a click opens or folds the card, and a sideways drag turns its dial.
     private var pressing: some Gesture {
-        DragGesture(minimumDistance: 0)
+        // Measured on the window, not on the card, which moves under the pointer as it goes: else
+        // each move would be counted less the last, and a card picked up off its pile would shake.
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { g in
-                guard let dial else { return }
-                var t = turn ?? Turn(from: dial.value, last: dial.value)
-                if !t.on {
-                    guard abs(g.translation.width) >= 4 else { turn = t; return }
+                var t = turn ?? Turn(from: dial?.value ?? 0, last: dial?.value ?? 0)
+                if !t.on && !t.restacking {
+                    // Up or down, a card in a pile is picked up; sideways, its dial turns.
+                    let across = abs(g.translation.width), along = abs(g.translation.height)
+                    if let restack, along >= 4, along > across {
+                        t.restacking = true
+                        turn = t
+                        restack(g.translation.height)
+                        return
+                    }
+                    guard dial != nil, across >= 4 else { turn = t; return }
                     t.on = true
                     store.beginGesture()
                     store.pointedAspect = aspect
                 }
+                if t.restacking {
+                    restack?(g.translation.height)
+                    return
+                }
+                guard let dial else { return }
                 let span = dial.range.upperBound - dial.range.lowerBound
-                let raw = t.from + Double(g.translation.width / Inspector.card) * span
+                // Past an end, the way on is counted from where the card has given to, so it
+                // takes as long a pull to tear one off as it always has.
+                let raw = t.from + Double((g.translation.width - t.pull) / Inspector.card) * span
                 let (value, stop) = Dial.settle(raw, in: dial.range, stops: dial.stops)
                 if stop != caught {
                     if stop != nil { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
@@ -242,6 +290,11 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
             }
             .onEnded { _ in
                 caught = nil
+                if turn?.restacking == true {
+                    turn = nil
+                    restack?(nil)
+                    return
+                }
                 guard let t = turn, t.on, let dial else {
                     turn = nil
                     toggle()
@@ -276,9 +329,10 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 extension AspectCard where Exact == EmptyView {
     init(aspect: Aspect, title: LocalizedStringResource, summary: String, dial: Dial? = nil, remove: (() -> Void)? = nil,
          removal: LocalizedStringResource = "Remove", live: Bool = false, accessory: AnyView? = nil,
+         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil,
          @ViewBuilder glyph: () -> Glyph, @ViewBuilder picks: () -> Picks) {
         self.init(aspect: aspect, title: title, summary: summary, dial: dial, remove: remove, removal: removal, live: live,
-                  accessory: accessory, glyph: glyph, picks: picks, exact: { EmptyView() })
+                  accessory: accessory, more: more, restack: restack, glyph: glyph, picks: picks, exact: { EmptyView() })
     }
 }
 
@@ -317,6 +371,38 @@ private struct Notches: View {
 private extension CGFloat {
     func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
         range.lowerBound > range.upperBound ? self : Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+    }
+}
+
+/// The + on an open card that adds another of its kind, shown on the canvas while it is pointed at.
+struct MoreButton: View {
+    @Environment(DocumentStore.self) private var store
+    let item: AddBar.Item
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: "plus")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(hovering ? Theme.ink : Theme.ink3)
+            .frame(width: 20, height: 20)
+            .background { Circle().fill(Theme.ink.opacity(hovering ? 0.07 : 0)) }
+            .contentShape(Circle())
+            .onHover { inside in
+                hovering = inside
+                store.showPreview(item.id, inside ? item.change : nil)
+            }
+            .onTapGesture {
+                store.showPreview(item.id, nil)
+                hovering = false
+                withAnimation(Theme.unfold) {
+                    if let add = item.add { add() } else { store.updateSelection(item.action, item.change) }
+                    store.openAspect = item.aspect
+                }
+            }
+            .onDisappear { if hovering { store.showPreview(item.id, nil) } }
+            .help(Text(item.help))
+            .accessibilityLabel(Text(item.help))
+            .accessibilityAddTraits(.isButton)
     }
 }
 

@@ -91,13 +91,15 @@ nonisolated enum Geometry {
             // A group is where what it holds is drawn, and only inside its mask.
             let inner = CGPoint(x: p.x - node.frame.minX, y: p.y - node.frame.minY)
             if let mask = node.mask?.first, !contains(mask, inner, tolerance: tolerance) { return false }
+            // A mask is all its shape, wherever what it holds shows or not.
+            if let holder = node.holder { return Mask.inside(holder, inner, tolerance: tolerance) }
             return node.children.contains { !$0.hidden && contains($0, inner, tolerance: tolerance) }
         }
         if node.kind == .line {
             let (a, b) = node.lineEnds
             let c = CGPoint(x: node.frame.midX, y: node.frame.midY)
             let ra = rotated(a, about: c, by: node.rotation), rb = rotated(b, about: c, by: node.rotation)
-            return distance(from: p, toSegment: ra, rb) <= max(tolerance, node.border.width / 2 + tolerance / 2)
+            return distance(from: p, toSegment: ra, rb) <= max(tolerance, node.borderWidth / 2 + tolerance / 2)
         }
         let q = local(p, in: node.frame, rotation: node.rotation)
         let hw = node.frame.width / 2 + tolerance, hh = node.frame.height / 2 + tolerance
@@ -107,7 +109,7 @@ nonisolated enum Geometry {
             guard abs(q.x) <= hw && abs(q.y) <= hh else { return false }
             let at = CGPoint(x: q.x + node.frame.width / 2, y: q.y + node.frame.height / 2)
             if silhouette.contains(at, using: .evenOdd) { return true }
-            let border = node.border.on ? node.border.width * (node.border.position == .center ? 1 : 2) : 0
+            let border = node.borders.map { $0.width * ($0.position == .center ? 1 : 2) }.max() ?? 0
             return silhouette.copy(strokingWithWidth: border + tolerance * 2, lineCap: .round, lineJoin: .round, miterLimit: 4).contains(at)
         }
         switch node.kind {
@@ -120,7 +122,7 @@ nonisolated enum Geometry {
             let at = CGPoint(x: q.x + node.frame.width / 2, y: q.y + node.frame.height / 2)
             let outline = Renderer.outline(of: node)
             if node.fill.on && outline.contains(at, using: node.evenOdd == true ? .evenOdd : .winding) { return true }
-            return outline.copy(strokingWithWidth: max(node.border.on ? node.border.width : 0, tolerance * 2) + tolerance,
+            return outline.copy(strokingWithWidth: max(node.borderWidth, tolerance * 2) + tolerance,
                                 lineCap: .round, lineJoin: .round, miterLimit: 4).contains(at)
         default:
             return abs(q.x) <= hw && abs(q.y) <= hh

@@ -550,9 +550,9 @@ enum Damage {
     /// that run to and from them, old and new. Nil when more than that changed, or when a change
     /// anywhere shows everywhere: a gradient or picture spread over its box, dashes along its length.
     private static func curvesMoved(_ x: Node, _ y: Node, _ ao: CGPoint, _ bo: CGPoint) -> CGRect? {
-        guard x.kind == .path, y.kind == .path, x.path != y.path, y.border.dash == 0 || !y.border.on,
+        guard x.kind == .path, y.kind == .path, x.path != y.path, !y.borders.contains(where: { $0.dash > 0 }),
               Perspective(x) == nil, Perspective(y) == nil else { return nil }
-        if x.frame.size != y.frame.size, y.fill.on, y.fill.gradient != nil || y.fill.image != nil { return nil }
+        if x.frame.size != y.frame.size, y.fills.contains(where: { $0.gradient != nil || $0.image != nil }) { return nil }
         func outlineless(_ n: Node) -> Node {
             var n = shell(n)
             n.frame = .zero
@@ -595,14 +595,13 @@ enum Damage {
         }
         guard !box.isNull else { return .null }
         // A border's corners can reach out several times its width.
-        let reach = (y.border.on ? max(x.border.width, y.border.width) * 6 : 0) + 2
+        let reach = (y.borders.isEmpty ? 0 : max(x.borderWidth, y.borderWidth) * 6) + 2
         return box.insetBy(dx: -reach, dy: -reach)
     }
 
     /// How far a layer's own shadow and blur carry what is drawn in it.
     private static func effects(_ node: Node) -> CGFloat {
-        var d: CGFloat = 0
-        if node.shadow.on { d += abs(node.shadow.x) + abs(node.shadow.y) + node.shadow.blur * 2 }
+        var d: CGFloat = node.shadows.lazy.map { abs($0.x) + abs($0.y) + $0.blur * 2 + abs($0.grown) }.max() ?? 0
         if let blur = node.blur, blur.on, !blur.background { d += blur.radius * 3 }
         return d
     }
@@ -621,10 +620,12 @@ nonisolated extension Renderer {
         case .text:
             // Words may run past the frame, and letters lean out of their boxes.
             let used = TextLayout.layout(node).usedSize
-            let size = node.style?.size ?? 24
-            return CGRect(x: 0, y: 0, width: max(own.width, used.width), height: max(own.height, used.height)).insetBy(dx: -size / 2, dy: -size / 2)
+            let size = max(node.style?.size ?? 24, node.spans?.compactMap(\.look.size).max() ?? 0)
+            let top = min(0, TextLayout.offset(node))
+            return CGRect(x: 0, y: top, width: max(own.width, used.width), height: max(own.height, used.height + max(0, TextLayout.offset(node))) - top)
+                .insetBy(dx: -size / 2, dy: -size / 2)
         default:
-            let w = node.border.on ? node.border.width : 0
+            let w = node.borderWidth
             return own.insetBy(dx: -w - 1, dy: -w - 1)
         }
     }
@@ -633,16 +634,23 @@ nonisolated extension Renderer {
     /// turned in depth.
     static func reach(of node: Node) -> CGRect {
         if let perspective = Perspective(node) {
-            let r = perspective.bounds(of: reach(of: flattened(node)))
-            guard node.shadow.outside else { return r }
-            return r.union(r.offsetBy(dx: node.shadow.x, dy: node.shadow.y).insetBy(dx: -node.shadow.blur * 2, dy: -node.shadow.blur * 2))
+            return shadowed(perspective.bounds(of: reach(of: flattened(node))), by: node, spreading: false)
         }
-        var r = ink(of: node).applying(localTransform(node))
-        if node.shadow.outside {
-            r = r.union(r.offsetBy(dx: node.shadow.x, dy: node.shadow.y).insetBy(dx: -node.shadow.blur * 2, dy: -node.shadow.blur * 2))
-        }
+        var r = shadowed(ink(of: node).applying(localTransform(node)), by: node)
         if let blur = node.blur, blur.on, !blur.background { r = r.insetBy(dx: -blur.radius * 3, dy: -blur.radius * 3) }
         return r
+    }
+
+    /// What a layer drawn over `r` covers with the shadows it casts under it as well: each falls
+    /// as far as it is moved, spreads and is blurred. Turned in depth, a layer casts from what it
+    /// shows, which a spread does not grow.
+    static func shadowed(_ r: CGRect, by node: Node, spreading: Bool = true) -> CGRect {
+        var all = r
+        for s in node.outerShadows {
+            let grow = s.blur * 2 + (spreading && spreads(node, s) ? max(s.grown, 0) : 0)
+            all = all.union(r.offsetBy(dx: s.x, dy: s.y).insetBy(dx: -grow, dy: -grow))
+        }
+        return all
     }
 
     /// Part of an artboard, `rect` on the canvas, drawn into a picture `scale` pixels to the point;
@@ -662,8 +670,8 @@ nonisolated extension Renderer {
     /// Whether any of a layer can be seen, counting how far its shadow and blur reach.
     static func inSight(_ node: Node, _ options: Options) -> Bool {
         guard let visible = options.visible, let board = options.board else { return true }
-        var reach: CGFloat = 64 + node.border.width
-        if node.shadow.outside { reach += abs(node.shadow.x) + abs(node.shadow.y) + node.shadow.blur * 2 }
+        var reach: CGFloat = 64 + node.borderWidth
+        reach += node.outerShadows.lazy.map { abs($0.x) + abs($0.y) + $0.blur * 2 + max($0.grown, 0) }.max() ?? 0
         if let blur = node.blur, blur.on { reach += blur.radius * 3 }
         let r = Geometry.bounds(of: node).offsetBy(dx: board.frame.minX + options.offset.x, dy: board.frame.minY + options.offset.y)
         return r.insetBy(dx: -reach, dy: -reach).intersects(visible)

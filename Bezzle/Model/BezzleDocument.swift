@@ -296,7 +296,7 @@ nonisolated struct BezzleDocument: Codable, Equatable {
             }
             // Text as wide as its words grows its letters, as it does when resized on its own.
             if n.kind == .text, n.style?.sizing == .autoWidth {
-                n.style = n.style?.scaled(by: sy)
+                n.scaleType(by: sy)
                 n.refit()
             }
             return n
@@ -311,14 +311,14 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         // By hundredths of a degree, round a quarter turn.
         var areas: [Int: CGFloat] = [:], largest: [Int: (area: CGFloat, rotation: Double)] = [:]
         func visit(_ n: Node) {
-            if n.isGroup { (n.mask ?? n.children).forEach(visit); return }
+            if n.isGroup { (n.cutBy.map { [$0] } ?? n.children).forEach(visit); return }
             let area = max(n.frame.width, 1) * max(n.frame.height, 1)
             let r = n.rotation.truncatingRemainder(dividingBy: 90)
             let key = Int(((r < 0 ? r + 90 : r) * 100).rounded()) % 9000
             areas[key, default: 0] += area
             if area > largest[key]?.area ?? 0 { largest[key] = (area, n.rotation) }
         }
-        (group.mask ?? group.children).forEach(visit)
+        (group.cutBy.map { [$0] } ?? group.children).forEach(visit)
         guard let key = areas.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) })?.key,
               key != 0, let rotation = largest[key]?.rotation else { return 0 }
         return CanvasView.normalized(rotation)
@@ -335,7 +335,7 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         guard turn != 0 else { return (node.frame, 0) }
         let pivot = node.frame.center
         let upright = turned(node, by: -turn, about: pivot)
-        guard let box = (upright.mask ?? upright.children).map({ Geometry.bounds(of: $0) }).reduce(nil as CGRect?, { $0?.union($1) ?? $1 }) else {
+        guard let box = (upright.cutBy.map { [$0] } ?? upright.children).map({ Geometry.bounds(of: $0) }).reduce(nil as CGRect?, { $0?.union($1) ?? $1 }) else {
             return (node.frame, 0)
         }
         let middle = Geometry.rotated(CGPoint(x: node.frame.minX + box.midX, y: node.frame.minY + box.midY), about: pivot, by: turn)
@@ -395,8 +395,8 @@ nonisolated struct BezzleDocument: Codable, Equatable {
     }
 
     private static func fitGroup(_ group: inout Node) {
-        // A masked group is as big as its mask.
-        let box = group.mask?.first.map { Geometry.bounds(of: $0) }
+        // A masked group is as big as its mask, and a mask as big as its shape.
+        let box = group.cutBy.map { Geometry.bounds(of: $0) }
             ?? group.children.map { Geometry.bounds(of: $0) }.reduce(nil as CGRect?) { $0?.union($1) ?? $1 }
         guard let box, box.origin != .zero || box.size != group.frame.size else { return }
         for j in group.children.indices { group.children[j].frame = group.children[j].frame.offsetBy(dx: -box.minX, dy: -box.minY) }

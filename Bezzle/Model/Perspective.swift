@@ -79,6 +79,48 @@ nonisolated struct Perspective {
         return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
     }
 
+    /// An outline drawn flat, as it shows. A turn in depth keeps straight lines straight, so they
+    /// are carried by their ends; curves it bends, so they are followed in short straight steps.
+    func shown(_ path: CGPath) -> CGPath {
+        let out = CGMutablePath()
+        var last = CGPoint.zero, start = CGPoint.zero
+        path.applyWithBlock { element in
+            let p = element.pointee.points
+            switch element.pointee.type {
+            case .moveToPoint:
+                out.move(to: shown(p[0]))
+                last = p[0]
+                start = p[0]
+            case .addLineToPoint:
+                out.addLine(to: shown(p[0]))
+                last = p[0]
+            case .addQuadCurveToPoint:
+                let a = last
+                for i in 1...16 {
+                    let t = CGFloat(i) / 16, u = 1 - t
+                    out.addLine(to: shown(CGPoint(x: u * u * a.x + 2 * u * t * p[0].x + t * t * p[1].x,
+                                                  y: u * u * a.y + 2 * u * t * p[0].y + t * t * p[1].y)))
+                }
+                last = p[1]
+            case .addCurveToPoint:
+                let a = last
+                for i in 1...24 {
+                    let t = CGFloat(i) / 24, u = 1 - t
+                    let x = u * u * u * a.x + 3 * u * u * t * p[0].x + 3 * u * t * t * p[1].x + t * t * t * p[2].x
+                    let y = u * u * u * a.y + 3 * u * u * t * p[0].y + 3 * u * t * t * p[1].y + t * t * t * p[2].y
+                    out.addLine(to: shown(CGPoint(x: x, y: y)))
+                }
+                last = p[2]
+            case .closeSubpath:
+                out.closeSubpath()
+                last = start
+            @unknown default:
+                break
+            }
+        }
+        return out
+    }
+
     /// Where a point drawn flat in a layer's parent shows, the layer turned in depth or not.
     static func shown(_ p: CGPoint, of node: Node) -> CGPoint {
         Perspective(node)?.shown(p) ?? p

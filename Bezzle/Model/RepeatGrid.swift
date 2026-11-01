@@ -256,10 +256,18 @@ extension RepeatGrid {
     /// its words and pictures from the cells there were (`Series`). `earlier` is the grid as it
     /// was when a drag began: a cell taken away and brought back in the same drag comes back as it
     /// was, and the cells it makes are the same however the drag got there.
-    static func heal(_ grid: inout Node, step given: CGSize? = nil, earlier: Node? = nil) {
+    static func heal(_ grid: inout Node, step given: CGSize? = nil, earlier: Node? = nil, before: Node? = nil) {
         guard let spec = grid.grid, let layout = layout(of: grid) else { return }
         let first = grid.children[layout.first]
         let step = given ?? Self.step(of: first, spec)
+
+        // The first cell's layers as they were before this change, for what was restyled in their words.
+        var firstWas: [UUID: Node] = [:]
+        func noteFirst(_ n: Node) {
+            firstWas[n.id] = n
+            n.children.forEach(noteFirst)
+        }
+        if let before, let l = Self.layout(of: before) { noteFirst(before.children[l.first]) }
 
         // Every layer of every other cell, as it is or as it was when the drag began.
         var own: [UUID: Node] = [:]
@@ -305,13 +313,21 @@ extension RepeatGrid {
                 n.mask = m.mask?.map { copy($0, key) }
                 if root { n.frame.origin = n.frame.origin + shift }
                 if let new {
-                    if let words = continued[m.id] { n.text = words[new] }
+                    if let words = continued[m.id] {
+                        n.text = words[new]
+                        n.spans = m.spans.flatMap { TextSpan.stored(TextSpan.aligned($0, onto: words[new])) }
+                    }
                     if let image = pictures[m.id] { n.fill.image = image[new] }
                 } else if let was = own[n.id] {
-                    if m.kind == .text, was.kind == .text { n.text = was.text }
+                    // Its words and how their letters look are its own, but for what was changed
+                    // of the whole layer, or of the same words, in the first cell.
+                    if m.kind == .text, was.kind == .text {
+                        n.text = was.text
+                        n.spans = was.lettersCarried(from: m, was: firstWas[m.id])
+                    }
                     n.fill.image = was.fill.image
                 }
-                if n.kind == .text, n.text != m.text { n.refit() }
+                if n.kind == .text, n.text != m.text || n.spans != m.spans { n.refit() }
                 return n
             }
             made.append(build(first, root: true))
@@ -383,7 +399,7 @@ extension RepeatGrid {
             var changes: [(inout Node) -> Void] = []
             for field in LayerField.all where !field.same(p.node, q.node) && free(field) && !own.contains(field.name) {
                 switch field.name {
-                case "text", "frame", "post", "own":
+                case "text", "spans", "frame", "post", "own":
                     continue
                 case "fill":
                     // Its picture is the cell's own.
@@ -399,8 +415,14 @@ extension RepeatGrid {
                     changes.append { field.copy(&$0, node) }
                 }
             }
-            // Moved or resized; but not grown or shrunk to its words as they were typed.
-            let typed = p.node.kind == .text && p.node.text != q.node.text
+            // Letters restyled, or the whole layer: the same in the first cell, where its words are alike.
+            if p.node.kind == .text, m.node.kind == .text, !own.contains("spans"),
+               p.node.spans != q.node.spans || p.node.style != q.node.style || p.node.fill.color != q.node.fill.color {
+                let target = m.node, source = p.node, sourceWas = q.node
+                changes.append { $0.spans = target.lettersCarried(from: source, was: sourceWas) }
+            }
+            // Moved or resized; but not grown or shrunk to its words as they were typed or restyled.
+            let typed = p.node.kind == .text && (p.node.text != q.node.text || p.node.spans != q.node.spans)
             if p.node.frame != q.node.frame, !typed, !own.contains("frame"), mWas.map({ $0.frame == m.node.frame }) ?? true {
                 let at = p.origin + p.node.frame.origin - shift
                 let frame = CGRect(origin: at - m.origin, size: p.node.frame.size)
@@ -573,7 +595,7 @@ extension BezzleDocument {
                 if let step = then ?? RepeatGrid.step(of: was) { RepeatGrid.carry(from: was, into: &grid, step: step) }
                 held = then
             }
-            RepeatGrid.heal(&grid, step: held, earlier: earlier)
+            RepeatGrid.heal(&grid, step: held, earlier: earlier, before: was)
             if grid != list[i] {
                 list[i] = grid
                 changed = true

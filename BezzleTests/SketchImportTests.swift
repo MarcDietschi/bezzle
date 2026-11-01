@@ -70,7 +70,7 @@ struct SketchImportTests {
               {"_class":"oval","name":"B","frame":\(frame(25, 25, 50, 50)),"booleanOperation":1,"isClosed":true}]}
             """
         let instance = #"{"_class":"symbolInstance","name":"Button","frame":\#(frame(16, 700, 200, 44)),"symbolID":"S1","overrideValues":[{"_class":"overrideValue","overrideName":"T1_stringValue","value":"Go"}]}"#
-        let photo = #"{"_class":"bitmap","name":"Photo","frame":\#(frame(200, 600, 40, 30)),"image":{"_class":"MSJSONFileReference","_ref_class":"MSImageData","_ref":"images/abc.png"}}"#
+        let photo = #"{"_class":"bitmap","name":"Photo","frame":\#(frame(200, 600, 40, 30)),"image":{"_class":"MSJSONFileReference","_ref_class":"MSImageData","_ref":"images/abc.png"},"exportOptions":{"_class":"exportOptions","exportFormats":[{"_class":"exportFormat","absoluteSize":0,"fileFormat":"png","name":"","namingScheme":0,"scale":1,"visibleScaleType":0},{"_class":"exportFormat","absoluteSize":0,"fileFormat":"png","name":"@2x","namingScheme":0,"scale":2,"visibleScaleType":0},{"_class":"exportFormat","absoluteSize":512,"fileFormat":"webp","name":"-big","namingScheme":0,"scale":1,"visibleScaleType":1},{"_class":"exportFormat","absoluteSize":0,"fileFormat":"eps","name":"","namingScheme":0,"scale":1,"visibleScaleType":0}]}}"#
         let board = """
             {"_class":"artboard","name":"Board","frame":\(frame(100, 50, 375, 812)),"hasBackgroundColor":true,"backgroundColor":\(color(0, 0, 0)),
              "layers":[\([card, spun, flipped, hello, note, masked, combined, instance, photo].joined(separator: ","))]}
@@ -166,10 +166,69 @@ struct SketchImportTests {
         let photo = try named("Photo")
         #expect(photo.kind == .rectangle && photo.fill.image?.asset == "abc.png" && photo.fill.image?.size == CGSize(width: 4, height: 3))
         #expect(photo.fill.image?.mode == .stretch && imported.pictures["abc.png"] == "images/abc.png")
+        // Marked for export as it was, and what Bezzle does not write, as a PNG.
+        #expect(photo.exports == [ExportPreset(), ExportPreset(size: .scale(2)), ExportPreset(size: .width(512), format: .webp, suffix: "-big"), ExportPreset()])
+        #expect(card.exports == nil)
 
         // The second page lies under the first, lined up on its left.
         #expect(try named("Loose").frame == CGRect(x: 600, y: 0, width: 50, height: 50))
         #expect(try named("Below").frame == CGRect(x: 100, y: 862 + 800, width: 50, height: 50))
+    }
+
+    /// One run of a text's words, in a font and colour, and with what else it says.
+    static func run(_ location: Int, _ length: Int, font: String, size: Double, color c: String, _ more: String = "") -> String {
+        #"{"_class":"stringAttribute","location":\#(location),"length":\#(length),"attributes":{"MSAttributedStringFontAttribute":{"_class":"fontDescriptor","attributes":{"name":"\#(font)","size":\#(size)}},"MSAttributedStringColorAttribute":\#(c)\#(more)}}"#
+    }
+
+    /// A page of texts whose letters differ, as Sketch keeps them: one with a word in bold and red,
+    /// underlined and spaced out, and one struck through, justified at the foot of its box; and one
+    /// with big letters and small, its line height set.
+    static func lettersFile() throws -> URL {
+        let paragraph = #","paragraphStyle":{"_class":"paragraphStyle","alignment":3,"paragraphSpacing":12},"textStyleVerticalAlignmentKey":2"#
+        let rich = #"{"_class":"text","name":"Rich","frame":\#(frame(20, 400, 300, 200)),"textBehaviour":2,"style":{},"attributedString":{"_class":"attributedString","string":"Hard coded colors\nstruck","attributes":["#
+            + [run(0, 5, font: "Helvetica", size: 24, color: blue, paragraph),
+               run(5, 5, font: "Helvetica-Bold", size: 24, color: red, #","underlineStyle":1,"kerning":2.4"# + paragraph),
+               run(10, 8, font: "Helvetica", size: 24, color: blue, paragraph),
+               run(18, 6, font: "Helvetica", size: 24, color: blue, #","strikethroughStyle":1"# + paragraph)].joined(separator: ",") + "]}}"
+        let line = #","paragraphStyle":{"_class":"paragraphStyle","maximumLineHeight":50,"minimumLineHeight":50}"#
+        let mixed = #"{"_class":"text","name":"Mixed","frame":\#(frame(20, 650, 200, 50)),"textBehaviour":0,"style":{},"attributedString":{"_class":"attributedString","string":"Big small","attributes":["#
+            + [run(0, 4, font: "Helvetica", size: 40, color: gray, line), run(4, 5, font: "Helvetica", size: 16, color: gray, line)].joined(separator: ",") + "]}}"
+        let page = #"{"_class":"page","name":"Page 1","layers":[\#(rich),\#(mixed)]}"#
+        let document = #"{"_class":"document","colorSpace":1,"pages":[{"_ref":"pages/P1"}]}"#
+        let zip = TestZip.make([("document.json", Data(document.utf8)), ("meta.json", Data(#"{"appVersion":"70","version":136}"#.utf8)),
+                                ("pages/P1.json", Data(page.utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).sketch")
+        try zip.write(to: url)
+        return url
+    }
+
+    @Test func bringsStyledLettersAcross() throws {
+        let url = try Self.lettersFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try SketchImporter.read(url)
+        func named(_ name: String) throws -> Node { try #require(imported.document.allNodes.first { $0.name == name }) }
+        #expect(imported.report.notes.isEmpty)
+
+        let rich = try named("Rich")
+        #expect(rich.text == "Hard coded colors\nstruck")
+        #expect(rich.style?.family == "Helvetica" && rich.style?.face == "Regular" && rich.style?.size == 24 && rich.fill.color.hex == "0000FF")
+        let runs = rich.runs
+        #expect(runs.map(\.text) == ["Hard ", "coded", " colors\n", "struck"])
+        #expect(runs[1].look.face == "Bold" && runs[1].look.color?.hex == "FF0000" && runs[1].look.underline == true && runs[1].look.tracking == 100)
+        #expect(runs[1].look.family == nil && runs[1].look.size == nil && runs[1].look.strikethrough == nil)
+        #expect(runs[0].look.isPlain && runs[2].look.isPlain && runs[3].look == TextLook(strikethrough: true))
+        // Justified, with room after each paragraph, its lines at the foot of the box it keeps.
+        #expect(rich.style?.align == .justify && rich.style?.paragraphSpacing == 12)
+        #expect(rich.style?.sizing == .fixed && rich.style?.vertical == .bottom)
+        #expect(rich.frame == CGRect(x: 20, y: 400, width: 300, height: 200))
+
+        // Its line height set, Sketch puts the line's room above the letters, the biggest at its foot.
+        let mixed = try named("Mixed")
+        #expect(mixed.style?.size == 16 && mixed.runs.map(\.text) == ["Big ", "small"] && mixed.runs[0].look.size == 40)
+        var big = mixed.style ?? TextStyle()
+        big.size = 40
+        let descent = Fonts.font(big).descender
+        #expect(abs(mixed.frame.minY + TextLayout.firstBaseline(mixed) - (650 + 50 + descent)) < 0.6)
     }
 
     @Test func writesTheDesignAsAPackage() throws {

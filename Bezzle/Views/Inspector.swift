@@ -45,20 +45,12 @@ struct Inspector: View {
 
 // MARK: - Nothing selected
 
+/// The tools and their keys, with no heading: an empty selection says so well enough by itself.
 private struct NothingSelected: View {
     let store: DocumentStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Nothing selected")
-                    .font(Theme.serif(19, weight: .medium))
-                    .foregroundStyle(Theme.ink)
-                Text("Click a layer to change it, or draw something new.")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 0) {
                 ForEach(Tool.allCases, id: \.self) { tool in
                     HStack(spacing: 10) {
@@ -120,7 +112,7 @@ private struct PresetList: View {
                     .font(Theme.serif(19, weight: .medium))
                     .foregroundStyle(Theme.ink)
                 Text("Drag on the canvas for a size of your own, or pick one.")
-                    .font(.system(size: 12.5))
+                    .prose(12.5)
                     .foregroundStyle(Theme.ink2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -144,7 +136,7 @@ private struct PresetList: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                 Text("Slides side by side, designed as one and exported a picture each.")
-                    .font(.system(size: 12))
+                    .prose(12)
                     .foregroundStyle(Theme.ink2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -275,10 +267,13 @@ struct PathCard: View {
                           options: [(false, LocalizedStringResource("path.open", defaultValue: "Open", comment: "An open path, as opposed to a closed one.")), (true, "Closed")])
             // Where the outline crosses itself, or one part lies inside another: only a fill shows it.
             if nodes.contains(where: \.fill.on) {
+                // Two words would not fit beside the name: what each does to two rings, drawn.
                 Row(title: "Overlaps") {
-                    SegmentedWell(selection: Binding(get: { nodes.allSatisfy { $0.evenOdd == true } }, set: { cut in
+                    GlyphChoice(selection: nodes.allSatisfy { $0.evenOdd == true }, options: [(false, "Fill in"), (true, "Cut out")]) { cut, on in
+                        OverlapGlyph(cut: cut, ink: on ? Theme.ink : Theme.ink2)
+                    } choose: { cut in
                         store.updateSelection(cut ? "Cut Out Overlaps" : "Fill In Overlaps") { $0.evenOdd = cut ? true : nil }
-                    }), options: [(false, "Fill in"), (true, "Cut out")])
+                    }
                 }
                 .transition(.unfold)
             }
@@ -323,151 +318,6 @@ struct PathCard: View {
         NumberField(label: x ? "X" : "Y", value: store.pickedPosition(x: x), action: "Move Points") { v in
             store.movePicked(x: x) { _ in v }
         } each: { f in store.movePicked(x: x) { f($0) } }
-    }
-}
-
-// MARK: - Text
-
-struct TextCard: View {
-    @Environment(MenuHost.self) private var menus
-    let store: DocumentStore
-    let nodes: [Node]
-    var live = false
-
-    private func common<T: Equatable>(_ value: (TextStyle) -> T) -> T? {
-        let styles = nodes.map { $0.style ?? TextStyle() }
-        guard let first = styles.first.map(value) else { return nil }
-        return styles.allSatisfy { value($0) == first } ? first : nil
-    }
-
-    private func set(_ action: LocalizedStringResource, _ change: @escaping (inout TextStyle) -> Void) {
-        store.updateSelection(action) { n in
-            var s = n.style ?? TextStyle()
-            change(&s)
-            n.style = s
-        }
-    }
-
-    /// Shows a change to the text style on the canvas without making it, such as the font pointed
-    /// at in the font menu; nil takes it away.
-    private func preview(_ change: ((inout TextStyle) -> Void)?) {
-        store.showPreview("font", change.map { change in { n in
-            var s = n.style ?? TextStyle()
-            change(&s)
-            n.style = s
-        } })
-    }
-
-    /// A field for one part of every selected layer's text style; what is typed applies to each.
-    private func styleField(_ label: LocalizedStringResource, unit: String = "", range: ClosedRange<Double>, scrub: Double, decimals: Int = 1,
-                            action: LocalizedStringResource, value: Double?, get: @escaping (TextStyle) -> Double,
-                            set apply: @escaping (inout TextStyle, Double) -> Void) -> NumberField {
-        NumberField(label: label, value: value, unit: unit, range: range, scrub: scrub, decimals: decimals, action: action) { v in
-            set(action) { apply(&$0, v) }
-        } each: { f in
-            set(action) { style in apply(&style, f(get(style))) }
-        }
-    }
-
-    var body: some View {
-        let family = common(\.family)
-        let face = common(\.face)
-        let size = common { Double($0.size) }
-        let first = nodes.first?.style ?? TextStyle()
-        let summary = [family.map { Fonts.displayName($0) } ?? String(localized: "Several fonts"),
-                       size.map { "\(SelectionInspector.said($0)) pt" } ?? SelectionInspector.several].joined(separator: " · ")
-        let dial = Dial(value: Double(first.size), range: 1...max(200, Double(first.size) * 1.5), stops: Presets.textSizes.map(Double.init),
-                        step: 1, action: "Change Size") { v in set("Change Size") { $0.size = CGFloat(v.rounded()) } }
-        AspectCard(aspect: .text, title: "Text", summary: summary, dial: dial, live: live) {
-            Text(verbatim: "Aa")
-                .font(family.flatMap { $0 != TextStyle.system && Fonts.showsOwnName($0) ? Font.custom($0, size: 12.5) : nil } ?? .system(size: 12.5, weight: .medium))
-                .lineLimit(1)
-                .fixedSize()
-        } picks: {
-            MenuButton(id: "font-family", title: family.map { .verbatim(Fonts.displayName($0)) } ?? "Several fonts", width: Inspector.content, fills: true) {
-                familyEntries(current: family)
-            }
-            HStack(spacing: 8) {
-                MenuButton(id: "font-face", title: face.map { .verbatim($0) } ?? "Several", width: 200, fills: true) {
-                    Fonts.faces(of: family ?? TextStyle.system).map { f in
-                        MenuEntry.item(.verbatim(f), checked: f == face, preview: { on in preview(on ? { $0.face = f } : nil) }) {
-                            set("Change Font") { $0.face = f }
-                        }
-                    }
-                }
-                styleField("", unit: "pt", range: 1...2000, scrub: 0.25, action: "Change Size", value: size,
-                           get: { Double($0.size) }, set: { $0.size = CGFloat($1) })
-                    .frame(width: Inspector.endField)
-            }
-            PresetStrip(action: "Change Size", items: Presets.textSizes.map { points in
-                PresetItem(id: "text-size-\(Int(points))", name: "\(Int(points)) points", active: size == Double(points)) { n in
-                    var style = n.style ?? TextStyle()
-                    style.size = points
-                    n.style = style
-                }
-            }) { item in
-                let points = Presets.textSizes.first { "text-size-\(Int($0))" == item.id } ?? 12
-                Text(verbatim: "\(Int(points))")
-                    .font(.system(size: 9.5 + CGFloat(Presets.textSizes.firstIndex(of: points) ?? 0) * 0.75, weight: .medium).monospacedDigit())
-            }
-            HStack(spacing: 8) {
-                IconChoice(selection: common(\.align), options: [
-                    (.left, "text.alignleft", "Align left"),
-                    (.center, "text.aligncenter", LocalizedStringResource("text.align-centre", defaultValue: "Centre", comment: "Centres the text, beside Align left and Align right.")),
-                    (.right, "text.alignright", "Align right"),
-                ]) { a in set("Align Text") { $0.align = a } }
-                IconChoice(selection: common(\.underline), options: [(true, "underline", "Underline")]) { _ in
-                    let on = common(\.underline) ?? false
-                    set(on ? "Remove Underline" : "Underline") { $0.underline = !on }
-                }
-                .frame(width: Inspector.endField)
-            }
-            SegmentedWell(selection: Binding(get: { common(\.sizing) ?? .autoWidth }, set: { v in
-                let action: LocalizedStringResource = switch v {
-                case .autoWidth: "Auto Size"
-                case .autoHeight: "Fixed Width"
-                case .fixed: "Fixed Size"
-                }
-                set(action) { $0.sizing = v }
-            }), options: [(.autoWidth, "Auto size"), (.autoHeight, "Fixed width"), (.fixed, "Fixed size")])
-        } exact: {
-            Pair(styleField(LocalizedStringResource("text.line-spacing", defaultValue: "Line", comment: "The distance between lines of text, beside the letter spacing."), range: 0...4000, scrub: 0.25, action: "Change Line Spacing", value: lineSpacing,
-                            get: { Double($0.lineSpacing ?? Self.naturalLineHeight($0)) }, set: { $0.lineSpacing = CGFloat($1) }),
-                 styleField("Letter", range: -500...2000, scrub: 1, decimals: 0, action: "Change Letter Spacing",
-                            value: common { Double($0.tracking) }, get: { Double($0.tracking) }, set: { $0.tracking = CGFloat($1) }))
-        }
-    }
-
-    /// The font's own line height, which the text has until one is set.
-    private static func naturalLineHeight(_ style: TextStyle) -> CGFloat {
-        let font = Fonts.font(style)
-        return ceil(font.ascender - font.descender + font.leading)
-    }
-
-    /// The line spacing they share, or the font's own line height until one is set.
-    private var lineSpacing: Double? {
-        if let set = common(\.lineSpacing) {
-            if let set { return Double(set) }
-            guard let style = nodes.first?.style else { return nil }
-            return Double(Self.naturalLineHeight(style))
-        }
-        return nil
-    }
-
-    private func familyEntries(current: String?) -> [MenuEntry] {
-        Fonts.families.map { f in
-            // The family, in the face the text has if it has one, else its regular one.
-            let choose: (inout TextStyle) -> Void = { s in
-                s.family = f
-                let faces = Fonts.faces(of: f)
-                if !faces.contains(s.face) { s.face = faces.first { $0 == "Regular" } ?? faces.first ?? "Regular" }
-            }
-            return MenuEntry.item(.verbatim(Fonts.displayName(f)), checked: f == current,
-                                  font: f != TextStyle.system && Fonts.showsOwnName(f) ? .custom(f, size: 13) : .system(size: 13),
-                                  preview: { on in preview(on ? choose : nil) }) {
-                set("Change Font", choose)
-            }
-        }
     }
 }
 
@@ -588,7 +438,7 @@ struct Caption: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11))
+            .prose(11)
             .foregroundStyle(Theme.ink3)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -612,6 +462,62 @@ struct AspectLock: View {
 }
 
 /// A row of small symbol buttons, one of them chosen, in a well.
+/// A row of small drawn pictures, one of them chosen, in a well, as `IconChoice` is with symbols.
+struct GlyphChoice<Value: Hashable, Glyph: View>: View {
+    let selection: Value?
+    /// Each value and what it is called.
+    let options: [(Value, LocalizedStringResource)]
+    /// The picture of a value, told whether it is the one chosen.
+    @ViewBuilder let glyph: (Value, Bool) -> Glyph
+    let choose: (Value) -> Void
+    @Namespace private var namespace
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.0) { value, help in
+                let selected = value == selection
+                glyph(value, selected)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 24)
+                    .background {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Theme.card)
+                                .shadow(color: Theme.shadow.opacity(0.12), radius: 2, y: 1)
+                                .matchedGeometryEffect(id: "thumb", in: namespace)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation(Theme.spring) { choose(value) } }
+                    .help(Text(help))
+                    .accessibilityLabel(Text(help))
+                    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(2)
+        .well(radius: 8)
+    }
+}
+
+/// Two rings overlapping, filled where a path's outline lies over itself, or with the overlap cut out.
+struct OverlapGlyph: View {
+    let cut: Bool
+    let ink: Color
+
+    var body: some View {
+        Canvas { ctx, size in
+            let r: CGFloat = 6.5, step: CGFloat = 7
+            let y = size.height / 2, x = (size.width - step) / 2
+            var rings = Path()
+            rings.addEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+            rings.addEllipse(in: CGRect(x: x + step - r, y: y - r, width: r * 2, height: r * 2))
+            ctx.fill(rings, with: .color(ink.opacity(0.5)), style: FillStyle(eoFill: cut))
+            ctx.stroke(rings, with: .color(ink), lineWidth: 1)
+        }
+        .frame(width: 32, height: 20)
+    }
+}
+
 struct IconChoice<Value: Hashable>: View {
     let selection: Value?
     /// Each value, its symbol, and what it is called.

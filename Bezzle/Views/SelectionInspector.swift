@@ -7,6 +7,10 @@ import AppKit
 struct SelectionInspector: View {
     let store: DocumentStore
     @State var lockAspect = false
+    /// Names for the cards of a pile of fills, borders or shadows, and the one picked up off it.
+    @State var lookKeys = LookKeys()
+    @State var restacking: Restacking?
+    @State var cardHeights: [Int: CGFloat] = [:]
 
     var nodes: [Node] { store.selectedNodes }
 
@@ -24,7 +28,7 @@ struct SelectionInspector: View {
                 .onChange(of: store.selection) { lockAspect = false }
                 // What is being worked on, on the canvas, opens the card that works it.
                 .onChange(of: store.editingPath) { _, id in if id != nil { open(.path) } }
-                .onChange(of: store.editingPicture) { _, id in if id != nil { open(.fill) } }
+                .onChange(of: store.editingPicture) { _, id in if id != nil { open(.fill(0)) } }
                 .onChange(of: store.building != nil) { _, on in if on { open(.arrange) } }
         }
     }
@@ -46,13 +50,27 @@ struct SelectionInspector: View {
             frameCard(first: first, live: live.contains(.frame))
             if onlyArtboards && nodes.count == 1 {
                 artboardCard(first)
-                backgroundCard(first, live: live.contains(.fill))
+                backgroundCard(first, live: live.contains(.fill(0)))
+                if DocumentStore.develops(first) { PhotoCard(store: store, nodes: [first], live: live.contains(.photo)) }
                 if first.isDeck { DeckCard(store: store, board: first) }
+                if first.layout != nil {
+                    LayoutCard(store: store, board: first, live: live.contains(.layout))
+                        .transition(.card)
+                }
+                if first.guides?.isEmpty == false {
+                    GuidesCard(store: store, board: first)
+                        .transition(.card)
+                }
             }
             if nodes.count == 1, first.isRepeatGrid {
                 RepeatGridCard(store: store, grid: first, live: live.contains(.grid))
             } else if nodes.count == 1, let grid = store.grid(holding: first.id) {
                 GridCellCard(store: store, node: first, grid: grid)
+            }
+            if nodes.count == 1, first.isMask {
+                MaskCard(store: store, group: first)
+            } else if nodes.count == 1, let mask = store.doc.parent(of: first.id), mask.isMask, mask.children.first?.id != first.id {
+                MaskedLayerCard(store: store, node: first, group: mask)
             }
             if nodes.count == 1, store.doc.post(of: first.id)?.post != nil, first.own?.isEmpty == false {
                 PostLayerCard(store: store, node: first)
@@ -63,17 +81,33 @@ struct SelectionInspector: View {
             if !onlyArtboards {
                 opacityCard(live: live.contains(.opacity))
                 // Only what the layers have; the rest waits below as dashed cards.
-                if fills && (kinds.contains(.text) || common { $0.fill.on } != false) {
-                    fillCard(removable: !kinds.contains(.text), live: live.contains(.fill))
+                // A pile of each kind there is several of, the top one first.
+                let firstFill = kinds.contains(.text) || common { $0.fill.on } != false
+                if fills && (firstFill || topSlot(.fill) > 0) {
+                    pile(.fill, first: firstFill) { slot, restack in
+                        fillCard(slot: slot, removable: !kinds.contains(.text), live: live.contains(.fill(slot)), restack: restack)
+                    }
+                    .transition(.card)
+                }
+                // What the pictures have of light, colour and detail, when every layer shows one.
+                if nodes.allSatisfy(DocumentStore.develops) {
+                    PhotoCard(store: store, nodes: nodes, live: live.contains(.photo))
                         .transition(.card)
                 }
-                if borders && (kinds.contains(.line) || common { $0.border.on } != false) {
-                    borderCard(lineOnly: kinds == [.line], removable: !kinds.contains(.line), live: live.contains(.border))
-                        .transition(.card)
+                let firstBorder = kinds.contains(.line) || common { $0.border.on } != false
+                if borders && (firstBorder || topSlot(.border) > 0) {
+                    pile(.border, first: firstBorder) { slot, restack in
+                        borderCard(slot: slot, lineOnly: kinds == [.line], removable: !kinds.contains(.line), live: live.contains(.border(slot)), restack: restack)
+                    }
+                    .transition(.card)
                 }
-                if common({ $0.shadow.on }) != false {
-                    shadowCard(canInset: !kinds.contains(.line), live: live.contains(.shadow))
-                        .transition(.card)
+                let firstShadow = common { $0.shadow.on } != false
+                if firstShadow || topSlot(.shadow) > 0 {
+                    pile(.shadow, first: firstShadow) { slot, restack in
+                        shadowCard(slot: slot, canInset: !kinds.contains(.line), canSpread: kinds.isSubset(of: [.rectangle, .ellipse, .path, .line]),
+                                   live: live.contains(.shadow(slot)), restack: restack)
+                    }
+                    .transition(.card)
                 }
                 if common({ $0.blur?.on == true }) != false {
                     blurCard(canBlurBehind: kinds.isSubset(of: [.rectangle, .ellipse, .path]), live: live.contains(.blur))
@@ -83,9 +117,25 @@ struct SelectionInspector: View {
                     depthCard(live: live.contains(.depth))
                         .transition(.card)
                 }
-                let missing = addable(fill: fills && !kinds.contains(.text), border: borders && !kinds.contains(.line))
+                if common({ $0.exports?.isEmpty == false }) != false {
+                    ExportCard(store: store, nodes: nodes)
+                        .transition(.card)
+                }
+                let missing = addable(fill: fills && !kinds.contains(.text), border: borders && !kinds.contains(.line), inset: !kinds.contains(.line))
                 if !missing.isEmpty {
                     AddBar(items: missing)
+                        .padding(.top, 6)
+                        .transition(.unfold)
+                }
+            } else {
+                if common({ $0.exports?.isEmpty == false }) != false {
+                    ExportCard(store: store, nodes: nodes)
+                        .transition(.card)
+                }
+                // What an artboard can gain: a layout grid, and being marked for export.
+                let more = [addLayout(nodes)].compactMap { $0 } + [markForExport].compactMap { $0 }
+                if !more.isEmpty {
+                    AddBar(items: more)
                         .padding(.top, 6)
                         .transition(.unfold)
                 }
@@ -95,10 +145,14 @@ struct SelectionInspector: View {
         .padding(.top, 14)
         .animation(Theme.unfold, value: nodes.map(\.fill.on))
         .animation(Theme.unfold, value: nodes.map(\.border.on))
+        .animation(Theme.unfold, value: nodes.map { $0.layout != nil })
+        .animation(Theme.unfold, value: nodes.map { $0.guides?.isEmpty == false })
         .animation(Theme.unfold, value: nodes.map(\.shadow.on))
+        .animation(Theme.unfold, value: nodes.map { Look.allCases.map($0.slots) })
         .animation(Theme.unfold, value: nodes.map { $0.blur?.on == true })
         .animation(Theme.unfold, value: nodes.map { $0.blur?.ramp != nil })
         .animation(Theme.unfold, value: nodes.map { $0.transform3D != nil })
+        .animation(Theme.unfold, value: nodes.map { $0.exports != nil })
         .animation(Theme.unfold, value: store.editingPath)
         .animation(Theme.unfold, value: store.building != nil)
         .animation(Theme.unfold, value: store.editingPicture)
@@ -115,13 +169,15 @@ struct SelectionInspector: View {
             if was.frame != n.frame || was.rotation != n.rotation { live.insert(.frame) }
             if was.radii != n.radii || was.cornerSmoothing != n.cornerSmoothing { live.insert(.corners) }
             if was.opacity != n.opacity { live.insert(.opacity) }
-            if was.fill != n.fill { live.insert(.fill) }
-            if was.border != n.border { live.insert(.border) }
-            if was.shadow != n.shadow { live.insert(.shadow) }
+            for slot in 0..<max(was.slots(.fill), n.slots(.fill)) where was[fill: slot] != n[fill: slot] { live.insert(.fill(slot)) }
+            for slot in 0..<max(was.slots(.border), n.slots(.border)) where was[border: slot] != n[border: slot] { live.insert(.border(slot)) }
+            for slot in 0..<max(was.slots(.shadow), n.slots(.shadow)) where was[shadow: slot] != n[shadow: slot] { live.insert(.shadow(slot)) }
             if was.blur != n.blur { live.insert(.blur) }
+            if was.fill.image?.develop != n.fill.image?.develop { live.insert(.photo) }
             if was.transform3D != n.transform3D { live.insert(.depth) }
             if was.style != n.style { live.insert(.text) }
             if was.grid != n.grid { live.insert(.grid) }
+            if was.layout != n.layout { live.insert(.layout) }
         }
         return live
     }

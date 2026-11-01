@@ -36,6 +36,10 @@ enum Welcome {
         let url = Library.shared.freeURL(named: String(localized: "Welcome to Bezzle"))
         do {
             try DesignFile.write(design(), to: url)
+            // The photo some lessons are tried on, into the design's own images.
+            if let photo = WelcomePhoto.jpeg() {
+                try photo.write(to: url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true).appendingPathComponent(photoAsset))
+            }
             Library.shared.refresh()
             return url
         } catch {
@@ -63,19 +67,20 @@ enum Welcome {
             doc.nodes.insert(s, at: 0)
             top = s.frame.maxY + gap + extra
         }
+        var number = 0
+        func lessons(_ all: [Lesson]) {
+            for lesson in all {
+                number += 1
+                place(sheet(lesson, number: number))
+            }
+        }
         place(cover())
-        place(sheet(moving, number: 1))
-        place(sheet(corners, number: 2))
-        place(sheet(typing, number: 3))
-        place(sheet(drawing, number: 4))
-        place(sheet(cutting, number: 5))
-        place(sheet(repeating, number: 6))
-        let (stack, own) = stackSheet(number: 7)
+        lessons([moving, corners, layering, typing, styling, drawing, cutting, repeating])
+        number += 1
+        let (stack, own) = stackSheet(number: number)
         // Room under the stack for the posts behind it, which show below its foot.
         place(stack, after: 60)
-        place(sheet(tipping, number: 8))
-        place(sheet(lifting, number: 9))
-        place(sheet(sharing, number: 10))
+        lessons([lining, tipping, lifting, developing, framing, marking, sharing])
 
         // The stack is made as the app makes one, from the sheet and the words for each post.
         let store = DocumentStore(url: FileManager.default.temporaryDirectory, document: doc)
@@ -123,7 +128,7 @@ enum Welcome {
             y = max(y + 24, line.frame.maxY) + 10
         }
         y += 26
-        let count = words(String(localized: "Ten lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
+        let count = words(String(localized: "Sixteen lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
         let start = note(String(localized: "Scroll down to start"), at: CGPoint(x: left, y: count.frame.maxY + 10), tilt: -3)
         layers += [count, start]
         let height = max(640, (start.frame.maxY + 76).rounded())
@@ -178,12 +183,17 @@ enum Welcome {
     /// A lesson: its title and steps, perhaps a key worth knowing, perhaps a last word, and what
     /// it is all tried on.
     private struct Lesson {
-        var name: String
+        /// The sheet's name, with its number.
+        var name: (Int) -> String
         var title: String
         var steps: [String]
         var keys: [String] = []
         var tip: String?
         var closing: String?
+        /// Where the mat runs across the sheet.
+        var mat: ClosedRange<CGFloat> = 396...840
+        /// Anything the sheet itself has besides its layers, such as a layout grid.
+        var dress: (@MainActor (inout Node) -> Void)?
         /// The things to try, laid out on the mat whose frame it is given.
         var scene: @MainActor (CGRect) -> [Node]
     }
@@ -223,16 +233,17 @@ enum Welcome {
             y = text.frame.maxY + 16
         }
         let height = max(560, (y + 40).rounded())
-        let mat = CGRect(x: 396, y: 40, width: 444, height: height - 80)
-        var board = Node(kind: .artboard, name: lesson.name, frame: CGRect(x: 0, y: 0, width: width, height: height))
+        let mat = CGRect(x: lesson.mat.lowerBound, y: 40, width: lesson.mat.upperBound - lesson.mat.lowerBound, height: height - 80)
+        var board = Node(kind: .artboard, name: lesson.name(number), frame: CGRect(x: 0, y: 0, width: width, height: height))
         board.children = [backdrop(mat), read(lesson.title, layers)] + lesson.scene(mat)
+        lesson.dress?(&board)
         return board
     }
 
     // MARK: The lessons
 
     private static let moving = Lesson(
-        name: String(localized: "1. Move and turn"),
+        name: { String(localized: "\($0). Move and turn") },
         title: String(localized: "Pick it up, put it down."),
         steps: [
             String(localized: "Drag the sun into the sky. When it lines up with something, a guide shows and it snaps into place."),
@@ -277,7 +288,7 @@ enum Welcome {
     }
 
     private static let corners = Lesson(
-        name: String(localized: "2. Corners and shadows"),
+        name: { String(localized: "\($0). Corners and shadows") },
         title: String(localized: "Shape it by hand."),
         steps: [
             String(localized: "Click the tile. Dots show inside its corners: drag one toward the middle to round every corner. Hold ⌥ to round just one."),
@@ -299,8 +310,43 @@ enum Welcome {
         return [tile, pointing(round, toCorner), pointing(grab, toShadow)]
     }
 
+    private static let layering = Lesson(
+        name: { String(localized: "\($0). Fills, borders, shadows") },
+        title: String(localized: "Pile on the looks."),
+        steps: [
+            String(localized: "Click the button. Each of its fills, borders and shadows is a card of its own in the inspector, several of a kind in a pile."),
+            String(localized: "Open a card and point at the + beside its ×: the button tries on another. Click to keep it."),
+            String(localized: "Drag a card up or down its pile to lay it over or under the others."),
+        ],
+        tip: String(localized: "A shadow can fall inside a layer too, and grow all round with Spread."),
+        scene: candy)
+
+    /// A button as shiny as a sweet, made of two fills, two borders and three shadows.
+    private static func candy(_ m: CGRect) -> [Node] {
+        let f = CGRect(x: (m.midX - 150).rounded(), y: (m.midY - 64).rounded(), width: 300, height: 104)
+        var button = shape(.rectangle, f, Ink.coral)
+        button.name = String(localized: "Button")
+        button.cornerRadius = 52
+        let gloss = Gradient(kind: .linear, stops: [GradientStop(offset: 0, color: RGBA(r: 1, g: 1, b: 1, a: 0.5)), GradientStop(offset: 0.55, color: RGBA(r: 1, g: 1, b: 1, a: 0))],
+                             start: CGPoint(x: 0.5, y: 0), end: CGPoint(x: 0.5, y: 1))
+        button.fills = [Fill(color: Ink.coral), Fill(color: .white, gradient: gloss)]
+        button.borders = [Border(on: true, color: RGBA(r: 1, g: 1, b: 1, a: 0.6), width: 3, position: .inside),
+                          Border(on: true, color: Ink.ink, width: 3, position: .outside)]
+        button.shadows = [
+            Shadow(on: true, color: Ink.ink, x: 0, y: 9, blur: 0),
+            Shadow(on: true, color: Ink.coral.with(alpha: 0.5), x: 0, y: 30, blur: 40, spread: -10),
+            Shadow(on: true, color: RGBA(r: 0.5, g: 0.12, b: 0.05, a: 0.4), x: 0, y: -6, blur: 8, inset: true),
+        ]
+        var label = words("Bezzle", TextStyle(family: "Charter", face: "Bold Italic", size: 40), .white, at: .zero)
+        label.frame.origin = CGPoint(x: (f.midX - label.frame.width / 2).rounded(), y: (f.midY - label.frame.height / 2 - 2).rounded())
+        var hint = note(String(localized: "2 fills, 2 borders, 3 shadows"), at: CGPoint(x: 0, y: f.minY - 92), tilt: -4)
+        hint.frame.origin.x = (f.midX - hint.frame.width / 2 + 10).rounded()
+        let pointer = arrow(from: CGPoint(x: hint.frame.midX - 30, y: hint.frame.maxY + 4), to: CGPoint(x: f.midX - 54, y: f.minY - 10), bend: 14)
+        return [button, label, pointing(hint, pointer)]
+    }
+
     private static let typing = Lesson(
-        name: String(localized: "3. Text"),
+        name: { String(localized: "\($0). Text") },
         title: String(localized: "Make it say something."),
         steps: [
             String(localized: "Double-click the headline on the poster and type something of your own."),
@@ -328,8 +374,50 @@ enum Welcome {
         return [poster, headline, bar, credit, pointing(hint, pointer)]
     }
 
+    private static let styling = Lesson(
+        name: { String(localized: "\($0). Styled text") },
+        title: String(localized: "Mix styles in one text."),
+        steps: [
+            String(localized: "Double-click the recipe and drag across a few words to pick them. Change their colour, font or size in the inspector: only those letters change."),
+            String(localized: "While typing, ⌘B, ⌘I and ⌘U make letters bold, italic or underlined, and ⇧⌘8 starts a list."),
+            String(localized: "Press ⌘; to check the spelling. One word on the card is spelt wrong."),
+        ],
+        keys: ["⌘", "F"], tip: String(localized: "Finds and replaces words across every sheet."),
+        scene: recipe)
+
+    /// A recipe card whose words are styled in places: a word in colour, a list, a crossed-out line.
+    private static func recipe(_ m: CGRect) -> [Node] {
+        let o = CGPoint(x: (m.midX - 150).rounded(), y: (m.midY - 150).rounded())
+        let inner: CGFloat = 244
+        // On one line, smaller where the language makes one long word of it.
+        let named = marked(String(localized: "*Lemon* cake", comment: "A recipe's title. The part between stars is set in colour and italic."),
+                           starred: TextLook(face: "Bold Italic", color: Ink.coral))
+        var title = Node(kind: .text, frame: .zero)
+        for size in stride(from: CGFloat(34), through: 22, by: -2) {
+            let style = TextStyle(family: "Charter", face: "Bold", size: size, lineSpacing: (size * 1.12).rounded())
+            title = styled(named, style, Ink.ink, at: CGPoint(x: o.x + 28, y: o.y + 28), width: inner)
+            if title.frame.height <= style.lineSpacing! + 1 { break }
+        }
+        let list = styled(marked(String(localized: "3 lemons\n200 g sugar\n~4 eggs~\na pinch of sallt",
+                                        comment: "A recipe's list, one item a line. The line between ~ is crossed out. Keep exactly one word misspelt, as “sallt” is, for the reader to find with the spelling check."),
+                                 starred: TextLook()).map { var r = $0; r.look.list = .bullet; return r },
+                          TextStyle(size: 15, lineSpacing: 24), Ink.ink2, at: CGPoint(x: o.x + 28, y: title.frame.maxY + 16), width: inner)
+        let method = styled(marked(String(localized: "Bake for *40 minutes* at 180 °C, then pour the *lemon syrup* over it while it’s warm.",
+                                          comment: "A recipe's method. The parts between stars are set in bold."),
+                                   starred: TextLook(face: "Bold")),
+                            TextStyle(size: 15, lineSpacing: 22), Ink.ink2, at: CGPoint(x: o.x + 28, y: list.frame.maxY + 16), width: inner)
+        var card = shape(.rectangle, CGRect(x: o.x, y: o.y, width: inner + 56, height: (method.frame.maxY + 30 - o.y).rounded()), RGBA(hex: "FFFDF8")!)
+        card.cornerRadius = 14
+        card.cornerSmoothing = 0.6
+        card.shadow = Shadow(on: true, color: RGBA(r: 0.23, g: 0.2, b: 0.15, a: 0.14), x: 0, y: 10, blur: 28)
+        card.locked = true
+        let hint = note(String(localized: "double-click me"), at: CGPoint(x: o.x + 120, y: o.y - 52), tilt: -4)
+        let pointer = arrow(from: CGPoint(x: hint.frame.minX - 6, y: hint.frame.midY + 4), to: CGPoint(x: o.x + 70, y: o.y + 18), bend: 16)
+        return [card, title, list, method, pointing(hint, pointer)]
+    }
+
     private static let drawing = Lesson(
-        name: String(localized: "4. Pen"),
+        name: { String(localized: "\($0). Pen") },
         title: String(localized: "Join the dots."),
         steps: [
             String(localized: "Press P to pick up the pen."),
@@ -369,7 +457,7 @@ enum Welcome {
     }
 
     private static let cutting = Lesson(
-        name: String(localized: "5. Knife and pieces"),
+        name: { String(localized: "\($0). Knife and pieces") },
         title: String(localized: "Cut it up, build it back."),
         steps: [
             String(localized: "Press K and drag the knife straight across the lemon. Press V, then pull the halves apart."),
@@ -418,7 +506,7 @@ enum Welcome {
     }
 
     private static let repeating = Lesson(
-        name: String(localized: "6. Repeat grid"),
+        name: { String(localized: "\($0). Repeat grid") },
         title: String(localized: "One card, a whole list."),
         steps: [
             String(localized: "Click the card and press ⌘R. It becomes a repeat grid."),
@@ -467,7 +555,7 @@ enum Welcome {
         ]
         let hints = [
             String(localized: "click the cards below"),
-            String(localized: "or click the dots below"),
+            String(localized: "or pick one in the row below"),
             String(localized: "⇧⌘P adds a fourth"),
         ]
         let kicker = words(String(localized: "Lesson \(number)"), Style.kicker, Ink.pencil, at: CGPoint(x: left, y: 56))
@@ -489,13 +577,52 @@ enum Welcome {
                              at: CGPoint(x: panel.frame.minX, y: 0), width: panel.frame.width)
         figure.frame.origin.y = (panel.frame.midY - figure.frame.height / 2 - 8).rounded()
 
-        var board = Node(kind: .artboard, name: String(localized: "7. Stacks"), frame: CGRect(x: 0, y: 0, width: width, height: height))
+        var board = Node(kind: .artboard, name: String(localized: "\(number). Stacks"), frame: CGRect(x: 0, y: 0, width: width, height: height))
         board.children = [panel, figure, kicker, title, body, hint, pointer]
         return (board, [(title.id, titles), (body.id, bodies), (hint.id, hints), (figure.id, digits)])
     }
 
+    /// Where the blocks to line up have their tops, more or less.
+    private static let blockTop: CGFloat = 150
+
+    private static let lining = Lesson(
+        name: { String(localized: "\($0). Rulers and grids") },
+        title: String(localized: "Line it all up."),
+        steps: [
+            String(localized: "Drag from the ruler at the top or left onto the sheet to pull out a guide. Drag it back onto the ruler to put it away."),
+            String(localized: "This sheet has a layout grid. Move a block: the columns light up and the block catches on their edges."),
+            String(localized: "Click the sheet’s name above its corner, then drag sideways across its Layout Grid card in the inspector to change the number of columns."),
+        ],
+        keys: ["⌃", "R"], tip: String(localized: "Shows or hides the rulers. ⌃, does the same for guides, ⌃G for layout grids."),
+        // The mat lies on the grid's columns 6 to 12.
+        mat: 386...824,
+        // No guide yet: one across the sheet would run through the words. The first step pulls one out.
+        dress: { $0.layout = LayoutGrid(columns: LayoutGrid.Track(count: 12, gutter: 24, margin: 56), rows: nil, baseline: nil) },
+        scene: blocks)
+
+    /// Blocks laid out by eye, each a little off the columns they are meant to fill.
+    private static func blocks(_ m: CGRect) -> [Node] {
+        // Columns of 42 with gutters of 24, from 56 in.
+        func column(_ i: Int) -> CGFloat { 56 + CGFloat(i - 1) * 66 }
+        func block(_ name: String, _ from: Int, _ to: Int, y: CGFloat, height: CGFloat, off: CGFloat, _ colour: RGBA) -> Node {
+            var n = shape(.rectangle, CGRect(x: column(from) + off, y: y, width: column(to) + 42 - column(from), height: height), colour)
+            n.name = name
+            n.cornerRadius = 10
+            return n
+        }
+        let name = String(localized: "Block")
+        let picture = block(name, 7, 9, y: blockTop + 7, height: 150, off: 9, Ink.coral)
+        let side = block(name, 10, 11, y: blockTop - 5, height: 150, off: -6, Ink.sun)
+        let wide = block(name, 7, 11, y: blockTop + 182, height: 64, off: 12, Ink.navy)
+        let small = block(name, 7, 8, y: blockTop + 268, height: 40, off: -8, Ink.sage)
+        var hint = note(String(localized: "snap us to the columns"), at: CGPoint(x: 0, y: m.minY + 34), tilt: -4)
+        hint.frame.origin.x = (m.maxX - 30 - hint.frame.width).rounded()
+        let pointer = arrow(from: CGPoint(x: hint.frame.minX - 6, y: hint.frame.midY + 6), to: CGPoint(x: picture.frame.minX + 30, y: picture.frame.minY - 12), bend: 18)
+        return [picture, side, wide, small, pointing(hint, pointer)]
+    }
+
     private static let tipping = Lesson(
-        name: String(localized: "8. 3D"),
+        name: { String(localized: "\($0). 3D") },
         title: String(localized: "Tip it into depth."),
         steps: [
             String(localized: "Click the card. Point just outside the middle of a side, then drag to turn the card in depth."),
@@ -526,7 +653,7 @@ enum Welcome {
     }
 
     private static let lifting = Lesson(
-        name: String(localized: "9. Remove background"),
+        name: { String(localized: "\($0). Remove background") },
         title: String(localized: "Lift out what matters."),
         steps: [
             String(localized: "Drag a photo of a person, a pet or a thing from the Finder or Photos onto the frame."),
@@ -566,11 +693,117 @@ enum Welcome {
         return [read(label.name, [well, glyph, sun, label]), frame, hint]
     }
 
+    private static let developing = Lesson(
+        name: { String(localized: "\($0). Photo editing") },
+        title: String(localized: "Bring out the light."),
+        steps: [
+            String(localized: "Click the photo and drag sideways across its Photo card in the inspector. Bezzle develops it as suits it best, as strongly as you like."),
+            String(localized: "Open the card, then drag up or down on the photo itself: the tones under the pointer grow lighter or darker. Under Colour, the same drag changes the colour under it."),
+            String(localized: "Hold the compare button to see the original. It is always kept: × takes the photo back to it."),
+        ],
+        tip: String(localized: "Under Colour, click something white or grey to make it neutral."),
+        scene: lake)
+
+    private static func lake(_ m: CGRect) -> [Node] {
+        let f = CGRect(x: (m.midX - 186).rounded(), y: (m.midY - 112).rounded(), width: 372, height: 248)
+        var framed = photo(f)
+        framed.border = Border(on: true, color: .white, width: 10, position: .inside)
+        framed.shadow = Shadow(on: true, color: RGBA(r: 0.23, g: 0.2, b: 0.15, a: 0.2), x: 0, y: 12, blur: 30)
+        let hint = note(String(localized: "a little flat, isn’t it?"), at: CGPoint(x: f.minX + 8, y: f.maxY + 30), tilt: -3)
+        let pointer = arrow(from: CGPoint(x: hint.frame.maxX + 8, y: hint.frame.midY), to: CGPoint(x: f.midX + 70, y: f.maxY + 8), bend: 18)
+        return [framed, pointing(hint, pointer)]
+    }
+
+    private static let framing = Lesson(
+        name: { String(localized: "\($0). Masks") },
+        title: String(localized: "Put it in a shape."),
+        steps: [
+            String(localized: "Drag the photo over the arch and hold it still. After a moment the arch opens and takes the photo in."),
+            String(localized: "Keep dragging to frame it, then let go. Drag it all the way out again to take it back out."),
+            String(localized: "Or select a shape and what should go in it, and click Mask above them."),
+        ],
+        keys: ["⌃", "⌘", "M"], tip: String(localized: "Masks what is selected. ↩ reaches into a mask."),
+        scene: arch)
+
+    /// An arch and a round window to hold a photo, and the photo lying apart.
+    private static func arch(_ m: CGRect) -> [Node] {
+        let a = CGRect(x: m.maxX - 64 - 156, y: m.minY + 40, width: 156, height: 208)
+        let r = a.width / 2, k = r * 0.5523
+        var outline = Trace()
+        outline.move(a.minX, a.maxY)
+        outline.line(a.minX, a.minY + r)
+        outline.curve(a.minX, a.minY + r - k, a.midX - k, a.minY, a.midX, a.minY)
+        outline.curve(a.midX + k, a.minY, a.maxX, a.minY + r - k, a.maxX, a.minY + r)
+        outline.line(a.maxX, a.maxY)
+        outline.close()
+        var window = path(outline, fill: RGBA(hex: "E6DFD2")!)
+        window.name = String(localized: "Arch")
+        window.border = Border(on: true, color: .white, width: 10, position: .inside)
+        window.shadow = Shadow(on: true, color: RGBA(r: 0.23, g: 0.2, b: 0.15, a: 0.2), x: 0, y: 10, blur: 24)
+        var round = shape(.ellipse, CGRect(x: m.maxX - 64 - 112, y: m.maxY - 44 - 112, width: 112, height: 112), RGBA(hex: "E6DFD2")!)
+        round.name = String(localized: "Circle")
+        round.border = Border(on: true, color: .white, width: 8, position: .inside)
+        round.shadow = window.shadow
+        let p = photo(CGRect(x: m.minX + 34, y: m.maxY - 44 - 140, width: 210, height: 140))
+        let hint = note(String(localized: "hold me over the arch"), at: CGPoint(x: m.minX + 28, y: p.frame.minY - 54), tilt: -4)
+        // Up from the note, round to the arch's side.
+        let pointer = arrow(from: CGPoint(x: hint.frame.minX + 40, y: hint.frame.minY - 6), to: CGPoint(x: a.minX - 12, y: a.minY + 70), bend: -30)
+        return [window, round, p, pointing(hint, pointer)]
+    }
+
+    private static let marking = Lesson(
+        name: { String(localized: "\($0). Export sizes") },
+        title: String(localized: "Every size at once."),
+        steps: [
+            String(localized: "Click the icon. Its Export card in the inspector lists the sizes it is saved at: 1×, 2× and 3×, each file named to match."),
+            String(localized: "Open the card and click + for another size, or type 512w for a width in pixels. Each size can be PNG, JPEG, WebP, AVIF, SVG or PDF."),
+            String(localized: "Select the sticker and click Export at the foot of the inspector to mark it too. Then press ⌘E and choose 2 marked."),
+        ],
+        scene: icons)
+
+    /// An app icon marked for export in three sizes, and a sticker not marked yet.
+    private static func icons(_ m: CGRect) -> [Node] {
+        let f = CGRect(x: m.minX + 70, y: (m.midY - 100).rounded(), width: 164, height: 164)
+        var tile = shape(.rectangle, f, Ink.pencil)
+        tile.cornerRadius = 38
+        tile.cornerSmoothing = 0.6
+        tile.fill.gradient = linear(RGBA(hex: "4E7BEA")!, RGBA(hex: "7B5CF0")!, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 1, y: 1))
+        tile.shadow = Shadow(on: true, color: RGBA(r: 0.13, g: 0.12, b: 0.3, a: 0.28), x: 0, y: 12, blur: 26)
+        let sun = shape(.ellipse, CGRect(x: f.minX + 92, y: f.minY + 38, width: 34, height: 34), RGBA(hex: "FFD66B")!)
+        var hills = Trace()
+        hills.move(f.minX + 26, f.maxY - 36)
+        hills.line(f.minX + 66, f.minY + 72)
+        hills.line(f.minX + 92, f.minY + 104)
+        hills.line(f.minX + 108, f.minY + 90)
+        hills.line(f.maxX - 26, f.maxY - 36)
+        hills.close()
+        var icon = group(String(localized: "App icon"), [tile, sun, path(hills, fill: .white)])
+        icon.exports = [ExportPreset(size: .scale(1)), ExportPreset(size: .scale(2)), ExportPreset(size: .scale(3))]
+
+        let c = CGPoint(x: m.maxX - 120, y: f.midY + 6)
+        var star = Trace()
+        for i in 0..<16 {
+            let angle = (-90 + Double(i) * 22.5) * .pi / 180, r: CGFloat = i % 2 == 0 ? 74 : 60
+            let p = CGPoint(x: c.x + r * CGFloat(cos(angle)), y: c.y + r * CGFloat(sin(angle)))
+            if i == 0 { star.move(p.x, p.y) } else { star.line(p.x, p.y) }
+        }
+        star.close()
+        var sticker = path(star, fill: Ink.sun)
+        sticker.name = String(localized: "Sticker")
+        sticker.rotation = 12
+        sticker.shadow = Shadow(on: true, color: RGBA(hex: "F5A524", alpha: 0.4)!, x: 0, y: 8, blur: 18)
+
+        let marked = note(String(localized: "marked: 1×, 2×, 3×"), at: CGPoint(x: f.minX - 4, y: f.maxY + 34), tilt: -3)
+        var mark = note(String(localized: "mark me too"), at: CGPoint(x: 0, y: c.y - 140), tilt: -5)
+        mark.frame.origin.x = (min(c.x - mark.frame.width / 2, m.maxX - 24 - mark.frame.width)).rounded()
+        return [icon, sticker, marked, mark]
+    }
+
     private static let sharing = Lesson(
-        name: String(localized: "10. Share and export"),
+        name: { String(localized: "\($0). Share and export") },
         title: String(localized: "Send it out into the world."),
         steps: [
-            String(localized: "Press ⌘E to export an artboard, a layer or every post of a stack as PNG, JPEG, SVG or PDF."),
+            String(localized: "Press ⌘E to export an artboard, a layer or every post of a stack as PNG, JPEG, WebP, AVIF, SVG or PDF."),
             String(localized: "Click Share… at the top to invite anyone with a Mac. You design together over iCloud, and no one’s work is ever lost."),
             String(localized: "With Bezzle › Connect an AI Assistant, Claude or another assistant can design with you. Every step it takes can be undone."),
         ],
@@ -653,6 +886,44 @@ enum Welcome {
         var n = words(texts[0], style, colour, at: p, width: width)
         n.style?.sizing = .fixed
         n.frame.size = CGSize(width: width ?? (sizes.map(\.width).max() ?? 0), height: sizes.map(\.height).max() ?? 0)
+        return n
+    }
+
+    /// The photo the tour brings (`WelcomePhoto`), as it is named in the design's images.
+    static let photoAsset = "welcome-lake.jpg"
+
+    /// The tour's photo, filling a rectangle.
+    private static func photo(_ frame: CGRect) -> Node {
+        var n = shape(.rectangle, frame, .white)
+        n.name = String(localized: "Photo")
+        n.fill.image = ImageFill(asset: photoAsset, mode: .cover, size: WelcomePhoto.size)
+        return n
+    }
+
+    /// Words some of which are marked out: those between stars look as `starred` says, those
+    /// between tildes are crossed out. As runs, to make into one layer.
+    private static func marked(_ text: String, starred: TextLook) -> [TextSpan] {
+        var runs: [TextSpan] = [], words = "", look = TextLook()
+        for letter in text {
+            guard letter == "*" || letter == "~" else {
+                words.append(letter)
+                continue
+            }
+            if !words.isEmpty { runs.append(TextSpan(text: words, look: look)) }
+            words = ""
+            let marking = letter == "*" ? starred : TextLook(strikethrough: true)
+            look = look == marking ? TextLook() : marking
+        }
+        if !words.isEmpty { runs.append(TextSpan(text: words, look: look)) }
+        return runs
+    }
+
+    /// Words styled in places, free to change: wrapped to `width`.
+    private static func styled(_ runs: [TextSpan], _ style: TextStyle, _ colour: RGBA, at p: CGPoint, width: CGFloat) -> Node {
+        var n = words(runs.map(\.text).joined(), style, colour, at: p, width: width)
+        n.setRuns(runs)
+        n.locked = false
+        n.refit()
         return n
     }
 

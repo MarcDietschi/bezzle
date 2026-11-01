@@ -1,24 +1,37 @@
 import SwiftUI
 import AppKit
 
-/// A design window: the strip along the top, the tools on the left beside the layers, the canvas
+/// A design, under the bar along the top: the tools on the left beside the layers, the canvas
 /// pressed into the paper in the middle, and the inspector on the right.
 struct Workspace: View {
     let store: DocumentStore
-    @State private var menus = MenuHost()
+    /// The design's tab's menus, which the window draws over everything, the bar included.
+    let menus: MenuHost
     @State private var gradients = GradientSession()
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar(store: store)
-                .zIndex(1)
+            // Where the window's tab bar lies.
+            Color.clear
+                .frame(height: Theme.barHeight)
             HStack(spacing: 0) {
                 ToolRail(store: store)
                     .readOnly(store.isReadOnly)
-                if store.showsLayers {
-                    LayersPanel(store: store)
-                        .frame(width: 236)
-                        .transition(Unfold(axis: .horizontal))
+                if store.showsLayers || store.showsResources {
+                    // One place beside the tools, for the layers or the resources, which trade
+                    // places sliding past each other.
+                    ZStack {
+                        if store.showsResources {
+                            ResourcesPanel(store: store)
+                                .transition(.asymmetric(insertion: .offset(x: 24).combined(with: .opacity), removal: .offset(x: 24).combined(with: .opacity)))
+                        } else {
+                            LayersPanel(store: store)
+                                .transition(.asymmetric(insertion: .offset(x: -24).combined(with: .opacity), removal: .offset(x: -24).combined(with: .opacity)))
+                        }
+                    }
+                    .frame(width: 236)
+                    .clipped()
+                    .transition(Unfold(axis: .horizontal))
                 }
                 CanvasHost(store: store, menus: menus)
                     .overlay { TableEdge().allowsHitTesting(false) }
@@ -30,6 +43,14 @@ struct Workspace: View {
                         GradientHandles(store: store)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
+                    .overlay(alignment: .top) {
+                        if let finder = store.finder {
+                            FindBar(store: store, finder: finder)
+                                .padding(.top, 14)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .animation(Theme.spring, value: store.finder != nil)
                     .overlay(alignment: .bottom) {
                         if let report = store.importReport { ImportReportCard(store: store, report: report).transition(.opacity) }
                     }
@@ -44,16 +65,7 @@ struct Workspace: View {
         .ignoresSafeArea()
         .frame(minWidth: 1000, minHeight: 640)
         .animation(Theme.unfold, value: store.showsLayers)
-        .overlay {
-            if store.exporting {
-                ExportSheet(store: store)
-                    .transition(.opacity)
-            }
-        }
-        .animation(store.exporting ? Theme.open : Theme.close, value: store.exporting)
-        .overlayPreferenceValue(MenuAnchorKey.self) { anchors in
-            MenuLayer(anchors: anchors)
-        }
+        .animation(Theme.unfold, value: store.showsResources)
         .environment(menus)
         .environment(gradients)
         .environment(store)
@@ -101,71 +113,22 @@ extension View {
 
 // MARK: - Top bar
 
-/// The strip along the top, level with the traffic lights: where you are, and how close.
-struct TopBar: View {
+/// The right of the bar along the top while a design is in front: how close, sharing and export.
+struct DesignBarControls: View {
     let store: DocumentStore
-    @Environment(\.openWindow) private var openWindow
-    @State private var renaming = false
-    @State private var draft = ""
-    @FocusState private var focused: Bool
 
     var body: some View {
         HStack(spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(verbatim: "Bezzle")
-                    .font(Theme.serif(15, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                    .contentShape(Rectangle())
-                    .onTapGesture { openWindow(id: "home") }
-                    .help("Home")
-                Text(verbatim: "/")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.ink4)
-                if renaming {
-                    TextField("", text: $draft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.ink)
-                        .focused($focused)
-                        .frame(width: 220)
-                        .onSubmit { commit() }
-                        .onExitCommand { renaming = false }
-                        .onChange(of: focused) { _, now in if !now { commit() } }
-                } else {
-                    Text(store.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.ink2)
-                        .lineLimit(1)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            draft = store.name
-                            renaming = true
-                            focused = true
-                        }
-                        .help("Rename")
-                }
-                if let mark = store.sharing?.mark {
-                    SharingTag(mark: mark)
-                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
-                }
+            if let mark = store.sharing?.mark {
+                SharingTag(mark: mark)
             }
-            .animation(Theme.pop, value: store.sharing?.mark)
-            Spacer(minLength: 12)
             MenuButton(id: "zoom", title: .verbatim("\(Int((store.viewport.zoom * 100).rounded()))%"), width: 220) { zoomMenu }
                 .help("Zoom")
             if CloudSync.isAvailable || store.isReadOnly { ShareButton(store: store) }
             CardButton(title: "Export…", height: 28) { store.exporting = true }
                 .help("Export  ⌘E")
         }
-        .padding(.leading, 92)
-        .padding(.trailing, 16)
-        .frame(height: Theme.barHeight)
-    }
-
-    private func commit() {
-        guard renaming else { return }
-        renaming = false
-        store.rename(to: draft)
+        .animation(Theme.pop, value: store.sharing?.mark)
     }
 
     private var zoomMenu: [MenuEntry] {
@@ -180,7 +143,8 @@ struct TopBar: View {
             .item(.verbatim("100%"), shortcut: "⌘1", checked: abs(store.viewport.zoom - 1) < 0.001) { store.zoom(to: 1) },
             .item(.verbatim("200%"), checked: abs(store.viewport.zoom - 2) < 0.001) { store.zoom(to: 2) },
             .item(.verbatim("400%"), checked: abs(store.viewport.zoom - 4) < 0.001) { store.zoom(to: 4) },
-        ]
+            .separator,
+        ] + Helpers.shared.entries(for: store)
     }
 }
 
@@ -201,6 +165,11 @@ struct ToolRail: View {
                 }
             }
             Spacer()
+            RailButton(selected: store.showsResources, help: "Resources  ⇧⌘Y") {
+                ResourcesGlyph()
+            } action: {
+                store.toggleResources()
+            }
             RailButton(selected: store.showsLayers, help: "Layers  ⌘Y") {
                 LayersGlyph()
             } action: {

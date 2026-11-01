@@ -196,3 +196,35 @@ struct FontMatch {
         return result
     }
 }
+
+// MARK: - Styled letters, for every importer
+
+nonisolated extension Node {
+    /// Sets an imported text's words from runs whose letters are each described in full, as the
+    /// apps designs come from keep them: the layer's own style and colour become those most of
+    /// its letters have, and each run keeps only how it differs from them. The style's other
+    /// parts, such as its alignment and line height, stay as they were set.
+    mutating func setImportedRuns(_ runs: [(text: String, letters: Letters)]) {
+        var style = self.style ?? TextStyle()
+        func unlisted(_ l: Letters) -> Letters {
+            var l = l
+            l.list = nil
+            return l
+        }
+        var counts: [Letters: Int] = [:]
+        for run in runs { counts[unlisted(run.letters), default: 0] += run.text.count }
+        let most = counts.values.max() ?? 0
+        // The first of those most letters have, so ties go the same way every time.
+        if let main = runs.lazy.map({ unlisted($0.letters) }).first(where: { counts[$0] == most }) {
+            style.family = main.family
+            style.face = main.face
+            style.size = main.size
+            style.tracking = main.tracking
+            style.underline = main.underline
+            style.strikethrough = main.strikethrough ? true : nil
+            fill.color = main.color
+        }
+        self.style = style
+        setRuns(runs.map { TextSpan(text: $0.text, look: TextLook($0.letters, over: style, color: fill.color)) })
+    }
+}

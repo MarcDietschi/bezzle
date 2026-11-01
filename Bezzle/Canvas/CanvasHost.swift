@@ -7,7 +7,8 @@ struct CanvasHost: NSViewRepresentable {
     let menus: MenuHost
 
     func makeNSView(context: Context) -> CanvasView {
-        let view = CanvasView(store: store)
+        // The canvas its tab kept while another was in front, tiles and all, or a new one.
+        let view = store.canvas ?? CanvasView(store: store)
         view.onContextMenu = { point, entries in
             menus.show(at: point, width: 230, entries: entries)
         }
@@ -39,7 +40,19 @@ enum CanvasMenus {
             ]
             if store.canGroup { entries.append(.item(DocumentStore.grouping, shortcut: "⌘G") { store.group() }) }
             if store.canUngroup { entries.append(.item("Ungroup", shortcut: "⇧⌘G") { store.ungroup() }) }
-            if store.canGroup || store.canUngroup { entries.append(.separator) }
+            if let plan = store.maskPlan {
+                // Pointed at, the canvas shows the mask made.
+                entries.append(.item(DocumentStore.masking, shortcut: "⌃⌘M", preview: { on in store.canvas?.maskTool.preview(plan, on) }) {
+                    if let tool = store.canvas?.maskTool { tool.commit(plan) } else { store.mask(plan) }
+                })
+            }
+            if let mask = store.selectedMask, !mask.locked {
+                if let id = store.selection.first, id != mask.id, id != mask.children.first?.id {
+                    entries.append(.item(DocumentStore.takingOut) { store.takeOutOfMask([id]) })
+                }
+                entries.append(.item(DocumentStore.unmasking, shortcut: "⌃⇧⌘M") { store.releaseMask(mask.id) })
+            }
+            if store.canGroup || store.canUngroup || store.canMask || store.selectedMask != nil { entries.append(.separator) }
             let nodes = store.selectedNodes
             let locked = nodes.allSatisfy(\.locked)
             entries.append(.item(locked ? "Unlock" : "Lock", shortcut: "⌘L") { store.setLocked(!locked, store.selection) })

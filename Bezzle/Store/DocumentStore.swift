@@ -68,6 +68,8 @@ final class DocumentStore {
     /// pen all ask for those of the path being edited many times a frame.
     @ObservationIgnored var pointsWorkedOut: (version: Int, points: [UUID: BezierPath]) = (-1, [:])
     @ObservationIgnored private var countWorkedOut: (version: Int, count: Int)?
+    /// The design as a preview that changes more than layers shows it (`Preview.reshape`).
+    @ObservationIgnored private var reshapedWorkedOut: (version: Int, token: UUID, doc: BezzleDocument)?
     /// The design as it is seen, each deck showing the post in front (`seenDoc`).
     @ObservationIgnored var seenWorkedOut: (version: Int, fronts: [UUID: Int], doc: BezzleDocument)?
     var selection: [UUID] = [] {
@@ -103,6 +105,15 @@ final class DocumentStore {
     var measurement: (text: String, rect: CGRect)?
     /// The text layer being typed into.
     var editingText: UUID?
+    /// The letters picked out in the text being typed into, in UTF-16 as the editor counts them;
+    /// of no length when there is only the caret. The text card and its colour change these.
+    var typingSelection = NSRange(location: 0, length: 0)
+    /// Changes how the letters picked out in the text being typed into look, or with only the
+    /// caret what is typed next, through the editor so that Undo while typing takes it back. Set
+    /// while typing. See `restyleLetters`.
+    @ObservationIgnored var restyleTyped: ((LocalizedStringResource, (inout Letters) -> Void) -> Void)?
+    /// Words being looked for in the design, or misspelt ones, while the find bar is open.
+    var finder: TextFinder?
     /// The path whose points are being edited, shown on the canvas in place of its frame.
     var editingPath: UUID? {
         didSet {
@@ -131,7 +142,15 @@ final class DocumentStore {
     }
     @ObservationIgnored var piecesWorkedOut: (version: Int, ids: [UUID], pieces: [Outlines.Piece])?
     /// Whether the layers list is out.
-    var showsLayers = true
+    var showsLayers = true {
+        didSet { if showsLayers && showsResources { showsResources = false } }
+    }
+    /// Whether the resources panel (kits of ready-made parts, and icons) is out, in the layers list's place.
+    var showsResources = false {
+        didSet { if showsResources && showsLayers { showsLayers = false } }
+    }
+    /// Whether the layers list was out when the resources panel came, to come back when it goes.
+    @ObservationIgnored var layersBeforeResources = true
     /// The size of the canvas on screen, for zooming from the menus.
     var canvasSize: CGSize = .zero
     /// The last artboard size added from the presets, so a new artboard matches the others.
@@ -142,12 +161,26 @@ final class DocumentStore {
     /// selected layers the canvas outlines. See `AspectCard`.
     var openAspect: Aspect?
     var pointedAspect: Aspect?
+    /// What the Photo card works on while it is open: the pictures' light, colour or detail,
+    /// and of their colours, the one picked. A drag on the picture works on the same.
+    var developGroup: Develop.Group = .light
+    var developBand: Develop.Band?
+    /// The tone or colour the pointer is on, on a picture, for the card to light up the same.
+    var developPointed: Develop.Isolation?
+    /// Whether the picture itself is the control, as the Photo card's target button turns on:
+    /// else a press on it moves it, as on any layer. See `DevelopTool`.
+    var developOnPhoto = false
+    /// What developing would suit each picture best, by the picture, and the glide to it going on.
+    @ObservationIgnored var autoKept: [String: Develop] = [:]
+    @ObservationIgnored var gliding: Task<Void, Never>?
 
     struct Preview {
         /// Which control shows it, so only that control takes it away again.
         let key: String
         let ids: [UUID]
         let change: (inout Node) -> Void
+        /// A change to more than the layers themselves, such as putting them into a mask.
+        var reshape: ((inout BezzleDocument) -> Void)? = nil
         /// Each one shown is a new one, even from the same control, such as the next colour
         /// along, so the canvas can ease from one to the next.
         let token = UUID()
@@ -171,6 +204,8 @@ final class DocumentStore {
     private struct Snapshot {
         var doc: BezzleDocument
         var selection: [UUID]
+        /// Which post each deck showed: undone or redone, a deck the step changed shows it again.
+        var fronts: [UUID: Int] = [:]
     }
 
     init(url: URL, document: BezzleDocument) {
@@ -207,11 +242,12 @@ final class DocumentStore {
     /// gesture the change is folded into the gesture's one step.
     func edit(_ action: LocalizedStringResource, _ change: (inout BezzleDocument) -> Void) {
         guard !isReadOnly else { return }
-        let before = Snapshot(doc: doc, selection: selection)
+        let before = Snapshot(doc: doc, selection: selection, fronts: fronts)
         var next = doc
         change(&next)
         next.syncGrids(since: doc, start: gestureStart?.doc)
         next.syncDecks(since: doc, fronts: fronts)
+        next.keepMasks(since: doc)
         next.fitGroups(since: doc)
         next.fitCarousels()
         guard next != doc else { return }
@@ -225,7 +261,7 @@ final class DocumentStore {
 
     /// Starts a drag, a scrub or anything else made of many small changes that undo as one.
     func beginGesture() {
-        if gestureStart == nil { gestureStart = Snapshot(doc: doc, selection: selection) }
+        if gestureStart == nil { gestureStart = Snapshot(doc: doc, selection: selection, fronts: fronts) }
     }
 
     func endGesture(_ action: LocalizedStringResource) {
@@ -265,13 +301,16 @@ final class DocumentStore {
         guard let undoManager else { return }
         // The history never sees an opened shape become a path: undoing the first change to its
         // outline goes back to the shape.
-        let before = Snapshot(doc: withShapeBack(before.doc), selection: before.selection)
+        let before = Snapshot(doc: withShapeBack(before.doc), selection: before.selection, fronts: before.fronts)
         let after = withShapeBack(doc)
         undoManager.registerUndo(withTarget: self) { store in
-            let now = Snapshot(doc: store.withShapeBack(store.doc), selection: store.selection)
+            let now = Snapshot(doc: store.withShapeBack(store.doc), selection: store.selection, fronts: store.fronts)
             // Others sharing the design may have changed it since: only what this step did is
             // taken back, and their changes stay.
             store.doc = now.doc == after ? before.doc : FlatDesign.apply(from: after, to: before.doc, onto: now.doc)
+            // A deck the step changed shows the post it showed then: undoing a post added or taken
+            // away shows the one that was in front, not whichever happens to be first.
+            for id in Self.decks(changedFrom: before.doc, to: after) { store.fronts[id] = before.fronts[id] }
             store.selection = before.selection.filter { store.doc.path(of: $0) != nil }
             store.editingText = nil
             if let id = store.editingPath, store.node(id)?.kind != .path { store.editingPath = nil }
@@ -279,6 +318,21 @@ final class DocumentStore {
             store.scheduleSave()
         }
         undoManager.setActionName(String(localized: action))
+    }
+
+    /// The decks that are not the same in two designs, or are a deck in only one of them.
+    private static func decks(changedFrom a: BezzleDocument, to b: BezzleDocument) -> [UUID] {
+        var was: [UUID: Node] = [:]
+        for n in a.nodes where n.isDeck { was[n.id] = n }
+        var changed: [UUID] = []
+        for n in b.nodes {
+            if let then = was.removeValue(forKey: n.id) {
+                if then != n { changed.append(n.id) }
+            } else if n.isDeck {
+                changed.append(n.id)
+            }
+        }
+        return changed + was.keys
     }
 
     private func selectionChanged() {
@@ -346,10 +400,29 @@ final class DocumentStore {
         }
     }
 
+    /// Shows a change to the design as a whole on the canvas without making it, such as a mask
+    /// being made; with nil, takes away the preview `key` showed.
+    func showPreview(_ key: String, reshaping reshape: ((inout BezzleDocument) -> Void)?) {
+        if let reshape {
+            preview = Preview(key: key, ids: [], change: { _ in }, reshape: reshape)
+        } else if preview?.key == key {
+            preview = nil
+        }
+    }
+
     /// The document as the canvas shows it: with the preview, if there is one.
     var shownDoc: BezzleDocument {
         guard let preview else { return doc }
         var shown = doc
+        if let reshape = preview.reshape {
+            // Asked for every frame the canvas draws: made once for each design and preview.
+            if let worked = reshapedWorkedOut, worked.version == version, worked.token == preview.token { return worked.doc }
+            reshape(&shown)
+            shown.keepMasks(since: doc)
+            shown.fitGroups(since: doc)
+            reshapedWorkedOut = (version, preview.token, shown)
+            return shown
+        }
         var regrown = false
         for id in preview.ids {
             shown.update(id) { node in
@@ -419,8 +492,7 @@ final class DocumentStore {
         var used: [Used] = []
         func byte(_ x: Double) -> Int { Int((min(max(x, 0), 1) * 255).rounded()) }
         func visit(_ n: Node) {
-            for c in [n.fill.on && n.kind != .artboard ? n.fill.color : nil, n.border.on ? n.border.color : nil] {
-                guard let c else { continue }
+            for c in (n.kind != .artboard ? n.fills.map(\.color) : []) + n.borders.map(\.color) {
                 let key = byte(c.r) << 16 | byte(c.g) << 8 | byte(c.b)
                 if let i = at[key] { used[i].count += 1 } else {
                     at[key] = used.count
@@ -552,6 +624,10 @@ final class DocumentStore {
                 editingPath = nil
             }
         }
+        // A mask whose shape someone else took away while layers were put in it here holds none
+        // of them by the first of those, as this Mac alone knows which its shape was.
+        next.keepMasks(since: old)
+        next.fitGroups(since: old)
         // Artboards nobody changed stay as they were, sharing their storage, so what is worked
         // out from them is not worked out again.
         var kept: [UUID: Node] = [:]

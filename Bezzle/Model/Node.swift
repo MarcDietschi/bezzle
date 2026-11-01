@@ -162,6 +162,8 @@ nonisolated struct ImageFill: Codable, Hashable {
     var flippedY: Bool?
     /// The picture with its background taken away, drawn in its place. See `Cutout`.
     var cutout: Cutout?
+    /// How the picture is developed: its light, colours and detail; nil as it was taken. See `Develop`.
+    var develop: Develop?
 
     /// The picture turned over with its layer: it lands on the other side, and faces the other way.
     func flipped(horizontally: Bool) -> ImageFill {
@@ -198,11 +200,17 @@ nonisolated struct Shadow: Codable, Hashable {
     var blur: CGFloat = 6
     /// Falling inside the layer, as if it were pressed into the page, rather than under it; nil is under it.
     var inset: Bool?
+    /// How much bigger than the layer the shadow is cast from, or smaller below 0: under the layer
+    /// its outline grown all round, inside it the hollow narrowed. Only a layer with an outline
+    /// of its own has one; nil is none.
+    var spread: CGFloat?
 
     /// A shadow falling under the layer and out past it.
     var outside: Bool { on && inset != true }
     /// A shadow falling inside the layer.
     var inside: Bool { on && inset == true }
+    /// The spread, 0 when there is none.
+    var grown: CGFloat { spread ?? 0 }
 }
 
 /// A layer held up off the page, as a card is in the hand: tipped back by `x` degrees, its top
@@ -307,7 +315,13 @@ nonisolated enum TextSizing: String, Codable, CaseIterable {
 }
 
 nonisolated enum TextAlign: String, Codable, CaseIterable {
-    case left, center, right
+    /// Justified: every line but a paragraph's last runs from side to side.
+    case left, center, right, justify
+}
+
+/// Where the lines lie in a box of fixed size that is taller, or shorter, than they are.
+nonisolated enum TextVertical: String, Codable, CaseIterable {
+    case top, middle, bottom
 }
 
 nonisolated struct TextStyle: Codable, Hashable {
@@ -323,8 +337,20 @@ nonisolated struct TextStyle: Codable, Hashable {
     var tracking: CGFloat = 0
     var underline = false
     var sizing: TextSizing = .autoWidth
-    /// Set in capitals, small letters or capitalised words whatever was typed; nil as typed.
+    /// Set in capitals, small letters, capitalised words or small capitals whatever was typed; nil as typed.
     var letterCase: LetterCase?
+    /// A line through the letters; nil is none.
+    var strikethrough: Bool?
+    /// Space after each paragraph but the last, in points; nil is none.
+    var paragraphSpacing: CGFloat?
+    /// Where the lines lie in a box of fixed size; nil is at its top.
+    var vertical: TextVertical?
+    /// OpenType features set by their tags, such as "onum" for old-style figures or "ss01" for a
+    /// stylistic set: 1 on, 0 off. Those the font does not have do nothing.
+    var features: [String: Int]?
+    /// Where a variable font is set along its axes, by their tags, such as "wght" for its weight
+    /// and "wdth" for its width. Those the font does not have do nothing.
+    var axes: [String: Double]?
 
     static let system = "System"
 
@@ -334,18 +360,22 @@ nonisolated struct TextStyle: Codable, Hashable {
         var s = self
         s.size = max(1, (size * k * 10).rounded() / 10)
         s.lineSpacing = lineSpacing.map { max(0, ($0 * k * 10).rounded() / 10) }
+        s.paragraphSpacing = paragraphSpacing.map { max(0, ($0 * k * 10).rounded() / 10) }
         return s
     }
 }
 
 nonisolated enum LetterCase: String, Codable, CaseIterable {
-    case upper, lower, title
+    /// Small capitals: small letters drawn as capitals of their height, by the font's own where
+    /// it has them (`smcp`).
+    case upper, lower, title, smallCaps
 
     func apply(_ text: String) -> String {
         switch self {
         case .upper: text.uppercased()
         case .lower: text.lowercased()
         case .title: text.capitalized
+        case .smallCaps: text
         }
     }
 }
@@ -403,6 +433,13 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     var fill: Fill
     var border = Border()
     var shadow = Shadow()
+    /// More fills lying over `fill`, bottom first, and more borders drawn over `border`; nil while
+    /// there is only the one. A picture is only ever in `fill`. See `fills` and `borders`.
+    var moreFills: [Fill]?
+    var moreBorders: [Border]?
+    /// More shadows besides `shadow`, under the layer or inside it, each cast on its own; nil while
+    /// there is only the one. See `shadows`.
+    var moreShadows: [Shadow]?
     var opacity: Double = 1
     /// Rectangles only.
     var cornerRadius: CGFloat = 0
@@ -416,6 +453,9 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// Text layers only.
     var text: String?
     var style: TextStyle?
+    /// Text layers only, when some letters look different from the rest: the words in runs that
+    /// look alike, each with its own words. See `TextSpan`; `runs` lays them onto `text`.
+    var spans: [TextSpan]?
     /// What lies on an artboard or in a group, bottom first. A group's frame is always the box
     /// around them, and it is never turned itself: its layers are.
     var children: [Node] = []
@@ -427,6 +467,10 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// Groups only: the shape that cuts off what lies outside it, in the group's coordinates.
     /// (A list of one, as a layer cannot hold another directly.)
     var mask: [Node]?
+    /// Groups only: whether the first layer it holds is a mask that shows, holding the rest as a
+    /// shape holds its picture: its fill and shadow lie under them, its border over them as a
+    /// frame, and they are cut off at its outline. The group is as big as that layer. See `Mask`.
+    var clipsToFirst: Bool?
     var blur: Blur?
     /// Turned in depth; nil lies flat in the page. Never for artboards, which are the page.
     var transform3D: Transform3D?
@@ -451,6 +495,14 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// properties (`LayerField`), whatever the same layer in other posts does. Its words and
     /// pictures are its own anyway.
     var own: [String]?
+    /// Artboards only: the columns, rows and baselines it is laid out on. See `LayoutGrid`.
+    var layout: LayoutGrid?
+    /// Artboards only: the guides pulled onto it out of the rulers, each by a key of its own, so
+    /// that two people adding guides to it at once both keep theirs. See `Guideline`.
+    var guides: [String: Guideline]?
+    /// The files the layer goes out as whenever what is marked for export is exported, such as
+    /// 1×, 2× and 3× PNGs named "@2x" and "@3x"; nil when it is not marked.
+    var exports: [ExportPreset]?
 
     init(kind: Kind, name: String? = nil, frame: CGRect) {
         self.kind = kind

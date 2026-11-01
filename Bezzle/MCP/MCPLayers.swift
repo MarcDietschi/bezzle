@@ -66,12 +66,15 @@ extension MCPTools {
             ("rotation", node.rotation != 0 ? .number(round(node.rotation)) : nil),
             ("hidden", node.hidden ? true : nil),
             ("locked", node.locked ? true : nil),
+            // What it is, as kind is, so a mask is told from a group in every answer.
+            ("mask", node.isMask ? true : nil),
         ]
         if node.kind == .text, let text = node.text {
             pairs.append(("text", .string(full || text.count <= 80 ? text : String(text.prefix(77)) + "…")))
         }
         if node.isRepeatGrid { pairs += gridDetails(node, in: doc) }
         if node.isDeck { pairs += deckDetails(node, front: nil, broken: DocumentStore.broken(node)) }
+        if node.isArtboard { pairs += layoutDetails(node) }
         if node.isCarousel, let slide = node.slideSize {
             pairs.append(("carousel", .string(Carousel.format(of: slide)?.name ?? "\(Int(slide.width))×\(Int(slide.height))")))
             pairs.append(("slides", .number(node.slideCount)))
@@ -79,7 +82,8 @@ extension MCPTools {
         if full {
             pairs += style(of: node)
         } else if node.kind != .group {
-            pairs.append(("fill", fill(node.fill)))
+            let fills = node.fills
+            pairs.append(("fill", fills.count > 1 ? .array(fills.map(fill)) : fill(node.fill)))
         }
         if node.isContainer {
             let count = BezzleDocument.layerCount(listed(in: node))
@@ -101,21 +105,27 @@ extension MCPTools {
 
     private static func style(of node: Node) -> [(String, JSONValue?)] {
         var pairs: [(String, JSONValue?)] = []
-        if node.kind != .group { pairs.append(("fill", fill(node.fill))) }
-        let b = node.border
-        if b.on {
-            pairs.append(("border", .compact([
+        // Several of a kind are a list, bottom first.
+        if node.kind != .group {
+            let fills = node.fills
+            pairs.append(("fill", fills.count > 1 ? .array(fills.map(fill)) : fill(node.fill)))
+        }
+        func border(_ b: Border) -> JSONValue {
+            .compact([
                 ("color", .string(hex(b.color))), ("width", .number(b.width)), ("position", .string(b.position.rawValue)),
                 ("dash", b.dash > 0 ? .number(b.dash) : nil), ("gap", b.dash > 0 ? .number(b.gap) : nil),
-            ])))
+            ])
         }
-        let s = node.shadow
-        if s.on {
-            pairs.append(("shadow", .compact([
+        let borders = node.borders
+        if !borders.isEmpty { pairs.append(("border", borders.count > 1 ? .array(borders.map(border)) : border(borders[0]))) }
+        func shadow(_ s: Shadow) -> JSONValue {
+            .compact([
                 ("color", .string(hex(s.color))), ("x", .number(s.x)), ("y", .number(s.y)), ("blur", .number(s.blur)),
-                ("inset", s.inside ? .bool(true) : nil),
-            ])))
+                ("spread", s.grown != 0 ? .number(s.grown) : nil), ("inset", s.inside ? .bool(true) : nil),
+            ])
         }
+        let shadows = node.shadows
+        if !shadows.isEmpty { pairs.append(("shadow", shadows.count > 1 ? .array(shadows.map(shadow)) : shadow(shadows[0]))) }
         if node.opacity != 1 { pairs.append(("opacity", .number(node.opacity))) }
         if node.kind == .rectangle {
             if let corners = node.corners, corners.count == 4 {
@@ -130,7 +140,12 @@ extension MCPTools {
                 ("family", .string(t.family)), ("face", .string(t.face)), ("size", .number(t.size)), ("align", .string(t.align.rawValue)),
                 ("lineSpacing", t.lineSpacing.map { .number($0) }), ("tracking", t.tracking != 0 ? .number(t.tracking) : nil),
                 ("underline", t.underline ? true : nil), ("sizing", .string(sizingName(t.sizing))), ("case", t.letterCase.map { .string($0.rawValue) }),
+                ("strikethrough", t.strikethrough == true ? true : nil), ("paragraphSpacing", t.paragraphSpacing.map { .number($0) }),
+                ("vertical", t.vertical.map { .string($0.rawValue) }),
+                ("features", t.features.map { f in .object(f.keys.sorted().map { ($0, .number(f[$0] ?? 0)) }) }),
+                ("axes", t.axes.map { a in .object(a.keys.sorted().map { ($0, .number(round(a[$0] ?? 0))) }) }),
             ])))
+            if node.hasStyledLetters { pairs.append(("spans", .array(node.runs.map(span)))) }
         }
         if let blur = node.blur, blur.on {
             pairs.append(("blur", .compact([
@@ -154,7 +169,55 @@ extension MCPTools {
             if node.evenOdd == true { pairs.append(("evenOdd", true)) }
         }
         if node.mask?.isEmpty == false { pairs.append(("masked", true)) }
+        if let exports = node.exports, !exports.isEmpty { pairs.append(("exports", Self.exports(exports))) }
         return pairs
+    }
+
+    /// Export presets as the exports property takes them back.
+    static func exports(_ presets: [ExportPreset]) -> JSONValue {
+        .array(presets.map { p in
+            .compact([("size", p.format.isPicture ? .string(p.size.text) : nil), ("format", .string(p.format.rawValue)),
+                      ("suffix", p.suffix.map { .string($0) }), ("file", .string("<name>\(p.nameSuffix).\(p.format.fileExtension)"))])
+        })
+    }
+
+    /// Reads the exports property: presets, or nothing to unmark the layer.
+    private static func exports(_ v: Any?) throws -> [ExportPreset]? {
+        guard let v else { return nil }
+        if let s = v as? String, ["none", ""].contains(s.lowercased()) { return nil }
+        guard let list = v as? [Any] else { throw MCPError("exports should be a list of {size, format, suffix}, or \"none\".") }
+        let presets = try list.map { item -> ExportPreset in
+            // A size alone is a PNG; a format alone is 1×.
+            if let s = item as? String {
+                if let f = try? format(s) { return ExportPreset(format: f) }
+                guard let size = ExportSize(s) else { throw MCPError("\"\(s)\" is neither a size (\"2x\", \"512w\", \"64h\") nor a format.") }
+                return ExportPreset(size: size)
+            }
+            if let n = item as? NSNumber, let size = ExportSize("\(n)x") { return ExportPreset(size: size) }
+            guard let o = item as? [String: Any] else { throw MCPError("Each export should be {size, format, suffix}.") }
+            let unknown = Set(o.keys).subtracting(["size", "format", "suffix", "file"])
+            guard unknown.isEmpty else { throw MCPError("An export has no \(unknown.sorted().joined(separator: ", ")). It takes size, format and suffix.") }
+            var preset = ExportPreset()
+            if let s = o["size"], !(s is NSNull) {
+                let text = (s as? NSNumber).map { "\($0)x" } ?? (s as? String) ?? ""
+                guard let size = ExportSize(text) else { throw MCPError("size \"\(text)\" should be pixels to a point, \"2x\", or pixels wide or tall, \"512w\" or \"64h\".") }
+                preset.size = size
+            }
+            if let f = try Read.string(o["format"], "format") { preset.format = try format(f) }
+            preset.suffix = try Read.string(o["suffix"], "suffix")
+            return preset
+        }
+        return presets.isEmpty ? nil : presets
+    }
+
+    /// A format by its name, as export and exports take it.
+    static func format(_ word: String) throws -> ExportFormat {
+        let w = word.lowercased()
+        guard let f = ExportFormat(rawValue: w == "jpg" ? "jpeg" : w) else {
+            throw MCPError("There is no format \(word). There are: \(ExportFormat.offered.map(\.rawValue).joined(separator: ", ")).")
+        }
+        guard f.isAvailable else { throw MCPError("This Mac cannot write \(f.title) files. It can write \(ExportFormat.offered.map(\.rawValue).joined(separator: ", ")).") }
+        return f
     }
 
     static func fill(_ f: Fill) -> JSONValue {
@@ -177,6 +240,7 @@ extension MCPTools {
                 ("pixelWidth", .number(i.size.width)), ("pixelHeight", .number(i.size.height)),
                 ("offset", i.offset != .zero ? point(i.offset) : nil), ("scale", i.scale != 1 ? .number(i.scale) : nil),
                 ("backgroundRemoved", i.cutout != nil ? .bool(true) : nil),
+                ("develop", Self.describe(i.develop)),
             ])))
         }
         return .compact(pairs)
@@ -208,6 +272,17 @@ extension MCPTools {
 
     private static func round(_ v: Double) -> Double { (v * 100).rounded() / 100 }
 
+    /// Some letters and how they differ from the rest of their text, as `spans` takes them.
+    private static func span(_ s: TextSpan) -> JSONValue {
+        let l = s.look
+        return .compact([
+            ("text", .string(s.text)), ("family", l.family.map { .string($0) }), ("face", l.face.map { .string($0) }),
+            ("size", l.size.map { .number($0) }), ("color", l.color.map { .string(hex($0)) }),
+            ("underline", l.underline.map { .bool($0) }), ("strikethrough", l.strikethrough.map { .bool($0) }),
+            ("tracking", l.tracking.map { .number($0) }), ("list", l.list.map { .string($0.rawValue) }),
+        ])
+    }
+
     private static func sizingName(_ s: TextSizing) -> String {
         switch s {
         case .autoWidth: "auto"
@@ -220,8 +295,8 @@ extension MCPTools {
 
     static let propertyKeys: Set<String> = [
         "name", "x", "y", "width", "height", "rotation", "opacity", "hidden", "locked", "fill", "border", "shadow",
-        "cornerRadius", "cornerSmoothing", "text", "font", "blur", "transform3D", "blend", "x1", "y1", "x2", "y2", "path", "evenOdd",
-        "clips", "preset", "carousel", "slides",
+        "cornerRadius", "cornerSmoothing", "text", "spans", "font", "blur", "transform3D", "blend", "x1", "y1", "x2", "y2", "path", "evenOdd",
+        "clips", "preset", "carousel", "slides", "exports",
     ]
 
     /// Changes a layer as `props` say, as the inspector would. What does not apply to this kind
@@ -271,6 +346,18 @@ extension MCPTools {
             var style = node.style ?? TextStyle()
             try applyFont(o, to: &style)
             node.style = style
+        }
+        if only([.text], "spans") {
+            if let list = value("spans") {
+                guard let items = list as? [Any] else { throw MCPError("spans should be a list of {text, …} runs, end to end.") }
+                let style = node.style ?? TextStyle()
+                node.setRuns(try items.enumerated().map { i, item in
+                    guard let o = item as? [String: Any] else { throw MCPError("spans[\(i)] should be an object, {text, face, color…}.") }
+                    return try textSpan(o, key: "spans[\(i)]", style: style, color: node.fill.color)
+                })
+            } else {
+                node.spans = nil
+            }
         }
         if only([.path], "path") {
             guard let data = try Read.string(value("path"), "path") else { throw MCPError("path cannot be empty.") }
@@ -328,13 +415,49 @@ extension MCPTools {
         }
 
         // How it looks.
-        if has("fill") { node.fill = try fill(value("fill"), on: node.fill) }
-        if has("border") { node.border = try border(value("border"), on: node.border) }
+        // One changes the first, and "none" takes all of them away; a list is all of them,
+        // bottom first, each merged into the one in its place.
+        if has("fill") {
+            if let list = value("fill") as? [Any] {
+                if kind == .text && list.count > 1 { warnings.append("Text takes one colour: only the first fill kept on \(name).") }
+                let fills = try list.enumerated().map { i, item in try fill(item, on: i < node.slots(.fill) ? node[fill: i] : Fill(color: .shape)) }
+                node.fills = Array(fills.filter(\.on).prefix(kind == .text ? 1 : .max))
+                if !node.fill.on { node.blend = nil }
+            } else {
+                node.fill = try fill(value("fill"), on: node.fill)
+                if !node.fill.on { node.moreFills = nil }
+            }
+        }
+        if has("border") {
+            if let list = value("border") as? [Any] {
+                let borders = try list.enumerated().map { i, item in
+                    try border(item, on: i < node.slots(.border) ? node[border: i] : Border(on: true, color: .line, width: 1))
+                }
+                node.borders = borders.filter(\.on)
+            } else {
+                node.border = try border(value("border"), on: node.border)
+                if !node.border.on { node.moreBorders = nil }
+            }
+        }
         if has("shadow") {
-            try shadow(value("shadow"), on: &node)
-            if kind == .line && node.shadow.inside {
-                node.shadow.inset = nil
+            if let list = value("shadow") as? [Any] {
+                var shadows: [Shadow] = []
+                for (i, item) in list.enumerated() {
+                    var s = i < node.slots(.shadow) ? node[shadow: i] : Shadow()
+                    try shadow(item, on: &s)
+                    if s.on { shadows.append(s) }
+                }
+                node.shadows = shadows
+            } else {
+                try shadow(value("shadow"), on: &node.shadow)
+                if !node.shadow.on { node.moreShadows = nil }
+            }
+            if kind == .line && node.shadows.contains(where: \.inside) {
+                node.shadows = node.shadows.map { s in var s = s; s.inset = nil; return s }
                 warnings.append("A line has no inside for a shadow to fall in: inset left out on \(name).")
+            }
+            if !Renderer.spreads(node, Shadow(spread: 1)) && node.shadows.contains(where: { $0.grown != 0 }) {
+                warnings.append("Only a shape's shadow spreads: spread kept on \(name), but it casts from what it draws.")
             }
         }
         if let o = try Read.number(value("opacity"), "opacity") { node.opacity = min(max(o, 0), 1) }
@@ -360,6 +483,7 @@ extension MCPTools {
         if let v = try Read.bool(value("hidden"), "hidden") { node.hidden = v }
         if let v = try Read.bool(value("locked"), "locked") { node.locked = v }
         if only([.artboard], "clips") { node.clips = try Read.bool(value("clips"), "clips") ?? true }
+        if has("exports") { node.exports = try exports(value("exports")) }
 
         // Text takes the size its words need, its top left where it was asked to be.
         if kind == .text {
@@ -383,8 +507,58 @@ extension MCPTools {
         throw MCPError("carousel should be a format's name, such as \"Portrait 4:5\", or {width, height} of a slide.")
     }
 
+    /// One run of a text's letters, from what the assistant gave: its words, and what about them
+    /// differs from the rest of the text.
+    static func textSpan(_ o: [String: Any], key: String, style: TextStyle, color: RGBA) throws -> TextSpan {
+        let known: Set = ["text", "family", "face", "weight", "size", "color", "underline", "strikethrough", "tracking", "list"]
+        let unknown = Set(o.keys).subtracting(known)
+        guard unknown.isEmpty else { throw MCPError("\(key) has no \(unknown.sorted().joined(separator: ", ")). It takes: \(known.sorted().joined(separator: ", ")).") }
+        guard let words = try Read.string(o["text"], "\(key).text") else { throw MCPError("\(key) needs its text.") }
+        var letters = TextLook.plain.resolved(over: style, color: color)
+        try restyle(&letters, from: o, key: key)
+        return TextSpan(text: words, look: TextLook(letters, over: style, color: color))
+    }
+
+    /// Changes letters as an object of font, colour and the rest says, as `spans` and `style_text` take it.
+    static func restyle(_ letters: inout Letters, from o: [String: Any], key: String) throws {
+        func value(_ k: String) -> Any? { o[k].flatMap { $0 is NSNull ? nil : $0 } }
+        if let family = try Read.string(value("family"), "\(key).family") {
+            let match = ["system", "sf pro"].contains(family.lowercased()) ? TextStyle.system : Fonts.families.first { $0.caseInsensitiveCompare(family) == .orderedSame }
+            guard let match else { throw MCPError("There is no font family \"\(family)\" on this Mac. list_fonts lists them.") }
+            letters.face = Fonts.face(like: letters.face, of: letters.family, in: match)
+            letters.family = match
+        }
+        if let face = try Read.string(value("face") ?? value("weight"), "\(key).face") {
+            let faces = Fonts.faces(of: letters.family)
+            guard let match = faces.first(where: { $0.caseInsensitiveCompare(face) == .orderedSame }) else {
+                throw MCPError("\(Fonts.displayName(letters.family)) has no face \"\(face)\". It has: \(faces.joined(separator: ", ")).")
+            }
+            letters.face = match
+        }
+        if let size = try Read.number(value("size"), "\(key).size") {
+            guard size > 0 else { throw MCPError("\(key).size should be more than 0.") }
+            letters.size = CGFloat(size)
+        }
+        if let c = value("color") { letters.color = try color(c, "\(key).color") }
+        if let u = try Read.bool(value("underline"), "\(key).underline") { letters.underline = u }
+        if let u = try Read.bool(value("strikethrough"), "\(key).strikethrough") { letters.strikethrough = u }
+        if let t = try Read.number(value("tracking"), "\(key).tracking") { letters.tracking = CGFloat(t) }
+        if o.keys.contains("list") {
+            let l = try Read.string(value("list"), "\(key).list")
+            if let l, l.lowercased() != "none" {
+                guard let list = TextList(rawValue: l.lowercased() == "numbered" ? "number" : l.lowercased() == "bulleted" ? "bullet" : l.lowercased()) else {
+                    throw MCPError("\(key).list is bullet, number or none.")
+                }
+                letters.list = list
+            } else {
+                letters.list = nil
+            }
+        }
+    }
+
     private static func applyFont(_ o: [String: Any], to style: inout TextStyle) throws {
-        let known: Set = ["family", "face", "weight", "size", "align", "lineSpacing", "tracking", "underline", "sizing", "case"]
+        let known: Set = ["family", "face", "weight", "size", "align", "lineSpacing", "tracking", "underline", "sizing", "case",
+                          "strikethrough", "paragraphSpacing", "vertical", "features", "axes"]
         let unknown = Set(o.keys).subtracting(known)
         guard unknown.isEmpty else { throw MCPError("font has no \(unknown.sorted().joined(separator: ", ")). It takes: \(known.sorted().joined(separator: ", ")).") }
         func value(_ key: String) -> Any? { o[key].flatMap { $0 is NSNull ? nil : $0 } }
@@ -407,7 +581,8 @@ extension MCPTools {
             style.size = CGFloat(size)
         }
         if let a = try Read.string(value("align"), "font.align") {
-            guard let align = TextAlign(rawValue: a.lowercased() == "centre" ? "center" : a.lowercased()) else { throw MCPError("font.align is left, center or right.") }
+            let named = a.lowercased() == "centre" ? "center" : a.lowercased() == "justified" ? "justify" : a.lowercased()
+            guard let align = TextAlign(rawValue: named) else { throw MCPError("font.align is left, center, right or justify.") }
             style.align = align
         }
         if o.keys.contains("lineSpacing") { style.lineSpacing = try Read.number(value("lineSpacing"), "font.lineSpacing").map { CGFloat(max($0, 0)) } }
@@ -424,10 +599,52 @@ extension MCPTools {
         if o.keys.contains("case") {
             let c = try Read.string(value("case"), "font.case")
             if let c, c.lowercased() != "none" {
-                guard let letterCase = LetterCase(rawValue: c.lowercased()) else { throw MCPError("font.case is upper, lower, title or none.") }
+                guard let letterCase = LetterCase.allCases.first(where: { $0.rawValue.lowercased() == c.lowercased().replacingOccurrences(of: "_", with: "") }) else {
+                    throw MCPError("font.case is upper, lower, title, smallCaps or none.")
+                }
                 style.letterCase = letterCase
             } else {
                 style.letterCase = nil
+            }
+        }
+        if let u = try Read.bool(value("strikethrough"), "font.strikethrough") { style.strikethrough = u ? true : nil }
+        if o.keys.contains("paragraphSpacing") {
+            style.paragraphSpacing = try Read.number(value("paragraphSpacing"), "font.paragraphSpacing").flatMap { $0 > 0 ? CGFloat($0) : nil }
+        }
+        if o.keys.contains("vertical") {
+            let v = try Read.string(value("vertical"), "font.vertical")?.lowercased()
+            if let v, v != "top" {
+                guard let vertical = TextVertical(rawValue: v == "center" || v == "centre" ? "middle" : v) else { throw MCPError("font.vertical is top, middle or bottom.") }
+                style.vertical = vertical
+            } else {
+                style.vertical = nil
+            }
+        }
+        if o.keys.contains("features") {
+            if let f = try Read.object(value("features"), "font.features") {
+                var features = style.features ?? [:]
+                for (tag, v) in f {
+                    guard tag.count == 4 else { throw MCPError("font.features are OpenType tags of four letters, such as \"onum\", \"tnum\" or \"ss01\".") }
+                    if v is NSNull { features[tag] = nil; continue }
+                    if let b = try? Read.bool(v, "font.features.\(tag)") { features[tag] = b == true ? 1 : 0; continue }
+                    guard let n = try Read.number(v, "font.features.\(tag)") else { continue }
+                    features[tag] = Int(n)
+                }
+                style.features = features.isEmpty ? nil : features
+            } else {
+                style.features = nil
+            }
+        }
+        if o.keys.contains("axes") {
+            if let a = try Read.object(value("axes"), "font.axes") {
+                var axes = style.axes ?? [:]
+                for (tag, v) in a {
+                    guard tag.count == 4 else { throw MCPError("font.axes are a variable font's axes by their tags of four letters, such as \"wght\" or \"wdth\".") }
+                    axes[tag] = try Read.number(v, "font.axes.\(tag)")
+                }
+                style.axes = axes.isEmpty ? nil : axes
+            } else {
+                style.axes = nil
             }
         }
     }
@@ -560,32 +777,33 @@ extension MCPTools {
         return b
     }
 
-    private static func shadow(_ v: Any?, on node: inout Node) throws {
-        guard let v else { node.shadow.on = false; return }
+    private static func shadow(_ v: Any?, on shadow: inout Shadow) throws {
+        guard let v else { shadow.on = false; return }
         if let s = v as? String {
             let word = s.lowercased()
-            if word == "none" { node.shadow.on = false; return }
+            if word == "none" { shadow.on = false; return }
             let presets = Presets.shadows + Presets.innerShadows
             if let preset = presets.first(where: { $0.name.key.lowercased() == word || $0.id == "shadow-" + word }) {
-                Presets.applyShadow(preset, to: &node)
+                Presets.applyShadow(preset, to: &shadow)
                 return
             }
             guard (try? color(s, "shadow")) != nil else {
-                throw MCPError("shadow should be \"none\", a preset (\(presets.map { $0.name.key.lowercased() }.joined(separator: ", "))), a colour, or {color, x, y, blur, inset}.")
+                throw MCPError("shadow should be \"none\", a preset (\(presets.map { $0.name.key.lowercased() }.joined(separator: ", "))), a colour, or {color, x, y, blur, spread, inset}.")
             }
-            node.shadow.color = try color(s, "shadow")
-            node.shadow.on = true
+            shadow.color = try color(s, "shadow")
+            shadow.on = true
             return
         }
-        guard let o = v as? [String: Any] else { throw MCPError("shadow should be \"none\", a preset name, a colour, or {color, x, y, blur, inset}.") }
-        let unknown = Set(o.keys).subtracting(["on", "color", "x", "y", "blur", "inset"])
-        guard unknown.isEmpty else { throw MCPError("shadow has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, x, y, blur and inset.") }
-        if let c = o["color"], !(c is NSNull) { node.shadow.color = try color(c, "shadow.color") }
-        if let x = try Read.number(o["x"], "shadow.x") { node.shadow.x = CGFloat(x) }
-        if let y = try Read.number(o["y"], "shadow.y") { node.shadow.y = CGFloat(y) }
-        if let b = try Read.number(o["blur"], "shadow.blur") { node.shadow.blur = CGFloat(max(b, 0)) }
-        if let inset = try Read.bool(o["inset"], "shadow.inset") { node.shadow.inset = inset ? true : nil }
-        node.shadow.on = try Read.bool(o["on"], "shadow.on") ?? true
+        guard let o = v as? [String: Any] else { throw MCPError("shadow should be \"none\", a preset name, a colour, {color, x, y, blur, spread, inset}, or a list of these.") }
+        let unknown = Set(o.keys).subtracting(["on", "color", "x", "y", "blur", "spread", "inset"])
+        guard unknown.isEmpty else { throw MCPError("shadow has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, x, y, blur, spread and inset.") }
+        if let c = o["color"], !(c is NSNull) { shadow.color = try color(c, "shadow.color") }
+        if let x = try Read.number(o["x"], "shadow.x") { shadow.x = CGFloat(x) }
+        if let y = try Read.number(o["y"], "shadow.y") { shadow.y = CGFloat(y) }
+        if let b = try Read.number(o["blur"], "shadow.blur") { shadow.blur = CGFloat(max(b, 0)) }
+        if let d = try Read.number(o["spread"], "shadow.spread") { shadow.spread = d == 0 ? nil : CGFloat(d) }
+        if let inset = try Read.bool(o["inset"], "shadow.inset") { shadow.inset = inset ? true : nil }
+        shadow.on = try Read.bool(o["on"], "shadow.on") ?? true
     }
 
     private static func corners(_ v: Any?, on node: inout Node) throws {

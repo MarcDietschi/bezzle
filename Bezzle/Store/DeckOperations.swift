@@ -43,7 +43,7 @@ extension DocumentStore {
     /// The artboard a post would be added to: the deck being worked on, or the artboard selected
     /// or the selection is on.
     var postableBoard: Node? {
-        if let deck = selectedDeck { return deck }
+        if let deck = selectedDeck { return deck.locked ? nil : deck }
         guard let first = selection.first else { return turnableDeck }
         let board = doc.node(first).flatMap { $0.isArtboard ? $0 : nil } ?? doc.artboard(of: first)
         return board.flatMap { $0.locked ? nil : $0 }
@@ -55,6 +55,14 @@ extension DocumentStore {
         guard let deck = doc.node(deckID), deck.isDeck, deck.posts.contains(post) else { return }
         let was = front(of: deck)
         guard was != post else { return }
+        // Typing into a post that goes behind: left there, the words typed would go on landing in
+        // a post no longer seen, over the one now in front. It ends there and goes on in the same
+        // words of the post coming to the front.
+        var typing: UUID?
+        if let id = editingText, let found = doc.post(of: id), found.deck.id == deckID, let from = found.post, from != post {
+            typing = id.mixed(Deck.key(from: from, to: post))
+            canvas?.endEditing()
+        }
         let k = Deck.key(from: was, to: post)
         let moved = selection.map { id in
             guard let found = doc.post(of: id), found.deck.id == deckID, found.post == was else { return id }
@@ -63,6 +71,7 @@ extension DocumentStore {
         fronts[deckID] = post
         if moved != selection { selection = moved.filter { doc.node($0) != nil } }
         if let id = hovered, let found = doc.post(of: id), found.deck.id == deckID { hovered = nil }
+        if let typing, doc.node(typing) != nil { canvas?.beginEditing(typing, action: "Typing") }
     }
 
     /// Turns the deck being worked on `by` posts on, or back; nothing past the first or the last.
@@ -87,6 +96,10 @@ extension DocumentStore {
     /// post. The new post comes to the front.
     func addPost(to boardID: UUID) {
         guard let board = doc.node(boardID), board.isArtboard, !board.locked else { return }
+        // Typing on the board, what was typed is a step of its own, before the post is added; the
+        // typing goes on in the same words of the new post.
+        let typing = editingText.flatMap { doc.artboard(of: $0)?.id == boardID ? $0 : nil }
+        if typing != nil { canvas?.endEditing() }
         let after = board.isDeck ? front(of: board) : nil
         var added: Int?
         edit(board.isDeck ? "Add Post" : "Make Deck") { doc in added = Self.addPost(to: boardID, after: after, in: &doc) }
@@ -94,6 +107,10 @@ extension DocumentStore {
             // The layers selected in the post copied are selected in the copy.
             if let after { fronts[boardID] = after }
             turn(boardID, to: added)
+            if let typing, let from = doc.post(of: typing)?.post, from != added {
+                let next = typing.mixed(Deck.key(from: from, to: added))
+                if doc.node(next) != nil { canvas?.beginEditing(next, action: "Typing") }
+            }
         }
     }
 
@@ -141,13 +158,23 @@ extension DocumentStore {
     }
 
     /// Takes a post away from a deck; the one after it comes to the front, or else the one before.
-    /// The last post stays.
+    /// The last post stays. Undone, the post is back in front if it was, with what was selected in it.
     func removePost(_ post: Int, from deckID: UUID) {
-        guard let deck = doc.node(deckID), deck.isDeck else { return }
+        guard let deck = doc.node(deckID), deck.isDeck, !deck.locked else { return }
         let posts = deck.posts
         guard posts.count > 1, let i = posts.firstIndex(of: post) else { return }
         let next = i + 1 < posts.count ? posts[i + 1] : posts[i - 1]
-        if front(of: deck) == post { turn(deckID, to: next) }
+        let shown = front(of: deck) == post
+        // What was selected or typed into in it goes on in the same layers of the next post. Turned
+        // only once it is gone, so that the step remembers it in front, and undoing shows it again.
+        let k = Deck.key(from: post, to: next)
+        func inIt(_ id: UUID) -> Bool { doc.post(of: id).map { $0.deck.id == deckID && $0.post == post } ?? false }
+        var typing: UUID?
+        if let id = editingText, inIt(id) {
+            typing = id.mixed(k)
+            canvas?.endEditing()
+        }
+        let carried = selection.map { inIt($0) ? $0.mixed(k) : $0 }
         edit("Remove Post") { doc in
             guard let path = doc.path(of: deckID) else { return }
             var board = doc[path]
@@ -157,13 +184,15 @@ extension DocumentStore {
             if board.posts.count == 1 { Self.unstack(&board, keeping: board.posts[0]) }
             doc[path] = board
         }
-        if doc.node(deckID)?.isDeck != true { fronts[deckID] = nil }
-        selection = selection.filter { doc.node($0) != nil }
+        if doc.node(deckID)?.isDeck != true { fronts[deckID] = nil } else if shown { fronts[deckID] = next }
+        selection = carried.filter { doc.node($0) != nil }
+        if let id = hovered, doc.node(id) == nil { hovered = nil }
+        if let typing, doc.node(typing) != nil { canvas?.beginEditing(typing, action: "Typing") }
     }
 
     /// Moves a post to another place among a deck's posts, counted before it is moved.
     func movePost(_ post: Int, in deckID: UUID, to index: Int) {
-        guard let deck = doc.node(deckID), deck.isDeck else { return }
+        guard let deck = doc.node(deckID), deck.isDeck, !deck.locked else { return }
         var posts = deck.posts
         guard let i = posts.firstIndex(of: post) else { return }
         posts.remove(at: i)
@@ -174,7 +203,7 @@ extension DocumentStore {
 
     /// Makes a deck an artboard like any again, of the post in front alone.
     func unstack(_ deckID: UUID) {
-        guard let deck = doc.node(deckID), deck.isDeck else { return }
+        guard let deck = doc.node(deckID), deck.isDeck, !deck.locked else { return }
         let keep = front(of: deck)
         edit("Keep Only This Post") { doc in
             guard let path = doc.path(of: deckID) else { return }
@@ -198,7 +227,7 @@ extension DocumentStore {
     /// Makes each of a deck's posts an artboard of its own, in a row to the right of it; the deck
     /// becomes the artboard of the post in front.
     func spreadOut(_ deckID: UUID) {
-        guard let deck = doc.node(deckID), deck.isDeck else { return }
+        guard let deck = doc.node(deckID), deck.isDeck, !deck.locked else { return }
         let keep = front(of: deck)
         var made: [UUID] = [deckID]
         edit("Make Artboards of Posts") { doc in
@@ -212,6 +241,8 @@ extension DocumentStore {
                     return n
                 }
             }
+            // Each in the first place along the row that lands on nothing else on the canvas.
+            var taken = doc.nodes.filter { $0.id != deckID }.map { Geometry.bounds(of: $0) }
             var x = board.frame.maxX + 80
             var boards: [Node] = []
             for (i, p) in others.enumerated() {
@@ -219,9 +250,14 @@ extension DocumentStore {
                 b.id = UUID()
                 b.deck = nil
                 b.name = "\(board.name) \(i + 2)"
-                b.frame.origin.x = x
+                var spot = CGRect(origin: CGPoint(x: x, y: board.frame.minY), size: board.frame.size)
+                while let hit = taken.first(where: { $0.intersects(spot.insetBy(dx: -40, dy: -40)) }) {
+                    spot.origin.x = (hit.maxX + 80).rounded()
+                }
+                b.frame.origin = spot.origin
                 b.children = plain(board.layers(of: p)).map { $0.freshCopy() }
-                x += board.frame.width + 80
+                taken.append(spot)
+                x = spot.maxX + 80
                 boards.append(b)
                 made.append(b.id)
             }
@@ -398,7 +434,7 @@ extension DocumentStore {
             let picture = n.fill.image != q.fill.image
             let names = LayerField.all.filter { field in
                 Deck.keepable.contains(field.name) && !field.same(n, q)
-                    && !(field.name == "fill" && a == b) && !(field.name == "frame" && n.kind == .text && words)
+                    && !(field.name == "fill" && a == b) && !(field.name == "frame" && n.kind == .text && (words || n.spans != q.spans))
             }.map(\.name)
             if inFront {
                 if words || picture { content.append(n.id) }

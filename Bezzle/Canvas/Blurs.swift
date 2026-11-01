@@ -49,13 +49,11 @@ nonisolated extension Renderer {
     /// it falls, faded and mixed as the layer is; the layer is then drawn without one. Core
     /// Graphics still makes it, from the layer drawn well to the side of the picture with its
     /// shadow cast back into it, so it is the shadow the layer casts. Returns whether it did.
-    static func drawShadowApart(_ node: Node, in ctx: CGContext, options: Options) -> Bool {
-        let shadow = node.shadow
+    static func drawShadowApart(_ node: Node, _ shadow: Shadow, in ctx: CGContext, options: Options) -> Bool {
         let scale = pixelScale(ctx), made = min(scale, shadowPixels / max(shadow.blur, 0.001))
         // Only into pixels: a PDF's shadows are left to Core Graphics.
         guard !options.castingShadow, made < scale * 0.75, ctx.width > 0 else { return false }
-        // In the parent's coordinates, and turned in depth with it.
-        let drawn = Perspective(node).map { $0.bounds(of: reach(of: flattened(node))) } ?? ink(of: node).applying(localTransform(node))
+        let drawn = casting(node, shadow)
         let falls = drawn.offsetBy(dx: shadow.x, dy: shadow.y).insetBy(dx: -shadow.blur * 2, dy: -shadow.blur * 2).integral
         // Only what is drawn of it, and a few pixels round that for the stretching, in whole pixels
         // counted from its corner: every tile makes the same pixels of it, and they meet without a seam.
@@ -68,17 +66,15 @@ nonisolated extension Renderer {
         let region = CGRect(x: x, y: y, width: pixel(seen.maxX, from: falls.minX, .up) - x, height: pixel(seen.maxY, from: falls.minY, .up) - y)
         // Far enough to the right that none of the layer reaches the picture, by whole pixels.
         let away = ((falls.maxX - drawn.minX + shadow.blur * 2 + 8) * made).rounded(.up) / made
-        var cast = node
-        cast.shadow.x -= away
-        cast.opacity = 1
-        cast.blend = nil
+        var cast = shadow
+        cast.x -= away
         var alone = options
         alone.castingShadow = true
         // Cast by as much of it as is drawn, without stopping the drawing it is part of.
         alone.halt = options.halt.map { Halt(before: $0.before) }
         guard let picture = offscreen(region, scale: made, { c in
             c.translateBy(x: away, y: 0)
-            drawNode(cast, in: c, options: alone)
+            drawCaster(of: node, casting: cast, in: c, options: alone)
         }) else { return false }
         ctx.saveGState()
         if node.opacity < 1 { ctx.setAlpha(node.opacity) }
@@ -86,6 +82,63 @@ nonisolated extension Renderer {
         place(picture, at: region.origin, scale: made, in: ctx)
         ctx.restoreGState()
         return true
+    }
+
+    /// One of a layer's shadows under it, on its own, so that the layer can cast several, or one
+    /// from its outline grown: made apart when it is wide on screen, as `drawShadowApart` makes
+    /// it, and otherwise cast where it falls by the layer drawn well to the side, out of sight,
+    /// faded and mixed as the layer is. The layer is then drawn over it without it.
+    static func drawShadowAlone(_ node: Node, _ shadow: Shadow, in ctx: CGContext, options: Options) {
+        if drawShadowApart(node, shadow, in: ctx, options: options) { return }
+        let drawn = casting(node, shadow)
+        let falls = drawn.offsetBy(dx: shadow.x, dy: shadow.y).insetBy(dx: -shadow.blur * 2 - 1, dy: -shadow.blur * 2 - 1)
+        guard !falls.isNull, falls.width > 0, falls.height > 0 else { return }
+        let away = (falls.maxX - drawn.minX + shadow.blur * 2 + 8).rounded(.up)
+        var cast = shadow
+        cast.x -= away
+        var alone = options
+        alone.castingShadow = true
+        alone.halt = options.halt.map { Halt(before: $0.before) }
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.clip(to: falls)
+        let mixed = node.opacity < 1 || node.blend != nil
+        if mixed {
+            if node.opacity < 1 { ctx.setAlpha(node.opacity) }
+            if let blend = node.blend { ctx.setBlendMode(blend.cg) }
+            ctx.beginTransparencyLayer(in: falls, auxiliaryInfo: nil)
+        }
+        ctx.translateBy(x: away, y: 0)
+        drawCaster(of: node, casting: cast, in: ctx, options: alone)
+        if mixed { ctx.endTransparencyLayer() }
+    }
+
+    /// Where what casts a shadow lies, in the layer's parent's coordinates: the layer as it is
+    /// drawn, turned in depth with it, or its outline as the spread grows it.
+    static func casting(_ node: Node, _ shadow: Shadow) -> CGRect {
+        let drawn = Perspective(node).map { $0.bounds(of: reach(of: flattened(node))) } ?? ink(of: node).applying(localTransform(node))
+        return spreads(node, shadow) && Perspective(node) == nil ? drawn.insetBy(dx: -max(shadow.grown, 0), dy: -max(shadow.grown, 0)) : drawn
+    }
+
+    /// Draws what casts one of a layer's shadows, the shadow set: the layer as it is drawn, at full
+    /// strength and holding no other shadow under it, or the outline its spread grows, filled.
+    /// `options` cast as Core Graphics casts, not apart.
+    static func drawCaster(of node: Node, casting shadow: Shadow, in ctx: CGContext, options: Options) {
+        if spreads(node, shadow), Perspective(node) == nil, let grown = spreadOutline(of: node, by: shadow.grown) {
+            ctx.saveGState()
+            setShadow(shadow, in: ctx)
+            ctx.concatenate(localTransform(node))
+            ctx.addPath(grown)
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.fillPath(using: node.silhouette != nil || node.evenOdd == true ? .evenOdd : .winding)
+            ctx.restoreGState()
+            return
+        }
+        var cast = node
+        cast.shadows = [shadow] + node.innerShadows
+        cast.opacity = 1
+        cast.blend = nil
+        drawNode(cast, in: ctx, options: options)
     }
 
     /// Where a layer's own coordinates are in its parent's: the frame's top left, turned with it.
@@ -109,11 +162,8 @@ nonisolated extension Renderer {
         // A blur that grows is sharp at one end, which needs the screen's own pixels.
         var scale = ramp == nil ? min(pixelScale(ctx), blurPixels / radius) : pixelScale(ctx)
         // The blur spreads about three times its radius; a shadow reaches further still.
-        var region = Geometry.bounds(of: node).insetBy(dx: -node.border.width, dy: -node.border.width)
-        if node.shadow.outside {
-            region = region.union(region.offsetBy(dx: node.shadow.x, dy: node.shadow.y).insetBy(dx: -node.shadow.blur * 2, dy: -node.shadow.blur * 2))
-        }
-        region = region.insetBy(dx: -radius * 3, dy: -radius * 3).integral
+        var region = Geometry.bounds(of: node).insetBy(dx: -node.borderWidth, dy: -node.borderWidth)
+        region = shadowed(region, by: node).insetBy(dx: -radius * 3, dy: -radius * 3).integral
         // A large layer seen up close is only made as big as what can be seen of it.
         if region.width * region.height * scale * scale > 12_000_000, let around = around(options) {
             let toCanvas = CGPoint(x: (options.board?.frame.minX ?? 0) + options.offset.x, y: (options.board?.frame.minY ?? 0) + options.offset.y)

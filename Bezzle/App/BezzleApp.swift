@@ -8,8 +8,9 @@ struct BezzleApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Window(Text(verbatim: "Bezzle"), id: "home") {
-            HomeView()
+        // One window: home and every open design in tabs along its top.
+        Window(Text(verbatim: "Bezzle"), id: BezzleApp.windowID) {
+            MainWindow()
                 .background(TallTitleBar())
                 .onAppear {
                     #if DEBUG
@@ -20,111 +21,24 @@ struct BezzleApp: App {
         // Test runs host the app without showing it, so they cannot take the keyboard.
         .defaultLaunchBehavior(BezzleApp.isTesting ? .suppressed : .presented)
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1100, height: 760)
+        .defaultWindowPlacement { _, context in
+            WindowPlacement(.center, size: Tabs.designSize(in: context.defaultDisplay.visibleRect.size))
+        }
         .restorationBehavior(.disabled)
         .windowResizability(.contentMinSize)
         .commands {
             BezzleCommands()
             MCPCommands()
         }
-
-        WindowGroup("Design", id: "design", for: URL.self) { $url in
-            if let current = url {
-                DesignWindow(url: current) { url = $0 }
-                    .background(TallTitleBar())
-            }
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1440, height: 900)
-        .restorationBehavior(.disabled)
-        .windowResizability(.contentMinSize)
     }
 }
 
 extension BezzleApp {
     static let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    static let windowID = "main"
 }
 
-/// One design in its own window. It opens the file, and gives the window back its new name when
-/// the design is renamed.
-struct DesignWindow: View {
-    let url: URL
-    let renamed: (URL) -> Void
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
-    @Environment(\.undoManager) private var undoManager
-    @State private var store: DocumentStore?
-    @State private var failure: String?
-
-    var body: some View {
-        Group {
-            if let store {
-                Workspace(store: store)
-                    .onChange(of: store.url) { _, new in renamed(new) }
-                    .navigationTitle(store.name)
-            } else if let failure {
-                VStack(spacing: 10) {
-                    Text(Importer.source(of: url).map { String(localized: "This \($0) file could not be brought in.") } ?? String(localized: "This design could not be opened."))
-                        .font(Theme.serif(22, weight: .medium))
-                        .foregroundStyle(Theme.ink)
-                    Text(failure)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Theme.ink2)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 420)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.paper)
-            } else {
-                Theme.paper
-            }
-        }
-        .frame(minWidth: 1000, minHeight: 640)
-        .onAppear {
-            WindowRouter.shared.openWindow = openWindow
-            WindowRouter.shared.dismissWindow = dismissWindow
-            WindowRouter.shared.openDesigns += 1
-            load()
-        }
-        .onDisappear {
-            store?.canvas?.endEditing()
-            store?.save()
-            DocumentStore.finishSaving()
-            store?.sharing?.close()
-            if let store { MCPTools.closed(store) }
-            WindowRouter.shared.openDesigns -= 1
-            // With the last design closed, the home screen comes back.
-            if WindowRouter.shared.openDesigns == 0 && !AppDelegate.terminating { openWindow(id: "home") }
-        }
-    }
-
-    private func load() {
-        guard store == nil else { return }
-        do {
-            var design = url
-            var report: ImportReport?
-            // A file from Adobe XD, Figma or Sketch is brought in as a new design in the library,
-            // which this window then shows; the file itself is left as it is.
-            if Importer.imports(url) {
-                (design, report) = try Importer.importFile(url, into: Library.shared.folder)
-                renamed(design)
-            }
-            let s = try DocumentStore(opening: design)
-            s.undoManager = undoManager
-            s.importReport = report
-            store = s
-            MCPTools.opened(s)
-            Library.shared.touched(design)
-            #if DEBUG
-            DebugHooks.attach(s)
-            #endif
-        } catch {
-            failure = "\(url.lastPathComponent): \(error.localizedDescription)"
-        }
-    }
-}
-
-/// Files opened from the Finder or dropped on the Dock icon open in their own windows.
+/// Files opened from the Finder or dropped on the Dock icon open in tabs of their own.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var terminating = false
 
@@ -132,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Library.moveInFromVellum()
         FileAccess.reopen()
         if BezzleApp.isTesting { NSApp.setActivationPolicy(.prohibited) }
+        // Bezzle keeps its designs in tabs of its own; the system's window tabs would only
+        // add menu items for a second kind.
+        NSWindow.allowsAutomaticWindowTabbing = false
         #if DEBUG
         // AppKit otherwise swallows an exception on the main thread and carries on, half done.
         UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
@@ -171,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         AppDelegate.terminating = true
+        Tabs.shared.saveAll()
         DocumentStore.finishSaving()
         return .terminateNow
     }
@@ -179,17 +97,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// The menu bar: File, Edit, Object and View, all working on the design in front.
 struct BezzleCommands: Commands {
     @FocusedValue(\.store) private var store
-    @Environment(\.openWindow) private var openWindow
+    /// Whether misspelt words are underlined while typing into text, and grammar checked with them.
+    @AppStorage("BezzleChecksSpelling") private var checksSpelling = true
+    @AppStorage("BezzleChecksGrammar") private var checksGrammar = false
 
     var body: some Commands {
         CommandGroup(replacing: .toolbar) {}
         CommandGroup(replacing: .newItem) {
-            Button("New…") { openWindow(id: "home") }
+            Button("New…") { WindowRouter.shared.showHome() }
                 .keyboardShortcut("n")
-            Button("Open…") { open() }
+            Button("Open…") { WindowRouter.openPanel() }
                 .keyboardShortcut("o")
-            Button("Import from XD, Figma or Sketch…") { open(only: DesignFile.importableTypes) }
+            Button("Import from XD, Figma or Sketch…") { WindowRouter.openPanel(only: DesignFile.importableTypes) }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+        }
+        CommandGroup(replacing: .saveItem) {
+            Button(store != nil ? "Close Tab" : "Close") { WindowRouter.shared.closeFront() }
+                .keyboardShortcut("w")
+            Button("Close Window") { (Tabs.shared.window ?? NSApp.keyWindow)?.performClose(nil) }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
         }
         CommandGroup(after: .saveItem) {
             Button("Save a Copy") { store?.saveCopy() }
@@ -207,6 +133,48 @@ struct BezzleCommands: Commands {
                 .keyboardShortcut("d")
                 .disabled(store?.selection.isEmpty ?? true)
         }
+        CommandGroup(replacing: .textEditing) {
+            Menu("Find") {
+                Button("Find…") { store?.openFind() }
+                    .keyboardShortcut("f")
+                Button("Find Next") { store?.findNext() }
+                    .disabled(store?.finder == nil)
+                Button("Find Previous") { store?.findNext(forward: false) }
+                    .disabled(store?.finder == nil)
+            }
+            .disabled(store == nil)
+            Menu("Spelling and Grammar") {
+                Button("Check Spelling…") { store?.openFind(spelling: true) }
+                    .keyboardShortcut(";")
+                    .disabled(store == nil)
+                Divider()
+                Toggle("Check Spelling While Typing", isOn: $checksSpelling)
+                Toggle("Check Grammar With Spelling", isOn: $checksGrammar)
+            }
+        }
+        CommandMenu("Format") {
+            Group {
+                Button("Bold") { store?.toggleBold() }
+                    .keyboardShortcut("b")
+                Button("Italic") { store?.toggleItalic() }
+                    .keyboardShortcut("i")
+                Button("Underline") { store?.toggleUnderline() }
+                    .keyboardShortcut("u")
+                Button("Strikethrough") { store?.toggleStrikethrough() }
+                    .keyboardShortcut("x", modifiers: [.command, .shift])
+                Divider()
+                Button("Bigger") { store?.growLetters(by: 1) }
+                    .keyboardShortcut(".", modifiers: [.command, .shift])
+                Button("Smaller") { store?.growLetters(by: -1) }
+                    .keyboardShortcut(",", modifiers: [.command, .shift])
+                Divider()
+                Button("Bulleted List") { store?.toggleList(.bullet) }
+                    .keyboardShortcut("8", modifiers: [.command, .shift])
+                Button("Numbered List") { store?.toggleList(.number) }
+                    .keyboardShortcut("7", modifiers: [.command, .shift])
+            }
+            .disabled(store?.canStyleText != true)
+        }
         CommandMenu("Object") {
             Button { store?.group() } label: { Text(DocumentStore.grouping) }
                 .keyboardShortcut("g")
@@ -214,6 +182,12 @@ struct BezzleCommands: Commands {
             Button("Ungroup") { store?.ungroup() }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .disabled(store?.canUngroup != true)
+            Button { store?.maskSelection() } label: { Text(DocumentStore.masking) }
+                .keyboardShortcut("m", modifiers: [.command, .control])
+                .disabled(store?.canMask != true)
+            Button { if let store, let mask = store.selectedMask { store.releaseMask(mask.id) } } label: { Text(DocumentStore.unmasking) }
+                .keyboardShortcut("m", modifiers: [.command, .control, .shift])
+                .disabled(store?.canReleaseMask != true)
             Divider()
             Button("Bring to Front") { store?.arrange(.front) }.keyboardShortcut("]", modifiers: [.command, .shift])
             Button("Bring Forward") { store?.arrange(.forward) }.keyboardShortcut("]")
@@ -308,6 +282,13 @@ struct BezzleCommands: Commands {
                 .keyboardShortcut("o", modifiers: [.command, .option])
                 .disabled(store?.canOutlineBorders != true)
         }
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+            Button("Show Previous Tab") { Tabs.shared.step(by: -1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+            Button("Show Next Tab") { Tabs.shared.step(by: 1) }
+                .keyboardShortcut(.tab, modifiers: .control)
+        }
         CommandGroup(replacing: .help) {
             Button("Welcome to Bezzle") { Welcome.open() }
         }
@@ -320,16 +301,21 @@ struct BezzleCommands: Commands {
             Divider()
             Button(store?.showsLayers == false ? "Show Layers" : "Hide Layers") { store?.showsLayers.toggle() }
                 .keyboardShortcut("y")
+            Button(store?.showsResources == true ? "Hide Resources" : "Show Resources") { store?.toggleResources() }
+                .keyboardShortcut("y", modifiers: [.command, .shift])
+            Divider()
+            Toggle("Rulers", isOn: Binding(get: { Helpers.shared.rulers }, set: { Helpers.shared.rulers = $0 }))
+                .keyboardShortcut("r", modifiers: .control)
+            // The comma has a key of its own on nearly every keyboard, where ";" often takes Shift
+            // (on a Swiss or German one it is ⇧,). Kept on that key: left to itself, macOS may
+            // move a shortcut elsewhere, and the ⌃, the menus and the tour name would do nothing.
+            Toggle("Guides", isOn: Binding(get: { Helpers.shared.guides }, set: { Helpers.shared.guides = $0 }))
+                .keyboardShortcut(",", modifiers: .control, localization: .custom)
+            Toggle("Layout Grids", isOn: Binding(get: { Helpers.shared.grids }, set: { Helpers.shared.grids = $0 }))
+                .keyboardShortcut("g", modifiers: .control)
+            Toggle("Lock Guides", isOn: Binding(get: { Helpers.shared.guidesLocked }, set: { Helpers.shared.guidesLocked = $0 }))
             Divider()
         }
-    }
-
-    private func open(only types: [UTType]? = nil) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = types ?? DesignFile.openableTypes
-        panel.allowsMultipleSelection = true
-        if types != nil { panel.message = String(localized: "Each file becomes a new design in your Bezzle folder. The file itself stays as it is.") }
-        if panel.runModal() == .OK { panel.urls.forEach { openWindow(id: "design", value: $0.standardizedFileURL) } }
     }
 }
 
@@ -347,6 +333,32 @@ struct TallTitleBar: NSViewRepresentable {
             window.toolbarStyle = .unified
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
+        }
+    }
+}
+
+/// Behind a window's bar along the top: a double click there does what a double click on a title
+/// bar does, as set in System Settings. The bar lies over the hidden title bar, and SwiftUI's
+/// window takes every click there for itself, so the title bar never hears of it; handing it on
+/// only comes back here. Dragging the window by the bar needs nothing: the window server does that.
+struct TitleBarDoubleClick: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Catcher() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class Catcher: NSView {
+        override func mouseDown(with event: NSEvent) {
+            guard event.clickCount == 2, let window else {
+                super.mouseDown(with: event)
+                return
+            }
+            switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+            case "Minimize": window.performMiniaturize(nil)
+            case "None": break
+            // Zoom, and Fill, which AppKit offers no way to ask for, and the system's own choice
+            // while none is made: the window takes the screen, and a second double click gives
+            // it back its size.
+            default: window.performZoom(nil)
+            }
         }
     }
 }

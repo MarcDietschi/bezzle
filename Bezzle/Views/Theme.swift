@@ -78,6 +78,15 @@ enum CanvasInk {
     static let label = Theme.dynamicNS(0x1C1B19, 0xEDEAE4, lightAlpha: 0.50, darkAlpha: 0.50)
     static let labelSelected = Theme.dynamicNS(0x3559C7, 0x8FA8F2)
     static let shadow = Theme.dynamicNS(0x3A3226, 0x000000)
+    /// A layout grid's columns and rows: the red a margin is ruled in on lined paper.
+    static let column = Theme.hex(0xE5484D)
+    /// Its baselines: the pale blue of the lines on that paper.
+    static let baseline = Theme.hex(0x1E9BD7)
+    /// The rulers: printed on the table itself, down in the well with the work, and a shade lighter
+    /// along the artboard they measure.
+    static let ruler = table
+    static let rulerSheet = Theme.dynamicNS(0xEAE7E0, 0x161514)
+    static let rulerInk = Theme.dynamicNS(0x1C1B19, 0xEDEAE4)
 }
 
 // MARK: - Surfaces
@@ -220,6 +229,13 @@ private struct EdgeFade: ViewModifier {
 
 extension View {
     func edgeFade(length: CGFloat = 28) -> some View { modifier(EdgeFade(length: length)) }
+
+    /// A sentence or two that says how something works, in the system face at `size`. SwiftUI
+    /// sets lines as close as the font allows, about 1.2 times its size: right for a label on one
+    /// line, crowded for a sentence that wraps. These are opened to about 1.45, on a half point.
+    func prose(_ size: CGFloat) -> some View {
+        font(.system(size: size)).lineSpacing((size * 0.5).rounded() / 2)
+    }
 }
 
 // MARK: - Opening and shutting

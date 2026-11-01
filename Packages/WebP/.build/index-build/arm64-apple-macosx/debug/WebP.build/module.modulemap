@@ -1,0 +1,4 @@
+module WebP {
+    umbrella "/Users/erik/Documents/apps/Bezzle/Packages/WebP/Sources/WebP/include"
+    export *
+}

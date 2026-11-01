@@ -135,27 +135,63 @@ final class DeckTool {
     /// lies over them.
     func drawStacks(_ ctx: CGContext, in bounds: CGRect) {
         noticeTurns(in: bounds)
-        for deck in store.doc.nodes where deck.isDeck && !deck.hidden && deck.posts.count > 1 {
+        for deck in store.doc.nodes where deck.isDeck && !deck.hidden && deck.posts.count > 1 && !hides(deck) {
             let r = view(deck.frame)
             guard r.insetBy(dx: -20, dy: -20).intersects(bounds), r.width >= 8 else { continue }
             drawBackCards(backCards(r, deck: deck), fill: deck.fill.on ? deck.fill.color.cgColor : .white, in: ctx)
         }
     }
 
+    /// Whether the canvas leaves a deck to the cards drawn here, as while it turns or its posts are
+    /// spread out: drawn under them, the artboard would show where they have not yet come to lie.
+    func hides(_ board: Node) -> Bool {
+        spread?.deck == board.id || (board.isDeck && transitions[board.id] != nil)
+    }
+
+    /// How many cards back each post lies behind `front`: the posts after it first, as turning on
+    /// brings them up, then those before it.
+    private func depths(of posts: [Int], front: Int?) -> [Int: Int] {
+        let c = front.flatMap { posts.firstIndex(of: $0) } ?? 0
+        guard c < posts.count else { return [:] }
+        let order = [posts[c]] + posts[(c + 1)...] + posts[..<c].reversed()
+        return Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
+    }
+
+    /// A post's place in a deck's stack on screen, `depth` cards back: the one in front on the
+    /// artboard, the next as the feet below it, any further back hidden behind the last foot.
+    private func stacked(_ r: CGRect, depth: Int, deck: Node) -> CGRect {
+        let feet = backCards(r, deck: deck)
+        guard depth > 0, !feet.isEmpty else { return r }
+        return feet[max(feet.count - depth, 0)]
+    }
+
+    /// How finely a post is drawn to stand in for its artboard on screen.
+    private func stackScale(_ board: Node) -> CGFloat {
+        min(store.viewport.zoom * deviceScale, 1600 / max(board.frame.width, board.frame.height, 1))
+    }
+
     private func drawBackCards(_ cards: [CGRect], fill: CGColor, in ctx: CGContext) {
-        for (i, card) in cards.enumerated() {
-            let depth = CGFloat(cards.count - i)
-            ctx.saveGState()
-            ctx.setShadow(offset: CGSize(width: 0, height: -1.5), blur: 6, color: NSColor.black.withAlphaComponent(0.16).cgColor)
-            ctx.setFillColor(fill)
-            ctx.fill(card)
-            ctx.restoreGState()
-            ctx.setFillColor(NSColor.black.withAlphaComponent(0.05 * depth).cgColor)
-            ctx.fill(card)
-            ctx.setStrokeColor(Self.edge.cgColor)
-            ctx.setLineWidth(0.5)
-            ctx.stroke(card.insetBy(dx: 0.25, dy: 0.25))
-        }
+        for (i, card) in cards.enumerated() { drawFoot(card, depth: cards.count - i, fill: fill, ctx: ctx) }
+    }
+
+    /// A card `depth` behind the one in front, as its foot shows below it: plain paper, a little
+    /// darker the further back it lies.
+    private func drawFoot(_ card: CGRect, depth: Int, turn: CGFloat = 0, fill: CGColor, ctx: CGContext) {
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.translateBy(x: card.midX, y: card.midY)
+        ctx.rotate(by: turn)
+        let local = CGRect(x: -card.width / 2, y: -card.height / 2, width: card.width, height: card.height)
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -1.5), blur: 6, color: NSColor.black.withAlphaComponent(0.16).cgColor)
+        ctx.setFillColor(fill)
+        ctx.fill(local)
+        ctx.restoreGState()
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.05 * CGFloat(depth)).cgColor)
+        ctx.fill(local)
+        ctx.setStrokeColor(Self.edge.cgColor)
+        ctx.setLineWidth(0.5)
+        ctx.stroke(local.insetBy(dx: 0.25, dy: 0.25))
     }
 
     // MARK: - Turning
@@ -206,7 +242,7 @@ final class DeckTool {
             // Turning quickly, as in scrubbing, each move is quicker.
             let quick = t - lastTurn < 0.3
             lastTurn = t
-            let scale = min(store.viewport.zoom * deviceScale, 1600 / max(deck.frame.width, deck.frame.height, 1))
+            let scale = stackScale(deck)
             transitions[deck.id] = Transition(kind: kind, start: t, duration: kind == .deal ? 0.62 : quick ? 0.24 : 0.46,
                                               old: picture(was.node.showing(was.front), scale: scale),
                                               new: picture(deck.showing(front), scale: scale))
@@ -243,8 +279,9 @@ final class DeckTool {
         }
         defer { if alpha < 1 { ctx.endTransparencyLayer() } }
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -(3 + 10 * lift)), blur: 8 + 22 * lift,
-                      color: NSColor.black.withAlphaComponent(0.18 + 0.14 * lift).cgColor)
+        // At rest, the shadow the canvas gives an artboard, so that a card laid down is the artboard it lands on.
+        ctx.setShadow(offset: CGSize(width: 0, height: -(2 * deviceScale + 10 * lift)), blur: 10 * deviceScale + 22 * lift,
+                      color: CanvasInk.shadow.withAlphaComponent(0.13 + 0.19 * lift).cgColor)
         ctx.setFillColor(fill)
         ctx.fill(local)
         ctx.restoreGState()
@@ -271,9 +308,7 @@ final class DeckTool {
             let p = min(max((t - move.start) / move.duration, 0), 1)
             let fill = deck.fill.on ? deck.fill.color.cgColor : CGColor.white
             ctx.saveGState()
-            // What the canvas drew there is the post now in front, all at once: covered while it moves.
-            ctx.setFillColor(CanvasInk.table.cgColor)
-            ctx.fill(r.insetBy(dx: -1, dy: -1))
+            // The canvas leaves the deck out while it turns (`hides`): the cards are all there is of it.
             drawBackCards(backCards(r, deck: deck), fill: fill, in: ctx)
             let w = r.width, h = r.height
             switch move.kind {
@@ -307,20 +342,26 @@ final class DeckTool {
         }
     }
 
-    // MARK: - The dots
+    // MARK: - The posts under a stack
 
-    /// The artboard the dots show under: the deck the selection is on, or an artboard selected alone.
+    /// The board the row shows under: the deck the selection is on, or an artboard selected alone.
+    /// Not while typing: a click below the artboard to stop must never turn the post or add one.
     private var board: Node? {
-        guard store.tool == .select || store.editingText != nil, store.editingPath == nil, store.editingPicture == nil,
+        guard store.tool == .select, store.editingText == nil, store.editingPath == nil, store.editingPicture == nil,
               store.building == nil, spread == nil else { return nil }
         if let deck = store.selectedDeck, !deck.hidden { return deck }
         guard store.selection.count == 1, let n = store.node(store.selection[0]), n.isArtboard, !n.locked, !n.hidden else { return nil }
         return n
     }
 
-    /// How much the dots show, and where the long dot of the post in front is, by deck.
+    /// By board, each eased: how much the row shows, where the ring round the post in front is,
+    /// how much the well under it and the words under it show, and how far a card just dealt has
+    /// grown in.
     private var pager = Springs<String>()
 
+    /// The row under a selected stack: a small card for each post, in the artboard's shape, the one
+    /// in front ringed in pencil as a selection is; after them a round button that adds one. Under
+    /// an artboard that is no stack yet, that button alone.
     private struct Dots {
         let board: UUID
         let posts: [Int]
@@ -328,18 +369,49 @@ final class DeckTool {
         let first: Int
         let shown: Int
         let front: Int
-        let centres: [CGPoint]
+        /// Each card shown, on screen, where the row lays it now, and how far it has grown in:
+        /// a post just dealt grows where it goes, and the cards after it make room.
+        let cards: [CGRect]
+        let grows: [CGFloat]
+        let size: CGSize
         let track: CGRect
-        let add: CGRect
+        /// The button that adds a post; none on a locked board, which takes none.
+        let add: CGRect?
+
+        var pitch: CGFloat { size.width + DeckTool.gap }
+
+        /// Where on the row a place between cards is, as the ring gliding from one to another goes.
+        func x(at a: CGFloat) -> CGFloat {
+            guard let head = cards.first, let tail = cards.last else { return 0 }
+            func mid(_ j: Int) -> CGFloat {
+                j < 0 ? head.midX + CGFloat(j) * pitch : j >= cards.count ? tail.midX + CGFloat(j - cards.count + 1) * pitch : cards[j].midX
+            }
+            let i = Int(a.rounded(.down))
+            return mid(i) + (mid(i + 1) - mid(i)) * (a - CGFloat(i))
+        }
 
         func index(at x: CGFloat) -> Int {
-            guard let nearest = centres.indices.min(by: { abs(centres[$0].x - x) < abs(centres[$1].x - x) }) else { return 0 }
+            guard let nearest = cards.indices.min(by: { abs(cards[$0].midX - x) < abs(cards[$1].midX - x) }) else { return 0 }
             return first + nearest
         }
     }
 
-    private static let pitch: CGFloat = 13
     private static let most = 13
+    /// Between one card and the next; before the card that adds, a little more.
+    fileprivate static let gap: CGFloat = 6
+    private static let addGap: CGFloat = 14
+    /// The button that adds a post: about as tall as the ring round the post in front.
+    private static let addSize: CGFloat = 18
+    /// Its plus at rest: the pencil, lighter on the dark table so it reads on its tint.
+    private static let addInk = Theme.dynamicNS(0x3559C7, 0x9DB3F5)
+    private static let tipFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
+    private static let well = Theme.dynamicNS(0x1C1B19, 0xEDEAE4, lightAlpha: 0.07, darkAlpha: 0.09)
+
+    /// A post's card in the row: about as big as a small square, in the artboard's shape.
+    private static func cardSize(_ board: Node) -> CGSize {
+        let root = sqrt(min(max(board.frame.width / max(board.frame.height, 1), 0.3), 3.3))
+        return CGSize(width: (11 * root).rounded(), height: (11 / root).rounded())
+    }
 
     private func dots(_ board: Node) -> Dots? {
         let r = view(board.frame)
@@ -348,102 +420,251 @@ final class DeckTool {
         let front = board.isDeck ? store.place(in: board).index : 0
         let shown = min(posts.count, Self.most)
         let first = min(max(front - shown / 2, 0), max(posts.count - shown, 0))
-        let y = stackFoot(r, deck: board) + 16
-        let width = CGFloat(max(shown - 1, 0)) * Self.pitch + (shown > 0 ? 22 : 0)
-        let left = r.midX - (width + (shown > 0 ? 14 : 0) + 18) / 2
-        let centres = (0..<shown).map { CGPoint(x: left + 11 + CGFloat($0) * Self.pitch, y: y) }
-        let track = CGRect(x: left - 8, y: y - 11, width: width + 16, height: 22)
-        let add = CGRect(x: left + width + (shown > 0 ? 14 : 0), y: y - 9, width: 18, height: 18)
-        return Dots(board: board.id, posts: posts, first: first, shown: shown, front: front, centres: centres, track: track, add: add)
+        let size = Self.cardSize(board)
+        let grows = posts[first..<first + shown].map { CGFloat(min(max(pager.all[cardKey(board.id, $0)]?.value ?? 1, 0), 1.1)) }
+        let pitch = size.width + Self.gap
+        let all = grows.reduce(0, +)
+        let row = max(all * pitch - Self.gap * min(all, 1), 0)
+        let adds = !board.locked
+        let width = row + (adds ? Self.addGap * min(all, 1) + Self.addSize : 0)
+        let y = (stackFoot(r, deck: board) + 18).rounded()
+        let left = r.midX - width / 2
+        var x = left
+        let cards = grows.map { g -> CGRect in
+            defer { x += g * pitch }
+            return CGRect(x: (x + g * size.width / 2 - size.width / 2).rounded(), y: y - size.height / 2, width: size.width, height: size.height)
+        }
+        let add = adds ? CGRect(x: (left + width - Self.addSize).rounded(), y: y - Self.addSize / 2, width: Self.addSize, height: Self.addSize) : nil
+        let tall = max(size.height, 12) + 12
+        let track = CGRect(x: left.rounded() - 8, y: y - tall / 2, width: row + 16, height: tall)
+        return Dots(board: board.id, posts: posts, first: first, shown: shown, front: front, cards: cards, grows: grows, size: size, track: track, add: add)
+    }
+
+    /// Where the row under a board lays each post's card it shows, and the button that adds one,
+    /// on screen; nil when no row shows under it. What a press there turns to or adds.
+    func row(under board: Node) -> (cards: [CGRect], add: CGRect?)? {
+        guard self.board?.id == board.id, let d = dots(board) else { return nil }
+        return (d.cards, d.add)
     }
 
     private enum Part: Equatable { case dot(Int), add, offer }
     private var hovered: Part?
 
     private func part(at v: CGPoint, _ d: Dots) -> Part? {
-        if d.add.insetBy(dx: -5, dy: -5).contains(v) { return .add }
+        if let add = d.add, add.insetBy(dx: -5, dy: -6).contains(v) { return .add }
         if d.shown > 1, d.track.insetBy(dx: 0, dy: -4).contains(v) { return .dot(d.index(at: v.x)) }
         return nil
     }
 
+    /// What the words under the row say, and under what, while it is pointed at or scrubbed; kept
+    /// as they fade.
+    private var tip: (board: UUID, text: String, x: CGFloat)?
+
     private func drawDots(_ d: Dots, _ board: Node, in ctx: CGContext) {
-        let shown = pager["shown " + d.board.uuidString, start: 0]
-        let alpha = CGFloat(min(max(shown.value, 0), 1))
-        guard alpha > 0.01 else { return }
+        let id = d.board.uuidString
+        let k = CGFloat(min(max(pager["shown " + id, start: 0].value, 0), 1))
+        guard k > 0.01 else { return }
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        // Rises into place under the board as it comes, and fades as one.
+        ctx.translateBy(x: 0, y: 5 * (1 - k))
+        ctx.setAlpha(k)
+        ctx.beginTransparencyLayer(in: (d.add.map { d.track.union($0) } ?? d.track).insetBy(dx: -60, dy: -40), auxiliaryInfo: nil)
+        defer { ctx.endTransparencyLayer() }
+
+        let broken = board.isDeck ? store.brokenPosts(of: board) : []
+        let scrubbing: Bool = if case .scrub = drag { true } else { false }
+        // Scrubbing, the ring is what moves; the card first pressed is not lifted.
+        let pointed: Int? = if !scrubbing, case .dot(let i) = hovered { i } else { nil }
+        let paper = board.fill.on ? board.fill.color.cgColor : CGColor.white
+
+        // A shallow well under the cards while they are pointed at, as a strip to scrub along.
+        let well = CGFloat(min(max(pager["well " + id, start: 0].value, 0), 1))
+        if d.shown > 1, well > 0.01 {
+            let t = d.track.insetBy(dx: 3 * (1 - well), dy: 2 * (1 - well))
+            ctx.addPath(CGPath(roundedRect: t, cornerWidth: t.height / 2, cornerHeight: t.height / 2, transform: nil))
+            ctx.setFillColor(Self.well.withAlphaComponent(Self.well.alphaComponent * well).cgColor)
+            ctx.fillPath()
+        }
+
+        // The cards: those behind receded into the table, the one in front full and lifted. On the
+        // light table paper shows little against it, so they recede less.
+        let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let recede: CGFloat = dark ? 0.38 : 0.75
+        let ring = pager["at " + id, start: Double(d.front - d.first)]
+        let at = CGFloat(ring.value)
+        for (i, card) in d.cards.enumerated() {
+            let index = d.first + i
+            // Dealt in, a card grows from nothing where it goes.
+            var grow = d.grows[i]
+            // Past what fits, the cards at either end are smaller, as there are more beyond them.
+            if d.posts.count > d.shown {
+                if (i == 0 && d.first > 0) || (i == d.shown - 1 && d.first + d.shown < d.posts.count) { grow *= 0.5 }
+                else if (i == 1 && d.first > 0) || (i == d.shown - 2 && d.first + d.shown < d.posts.count) { grow *= 0.78 }
+            }
+            guard grow > 0.01 else { continue }
+            let near = max(0, 1 - abs(at - CGFloat(i)))
+            let lifted = pointed == index ? 1 : 0 as CGFloat
+            let scale = grow * (1 + 0.1 * near + 0.14 * lifted * (1 - near))
+            let r = CGRect(center: CGPoint(x: card.midX, y: card.midY), size: CGSize(width: card.width * scale, height: card.height * scale))
+            let isBroken = index < d.posts.count && broken.contains(d.posts[index])
+            drawMiniCard(r, fill: isBroken ? Self.broken.cgColor : paper, alpha: recede + (1 - recede) * max(near, 0.7 * lifted), lift: max(near, lifted), ctx: ctx)
+        }
+
+        // The ring round the post in front, as a selection is drawn: it glides from card to card,
+        // drawn out a little the faster it goes.
+        if d.shown > 0, let firstCard = d.cards.first {
+            let frontBroken = d.front < d.posts.count && broken.contains(d.posts[d.front])
+            let stretch = min(abs(CGFloat(ring.velocity)) * d.pitch * 0.02, 12)
+            let size = CGSize(width: d.size.width * 1.1 + 7 + stretch, height: d.size.height * 1.1 + 7)
+            let r = CGRect(center: CGPoint(x: d.x(at: at), y: firstCard.midY), size: size)
+            let grown = d.front - d.first < d.grows.count ? min(d.grows[max(d.front - d.first, 0)], 1) : 1
+            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil))
+            ctx.setStrokeColor((frontBroken ? Self.broken : CanvasInk.pencil).withAlphaComponent(grown).cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.strokePath()
+        }
+
+        let adding = hovered == .add && d.add != nil
+        if let add = d.add { drawAdd(add, board: id, dark: dark, ctx: ctx) }
+
+        // Under the row: which post is pointed at or scrubbed to, or what the button does,
+        // in a pencil pill as the canvas gives a measure; past what fits, which post is in front.
+        let below = d.track.maxY + 6
+        if scrubbing, !d.cards.isEmpty {
+            tip = (d.board, String(localized: "\(d.front + 1) of \(d.posts.count)"), d.x(at: at))
+        } else if let p = pointed, p >= d.first, p - d.first < d.cards.count {
+            tip = (d.board, String(localized: "\(p + 1) of \(d.posts.count)"), d.cards[p - d.first].midX)
+        } else if adding, let add = d.add {
+            tip = (d.board, String(localized: "Add Post"), add.midX)
+        }
+        let showing = CGFloat(min(max(pager["tip " + id, start: 0].value, 0), 1))
+        if showing > 0.01, let tip, tip.board == d.board {
+            drawPill(tip.text, under: CGPoint(x: tip.x, y: below), grow: showing, ctx: ctx)
+        }
+        if d.posts.count > Self.most, showing < 0.99 {
+            let label = NSAttributedString(string: String(localized: "\(d.front + 1) of \(d.posts.count)"),
+                                           attributes: [.font: Self.numberFont, .foregroundColor: CanvasInk.label.withAlphaComponent(CanvasInk.label.alphaComponent * (1 - showing))])
+            let size = label.size()
+            label.draw(at: CGPoint(x: (d.track.midX - size.width / 2).rounded(), y: below + (18 - size.height) / 2))
+        }
+    }
+
+    /// The button that adds a post: round, as the spread's buttons are, a pencil tint at rest;
+    /// under the pointer it fills in pencil and swells, and pressed it gives and springs back
+    /// as the new post is dealt into the row.
+    private func drawAdd(_ add: CGRect, board id: String, dark: Bool, ctx: CGContext) {
+        let h = CGFloat(min(max(pager["add " + id, start: 0].value, 0), 1))
+        let press = CGFloat(pager["press " + id, start: 0].value)
+        let swell = 1 + 0.1 * h - 0.14 * press
+        let c = CGPoint(x: add.midX, y: add.midY)
+        let disc = CGRect(center: c, size: CGSize(width: Self.addSize * swell, height: Self.addSize * swell))
+        ctx.setFillColor(CanvasInk.pencil.withAlphaComponent(dark ? 0.24 : 0.13).cgColor)
+        ctx.fillEllipse(in: disc)
+        if h > 0.01 {
+            ctx.saveGState()
+            ctx.setAlpha(h)
+            ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 5, color: CanvasInk.pencil.withAlphaComponent(0.45).cgColor)
+            ctx.setFillColor(CanvasInk.pencil.cgColor)
+            ctx.fillEllipse(in: disc)
+            ctx.restoreGState()
+        }
+        let arm = 3.5 * swell
+        for (color, alpha) in [(Self.addInk.cgColor, 1 - h), (CGColor.white, h)] where alpha > 0.01 {
+            ctx.saveGState()
+            ctx.setAlpha(alpha)
+            ctx.move(to: CGPoint(x: c.x - arm, y: c.y))
+            ctx.addLine(to: CGPoint(x: c.x + arm, y: c.y))
+            ctx.move(to: CGPoint(x: c.x, y: c.y - arm))
+            ctx.addLine(to: CGPoint(x: c.x, y: c.y + arm))
+            ctx.setStrokeColor(color)
+            ctx.setLineWidth(1.5)
+            ctx.setLineCap(.round)
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
+    }
+
+    /// A post as a small card of paper on the table: a hairline edge and a contact shadow, which
+    /// deepens as it lifts.
+    private func drawMiniCard(_ r: CGRect, fill: CGColor, alpha: CGFloat, lift: CGFloat, ctx: CGContext) {
+        let shape = CGPath(roundedRect: r, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)
         ctx.saveGState()
         defer { ctx.restoreGState() }
         ctx.setAlpha(alpha)
-        let broken = board.isDeck ? store.brokenPosts(of: board) : []
-        let scrubbing: Bool = if case .scrub = drag { true } else { false }
-        if d.shown > 1, scrubbing || { if case .dot = hovered { true } else { false } }() {
-            ctx.addPath(CGPath(roundedRect: d.track, cornerWidth: 11, cornerHeight: 11, transform: nil))
-            ctx.setFillColor(Self.faint.withAlphaComponent(0.12).cgColor)
-            ctx.fillPath()
-        }
-        // The long dot glides from post to post, over the dots it passes.
-        let at = CGFloat(pager["at " + d.board.uuidString, start: Double(d.front - d.first)].value)
-        for (i, c) in d.centres.enumerated() {
-            let index = d.first + i
-            // Past what fits, the dots at either end shrink, as there are more beyond them.
-            var size: CGFloat = 6
-            if d.posts.count > d.shown {
-                if (i == 0 && d.first > 0) || (i == d.shown - 1 && d.first + d.shown < d.posts.count) { size = 3.5 }
-                else if (i == 1 && d.first > 0) || (i == d.shown - 2 && d.first + d.shown < d.posts.count) { size = 5 }
-            }
-            let under = min(1, abs(at - CGFloat(i)) * 1.4)
-            guard under > 0.02 else { continue }
-            let isBroken = index < d.posts.count && broken.contains(d.posts[index])
-            let lifted = hovered == .dot(index)
-            let grow: CGFloat = lifted ? 2 : 0
-            let dot = CGRect(x: c.x - (size + grow) / 2, y: c.y - (size + grow) / 2, width: size + grow, height: size + grow)
-            let color: NSColor = isBroken ? Self.broken : lifted ? Self.ink : Self.faint.withAlphaComponent(0.6)
-            ctx.setFillColor(color.withAlphaComponent(color.alphaComponent * under).cgColor)
-            ctx.fillEllipse(in: dot)
-        }
-        if d.shown > 0 {
-            let x = (d.centres.first?.x ?? 0) + at * Self.pitch
-            let frontBroken = d.front < d.posts.count && broken.contains(d.posts[d.front])
-            let pill = CGRect(x: x - 9, y: (d.centres.first?.y ?? 0) - 3, width: 18, height: 6)
-            ctx.addPath(CGPath(roundedRect: pill, cornerWidth: 3, cornerHeight: 3, transform: nil))
-            ctx.setFillColor((frontBroken ? Self.broken : CanvasInk.pencil).cgColor)
-            ctx.fillPath()
-        }
-        if d.posts.count > Self.most {
-            let label = NSAttributedString(string: String(localized: "\(d.front + 1) of \(d.posts.count)"), attributes: [.font: Self.numberFont, .foregroundColor: Self.ink])
-            let size = label.size()
-            label.draw(at: CGPoint(x: d.track.midX - size.width / 2, y: d.track.maxY + 2))
-        }
-        // The plus: a copy of the post in front, dealt onto the stack.
-        let ring = d.add.insetBy(dx: 0.75, dy: 0.75)
-        let lift = hovered == .add
+        ctx.beginTransparencyLayer(in: r.insetBy(dx: -8, dy: -8), auxiliaryInfo: nil)
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: lift ? 6 : 3, color: NSColor.black.withAlphaComponent(lift ? 0.22 : 0.14).cgColor)
-        ctx.setFillColor((lift ? CanvasInk.pencil : Self.surface).cgColor)
-        ctx.fillEllipse(in: ring)
+        ctx.setShadow(offset: CGSize(width: 0, height: -(1 + 2 * lift)), blur: 2 + 5 * lift,
+                      color: CanvasInk.shadow.withAlphaComponent(0.3 + 0.2 * lift).cgColor)
+        ctx.addPath(shape)
+        ctx.setFillColor(fill)
+        ctx.fillPath()
         ctx.restoreGState()
-        let c = CGPoint(x: d.add.midX, y: d.add.midY)
-        ctx.move(to: CGPoint(x: c.x - 3.5, y: c.y))
-        ctx.addLine(to: CGPoint(x: c.x + 3.5, y: c.y))
-        ctx.move(to: CGPoint(x: c.x, y: c.y - 3.5))
-        ctx.addLine(to: CGPoint(x: c.x, y: c.y + 3.5))
-        ctx.setStrokeColor((lift ? NSColor.white : CanvasInk.pencil).cgColor)
-        ctx.setLineWidth(1.5)
-        ctx.setLineCap(.round)
+        ctx.addPath(CGPath(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), cornerWidth: 1.25, cornerHeight: 1.25, transform: nil))
+        ctx.setStrokeColor(Self.edge.cgColor)
+        ctx.setLineWidth(0.5)
         ctx.strokePath()
+        ctx.endTransparencyLayer()
     }
 
-    /// Brings the dots in under the board they belong to, and the long dot to the post in front.
+    /// Words in a pencil pill, centred on `p.x` with its top at `p.y`, springing out of the row above.
+    private func drawPill(_ text: String, under p: CGPoint, grow: CGFloat, ctx: CGContext) {
+        let attrs: [NSAttributedString.Key: Any] = [.font: Self.tipFont, .foregroundColor: NSColor.white]
+        let size = (text as NSString).size(withAttributes: attrs)
+        let w = (size.width + 14).rounded(), h: CGFloat = 18
+        let pill = CGRect(x: (p.x - w / 2).rounded(), y: p.y.rounded(), width: w, height: h)
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.translateBy(x: pill.midX, y: pill.minY)
+        ctx.scaleBy(x: 0.8 + 0.2 * grow, y: 0.8 + 0.2 * grow)
+        ctx.translateBy(x: -pill.midX, y: -pill.minY - 4 * (1 - grow))
+        ctx.setAlpha(min(1, grow))
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 3, color: CanvasInk.pencil.withAlphaComponent(0.35).cgColor)
+        ctx.addPath(CGPath(roundedRect: pill, cornerWidth: h / 2, cornerHeight: h / 2, transform: nil))
+        ctx.setFillColor(CanvasInk.pencil.cgColor)
+        ctx.fillPath()
+        ctx.restoreGState()
+        (text as NSString).draw(at: CGPoint(x: pill.minX + (w - size.width) / 2, y: pill.minY + (h - size.height) / 2), withAttributes: attrs)
+    }
+
+    /// Brings the row in under the board it belongs to, the ring to the post in front, a post just
+    /// dealt in, and the well and the words while it is pointed at.
     private func aimPager() {
         let current = board
         for key in pager.all.keys where key.hasPrefix("shown ") && key != "shown " + (current?.id.uuidString ?? "") {
             pager.all[key]?.target = 0
         }
         guard let current, let d = dots(current) else { return }
-        pager["shown " + current.id.uuidString, start: 0].target = 1
-        let key = "at " + current.id.uuidString
-        var at = pager[key, start: Double(d.front - d.first)]
-        at.target = Double(d.front - d.first)
-        pager.all[key] = at
+        let id = current.id.uuidString
+        let scrubbing: Bool = if case .scrub = drag { true } else { false }
+        let onCards: Bool = if case .dot = hovered { true } else { false }
+        aim("shown " + id, 1, from: 0)
+        aim("at " + id, Double(d.front - d.first))
+        // A post the row has not shown before is dealt in: its card grows where it goes.
+        if let known = rowPosts[current.id] {
+            for p in d.posts where !known.contains(p) {
+                var grow = Spring(0)
+                grow.target = 1
+                pager.all[cardKey(current.id, p)] = grow
+            }
+        }
+        rowPosts = [current.id: Set(d.posts)]
+        pager.all = pager.all.filter { !($0.key.hasPrefix("card ") && $0.value.settled && $0.value.value == 1) }
+        aim("well " + id, onCards || scrubbing ? 1 : 0, from: 0)
+        aim("tip " + id, onCards || scrubbing || hovered == .add ? 1 : 0, from: 0)
+        aim("add " + id, hovered == .add ? 1 : 0, from: 0)
+    }
+
+    /// The posts each row last showed, to tell one just dealt.
+    private var rowPosts: [UUID: Set<Int>] = [:]
+
+    private func cardKey(_ board: UUID, _ post: Int) -> String { "card \(board.uuidString) \(post)" }
+
+    private func aim(_ key: String, _ target: Double, from start: Double? = nil) {
+        var spring = pager[key, start: start ?? target]
+        spring.target = target
+        pager.all[key] = spring
     }
 
     // MARK: - The pointer
@@ -474,6 +695,9 @@ final class DeckTool {
         if let board, let d = dots(board), let part = part(at: v, d) {
             switch part {
             case .add:
+                var press = Spring(1)
+                press.target = 0
+                pager.all["press " + board.id.uuidString] = press
                 store.addPost(to: board.id)
             case .dot(let i):
                 if i < d.posts.count { store.turn(board.id, to: d.posts[i]) }
@@ -640,7 +864,7 @@ final class DeckTool {
     private var offerShown = Spring(0)
     private var offerToken: UUID?
 
-    private func offerRect() -> (rect: CGRect, words: NSAttributedString, button: CGRect)? {
+    private func offerRect() -> (rect: CGRect, words: NSAttributedString, button: CGRect, label: NSAttributedString)? {
         guard let offer = store.offer, store.editingText == nil, let deck = store.node(offer.deck), deck.isDeck,
               let frame = store.doc.absoluteFrame(of: offer.anchor) else { return nil }
         let words = NSMutableAttributedString(string: offer.words + "  ", attributes: [.font: Self.offerFont, .foregroundColor: Self.ink])
@@ -651,7 +875,7 @@ final class DeckTool {
         var origin = CGPoint(x: r.midX - size.width / 2, y: r.minY - size.height - 10)
         if origin.y < board.minY + 4 { origin.y = r.maxY + 10 }
         let rect = CGRect(origin: origin, size: size)
-        return (rect, words, CGRect(x: rect.maxX - 4 - b - 16, y: rect.minY + 4, width: b + 16, height: rect.height - 8))
+        return (rect, words, CGRect(x: rect.maxX - 4 - b - 16, y: rect.minY + 4, width: b + 16, height: rect.height - 8), button)
     }
 
     private func drawOffer(_ ctx: CGContext) {
@@ -682,6 +906,8 @@ final class DeckTool {
         ctx.fillPath()
         let size = o.words.size()
         o.words.draw(at: CGPoint(x: o.rect.minX + 12, y: o.rect.midY - size.height / 2))
+        let label = o.label.size()
+        o.label.draw(at: CGPoint(x: o.button.midX - label.width / 2, y: o.button.midY - label.height / 2))
     }
 
     // MARK: - Every post at once
@@ -707,9 +933,27 @@ final class DeckTool {
             h.target = r.height
         }
 
-        mutating func step(_ dt: Double) {
-            for k in [\Card.x, \Card.y, \Card.w, \Card.h] { self[keyPath: k].step(dt, stiffness: 210, damping: 21) }
+        mutating func step(_ dt: Double, home: Bool = false) {
+            // Flying back onto the stack, it comes firmly and stops where it lands, not past it.
+            let (stiffness, damping) = home ? (300.0, 32.0) : (210.0, 21.0)
+            for k in [\Card.x, \Card.y, \Card.w, \Card.h] { self[keyPath: k].step(dt, stiffness: stiffness, damping: damping) }
             lift.step(dt, stiffness: 400, damping: 30)
+        }
+
+        /// Near enough where it is going, and slow enough, for the canvas to take over without a jump.
+        var landed: Bool {
+            [x, y, w, h].allSatisfy { abs($0.value - $0.target) < 0.35 && abs($0.velocity) < 12 } && abs(lift.value) < 0.01
+        }
+
+        /// Kept where it is on the canvas as the view scrolls or zooms under it.
+        mutating func carry(from old: Viewport, to new: Viewport) {
+            let k = Double(new.zoom / old.zoom)
+            let c = new.toView(old.toCanvas(CGPoint(x: x.value, y: y.value)))
+            x.value = c.x
+            y.value = c.y
+            w.value *= k
+            h.value *= k
+            for path in [\Card.x, \Card.y, \Card.w, \Card.h] { self[keyPath: path].velocity *= k }
         }
     }
 
@@ -720,6 +964,8 @@ final class DeckTool {
         var cards: [Int: Card] = [:]
         /// When each card is let go from the stack to fly to its place, from when the spread opened.
         var opened: CFTimeInterval
+        /// The view the cards were last placed in: closing, they go where the stack is on the canvas.
+        var viewport: Viewport
         var backdrop = Spring(0)
         var hovered: Int?
         var hoveredButton: Button?
@@ -735,20 +981,31 @@ final class DeckTool {
     /// Whether every post of a deck is spread out over the canvas.
     var spreading: Bool { spread != nil }
 
+    /// The spread as it lies on screen now: each post's card, the buttons on it that throw it
+    /// away, and the card that adds one. What a press there picks.
+    var spreadPlaces: (cards: [Int: CGRect], trash: [Int: CGRect], add: CGRect?)? {
+        guard let s = spread else { return nil }
+        var cards: [Int: CGRect] = [:], trash: [Int: CGRect] = [:]
+        for p in s.posts {
+            guard let card = s.cards[p] else { continue }
+            cards[p] = card.rect
+            trash[p] = buttons(on: face(card), post: p, in: s).first { $0.0 == .remove(p) }?.1
+        }
+        return (cards, trash, addCard(s))
+    }
+
     /// Every post of a deck flies out of the stack into rows over the canvas.
     func openSpread(_ board: Node) {
         guard board.isDeck, spread == nil, let bounds = store.canvas?.bounds else { return }
         let r = view(board.frame)
-        var s = Spread(deck: board.id, posts: board.posts, opened: CACurrentMediaTime())
+        var s = Spread(deck: board.id, posts: board.posts, opened: CACurrentMediaTime(), viewport: store.viewport)
         let front = store.front(of: board)
-        for (i, p) in s.posts.enumerated() {
-            // Out of the stack: the one in front from where it lies, the rest from just behind it.
-            s.cards[p] = Card(p == front ? r : receded(r, CGFloat(min(i, 2)) * 0.5 + 0.5, deck: board.id))
-        }
+        // Out of the stack from where each lies in it: the one in front from the artboard, the rest
+        // from the feet below it.
+        for (p, depth) in depths(of: s.posts, front: front) { s.cards[p] = Card(stacked(r, depth: depth, deck: board)) }
+        if let front { s.pictures[front] = picture(board.showing(front), scale: stackScale(board)) }
         s.backdrop.target = 1
         spread = s
-        if let front { s.pictures[front] = picture(board.showing(front), scale: min(deviceScale, 1600 / max(board.frame.width, 1))) }
-        spread?.pictures = s.pictures
         drawPictures(bounds: bounds)
         reflow()
         redraw()
@@ -809,7 +1066,7 @@ final class DeckTool {
 
     private func spreadLayout(_ s: Spread) -> Layout? {
         guard let board = store.node(s.deck), let bounds = store.canvas?.bounds else { return nil }
-        return layout(count: s.posts.count + 1, aspect: board.frame.width / max(board.frame.height, 1), in: bounds)
+        return layout(count: s.posts.count + (board.locked ? 0 : 1), aspect: board.frame.width / max(board.frame.height, 1), in: bounds)
     }
 
     /// The posts in the order they show: with one taken up, the others make room where it would go.
@@ -841,21 +1098,59 @@ final class DeckTool {
             spread = nil
             return
         }
-        let r = view(board.frame)
+        guard s.closing == nil else { return }
         let chosen = post ?? store.front(of: board)
-        for (i, p) in s.posts.enumerated() {
-            guard var card = s.cards[p] else { continue }
-            card.aim(p == chosen ? r : receded(r, CGFloat(min(i, 2)) * 0.5 + 0.5, deck: board.id))
-            s.cards[p] = card
-        }
         s.closing = (chosen, CACurrentMediaTime())
+        s.viewport = store.viewport
         s.backdrop.target = 0
         s.hovered = nil
         s.hoveredButton = nil
-        spread = s
+        // Laid down flat: a card still lifted under the pointer would land larger than its artboard.
+        for p in s.posts { s.cards[p]?.lift.target = 0 }
+        // The feet it lands on lie close, as they do with the pointer away; pointed at, they part again.
+        if let was = pointedDeck { fan.all[was]?.target = 0 }
+        pointedDeck = nil
         // In front at once, under the cards flying back, so what is shown and exported is it.
         if let chosen { store.turn(board.id, to: chosen) }
+        aimHome(&s)
+        spread = s
+        sharpen(chosen)
         redraw()
+    }
+
+    /// Closing, sends every card to its place in the stack, wherever the stack is on screen now:
+    /// the chosen post onto the artboard, the ones behind it onto its feet.
+    private func aimHome(_ s: inout Spread) {
+        guard let closing = s.closing, let board = store.node(s.deck) else { return }
+        let r = view(board.frame)
+        for (p, depth) in depths(of: s.posts, front: closing.post) { s.cards[p]?.aim(stacked(r, depth: depth, deck: board)) }
+    }
+
+    /// The post chosen drawn again as finely as the artboard it lands on, so that nothing changes
+    /// when the canvas takes over from the card. Away from the main thread, while the card flies.
+    private func sharpen(_ post: Int?) {
+        guard let post, let s = spread, let board = store.node(s.deck) else { return }
+        let node = board.isDeck ? board.showing(post) : board
+        let scale = stackScale(board), key = node.children.first?.id ?? node.id
+        if let kept = drawn[key], kept.scale == scale, kept.node == node {
+            spread?.pictures[post] = kept.image
+            return
+        }
+        let assets = store.assets, token = s.token
+        struct Made: @unchecked Sendable { let image: CGImage? }
+        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            let made = Made(image: Renderer.image(of: node, scale: scale, assets: assets))
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, let image = made.image else { return }
+                    if self.drawn.count > 40 { self.drawn.removeAll() }
+                    self.drawn[key] = (node, scale, image)
+                    guard self.spread?.token == token else { return }
+                    self.spread?.pictures[post] = image
+                    self.redraw()
+                }
+            }
+        }
     }
 
     private func post(at v: CGPoint, in s: Spread) -> Int? {
@@ -876,24 +1171,39 @@ final class DeckTool {
         return best?.0
     }
 
-    /// The round buttons on a card the pointer is on, on screen: export it, throw it away.
-    private func buttons(on r: CGRect, post: Int) -> [(Button, CGRect, String)] {
-        let d: CGFloat = 26
-        return [
-            (.remove(post), CGRect(x: r.maxX - d - 6, y: r.minY + 6, width: d, height: d), "trash"),
-            (.export(post), CGRect(x: r.maxX - 2 * d - 12, y: r.minY + 6, width: d, height: d), "square.and.arrow.up"),
-        ]
+    /// A card as it is drawn: a little larger as it is lifted.
+    private func face(_ card: Card) -> CGRect {
+        let r = card.rect, up = CGFloat(card.lift.value)
+        return r.insetBy(dx: -r.width * 0.025 * up, dy: -r.height * 0.025 * up)
     }
 
-    private func addCard(_ s: Spread) -> CGRect? { spreadLayout(s).map { $0.rect(s.posts.count) } }
+    /// The round buttons on a card the pointer is on, as it is drawn on screen: export it, throw it
+    /// away. Large enough to hit without aiming, and well in from the card's corner. The last post
+    /// of a deck, and any of a locked one, cannot be thrown away.
+    private func buttons(on r: CGRect, post: Int, in s: Spread) -> [(Button, CGRect, String)] {
+        let d = min(31, max(24, (r.width * 0.13).rounded()))
+        let margin = (d * 0.42).rounded(), gap = (d * 0.28).rounded()
+        let top = r.minY + margin
+        let export = (Button.export(post), CGRect(x: r.maxX - margin - 2 * d - gap, y: top, width: d, height: d), "square.and.arrow.up")
+        guard s.posts.count > 1, takes(s) else { return [export] }
+        return [(.remove(post), CGRect(x: r.maxX - margin - d, y: top, width: d, height: d), "trash"), export]
+    }
+
+    /// Whether the deck spread out takes posts added and thrown away: not while it is locked.
+    private func takes(_ s: Spread) -> Bool { store.node(s.deck)?.locked != true }
+
+    private func addCard(_ s: Spread) -> CGRect? {
+        guard takes(s) else { return nil }
+        return spreadLayout(s).map { $0.rect(s.posts.count) }
+    }
 
     private func spreadHover(_ v: CGPoint?) {
         guard var s = spread, s.closing == nil else { return }
         var post: Int?, button: Button?
         if let v {
             post = self.post(at: v, in: s)
-            if let p = post, let r = s.cards[p]?.rect {
-                button = buttons(on: r, post: p).first { $0.1.insetBy(dx: -3, dy: -3).contains(v) }?.0
+            if let p = post, let card = s.cards[p] {
+                button = buttons(on: face(card), post: p, in: s).first { $0.1.insetBy(dx: -3, dy: -3).contains(v) }?.0
             } else if addCard(s)?.contains(v) == true {
                 button = .add
             }
@@ -910,8 +1220,9 @@ final class DeckTool {
     private func spreadDown(at v: CGPoint) -> Bool {
         guard let s = spread else { return false }
         guard s.closing == nil else { return true }
-        if let p = post(at: v, in: s), let r = s.cards[p]?.rect {
-            if let (button, _, _) = buttons(on: r, post: p).first(where: { $0.1.insetBy(dx: -3, dy: -3).contains(v) }) {
+        if let p = post(at: v, in: s), let card = s.cards[p] {
+            let r = card.rect
+            if let (button, _, _) = buttons(on: face(card), post: p, in: s).first(where: { $0.1.insetBy(dx: -3, dy: -3).contains(v) }) {
                 press(button, s)
                 return true
             }
@@ -936,7 +1247,7 @@ final class DeckTool {
                 ExportPanel.present(for: self.store)
             }
         case .remove(let post):
-            guard s.posts.count > 1 else { return }
+            guard s.posts.count > 1, takes(s) else { return }
             quietly.insert(s.deck)
             store.removePost(post, from: s.deck)
             spread?.posts.removeAll { $0 == post }
@@ -946,7 +1257,7 @@ final class DeckTool {
             // The last post left is an artboard like any again: its card goes back down onto it.
             if store.node(s.deck)?.isDeck != true { closeSpread(choosing: spread?.posts.first) }
         case .add:
-            guard let last = s.posts.last, let l = spreadLayout(s) else { return }
+            guard takes(s), let last = s.posts.last, let l = spreadLayout(s) else { return }
             store.fronts[s.deck] = last
             quietly.insert(s.deck)
             store.addPost(to: s.deck)
@@ -962,15 +1273,31 @@ final class DeckTool {
     }
 
     private func drawSpread(in ctx: CGContext, bounds: CGRect) {
-        guard var s = spread, let board = store.node(s.deck), let l = spreadLayout(s) else { return }
-        let t = CACurrentMediaTime()
-        // Each card leaves the stack a moment after the one before, so they fan out.
-        if s.closing == nil {
-            for (i, p) in s.posts.enumerated() where t - s.opened >= Double(i) * 0.022 { s.cards[p]?.step(dt) }
-        } else {
-            for p in s.posts { s.cards[p]?.step(dt) }
+        // A deck undone away, or made an artboard elsewhere, while its posts were out: they go.
+        guard let current = spread, let board = store.node(current.deck), board.isDeck || current.closing != nil else {
+            spread = nil
+            return
         }
-        s.backdrop.step(dt, stiffness: 180, damping: 26)
+        if current.closing == nil, drag == nil, board.posts != current.posts { follow(board, bounds: bounds) }
+        guard var s = spread, spreadLayout(s) != nil else { return }
+        let t = CACurrentMediaTime()
+        let front = store.front(of: board)
+        let depth = depths(of: s.posts, front: s.closing != nil ? s.closing?.post : front)
+        // Each card leaves the stack a moment after the one in front of it, so they fan out.
+        let stagger = min(0.022, 0.3 / Double(max(s.posts.count, 1)))
+        if s.closing == nil {
+            for p in s.posts where t - s.opened >= Double(depth[p] ?? 0) * stagger { s.cards[p]?.step(dt) }
+            s.backdrop.step(dt, stiffness: 180, damping: 26)
+        } else {
+            // Flying back onto the canvas, they keep to it as it scrolls or zooms.
+            if store.viewport != s.viewport {
+                for p in s.posts { s.cards[p]?.carry(from: s.viewport, to: store.viewport) }
+                s.viewport = store.viewport
+            }
+            aimHome(&s)
+            for p in s.posts { s.cards[p]?.step(dt, home: true) }
+            s.backdrop.step(dt, stiffness: 260, damping: 32)
+        }
         spread = s
         let fill = board.fill.on ? board.fill.color.cgColor : CGColor.white
 
@@ -980,9 +1307,8 @@ final class DeckTool {
         ctx.setFillColor(CanvasInk.table.withAlphaComponent(0.985 * k).cgColor)
         ctx.fill(bounds)
 
-        // The card that adds a post, after the last.
-        if s.closing == nil {
-            let r = l.rect(s.posts.count)
+        // The card that adds a post, after the last; fading with the rest as they close.
+        if k > 0.01, let r = addCard(s) {
             let lifted = s.hoveredButton == .add
             ctx.saveGState()
             ctx.setAlpha(k)
@@ -1007,25 +1333,35 @@ final class DeckTool {
             ctx.restoreGState()
         }
 
-        let front = store.front(of: board)
         let broken = store.brokenPosts(of: board)
         let lifted: Int? = if case .lift(let p, _, _, true) = drag { p } else { nil }
-        // Back to front: the lifted card, or the one being laid on top, last.
-        var drawing = s.posts.reversed() as [Int]
-        if let top = lifted ?? s.closing?.post, let i = drawing.firstIndex(of: top) { drawing.append(drawing.remove(at: i)) }
+        let feet = backCards(view(board.frame), deck: board).count
+        // Back to front as they lie in the stack, the one in front (or being laid on top) last; one
+        // taken up over them all.
+        var drawing = s.posts.sorted { (depth[$0] ?? 0) > (depth[$1] ?? 0) }
+        if let lifted, let i = drawing.firstIndex(of: lifted) { drawing.append(drawing.remove(at: i)) }
         for p in drawing {
-            guard var card = s.cards[p] else { continue }
-            var r = card.rect
+            guard let card = s.cards[p] else { continue }
+            var grown = face(card)
             if p == lifted, let at = s.pointer, case .lift(_, let grip, _, _) = drag {
-                r = CGRect(center: CGPoint(x: at.x - grip.x, y: at.y - grip.y), size: r.size)
+                grown = CGRect(center: CGPoint(x: at.x - grip.x, y: at.y - grip.y), size: grown.size)
             }
             let up = CGFloat(card.lift.value)
-            let grown = r.insetBy(dx: -r.width * 0.025 * up, dy: -r.height * 0.025 * up)
-            // Leaning the way it flies.
-            let lean = CGFloat(max(-0.12, min(0.12, card.x.velocity * 0.00012)))
-            drawCard(s.pictures[p], in: grown, turn: lean, lift: min(up, 1) * 0.8, fill: fill, ctx: ctx)
-            s.cards[p] = card
-            guard s.closing == nil else { continue }
+            // Leaning the way it flies; coming back to lie in the stack, less, so it lands straight.
+            let most = s.closing != nil ? 0.05 : 0.12
+            let lean = CGFloat(max(-most, min(most, card.x.velocity * (s.closing != nil ? 0.00006 : 0.00012))))
+            // A card behind the one in front is, in the stack, a plain foot below it: it turns into
+            // the post as it leaves, and back into the foot as it lands, so that nothing jumps where
+            // the canvas draws the feet again. Those further back than the feet show fade instead.
+            let d = depth[p] ?? 0
+            var foot: CGFloat = 0
+            if d > 0 {
+                foot = s.closing != nil
+                    ? CGFloat(max(0, 1 - hypot(card.x.value - card.x.target, card.y.value - card.y.target) / 48))
+                    : CGFloat(min(max(1 - (t - s.opened - Double(d) * stagger) / 0.1, 0), 1))
+            }
+            if foot > 0, d <= feet { drawFoot(grown, depth: d, turn: lean, fill: fill, ctx: ctx) }
+            drawCard(s.pictures[p], in: grown, turn: lean, alpha: 1 - foot, lift: min(up, 1) * 0.8, fill: fill, ctx: ctx)
             if p == front || broken.contains(p) {
                 ctx.setStrokeColor((broken.contains(p) ? Self.broken : CanvasInk.pencil).withAlphaComponent(k).cgColor)
                 ctx.setLineWidth(2)
@@ -1039,17 +1375,39 @@ final class DeckTool {
                 ])
                 number.draw(at: CGPoint(x: grown.minX, y: grown.maxY + 6))
             }
-            if p == s.hovered, p != lifted {
-                for (button, rect, symbol) in buttons(on: grown, post: p) where button != .remove(p) || s.posts.count > 1 {
+            if s.closing == nil, p == s.hovered, p != lifted {
+                for (button, rect, symbol) in buttons(on: grown, post: p, in: s) {
                     drawButton(symbol, in: rect, lifted: s.hoveredButton == button, ctx: ctx)
                 }
             }
         }
-        spread = s
-        // Laid back in the stack, the spread is gone, and the chosen post is in front.
-        if let closing = s.closing, t - closing.since > 0.12, s.posts.allSatisfy({ s.cards[$0]?.settled ?? true }) || t - closing.since > 0.9 {
+        // Laid back in the stack, the spread is gone as soon as nothing would move any more, and
+        // the canvas draws the deck again, the chosen post in front.
+        if let closing = s.closing,
+           (s.backdrop.value < 0.02 && s.posts.allSatisfy({ s.cards[$0]?.landed ?? true })) || t - closing.since > 1.2 {
             spread = nil
         }
+    }
+
+    /// Takes in posts added or taken away other than here, as by undoing or by someone else: each
+    /// new one dealt out of the card that adds, and those gone taken off the table.
+    private func follow(_ board: Node, bounds: CGRect) {
+        guard var s = spread else { return }
+        let now = board.posts
+        let from = addCard(s) ?? view(board.frame)
+        for p in Set(s.posts).subtracting(now) {
+            s.cards[p] = nil
+            s.pictures[p] = nil
+        }
+        for p in now where s.cards[p] == nil { s.cards[p] = Card(from) }
+        s.posts = now
+        if let h = s.hovered, !now.contains(h) {
+            s.hovered = nil
+            s.hoveredButton = nil
+        }
+        spread = s
+        reflow()
+        drawPictures(bounds: bounds)
     }
 
     private func drawButton(_ symbol: String, in rect: CGRect, lifted: Bool, ctx: CGContext) {
@@ -1058,7 +1416,7 @@ final class DeckTool {
         ctx.setFillColor((lifted ? CanvasInk.pencil : Self.surface).cgColor)
         ctx.fillEllipse(in: rect)
         ctx.restoreGState()
-        let config = NSImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)
+        let config = NSImage.SymbolConfiguration(pointSize: (rect.width * 0.42).rounded(), weight: .semibold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [lifted ? .white : CanvasInk.pencil]))
         guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return }
         let size = image.size

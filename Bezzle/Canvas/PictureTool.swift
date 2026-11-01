@@ -383,7 +383,7 @@ final class PictureTool {
 
         let pixels = max(rect.width, rect.height) * look.viewport.zoom * deviceScale
         // The whole picture, even one cut out: what lies past the layer is placed with the rest.
-        if let picture = store.assets.image(look.image.asset, pixels: pixels) {
+        if let picture = store.assets.image(look.image.asset, pixels: pixels).map({ Developer.developed($0, look.image.develop) }) {
             ctx.saveGState()
             ctx.concatenate(toView)
             // Only what lies past the outline: inside it, the layer shows the picture itself.

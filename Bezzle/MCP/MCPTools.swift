@@ -108,10 +108,10 @@ final class MCPTools {
         open.removeAll { $0.store == nil || $0.store === store }
     }
 
-    /// The open designs, the window in front first.
+    /// The open designs, the tab in front first, then as they were last looked at.
     static var stores: [DocumentStore] {
         let all = open.compactMap(\.store)
-        var ordered = NSApp.orderedWindows.compactMap { window in all.first { $0.canvas?.window === window } }
+        var ordered = Tabs.shared.storesByRecency.filter { s in all.contains { $0 === s } }
         ordered += all.reversed().filter { s in !ordered.contains { $0 === s } }
         return ordered
     }
@@ -153,7 +153,7 @@ final class MCPTools {
             : " Bezzle can only open files in Downloads and Pictures, and ones opened in it from the Finder or its Open panel."
     }
 
-    /// Opens a design in a window, as the home screen does, and waits for it. A file from Adobe XD,
+    /// Opens a design in a tab, as the home screen does, and waits for it. A file from Adobe XD,
     /// Figma or Sketch becomes a new design in the Bezzle folder, which is what opens.
     private func open(_ url: URL) async throws -> DocumentStore {
         let url = url.standardizedFileURL
@@ -236,17 +236,15 @@ final class MCPTools {
 
     func openDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
-        store.canvas?.window?.makeKeyAndOrderFront(nil)
+        WindowRouter.shared.show(store)
         return [.text(summary(of: store).text)]
     }
 
     func closeDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         let name = store.name
-        store.canvas?.endEditing()
-        store.save()
-        guard let window = store.canvas?.window else { throw MCPError("\(name) has no window to close.") }
-        window.performClose(nil)
+        guard let tab = Tabs.shared.tab(of: store) else { throw MCPError("\(name) has no tab to close.") }
+        Tabs.shared.close(tab)
         return [.text("Closed \(name). It was saved.")]
     }
 
@@ -276,9 +274,7 @@ final class MCPTools {
         let store = Self.openStore(ref)
         let url = try store?.url ?? locate(ref)
         if let store {
-            store.canvas?.endEditing()
-            store.save()
-            store.canvas?.window?.performClose(nil)
+            if let tab = Tabs.shared.tab(of: store) { Tabs.shared.close(tab) }
             DocumentStore.finishSaving()
         }
         let inFolder = url.standardizedFileURL.path.hasPrefix(Library.shared.folder.standardizedFileURL.path + "/")

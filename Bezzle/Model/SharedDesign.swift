@@ -162,6 +162,17 @@ nonisolated struct SharedDesign: Codable, Equatable, Sendable {
             var layer = layers[id] ?? SharedLayer()
             var changed = false
             for field in LayerField.all {
+                if let entries = field.entries {
+                    // Each entry on its own: only those that changed here are written.
+                    for k in entries.keys(node).union(was.map(entries.keys) ?? []) {
+                        let name = field.entryName(k), value = entries.value(node, k)
+                        if let was, entries.same(was, node, k), layer.fields[name] != nil || value == .null { continue }
+                        if layer.fields[name]?.value == value { continue }
+                        layer.fields[name] = Register(value: value, stamp: stamp)
+                        changed = true
+                    }
+                    continue
+                }
                 if let was, field.same(was, node), layer.fields[field.name] != nil { continue }
                 let value = values[field.name] ?? .null
                 if layer.fields[field.name]?.value == value { continue }

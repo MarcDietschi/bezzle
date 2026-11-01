@@ -46,7 +46,13 @@ nonisolated extension Renderer {
         }
         guard let made else { return }
         ctx.saveGState()
-        if node.shadow.outside, !drawShadowApart(node, in: ctx, options: options) { setShadow(node.shadow, in: ctx) }
+        // Several shadows are each cast on their own, by the same picture.
+        let outer = node.outerShadows
+        if outer.count == 1 || options.castingShadow, let shadow = outer.first {
+            if !drawShadowApart(node, shadow, in: ctx, options: options) { setShadow(shadow, in: ctx) }
+        } else {
+            for shadow in outer { drawShadowAlone(node, shadow, in: ctx, options: options) }
+        }
         if node.opacity < 1 { ctx.setAlpha(node.opacity) }
         if let blend = node.blend { ctx.setBlendMode(blend.cg) }
         place(made.image, at: made.at, scale: scale, in: ctx)
@@ -60,7 +66,13 @@ nonisolated extension Renderer {
         plain.transform3D = nil
         plain.opacity = 1
         plain.blend = nil
-        if node.shadow.outside { plain.shadow = Shadow() }
+        // Those inside are part of its face; those under it fall once it is in place.
+        let inner = node.innerShadows
+        if inner.count != node.shadows.count {
+            plain.shadow = Shadow()
+            plain.moreShadows = nil
+            if !inner.isEmpty { plain.shadows = inner }
+        }
         return plain
     }
 

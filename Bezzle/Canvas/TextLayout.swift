@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 
 /// Fonts by family and face, as the Font Book names them, with the Mac's own font as "System".
 enum Fonts {
@@ -10,11 +11,11 @@ enum Fonts {
     static let families: [String] = [TextStyle.system] + NSFontManager.shared.availableFontFamilies
         .filter { !$0.hasPrefix(".") }
 
-    static func faces(of family: String) -> [String] {
+    nonisolated static func faces(of family: String) -> [String] {
         if family == TextStyle.system {
             return systemFaces.flatMap { [$0.0, "\($0.0) Italic"] }
         }
-        let members = NSFontManager.shared.availableMembers(ofFontFamily: family) ?? []
+        let members = resolving.withLock { NSFontManager.shared.availableMembers(ofFontFamily: family) } ?? []
         return members.compactMap { $0.count > 1 ? $0[1] as? String : nil }
     }
 
@@ -39,14 +40,18 @@ enum Fonts {
         return ok
     }
 
-    private nonisolated struct FontKey: Hashable { let family: String, face: String, size: CGFloat }
+    private nonisolated struct FontKey: Hashable {
+        let family: String, face: String, size: CGFloat
+        let features: [String: Int]?, axes: [String: Double]?, smallCaps: Bool
+    }
     /// Asked for by text drawn on several threads at once.
     private nonisolated static let cache = Shared([FontKey: NSFont]())
     /// The font manager is asked one at a time.
     private nonisolated static let resolving = NSLock()
 
     nonisolated static func font(_ style: TextStyle) -> NSFont {
-        let key = FontKey(family: style.family, face: style.face, size: style.size)
+        let key = FontKey(family: style.family, face: style.face, size: style.size, features: style.features,
+                          axes: style.axes, smallCaps: style.letterCase == .smallCaps)
         if let font = cache.with({ $0[key] }) { return font }
         let font = resolving.withLock { resolve(style) }
         cache.with {
@@ -57,6 +62,30 @@ enum Fonts {
     }
 
     private nonisolated static func resolve(_ style: TextStyle) -> NSFont {
+        let plain = plainFont(style)
+        var settings: [[CFString: Any]] = []
+        for (tag, value) in (style.features ?? [:]).sorted(by: { $0.key < $1.key }) {
+            settings.append([kCTFontOpenTypeFeatureTag: tag, kCTFontOpenTypeFeatureValue: value])
+        }
+        if style.letterCase == .smallCaps, style.features?["smcp"] == nil, tags(of: plain).contains("smcp") {
+            settings.append([kCTFontOpenTypeFeatureTag: "smcp", kCTFontOpenTypeFeatureValue: 1])
+        }
+        var attributes: [CFString: Any] = [:]
+        if !settings.isEmpty { attributes[kCTFontFeatureSettingsAttribute] = settings }
+        if let axes = style.axes, !axes.isEmpty {
+            let own = Set(self.axes(of: plain).map(\.tag))
+            let set = axes.filter { own.contains($0.key) }
+            if !set.isEmpty {
+                attributes[kCTFontVariationAttribute] = Dictionary(uniqueKeysWithValues: set.map { (NSNumber(value: code($0.key)), NSNumber(value: $0.value)) })
+            }
+        }
+        guard !attributes.isEmpty else { return plain }
+        let descriptor = CTFontDescriptorCreateCopyWithAttributes(plain.fontDescriptor as CTFontDescriptor, attributes as CFDictionary)
+        return CTFontCreateWithFontDescriptor(descriptor, plain.pointSize, nil) as NSFont
+    }
+
+    /// The face itself, without features or axes.
+    private nonisolated static func plainFont(_ style: TextStyle) -> NSFont {
         let size = max(style.size, 1)
         if style.family == TextStyle.system {
             let italic = style.face.hasSuffix("Italic")
@@ -64,46 +93,370 @@ enum Fonts {
             let weight = systemFaces.first { $0.0 == name }?.1 ?? .regular
             let font = NSFont.systemFont(ofSize: size, weight: weight)
             guard italic else { return font }
-            return NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.italic), size: size) ?? font
+            // Leaning, at the weight it has: a descriptor's traits alone would make it regular.
+            return CTFontCreateCopyWithSymbolicTraits(font, size, nil, .traitItalic, .traitItalic).map { $0 as NSFont } ?? font
         }
         let members = NSFontManager.shared.availableMembers(ofFontFamily: style.family) ?? []
         let member = members.first { ($0.count > 1 ? $0[1] as? String : nil) == style.face } ?? members.first
         if let name = member?.first as? String, let font = NSFont(name: name, size: size) { return font }
         return NSFont(name: style.family, size: size) ?? NSFont.systemFont(ofSize: size)
     }
+
+    // MARK: Faces alike
+
+    /// How heavy a face is and whether it leans, as the font manager counts weight: 5 regular, 9 bold.
+    nonisolated static func traits(of face: String, in family: String) -> (weight: Int, italic: Bool) {
+        var style = TextStyle()
+        style.family = family
+        style.face = face
+        style.size = 12
+        let font = self.font(style)
+        let weight = resolving.withLock { NSFontManager.shared.weight(of: font) }
+        return (weight, font.fontDescriptor.symbolicTraits.contains(.italic))
+    }
+
+    /// The face of `family` most like `face` of `from`: the same name if it has one, else the one
+    /// nearest in weight that leans as it does.
+    nonisolated static func face(like face: String, of from: String, in family: String) -> String {
+        let faces = self.faces(of: family)
+        if faces.contains(face) { return face }
+        guard !faces.isEmpty else { return face }
+        let want = traits(of: face, in: from)
+        return faces.min { a, b in
+            let ta = traits(of: a, in: family), tb = traits(of: b, in: family)
+            let da = abs(ta.weight - want.weight) + (ta.italic == want.italic ? 0 : 20)
+            let db = abs(tb.weight - want.weight) + (tb.italic == want.italic ? 0 : 20)
+            return da != db ? da < db : (a == "Regular") && b != "Regular"
+        } ?? face
+    }
+
+    /// The face of a family that is the bold, or not bold, of `face`, keeping whether it leans.
+    nonisolated static func face(_ face: String, of family: String, bold: Bool) -> String {
+        let now = traits(of: face, in: family)
+        let faces = self.faces(of: family).filter { traits(of: $0, in: family).italic == now.italic }
+        let goal = bold ? 9 : 5
+        if bold ? now.weight >= 8 : now.weight <= 6 { return face }
+        return faces.min { abs(traits(of: $0, in: family).weight - goal) < abs(traits(of: $1, in: family).weight - goal) } ?? face
+    }
+
+    /// The face of a family that is the leaning, or upright, `face`, keeping its weight.
+    nonisolated static func face(_ face: String, of family: String, italic: Bool) -> String {
+        let now = traits(of: face, in: family)
+        guard now.italic != italic else { return face }
+        let faces = self.faces(of: family).filter { traits(of: $0, in: family).italic == italic }
+        return faces.min { abs(traits(of: $0, in: family).weight - now.weight) < abs(traits(of: $1, in: family).weight - now.weight) } ?? face
+    }
+
+    nonisolated static func isBold(_ face: String, of family: String) -> Bool { traits(of: face, in: family).weight >= 8 }
+    nonisolated static func isItalic(_ face: String, of family: String) -> Bool { traits(of: face, in: family).italic }
+
+    // MARK: Features and axes
+
+    /// An OpenType feature a font has, by its tag, as the font names it.
+    nonisolated struct Feature: Hashable {
+        let tag: String
+        let name: String
+    }
+
+    private nonisolated static let featureCache = Shared([String: [Feature]]())
+
+    /// The OpenType features a font has that can be turned on, in the order it lists them.
+    nonisolated static func features(of font: NSFont) -> [Feature] {
+        if let known = featureCache.with({ $0[font.fontName] }) { return known }
+        var out: [Feature] = []
+        var seen = Set<String>()
+        let types = (CTFontCopyFeatures(font) as? [[String: Any]]) ?? []
+        for type in types {
+            let typeName = type[kCTFontFeatureTypeNameKey as String] as? String
+            for selector in type[kCTFontFeatureTypeSelectorsKey as String] as? [[String: Any]] ?? [] {
+                guard let tag = selector[kCTFontOpenTypeFeatureTag as String] as? String,
+                      (selector[kCTFontOpenTypeFeatureValue as String] as? NSNumber)?.intValue ?? 1 != 0,
+                      seen.insert(tag).inserted else { continue }
+                var name = selector[kCTFontFeatureSelectorNameKey as String] as? String ?? tag
+                // A character variant's "On" says nothing; its type is what it is called.
+                if ["On", "Off"].contains(name), let typeName { name = typeName }
+                out.append(Feature(tag: tag, name: name))
+            }
+        }
+        featureCache.with {
+            if $0.count > 500 { $0.removeAll() }
+            $0[font.fontName] = out
+        }
+        return out
+    }
+
+    nonisolated static func tags(of font: NSFont) -> Set<String> { Set(features(of: font).map(\.tag)) }
+
+    /// One axis a variable font can be set along.
+    nonisolated struct Axis: Hashable {
+        let tag: String
+        let name: String
+        let range: ClosedRange<Double>
+        let standard: Double
+    }
+
+    /// The axes of a variable font that are meant to be set by hand; none for any other font.
+    nonisolated static func axes(of font: NSFont) -> [Axis] {
+        let all = (CTFontCopyVariationAxes(font) as? [[String: Any]]) ?? []
+        return all.compactMap { a in
+            guard (a[kCTFontVariationAxisHiddenKey as String] as? NSNumber)?.boolValue != true,
+                  let id = (a[kCTFontVariationAxisIdentifierKey as String] as? NSNumber)?.uint32Value,
+                  let lo = (a[kCTFontVariationAxisMinimumValueKey as String] as? NSNumber)?.doubleValue,
+                  let hi = (a[kCTFontVariationAxisMaximumValueKey as String] as? NSNumber)?.doubleValue, lo < hi else { return nil }
+            let standard = (a[kCTFontVariationAxisDefaultValueKey as String] as? NSNumber)?.doubleValue ?? lo
+            let tag = Self.tag(id)
+            return Axis(tag: tag, name: a[kCTFontVariationAxisNameKey as String] as? String ?? tag, range: lo...hi, standard: standard)
+        }
+    }
+
+    /// A four-letter tag as the number fonts keep it, and back.
+    nonisolated static func code(_ tag: String) -> UInt32 {
+        tag.utf8.prefix(4).reduce(0) { $0 << 8 | UInt32($1) }
+    }
+
+    nonisolated static func tag(_ code: UInt32) -> String {
+        String(bytes: [24, 16, 8, 0].map { UInt8((code >> $0) & 0xFF) }, encoding: .ascii) ?? ""
+    }
 }
 
 /// Lays text out the one way Bezzle does everywhere (on the canvas, in the editor, in exports),
 /// so what you type is exactly what is drawn.
 nonisolated enum TextLayout {
-    static func attributes(_ style: TextStyle, color: RGBA) -> [NSAttributedString.Key: Any] {
+    /// The attributes of letters of a layer of `style` in `color`, looking as `look` says, and of
+    /// a paragraph of its own.
+    static func attributes(_ style: TextStyle, look: TextLook = .plain, color: RGBA) -> [NSAttributedString.Key: Any] {
+        var attrs = letterAttributes(style, look: look, color: color, lift: lift(style))
+        attrs[.paragraphStyle] = paragraph(style)
+        attrs[.bezzleLook] = LookBox(look)
+        return attrs
+    }
+
+    /// How far the letters are raised in their lines, when the lines are set further apart than
+    /// the font's own: the extra room is shared above and below the letters, as the eye expects.
+    /// The same for every letter of a text, so that letters of all sizes share a baseline.
+    private static func lift(_ style: TextStyle) -> CGFloat {
+        guard let spacing = style.lineSpacing, spacing > 0 else { return 0 }
         let font = Fonts.font(style)
+        let natural = ceil(font.ascender - font.descender + font.leading)
+        return (spacing - natural) / 2
+    }
+
+    private static func letterAttributes(_ style: TextStyle, look: TextLook, color: RGBA?, lift: CGFloat) -> [NSAttributedString.Key: Any] {
+        let letters = look.resolved(over: style, color: color ?? .black)
+        let font = Fonts.font(letters.style(over: style))
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color == nil ? NSColor.clear : letters.color.nsColor,
+            .kern: letters.tracking / 1000 * letters.size,
+        ]
+        if lift != 0 { attrs[.baselineOffset] = lift }
+        if letters.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        if letters.strikethrough { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        return attrs
+    }
+
+    /// How a paragraph of the text is set: aligned, its lines as far apart as asked, with room after it.
+    private static func paragraph(_ style: TextStyle) -> NSMutableParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = switch style.align {
         case .left: .left
         case .center: .center
         case .right: .right
+        case .justify: .justified
         }
-        var attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: color.nsColor,
-            .kern: style.tracking / 1000 * style.size,
-        ]
         if let spacing = style.lineSpacing, spacing > 0 {
             paragraph.minimumLineHeight = spacing
             paragraph.maximumLineHeight = spacing
-            // The extra room is shared above and below the letters, as the eye expects.
-            let natural = ceil(font.ascender - font.descender + font.leading)
-            attrs[.baselineOffset] = (spacing - natural) / 2
         }
-        if style.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-        attrs[.paragraphStyle] = paragraph
-        return attrs
+        if let after = style.paragraphSpacing, after > 0 { paragraph.paragraphSpacing = after }
+        return paragraph
+    }
+
+    /// Runs of words as an attributed string, each letter drawn as it looks, every one marked with
+    /// its look (`.bezzleLook`), and each item of a list with its marker (`.bezzleMarker`). `color`
+    /// nil draws them unseen, as a text whose colour is off. `cased` sets them in the letter case
+    /// the style asks for; the editor shows them as typed.
+    static func attributed(_ runs: [TextSpan], style: TextStyle, color: RGBA?, cased: Bool = true) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let lift = lift(style)
+        var texts = runs.map(\.text)
+        if cased, let letterCase = style.letterCase, letterCase != .smallCaps {
+            let whole = texts.joined()
+            let set = letterCase.apply(whole)
+            // Cased whole, so words are capitalised across runs, unless that changes how long it is.
+            if set.utf16.count == whole.utf16.count {
+                let ns = set as NSString
+                var at = 0
+                texts = texts.map { t in
+                    let n = t.utf16.count
+                    defer { at += n }
+                    return ns.substring(with: NSRange(location: at, length: n))
+                }
+            } else {
+                texts = texts.map(letterCase.apply)
+            }
+        }
+        for (run, text) in zip(runs, texts) {
+            var attrs = letterAttributes(style, look: run.look, color: color, lift: lift)
+            attrs[.bezzleLook] = LookBox(run.look)
+            if cased, style.letterCase == .smallCaps, let font = attrs[.font] as? NSFont, !Fonts.tags(of: font).contains("smcp") {
+                appendSmallCaps(text, attrs, run.look.resolved(over: style, color: color ?? .black), style: style, to: out)
+            } else {
+                out.append(NSAttributedString(string: text, attributes: attrs))
+            }
+        }
+        setParagraphs(out, style: style)
+        return out
+    }
+
+    /// Small letters as capitals of their height, for a font that has no small capitals of its own.
+    private static func appendSmallCaps(_ text: String, _ attrs: [NSAttributedString.Key: Any], _ letters: Letters, style: TextStyle, to out: NSMutableAttributedString) {
+        var small = letters
+        small.size = (letters.size * 0.76 * 10).rounded() / 10
+        var smallAttrs = attrs
+        smallAttrs[.font] = Fonts.font(small.style(over: style))
+        smallAttrs[.kern] = (letters.tracking / 1000 + 0.03) * small.size
+        var rest = Substring(text)
+        while let first = rest.first {
+            let lower = first.isLowercase
+            let end = rest.firstIndex { $0.isLowercase != lower } ?? rest.endIndex
+            let piece = String(rest[..<end])
+            out.append(NSAttributedString(string: lower ? piece.uppercased() : piece, attributes: lower ? smallAttrs : attrs))
+            rest = rest[end...]
+        }
+    }
+
+    /// Sets each paragraph: its alignment and spacing, and for an item of a list, its marker and
+    /// how far in its words begin, the same for every item of a list so their words line up.
+    private static func setParagraphs(_ s: NSMutableAttributedString, style: TextStyle) {
+        guard s.length > 0 else { return }
+        let whole = NSRange(location: 0, length: s.length)
+        let plain = paragraph(style)
+        s.addAttribute(.paragraphStyle, value: plain, range: whole)
+        let ns = s.string as NSString
+        var paragraphs: [(range: NSRange, list: TextList?)] = []
+        var at = 0
+        while at < s.length {
+            let r = ns.paragraphRange(for: NSRange(location: at, length: 0))
+            paragraphs.append((r, (s.attribute(.bezzleLook, at: r.location, effectiveRange: nil) as? LookBox)?.look.list))
+            at = NSMaxRange(r)
+        }
+        var i = 0
+        while i < paragraphs.count {
+            guard paragraphs[i].list != nil else { i += 1; continue }
+            var j = i
+            while j < paragraphs.count, paragraphs[j].list != nil { j += 1 }
+            // One list: its markers, counted on through its numbered items.
+            var number = 0
+            var markers: [(text: String, font: NSFont)] = []
+            for k in i..<j {
+                let font = s.attribute(.font, at: paragraphs[k].range.location, effectiveRange: nil) as? NSFont ?? Fonts.font(style)
+                if paragraphs[k].list == .number {
+                    number += 1
+                    markers.append(("\(number).", font))
+                } else {
+                    number = 0
+                    markers.append(("•", font))
+                }
+            }
+            let size = markers.map(\.font.pointSize).max() ?? style.size
+            let column = max(markers.map { width(of: $0.text, in: $0.font) }.max() ?? 0, size * 0.6)
+            let gap = (size * 0.5).rounded()
+            let item = plain.mutableCopy() as! NSMutableParagraphStyle
+            item.headIndent = ceil(column + gap)
+            item.firstLineHeadIndent = item.headIndent
+            for k in i..<j {
+                s.addAttribute(.paragraphStyle, value: item, range: paragraphs[k].range)
+                s.addAttribute(.bezzleMarker, value: ListMarker(markers[k - i].text, gap: gap), range: paragraphs[k].range)
+            }
+            i = j
+        }
+    }
+
+    static func width(of text: String, in font: NSFont) -> CGFloat {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+        return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+    }
+
+    /// A list item's marker as it is placed: its baseline's left end, in the text's own space.
+    struct Marker {
+        let text: String
+        let font: NSFont
+        let color: NSColor
+        let at: CGPoint
+    }
+
+    /// The markers of the list items whose first letters are among `characters`, or all of them.
+    static func markers(_ manager: NSLayoutManager, characters: NSRange? = nil) -> [Marker] {
+        guard let storage = manager.textStorage, storage.length > 0 else { return [] }
+        let ns = storage.string as NSString
+        let range = characters.map { NSIntersectionRange($0, NSRange(location: 0, length: storage.length)) } ?? NSRange(location: 0, length: storage.length)
+        var out: [Marker] = []
+        storage.enumerateAttribute(.bezzleMarker, in: range) { value, r, _ in
+            guard let marker = value as? ListMarker else { return }
+            var at = r.location
+            while at < NSMaxRange(r) {
+                let paragraph = ns.paragraphRange(for: NSRange(location: at, length: 0))
+                if paragraph.location == at {
+                    let glyph = manager.glyphIndexForCharacter(at: at)
+                    let fragment = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+                    let place = manager.location(forGlyphAt: glyph)
+                    let font = storage.attribute(.font, at: at, effectiveRange: nil) as? NSFont ?? NSFont.systemFont(ofSize: 12)
+                    let color = storage.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor ?? .black
+                    let lift = storage.attribute(.baselineOffset, at: at, effectiveRange: nil) as? CGFloat ?? 0
+                    let x = fragment.minX + place.x - marker.gap - width(of: marker.text, in: font)
+                    out.append(Marker(text: marker.text, font: font, color: color, at: CGPoint(x: x, y: fragment.minY + place.y - lift)))
+                }
+                at = NSMaxRange(paragraph)
+            }
+        }
+        return out
+    }
+
+    /// Draws text as a layout manager does, and the markers of its list items with it.
+    final class Manager: NSLayoutManager {
+        /// An item of a list on the empty line at the end, which has no letters to carry it, as
+        /// the editor has one while it is typed.
+        struct Trailing: Equatable {
+            let text: String
+            let gap: CGFloat
+            let font: NSFont
+            let color: NSColor
+            let indent: CGFloat
+            let lift: CGFloat
+        }
+
+        var trailing: Trailing?
+
+        override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+            super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+            let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+            var markers = TextLayout.markers(self, characters: characters)
+            if let t = trailing, !extraLineFragmentRect.isEmpty {
+                let rect = extraLineFragmentRect
+                let baseline = rect.maxY - (defaultLineHeight(for: t.font) - defaultBaselineOffset(for: t.font)) - t.lift
+                markers.append(Marker(text: t.text, font: t.font, color: t.color,
+                                      at: CGPoint(x: rect.minX + t.indent - t.gap - TextLayout.width(of: t.text, in: t.font), y: baseline)))
+            }
+            for marker in markers {
+                let line = CTLineCreateWithAttributedString(NSAttributedString(string: marker.text, attributes: [
+                    .font: marker.font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
+                ]))
+                ctx.saveGState()
+                ctx.setFillColor(marker.color.cgColor)
+                // The context's y runs down, as the text's does.
+                ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+                ctx.textPosition = CGPoint(x: origin.x + marker.at.x, y: origin.y + marker.at.y)
+                CTLineDraw(line, ctx)
+                ctx.restoreGState()
+            }
+        }
     }
 
     final class Laid {
         let storage: NSTextStorage
-        let manager = NSLayoutManager()
+        let manager = Manager()
         let container: NSTextContainer
         /// An empty text has no letters to carry its font, so it is kept here for the height of its one line.
         let font: NSFont
@@ -138,6 +491,7 @@ nonisolated enum TextLayout {
     /// in plenty, and found without building strings.
     private struct Key: Hashable {
         let text: String
+        let spans: [TextSpan]?
         let style: TextStyle
         let fill: Fill?
         /// The width laid out at; none for a text's natural width.
@@ -165,10 +519,7 @@ nonisolated enum TextLayout {
     }
 
     static func attributed(_ node: Node) -> NSAttributedString {
-        let style = node.style ?? TextStyle()
-        let attrs = attributes(style, color: node.fill.on ? node.fill.color : RGBA(r: 0, g: 0, b: 0, a: 0))
-        let text = node.text ?? ""
-        return NSAttributedString(string: style.letterCase?.apply(text) ?? text, attributes: attrs)
+        attributed(node.runs, style: node.style ?? TextStyle(), color: node.fill.on ? node.fill.color : nil)
     }
 
     private static func laid(_ node: Node, width: CGFloat) -> Laid {
@@ -186,7 +537,7 @@ nonisolated enum TextLayout {
     static func layout(_ node: Node) -> Laid {
         let style = node.style ?? TextStyle()
         let width = style.sizing == .autoWidth ? naturalWidth(node) + 0.5 : max(node.frame.width, 1)
-        let key = Key(text: node.text ?? "", style: style, fill: node.fill, width: width)
+        let key = Key(text: node.text ?? "", spans: node.spans, style: style, fill: node.fill, width: width)
         let kept = layouts
         if let laid = kept.cache[key] { return laid }
         let laid = laid(node, width: width)
@@ -201,7 +552,7 @@ nonisolated enum TextLayout {
         style.align = .left
         var probe = node
         probe.style = style
-        let key = Key(text: node.text ?? "", style: style, fill: nil, width: nil)
+        let key = Key(text: node.text ?? "", spans: node.spans, style: style, fill: nil, width: nil)
         let kept = layouts
         if let laid = kept.cache[key] { return ceil(laid.usedSize.width) }
         let laid = laid(probe, width: 100_000)
@@ -209,12 +560,20 @@ nonisolated enum TextLayout {
         return ceil(laid.usedSize.width)
     }
 
+    /// How far down a text's lines begin in its frame: below its top for a box of fixed size whose
+    /// lines lie in its middle or at its bottom, and above it when they are more than fit.
+    static func offset(_ node: Node) -> CGFloat {
+        guard let style = node.style, style.sizing == .fixed, let vertical = style.vertical, vertical != .top else { return 0 }
+        let room = node.frame.height - layout(node).usedSize.height
+        return vertical == .middle ? (room / 2).rounded() : room.rounded()
+    }
+
     /// How far below a text layer's top its first line's baseline is.
     static func firstBaseline(_ node: Node) -> CGFloat {
         let laid = layout(node)
-        guard laid.storage.length > 0 else { return Fonts.font(node.style ?? TextStyle()).ascender }
+        guard laid.storage.length > 0 else { return Fonts.font(node.style ?? TextStyle()).ascender + offset(node) }
         let fragment = laid.manager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
-        return fragment.minY + laid.manager.location(forGlyphAt: 0).y
+        return fragment.minY + laid.manager.location(forGlyphAt: 0).y + offset(node)
     }
 
     /// The frame a text layer takes for its words, keeping its top left where it is.
@@ -242,17 +601,24 @@ extension Node {
 
     /// For text layers dragged by a corner: a box of fixed `size`, and the letters and lines of
     /// `style` as big as they can be, to a tenth of a point, with the words wrapped inside it.
+    /// Letters of sizes of their own grow and shrink with them.
     mutating func fit(_ style: TextStyle, into size: CGSize) {
         guard kind == .text, style.size > 0 else { return }
         var base = style
         base.sizing = .fixed
         let width = max(size.width, 1)
         frame.size = CGSize(width: width, height: max(size.height, 1))
-        func styled(_ tenths: Int) -> TextStyle { base.scaled(by: CGFloat(tenths) / (base.size * 10)) }
-        func fits(_ tenths: Int) -> Bool {
+        let letters = spans
+        func sized(_ tenths: Int) -> Node {
             var n = self
-            n.style = styled(tenths)
-            return TextLayout.height(n, width: width) <= size.height + 0.5
+            let k = CGFloat(tenths) / (base.size * 10)
+            n.style = base.scaled(by: k)
+            n.spans = letters
+            n.scaleLetters(by: k)
+            return n
+        }
+        func fits(_ tenths: Int) -> Bool {
+            TextLayout.height(sized(tenths), width: width) <= size.height + 0.5
         }
         // From the size it was, doubled or halved until past the fit, then halved in between.
         var lo = max(Int((base.size * 10).rounded()), 10), hi = lo
@@ -265,7 +631,9 @@ extension Node {
             let mid = (lo + hi) / 2
             if fits(mid) { lo = mid } else { hi = mid }
         }
-        self.style = styled(lo)
+        let best = sized(lo)
+        self.style = best.style
+        spans = best.spans
         refit()
     }
 
@@ -280,7 +648,7 @@ extension Node {
             frame.size.width = size.width
         } else {
             let k = byHeight ? size.height / old.height : size.width / old.width
-            style = style?.scaled(by: k)
+            scaleType(by: k)
             switch style?.sizing {
             case .autoHeight: frame.size.width = (old.width * k).rounded()
             case .fixed: frame.size = CGSize(width: (old.width * k).rounded(), height: (old.height * k).rounded())
@@ -298,7 +666,7 @@ extension Node {
         // Centred and right-aligned text grows around its anchor rather than to the right.
         if style?.sizing == .autoWidth {
             switch style?.align ?? .left {
-            case .left: frame = fitted
+            case .left, .justify: frame = fitted
             case .center: frame = CGRect(x: old.midX - fitted.width / 2, y: old.minY, width: fitted.width, height: fitted.height)
             case .right: frame = CGRect(x: old.maxX - fitted.width, y: old.minY, width: fitted.width, height: fitted.height)
             }

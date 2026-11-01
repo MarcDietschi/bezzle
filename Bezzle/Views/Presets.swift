@@ -93,28 +93,41 @@ enum Presets {
         ("shadow-sunken", "Sunken", 4, 12, 0.2, true), ("shadow-deep", "Deep", 8, 24, 0.26, true),
     ]
 
-    static func applyShadow(_ preset: ShadowPreset, to n: inout Node) {
-        n.shadow.on = true
-        n.shadow.x = 0
-        n.shadow.y = preset.y
-        n.shadow.blur = preset.blur
-        n.shadow.color = n.shadow.color.with(alpha: preset.alpha)
-        n.shadow.inset = preset.inset ? true : nil
+    static func applyShadow(_ preset: ShadowPreset, to n: inout Node) { applyShadow(preset, to: &n.shadow) }
+
+    static func applyShadow(_ preset: ShadowPreset, to s: inout Shadow) {
+        s.on = true
+        s.x = 0
+        s.y = preset.y
+        s.blur = preset.blur
+        s.spread = nil
+        s.color = s.color.with(alpha: preset.alpha)
+        s.inset = preset.inset ? true : nil
+    }
+
+    /// A new shadow made by a preset, in the colour of `like`.
+    static func shadow(_ preset: ShadowPreset, like: Shadow) -> Shadow {
+        var s = like
+        applyShadow(preset, to: &s)
+        return s
     }
 
     static func isShadow(_ preset: ShadowPreset, _ s: Shadow) -> Bool {
-        s.on && (s.inset == true) == preset.inset && s.x == 0 && s.y == preset.y && s.blur == preset.blur && abs(s.color.a - preset.alpha) < 0.005
+        s.on && (s.inset == true) == preset.inset && s.x == 0 && s.y == preset.y && s.blur == preset.blur && s.grown == 0
+            && abs(s.color.a - preset.alpha) < 0.005
     }
 
     /// Moves a shadow inside the layer or back under it. A shadow that is one of the choices
     /// becomes the one across from it, Soft becoming Pressed; one set by hand keeps its numbers.
-    static func setShadowInset(_ inset: Bool, on n: inout Node) {
+    static func setShadowInset(_ inset: Bool, on n: inout Node) { setShadowInset(inset, on: &n.shadow) }
+
+    static func setShadowInset(_ inset: Bool, on s: inout Shadow) {
         let from = inset ? shadows : innerShadows, to = inset ? innerShadows : shadows
-        if let i = from.firstIndex(where: { isShadow($0, n.shadow) }) {
-            applyShadow(to[i], to: &n)
+        if let i = from.firstIndex(where: { isShadow($0, s) }) {
+            applyShadow(to[i], to: &s)
         } else {
-            n.shadow.on = true
-            n.shadow.inset = inset ? true : nil
+            s.on = true
+            s.inset = inset ? true : nil
         }
     }
 
@@ -135,17 +148,19 @@ enum Presets {
 
     /// Lifts the layer's shadow to an elevation, keeping its colour, how far it falls sideways and
     /// whether it falls inside. A whole elevation is that preset exactly.
-    static func setElevation(_ elevation: Double, on n: inout Node) {
-        let presets = n.shadow.inset == true ? innerShadows : shadows
+    static func setElevation(_ elevation: Double, on n: inout Node) { setElevation(elevation, on: &n.shadow) }
+
+    static func setElevation(_ elevation: Double, on s: inout Shadow) {
+        let presets = s.inset == true ? innerShadows : shadows
         let steps: [(y: CGFloat, blur: CGFloat, alpha: Double)] = [(0, 0, 0)] + presets.map { ($0.y, $0.blur, $0.alpha) }
         let e = min(max(elevation, 0), Double(steps.count - 1))
         let i = min(Int(e), steps.count - 2), t = e - Double(i)
         let a = steps[i], b = steps[i + 1]
         let between = { (x: CGFloat, y: CGFloat) in t == 0 ? x : t == 1 ? y : ((x + (y - x) * t) * 10).rounded() / 10 }
-        n.shadow.on = true
-        n.shadow.y = between(a.y, b.y)
-        n.shadow.blur = between(a.blur, b.blur)
-        n.shadow.color = n.shadow.color.with(alpha: t == 0 ? a.alpha : t == 1 ? b.alpha : a.alpha + (b.alpha - a.alpha) * t)
+        s.on = true
+        s.y = between(a.y, b.y)
+        s.blur = between(a.blur, b.blur)
+        s.color = s.color.with(alpha: t == 0 ? a.alpha : t == 1 ? b.alpha : a.alpha + (b.alpha - a.alpha) * t)
     }
 
     /// Border weights, and a dashed line of the weight there is.
@@ -153,16 +168,54 @@ enum Presets {
         ("border-thin", "Thin", 1), ("border-medium", "Medium", 2), ("border-bold", "Bold", 4), ("border-dashed", "Dashed", nil),
     ]
 
-    static func applyBorder(_ width: CGFloat?, to n: inout Node) {
-        n.border.on = true
+    static func applyBorder(_ width: CGFloat?, to n: inout Node) { applyBorder(width, to: &n.border) }
+
+    static func applyBorder(_ width: CGFloat?, to b: inout Border) {
+        b.on = true
         if let width {
-            n.border.width = width
-            n.border.dash = 0
-            n.border.gap = 0
+            b.width = width
+            b.dash = 0
+            b.gap = 0
         } else {
-            n.border.dash = max(4, n.border.width * 2)
-            n.border.gap = n.border.dash
+            b.dash = max(4, b.width * 2)
+            b.gap = b.dash
         }
+    }
+
+    // MARK: Another one
+
+    /// A fill to lay over a layer's others: a shade from nothing at the top to dark at the bottom,
+    /// as words over a picture want, and plain to see over anything, to make into what it should be.
+    static let overlay = Fill(color: RGBA(r: 0, g: 0, b: 0, a: 0.5),
+                              gradient: Gradient(kind: .linear, stops: [GradientStop(offset: 0, color: RGBA(r: 0, g: 0, b: 0, a: 0)),
+                                                                        GradientStop(offset: 1, color: RGBA(r: 0, g: 0, b: 0, a: 0.5))],
+                                                 start: CGPoint(x: 0.5, y: 0), end: CGPoint(x: 0.5, y: 1)))
+
+    /// A border to draw over a layer's others: a ring of their colour, fainter, on the other side
+    /// of the edge from the top one, so that both show. A line's is a finer line along the middle
+    /// of it, in white over a dark one and black over a light one.
+    static func border(over n: Node) -> Border {
+        let top = n.borders.last ?? Border(on: true)
+        var b = top
+        b.on = true
+        b.dash = 0
+        b.gap = 0
+        if n.kind == .line {
+            b.width = max((top.width / 3 * 2).rounded() / 2, 0.5)
+            b.color = top.color.hsb.b > 0.6 ? .black : .white
+        } else {
+            b.width = max(2, top.width)
+            b.position = top.position == .outside ? .inside : .outside
+            b.color = top.color.with(alpha: max(top.color.a * 0.35, 0.15))
+        }
+        return b
+    }
+
+    /// A shadow to cast with a layer's others, falling the way `like` does: under the layer, a
+    /// close one that sets it down on the page, as a soft one far below cannot alone; inside it, a
+    /// fine line along the top edge.
+    static func shadow(besides like: Shadow) -> Shadow {
+        shadow(like.inset == true ? innerShadows[0] : shadows[0], like: like)
     }
 
     static func isBorder(_ width: CGFloat?, _ b: Border) -> Bool {

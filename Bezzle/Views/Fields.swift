@@ -700,9 +700,11 @@ struct ColorPanel: View {
     private func load() {
         if let start { set(start); return }
         guard let first = store.selectedNodes.first else { return }
-        let c: RGBA = switch id {
-        case "border": first.border.color
-        case "shadow": first.shadow.color
+        // A border's or a shadow over the first is "border-1", "shadow-2" and so on.
+        let slot = id.split(separator: "-").last.flatMap { Int($0) } ?? 0
+        let c: RGBA = switch id.split(separator: "-").first {
+        case "border": first[border: slot].color
+        case "shadow": first[shadow: slot].color
         default: first.fill.color
         }
         set(c)

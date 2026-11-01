@@ -7,16 +7,21 @@ import AppKit
 /// square to the radius. Its colours are points on the line: the ends are the first and last, and
 /// the ones between can be dragged along, or away to take them off. Click one to pick its colour in
 /// the menu, and the line to add one there. Drag an end to turn and stretch the gradient, or the
-/// centre to move it; the point on the ellipse makes it wider or narrower. Shift keeps the line to
-/// every fifteen degrees. They lie over the canvas without taking its clicks anywhere but on
+/// centre to move it; the point on the ellipse square to the radius makes it wider or narrower, and
+/// the one at the corner of the square the ellipse sits in sizes it both ways at once, as a layer's
+/// corner does, Shift keeping its shape. That square is never drawn: only its two sides from the
+/// corner, fading out on their way to the ellipse, and running on to touch it at its two points
+/// while the corner is pointed at or dragged.
+/// Shift keeps the line to every fifteen degrees. They lie over the canvas without taking its clicks anywhere but on
 /// themselves, and a click on them leaves the menu open.
 struct GradientHandles: View {
     let store: DocumentStore
     @Environment(MenuHost.self) private var menus
+    @Environment(GradientSession.self) private var session
 
     var body: some View {
         if menus.open?.id == FillMenu.id, store.selection.count == 1, let id = store.selection.first, let node = store.node(id),
-           node.fill.on, node.fill.image == nil, let gradient = node.fill.gradient, gradient.stops.count >= 2,
+           case let fill = node[keyPath: Node.fillPath(session.slot)], fill.on, fill.image == nil, let gradient = fill.gradient, gradient.stops.count >= 2,
            let frame = store.doc.absoluteFrame(of: id) {
             GradientRig(store: store, gradient: gradient, map: LayerMap(frame: frame, rotation: node.rotation, viewport: store.viewport))
                 .transition(.opacity)
@@ -55,10 +60,15 @@ private struct GradientRig: View {
     @State private var grip: Grip?
     @State private var began = false
     @State private var leaving = false
+    /// How far from the point it took hold of the press was, so the point keeps that distance
+    /// from the pointer rather than jumping under it.
+    @State private var grabbed: CGSize = .zero
+    /// Whether the pointer is on the corner that sizes a radial gradient.
+    @State private var onCorner = false
     /// Where the handles' space is in the window, to tell the menu where they are.
     @State private var origin: CGPoint = .zero
 
-    private enum Grip: Equatable { case start, end, across, stop, line }
+    private enum Grip: Equatable { case start, end, across, corner, stop, line }
 
     static let space = "gradient-rig"
     /// How near a point a press takes hold of it.
@@ -103,15 +113,22 @@ private struct GradientRig: View {
         let stops = gradient.stops
         let chosen = min(session.stop, stops.count - 1)
         let side = gradient.kind == .radial ? map.view(gradient.radii.1) : nil
+        let corner = gradient.kind == .radial ? map.view(gradient.corner) : nil
         let dots = between.map { (index: $0, at: on(stops[$0].offset, a, b)) }
         // The chosen colour, when it is at an end, is ringed there.
         let endChosen = stops[chosen].offset <= Self.atEnd ? 0 : stops[chosen].offset >= 1 - Self.atEnd ? 1 : nil
-        let points = [a, b] + (side.map { [$0] } ?? []) + dots.map(\.at)
+        let points = [a, b] + (side.map { [$0] } ?? []) + (corner.map { [$0] } ?? []) + dots.map(\.at)
         let _ = session.handles = (points.map { CGPoint(x: $0.x + origin.x, y: $0.y + origin.y) },
                                    (CGPoint(x: a.x + origin.x, y: a.y + origin.y), CGPoint(x: b.x + origin.x, y: b.y + origin.y)))
         ZStack(alignment: .topLeading) {
             Group {
-                if gradient.kind == .radial { ring }
+                if gradient.kind == .radial {
+                    ring
+                    if let corner, let side {
+                        Tangents(corner: corner, edge: b, side: side, reach: onCorner || grip == .corner ? 1 : 0.36)
+                            .animation(Theme.spring, value: onCorner || grip == .corner)
+                    }
+                }
                 // The line, white over a dark edge so it shows over any colour beneath.
                 Path { $0.move(to: a); $0.addLine(to: b) }
                     .stroke(Color.black.opacity(0.32), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
@@ -119,6 +136,9 @@ private struct GradientRig: View {
                     .stroke(Color.white, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                 if let side {
                     ShapePoint().position(side)
+                }
+                if let corner {
+                    ShapePoint().position(corner)
                 }
                 ColourPoint(color: gradient.color(at: 0), chosen: endChosen == 0, size: 16).position(a)
                 ColourPoint(color: gradient.color(at: 1), chosen: endChosen == 1, size: 16).position(b)
@@ -133,10 +153,20 @@ private struct GradientRig: View {
             // One press decides what it holds, so no point gives way under it as the colours reorder.
             Color.clear
                 .contentShape(Grips(points: points, reach: Self.reach, line: (a, b)))
-                .gesture(press(a: a, b: b, side: side, dots: dots))
+                .gesture(press(a: a, b: b, side: side, corner: corner, dots: dots))
                 .help(gradient.kind == .radial
-                      ? "Drag the centre to move the gradient, its edge to turn and stretch it, and the point on the ring to widen it. Click a colour to pick it, or the line to add one."
+                      ? "Drag the centre to move the gradient and its edge to turn and stretch it. The diamond on the ring widens it, and the one at the corner beyond it sizes it both ways, with Shift keeping its shape. Click a colour to pick it, or the line to add one."
                       : "Drag an end to turn and stretch the gradient. Click a colour to pick it, drag it along to move it or away to take it off, or click the line to add one.")
+            // The point that sizes it says so, with the pointer a layer's corner shows.
+            if let corner {
+                Color.clear
+                    .frame(width: Self.reach * 2, height: Self.reach * 2)
+                    .contentShape(Rectangle())
+                    .onHover { onCorner = $0 }
+                    .pointerStyle(.frameResize(position: .bottomTrailing))
+                    .gesture(press(a: a, b: b, side: side, corner: corner, dots: dots))
+                    .position(corner)
+            }
         }
         .coordinateSpace(.named(Self.space))
         .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { origin = $0 }
@@ -162,25 +192,28 @@ private struct GradientRig: View {
 
     /// What a press near `p` takes hold of: a colour between the ends first, as they lie on the line,
     /// then an end or the point on the ring, then the line.
-    private func hold(at p: CGPoint, a: CGPoint, b: CGPoint, side: CGPoint?, dots: [(index: Int, at: CGPoint)]) -> (Grip, Int?)? {
+    private func hold(at p: CGPoint, a: CGPoint, b: CGPoint, side: CGPoint?, corner: CGPoint?, dots: [(index: Int, at: CGPoint)]) -> (Grip, Int?)? {
         func near(_ q: CGPoint) -> CGFloat { hypot(q.x - p.x, q.y - p.y) }
         if let dot = dots.min(by: { near($0.at) < near($1.at) }), near(dot.at) <= Self.reach { return (.stop, dot.index) }
         var points: [(Grip, CGPoint)] = [(.start, a), (.end, b)]
         if let side { points.append((.across, side)) }
+        if let corner { points.append((.corner, corner)) }
         if let point = points.min(by: { near($0.1) < near($1.1) }), near(point.1) <= Self.reach { return (point.0, nil) }
         return place(p, a, b).off <= 6 ? (.line, nil) : nil
     }
 
-    private func press(a: CGPoint, b: CGPoint, side: CGPoint?, dots: [(index: Int, at: CGPoint)]) -> some Gesture {
+    private func press(a: CGPoint, b: CGPoint, side: CGPoint?, corner: CGPoint?, dots: [(index: Int, at: CGPoint)]) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
             .onChanged { g in
                 if grip == nil {
-                    guard let held = hold(at: g.startLocation, a: a, b: b, side: side, dots: dots) else { return }
+                    guard let held = hold(at: g.startLocation, a: a, b: b, side: side, corner: corner, dots: dots) else { return }
                     grip = held.0
                     switch held.0 {
                     case .start: session.stop = first
                     case .end: session.stop = last
                     case .stop: session.stop = held.1 ?? session.stop
+                    case .corner:
+                        if let corner { grabbed = CGSize(width: g.startLocation.x - corner.x, height: g.startLocation.y - corner.y) }
                     case .across, .line: break
                     }
                 }
@@ -193,8 +226,17 @@ private struct GradientRig: View {
                 case .start, .end: moveEnd(grip == .start, to: g.location, other: grip == .start ? b : a)
                 case .across:
                     let u = map.unit(g.location)
+                    let path = Node.fillPath(session.slot)
                     store.updateSelection("Shape Gradient") { n in
-                        n.fill.gradient?.stretch(to: u, in: n.frame.size)
+                        let size = n.frame.size
+                        n[keyPath: path].gradient?.stretch(to: u, in: size)
+                    }
+                case .corner:
+                    let u = map.unit(CGPoint(x: g.location.x - grabbed.width, y: g.location.y - grabbed.height))
+                    let path = Node.fillPath(session.slot), keep = NSEvent.modifierFlags.contains(.shift)
+                    store.updateSelection("Shape Gradient") { n in
+                        let size = n.frame.size
+                        n[keyPath: path].gradient?.resize(to: u, in: size, keepingShape: keep)
                     }
                 case .stop:
                     let (along, off) = place(g.location, a, b)
@@ -202,7 +244,7 @@ private struct GradientRig: View {
                     guard gradient.stops.indices.contains(session.stop) else { return }
                     let (moved, at) = gradient.stops.placing(session.stop, at: along)
                     session.stop = at
-                    store.updateSelection("Move Gradient Colour") { $0.fill.gradient?.stops = moved }
+                    store.updateSelection("Move Gradient Colour") { $0[keyPath: Node.fillPath(session.slot)].gradient?.stops = moved }
                 case .line: break
                 }
             }
@@ -211,6 +253,7 @@ private struct GradientRig: View {
                     grip = nil
                     began = false
                     leaving = false
+                    grabbed = .zero
                 }
                 if began { store.endGesture(grip == .stop ? "Move Gradient Colour" : "Shape Gradient") }
                 if grip == .stop && leaving { remove(session.stop) }
@@ -229,14 +272,14 @@ private struct GradientRig: View {
         }
         let u = map.unit(p)
         store.updateSelection("Shape Gradient") { n in
-            guard var g = n.fill.gradient else { return }
+            guard var g = n[keyPath: Node.fillPath(session.slot)].gradient else { return }
             switch (g.kind, start) {
             case (.linear, true): g.start = u
             case (.linear, false): g.end = u
             case (.radial, true): g.centre(at: u)
             case (.radial, false): g.turn(to: u, in: n.frame.size)
             }
-            n.fill.gradient = g
+            n[keyPath: Node.fillPath(session.slot)].gradient = g
         }
     }
 
@@ -244,7 +287,7 @@ private struct GradientRig: View {
         let stop = GradientStop(offset: offset, color: gradient.color(at: offset))
         let (stops, at) = (gradient.stops + [stop]).placing(gradient.stops.count, at: offset)
         session.stop = at
-        store.updateSelection("Add Gradient Colour") { $0.fill.gradient?.stops = stops }
+        store.updateSelection("Add Gradient Colour") { $0[keyPath: Node.fillPath(session.slot)].gradient?.stops = stops }
     }
 
     private func remove(_ i: Int) {
@@ -252,7 +295,7 @@ private struct GradientRig: View {
         var stops = gradient.stops
         stops.remove(at: i)
         session.stop = max(i - 1, 0)
-        store.updateSelection("Remove Gradient Colour") { $0.fill.gradient?.stops = stops }
+        store.updateSelection("Remove Gradient Colour") { $0[keyPath: Node.fillPath(session.slot)].gradient?.stops = stops }
     }
 }
 
@@ -276,8 +319,39 @@ private struct ColourPoint: View {
     }
 }
 
-/// The point on a radial gradient's ring that widens or narrows it: small and white, as it holds
-/// no colour.
+/// The corner's tie to the ring: the two sides of the square the ring sits in, from the corner to
+/// where they touch the ring, at its edge and at its diamond. Resting, only their start shows,
+/// fading as it goes; pointed at or dragged, they run on all the way to the two points.
+private struct Tangents: View, Animatable {
+    let corner: CGPoint
+    let edge: CGPoint
+    let side: CGPoint
+    /// How far along the way to the ring they are drawn, 0…1.
+    var reach: Double
+
+    var animatableData: Double {
+        get { reach }
+        set { reach = newValue }
+    }
+
+    var body: some View {
+        Canvas { ctx, _ in
+            // Faintest at the far end: fading out short of the ring at rest, just there once out to it.
+            let far = 0.05 + 0.4 * min(max((reach - 0.36) / 0.64, 0), 1)
+            for p in [edge, side] {
+                let end = CGPoint(x: corner.x + (p.x - corner.x) * reach, y: corner.y + (p.y - corner.y) * reach)
+                let line = Path { $0.move(to: corner); $0.addLine(to: end) }
+                ctx.stroke(line, with: .linearGradient(SwiftUI.Gradient(colors: [.black.opacity(0.28), .black.opacity(0.28 * far)]),
+                                                       startPoint: corner, endPoint: end), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                ctx.stroke(line, with: .linearGradient(SwiftUI.Gradient(colors: [.white, .white.opacity(far)]),
+                                                       startPoint: corner, endPoint: end), style: StrokeStyle(lineWidth: 1.25, lineCap: .round))
+            }
+        }
+    }
+}
+
+/// A point on a radial gradient that shapes it, widening it or sizing it: small and white, as it
+/// holds no colour.
 private struct ShapePoint: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 2, style: .continuous)

@@ -281,6 +281,52 @@ struct CanvasTests {
         #expect(abs(f.width / f.height - 90.0 / 70.0) < 0.02)
     }
 
+    @Test func withShiftACatchNeverBendsTheShape() {
+        // "T"'s left edge is at 400 on the canvas; the artboard's middle across at 250.
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 100, height: 50)),
+                                  CanvasTests.rect("T", CGRect(x: 300, y: 10, width: 50, height: 50))])
+        bench.click(CGPoint(x: 150, y: 130))
+        // Pulled by its bottom right corner (210,160) to where its right edge is 3 short of T and its
+        // bottom 3.5 past the middle: both would catch, and only the nearer one does.
+        bench.drag(CGPoint(x: 210, y: 160), CGPoint(x: 397, y: 230), flags: .shift, release: false)
+        let f = try! #require(bench.node("R")?.frame)
+        #expect(f == CGRect(x: 10, y: 10, width: 290, height: 145))
+        #expect(bench.store.guides.contains { $0.from.x == 400 && $0.to.x == 400 })
+        #expect(!bench.store.guides.contains { $0.from.y == 250 && $0.to.y == 250 })
+        bench.release(CGPoint(x: 397, y: 230), flags: .shift)
+    }
+
+    @Test func aProportionalCatchFromASideATurnOverAndTheMiddle() {
+        var targets = SnapTargets(doc: BezzleDocument(), moving: [])
+        let box = CGRect(x: 0, y: 0, width: 10, height: 10)
+        targets.xs = [.init(value: 300, box: box), .init(value: -100, box: box)]
+        targets.ys = [.init(value: 260, box: box)]
+        // From the right side: the width catches, the height follows round the middle.
+        let (side, _) = targets.snap(CGRect(x: 100, y: 75, width: 197, height: 98.5), keeping: 2, anchor: CGPoint(x: 100, y: 124.25),
+                                     along: (true, false), threshold: 5)
+        #expect(side == CGRect(x: 100, y: 74.25, width: 200, height: 100))
+        // Dragged past its still corner at 100,100, it catches by its left edge, on the other side.
+        let (over, _) = targets.snap(CGRect(x: -97, y: 0, width: 197, height: 100), keeping: 1.97, anchor: CGPoint(x: 100, y: 100),
+                                     along: (true, true), threshold: 5)
+        #expect(over.maxX == 100 && over.minX == -100 && abs(over.width / over.height - 1.97) < 0.0001)
+        // Grown from its middle at 200,200, a square catches by its bottom edge, and grows round it.
+        let (middle, _) = targets.snap(CGRect(x: 142, y: 142, width: 116, height: 116), keeping: 1, anchor: CGPoint(x: 200, y: 200),
+                                       along: (true, true), threshold: 5)
+        #expect(middle == CGRect(x: 140, y: 140, width: 120, height: 120))
+    }
+
+    @Test func aSquareDrawnWithShiftShowsOnlyWhatItCatches() {
+        let bench = Bench(extra: [CanvasTests.rect("T", CGRect(x: 300, y: 10, width: 50, height: 50))])
+        bench.store.tool = .rectangle
+        // The pointer comes 3 short of T's left edge (400), but the square, as tall as the pointer is
+        // far down, reaches 410: it does not catch there, and no guide says it does.
+        bench.drag(CGPoint(x: 150, y: 120), CGPoint(x: 397, y: 380), flags: .shift, release: false)
+        let r = try! #require(bench.a.children.last)
+        #expect(r.frame.width == r.frame.height && r.frame.width == 260)
+        #expect(!bench.store.guides.contains { $0.from.x == 400 && $0.to.x == 400 })
+        bench.release(CGPoint(x: 397, y: 380), flags: .shift)
+    }
+
     @Test func aCornerDotRoundsEveryCornerOrWithOptionOnlyItsOwn() {
         let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 50, y: 50, width: 200, height: 200))])
         // On the canvas, from 150,150 to 350,350.

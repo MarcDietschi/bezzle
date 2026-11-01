@@ -100,6 +100,37 @@ extension Gradient {
         across = Self.inBox(CGPoint(x: c.x + square.x * length, y: c.y + square.y * length), size)
     }
 
+    /// The corner of the square a radial gradient's ellipse sits in, past the ends of both its
+    /// radii, where the ellipse's edges there would meet: its bottom right, until it is turned.
+    var corner: CGPoint {
+        let (a, b) = radii
+        return CGPoint(x: a.x + b.x - start.x, y: a.y + b.y - start.y)
+    }
+
+    /// Sizes a radial gradient by that corner, as a layer is sized by its own: both radii at once,
+    /// each reaching as far along it as `point` is, on a layer of `size`. The centre stays where
+    /// it is, as it does for the gradient's other points; `keepingShape`, both grow by the same share.
+    mutating func resize(to point: CGPoint, in size: CGSize, keepingShape: Bool) {
+        let c = Self.onLayer(start, size), (a, b) = radii
+        let u = Self.onLayer(a, size) - c, v = Self.onLayer(b, size) - c
+        let lu = hypot(u.x, u.y), lv = hypot(v.x, v.y)
+        guard lu > 0.5, lv > 0.5 else { return }
+        let p = Self.onLayer(point, size) - c
+        // How far out the point is along each radius.
+        var s = (p.x * u.x + p.y * u.y) / lu, t = (p.x * v.x + p.y * v.y) / lv
+        if keepingShape {
+            // Along the line from the centre through the corner, so the ellipse keeps its shape.
+            let k = (s * lu + t * lv) / (lu * lu + lv * lv)
+            s = lu * k
+            t = lv * k
+        }
+        // Never through the centre and out the other side: a point's width at the least.
+        s = max(s, 1)
+        t = max(t, 1)
+        end = Self.inBox(CGPoint(x: c.x + u.x / lu * s, y: c.y + u.y / lu * s), size)
+        across = Self.inBox(CGPoint(x: c.x + v.x / lv * t, y: c.y + v.y / lv * t), size)
+    }
+
     /// One unit square to `u`, on the `side` of it the second radius was, so the ellipse keeps its turn.
     private static func square(to u: CGPoint, side: CGFloat) -> CGPoint {
         let length = hypot(u.x, u.y)
@@ -145,6 +176,8 @@ struct FillField: View {
     let action: LocalizedStringResource
     var suggestions: [RGBA] = []
     var preview: ((RGBA?) -> Void)? = nil
+    /// Which of the layers' fills it is, of those one over another.
+    var slot = 0
     let apply: (RGBA) -> Void
 
     var body: some View {
@@ -176,6 +209,7 @@ struct FillField: View {
     }
 
     private func open() {
+        session.slot = slot
         menus.panel(FillMenu.id, size: FillMenu.size(for: FillKind(fill))) {
             FillMenu(action: action)
                 .environment(store)
@@ -238,6 +272,9 @@ struct FillMenu: View {
     @Environment(GradientSession.self) private var session
     let action: LocalizedStringResource
 
+    /// The fill the menu is open on, of those one over another.
+    private var path: WritableKeyPath<Node, Fill> { Node.fillPath(session.slot) }
+
     static func size(for kind: FillKind) -> CGSize {
         switch kind {
         case .solid: CGSize(width: 248, height: 374)
@@ -248,8 +285,8 @@ struct FillMenu: View {
 
     var body: some View {
         if let first = store.selectedNodes.first {
-            let kind = FillKind(first.fill)
-            let gradient = kind == .picture ? nil : first.fill.gradient.flatMap { $0.stops.isEmpty ? nil : $0 }
+            let kind = FillKind(first[keyPath: path])
+            let gradient = kind == .picture ? nil : first[keyPath: path].gradient.flatMap { $0.stops.isEmpty ? nil : $0 }
             let chosen = gradient.map { min(session.stop, $0.stops.count - 1) }
             VStack(alignment: .leading, spacing: 0) {
                 SegmentedWell(selection: Binding(get: { kind }, set: { choose($0) }), options: FillKind.choices(with: kind))
@@ -263,7 +300,7 @@ struct FillMenu: View {
                 }
                 if kind == .picture {
                     Text("A picture fills this. Choose a colour or a gradient to fill it with that instead.")
-                        .font(.system(size: 12))
+                        .prose(12)
                         .foregroundStyle(Theme.ink3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(14)
@@ -272,14 +309,14 @@ struct FillMenu: View {
                     // so the picker stays as it is then. It starts again for another colour, or when
                     // one is taken off or added and another comes to have the chosen place.
                     ColorPanel(id: gradient == nil ? Self.id : "fill-stop", action: action,
-                               start: gradient.map { $0.stops[chosen ?? 0].color } ?? first.fill.color,
+                               start: gradient.map { $0.stops[chosen ?? 0].color } ?? first[keyPath: path].color,
                                key: "\(chosen ?? 0) of \(gradient?.stops.count ?? 2)") { c in
                         store.updateSelection(action) { n in
-                            n.fill.on = true
-                            if let chosen, n.fill.gradient != nil {
-                                if n.fill.gradient?.stops.indices.contains(chosen) == true { n.fill.gradient?.stops[chosen].color = c }
+                            n[keyPath: path].on = true
+                            if let chosen, n[keyPath: path].gradient != nil {
+                                if n[keyPath: path].gradient?.stops.indices.contains(chosen) == true { n[keyPath: path].gradient?.stops[chosen].color = c }
                             } else {
-                                n.fill.color = c
+                                n[keyPath: path].color = c
                             }
                         }
                     }
@@ -301,15 +338,15 @@ struct FillMenu: View {
         session.stop = 0
         withAnimation(Theme.unfold) {
             store.updateSelection(kind == .solid ? "Fill with a Colour" : "Fill with a Gradient") { n in
-                n.fill.on = true
+                n[keyPath: path].on = true
                 switch kind {
                 case .solid:
-                    if let first = n.fill.gradient?.stops.first { n.fill.color = first.color }
-                    n.fill.gradient = nil
-                    n.fill.image = nil
+                    if let first = n[keyPath: path].gradient?.stops.first { n[keyPath: path].color = first.color }
+                    n[keyPath: path].gradient = nil
+                    n[keyPath: path].image = nil
                 case .linear, .radial:
-                    let was = n.fill.gradient?.kind
-                    var g = n.fill.gradient ?? .fading(from: n.fill.color)
+                    let was = n[keyPath: path].gradient?.kind
+                    var g = n[keyPath: path].gradient ?? .fading(from: n[keyPath: path].color)
                     g.kind = kind == .radial ? .radial : .linear
                     if g.kind == .radial && was != .radial {
                         g.start = CGPoint(x: 0.5, y: 0.5)
@@ -319,8 +356,8 @@ struct FillMenu: View {
                         g.aim(180, in: n.frame.size)
                         g.across = nil
                     }
-                    n.fill.gradient = g
-                    n.fill.image = nil
+                    n[keyPath: path].gradient = g
+                    n[keyPath: path].image = nil
                 case .picture:
                     break
                 }
@@ -332,9 +369,9 @@ struct FillMenu: View {
     /// Gives every selected gradient these colours.
     private func set(_ stops: [GradientStop], _ action: LocalizedStringResource) {
         store.updateSelection(action) { n in
-            guard n.fill.gradient != nil else { return }
-            n.fill.gradient?.stops = stops
-            n.fill.on = true
+            guard n[keyPath: path].gradient != nil else { return }
+            n[keyPath: path].gradient?.stops = stops
+            n[keyPath: path].on = true
         }
     }
 
@@ -461,6 +498,8 @@ struct StopPin: View {
 @Observable
 final class GradientSession {
     var stop = 0
+    /// Which of a layer's fills the menu is open on: 0 for the first, at the bottom.
+    var slot = 0
     @ObservationIgnored weak var store: DocumentStore?
     @ObservationIgnored weak var menus: MenuHost? {
         didSet { menus?.spares = { [weak self] p in self?.holds(p) ?? false } }
@@ -486,12 +525,14 @@ final class GradientSession {
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 51 || event.keyCode == 117, self.menus?.open?.id == FillMenu.id,
                   !(event.window?.firstResponder is NSText), let store = self.store,
-                  let fill = store.selectedNodes.first?.fill, fill.image == nil, let gradient = fill.gradient else { return event }
+                  let fill = store.selectedNodes.first?[keyPath: Node.fillPath(self.slot)], fill.on, fill.image == nil,
+                  let gradient = fill.gradient else { return event }
+            let path = Node.fillPath(self.slot)
             if gradient.stops.count > 2, gradient.stops.indices.contains(self.stop) {
                 var stops = gradient.stops
                 stops.remove(at: self.stop)
                 self.stop = max(self.stop - 1, 0)
-                store.updateSelection("Remove Gradient Colour") { n in if n.fill.gradient != nil { n.fill.gradient?.stops = stops } }
+                store.updateSelection("Remove Gradient Colour") { n in if n[keyPath: path].gradient != nil { n[keyPath: path].gradient?.stops = stops } }
             } else {
                 NSSound.beep()
             }

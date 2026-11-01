@@ -54,6 +54,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var editorHost: FlippedView?
     private var editor: NSTextView?
     private var editorUndo = UndoManager()
+    /// What the editor shows, to tell when the layer has been changed from elsewhere.
+    private var editorShown: Shown?
     private var editingAction: LocalizedStringResource = "Typing"
 
     /// The pen, and the points of a path being edited.
@@ -74,6 +76,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// A picture being cut out, and the subjects of one cut out being picked.
     private(set) lazy var cutoutTool: CutoutTool = {
         let tool = CutoutTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
+    /// The picture as the control while the Photo card is open.
+    private(set) lazy var developTool: DevelopTool = {
+        let tool = DevelopTool(store: store)
         tool.redraw = { [weak self] in self?.needsDisplay = true }
         return tool
     }()
@@ -121,7 +130,48 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return tool
     }()
 
+    /// The rulers along the top and left, measuring the artboard being worked on.
+    private(set) lazy var rulers = Rulers(store: store)
+
+    /// Guides pulled out of the rulers onto artboards.
+    private(set) lazy var guideTool: GuideTool = {
+        let tool = GuideTool(store: store, rulers: rulers)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        tool.click = { [weak self] v, flags in self?.clickThrough(at: v, flags: flags) }
+        tool.covered = { [weak self] v in
+            guard let self else { return false }
+            return self.pick(self.store.viewport.toCanvas(v)) != nil
+        }
+        tool.menu = { [weak self] v, entries in
+            guard let self else { return }
+            self.onContextMenu?(self.windowPoint(v), entries)
+        }
+        return tool
+    }()
+
+    /// Artboards' layout grids: their columns, rows and baselines.
+    private(set) lazy var layoutTool: LayoutTool = {
+        let tool = LayoutTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
+    /// Masks: what is dragged held over a shape goes into it, the word offering one, and the
+    /// ghost of what a mask cuts off.
+    private(set) lazy var maskTool: MaskTool = {
+        let tool = MaskTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
     /// Files dragged in from elsewhere, shown doing what they would do before they are let go.
+    /// A part or an icon dragged in from the resources panel, shown as it will land.
+    private(set) lazy var resourceDropTool: ResourceDropTool = {
+        let tool = ResourceDropTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
     private(set) lazy var dropTool: DropTool = {
         let tool = DropTool(store: store)
         tool.redraw = { [weak self] in self?.needsDisplay = true }
@@ -140,7 +190,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // Tiles are drawn on other threads, and the canvas is drawn again as they come.
         tiles.maker = TileMaker.shared
         tiles.arrived = { [weak self] in self?.needsDisplay = true }
-        registerForDraggedTypes([.fileURL, .string])
+        registerForDraggedTypes([.fileURL, .string, ResourceDrag.type])
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -148,11 +198,50 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     nonisolated override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    /// Every press on the canvas is its own, never the window's. SwiftUI's window does not ask,
+    /// though, so the window is also held still under the title bar (see `holdWindow`).
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if holdsWindow { window?.isMovable = true }
+        holdsWindow = false
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    /// The design's own history, which its tab keeps, rather than the window's, which all the
+    /// tabs share.
+    override var undoManager: UndoManager? { store.undoManager ?? super.undoManager }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        store.undoManager = window?.undoManager
         if window != nil { window?.makeFirstResponder(self) }
+        holdWindow()
+    }
+
+    // MARK: - Under the title bar
+
+    /// The strip of the canvas the title bar reaches down over. The window's empty toolbar makes
+    /// the title bar taller than the top bar (66 points against 52 on macOS 27), so it covers most
+    /// of the top ruler and the set square.
+    private var underTitleBar: CGRect {
+        guard let window else { return .zero }
+        let content = convert(window.contentLayoutRect, from: nil)
+        return CGRect(x: 0, y: 0, width: bounds.width, height: min(bounds.height, max(0, content.minY)))
+    }
+
+    private var holdsWindow = false
+    private lazy var titleBarWatch = TitleBarWatch(canvas: self)
+
+    /// A drag in the title bar moves the window, and the window server starts it before the canvas
+    /// hears of the press. So while the pointer is in that strip, the window holds still, and a
+    /// guide can be pulled out of the ruler there as anywhere else. Asks where the pointer really
+    /// is each time, so the window can never be left unable to move.
+    fileprivate func holdWindow() {
+        guard let window else { return }
+        let hold = underTitleBar.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        guard hold != holdsWindow else { return }
+        holdsWindow = hold
+        window.isMovable = !hold
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -162,11 +251,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        // A tab's kept canvas is sized to nothing for a moment as it goes back into the window.
+        // Taken for a resize, that would move its view by half the canvas each time.
+        guard newSize.width > 0, newSize.height > 0 else { return }
         let old = store.canvasSize
         store.canvasSize = newSize
-        if !laidOut, newSize.width > 0, newSize.height > 0 {
+        if !laidOut {
             laidOut = true
-            if store.doc.viewport == nil { store.lookFirst() }
+            // A design opens where it was left, unless nothing of it could be seen from there.
+            let lost = store.doc.contentBounds.map { !store.visibleCanvasRect.intersects($0) } ?? false
+            if store.doc.viewport == nil || lost { store.lookFirst() }
         } else if old.width > 0 {
             // The view keeps its centre when the window is resized.
             var v = store.viewport
@@ -180,6 +274,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        // Also in a window in the background, whose ruler a first click can pull a guide from.
+        let strip = underTitleBar
+        if !strip.isEmpty {
+            addTrackingArea(NSTrackingArea(rect: strip, options: [.mouseEnteredAndExited, .activeAlways], owner: titleBarWatch))
+        }
+        holdWindow()
     }
 
     // MARK: - Drawing
@@ -206,7 +306,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     @objc private func easeStep(_ link: CADisplayLink) {
         needsDisplay = true
-        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating {
+        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating {
             link.invalidate()
             easing = nil
         }
@@ -247,17 +347,30 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if previewMotion.isMoving || deckTool.isAnimating { keepEasing() }
         cutoutTool.draw(ctx, scale: deviceScale)
         if cutoutTool.animating { redrawSoon() }
+        maskTool.draw(ctx, scale: deviceScale, in: bounds)
+        if maskTool.animating { keepEasing() }
 
         drawSlideCuts(ctx)
+        // Layout grids and guides over the work, under the marks drawn over what is selected.
+        let helpers = Helpers.shared
+        _ = (helpers.rulers, helpers.guides, helpers.grids, helpers.guidesLocked)
+        if !deckTool.spreading {
+            layoutTool.draw(ctx, scale: deviceScale, in: bounds)
+            guideTool.draw(ctx, scale: deviceScale)
+        }
+        drawFound(ctx)
         drawArtboardTitles(ctx)
         drawHover(ctx)
         drawSelection(ctx)
         pathTool.draw(ctx, scale: deviceScale)
         pictureTool.draw(ctx, scale: deviceScale)
+        developTool.draw(ctx, scale: deviceScale)
+        if developTool.animating { redrawSoon() }
         outlineTool.draw(ctx, scale: deviceScale)
         depthTool.draw(ctx, scale: deviceScale)
         gridTool.draw(ctx, scale: deviceScale)
         dropTool.draw(ctx, scale: deviceScale, in: bounds)
+        resourceDropTool.draw(ctx, scale: deviceScale, in: bounds)
         shapeBuilder.draw(ctx, scale: deviceScale)
         knifeTool.draw(ctx, scale: deviceScale)
         if pictureTool.animating { redrawSoon() }
@@ -266,7 +379,28 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         drawMeasurement(ctx)
         deckTool.draw(ctx, scale: deviceScale, in: bounds)
         if deckTool.isAnimating { keepEasing() }
+        if !deckTool.spreading { rulers.draw(ctx, in: bounds, scale: deviceScale, tabs: guideTool.tabs()) }
+        if helpersAnimating { keepEasing() }
         _ = store.tool
+    }
+
+    /// Whether the rulers, a guide or a layout grid are on their way somewhere.
+    private var helpersAnimating: Bool { rulers.isAnimating || guideTool.isAnimating || layoutTool.isAnimating }
+
+    /// A point in the window, measured from its top, as the menus are placed.
+    private func windowPoint(_ v: CGPoint) -> CGPoint {
+        let inWindow = convert(v, to: nil)
+        return CGPoint(x: inWindow.x, y: (window?.contentView?.bounds.height ?? 0) - inWindow.y)
+    }
+
+    /// A click that came to nothing else, such as on a guide without dragging it: what lies under it is picked.
+    private func clickThrough(at v: CGPoint, flags: NSEvent.ModifierFlags) {
+        let id = titleHit(v) ?? pick(store.viewport.toCanvas(v))
+        if flags.contains(.shift) {
+            if let id { if store.selection.contains(id) { store.selection.removeAll { $0 == id } } else { store.selection.append(id) } }
+        } else {
+            store.selection = id.map { [$0] } ?? []
+        }
     }
 
     /// The design: each artboard from its tiles, so that moving about a large design draws a few
@@ -295,6 +429,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             // A deck shows the post in front of it.
             let node = whole.isDeck ? whole.showing(store.front(of: whole)) : whole
             guard node.frame.insetBy(dx: -40 / store.viewport.zoom, dy: -40 / store.viewport.zoom).intersects(visible) else { continue }
+            // A deck whose posts are out of the stack as cards, flying or turning, is left to them:
+            // drawn unseen, so that its tiles are ready when they land.
+            let away = deckTool.hides(whole)
+            if away {
+                ctx.saveGState()
+                ctx.setAlpha(0)
+            }
+            defer { if away { ctx.restoreGState() } }
             if node.id == typingOn {
                 Renderer.drawArtboard(node, in: ctx, options: options)
                 continue
@@ -602,8 +744,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     /// The selected layer's shape where its shadow falls, dashed, while the pointer is on it.
     private func drawShadowOutline(_ ctx: CGContext) {
-        guard store.selection.count == 1, let node = store.node(store.selection[0]), let frame = store.doc.absoluteFrame(of: node.id) else { return }
-        let shadowFrame = frame.offsetBy(dx: node.shadow.x, dy: node.shadow.y)
+        guard store.selection.count == 1, let node = store.node(store.selection[0]), let slot = store.shadowSlot(of: node),
+              let frame = store.doc.absoluteFrame(of: node.id) else { return }
+        let shadow = node[shadow: slot], grown = Renderer.spreads(node, shadow) ? shadow.grown : 0
+        let shadowFrame = frame.offsetBy(dx: shadow.x, dy: shadow.y).insetBy(dx: -grown, dy: -grown)
         ctx.saveGState()
         ctx.addPath(outlinePath(Geometry.corners(of: shadowFrame, rotation: node.rotation).map(store.viewport.toView), closed: true))
         ctx.setStrokeColor(CanvasInk.pencil.withAlphaComponent(0.7).cgColor)
@@ -616,14 +760,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// Whether a point on screen is on the selected layer's shadow and not on the layer itself.
     private func isOnShadow(_ v: CGPoint) -> Bool {
         guard store.tool == .select, store.editingText == nil, store.selection.count == 1, let node = store.node(store.selection[0]),
-              node.shadow.outside, !node.locked, !node.isArtboard, node.kind != .line, !inDepth(node),
+              let slot = store.shadowSlot(of: node), !node.locked, !node.isArtboard, node.kind != .line, !inDepth(node),
               let frame = store.doc.absoluteFrame(of: node.id) else { return false }
+        let shadow = node[shadow: slot], grown = Renderer.spreads(node, shadow) ? max(shadow.grown, 0) : 0
         let p = store.viewport.toCanvas(v)
         let own = Geometry.local(p, in: frame, rotation: node.rotation)
         if abs(own.x) <= frame.width / 2 + tolerance && abs(own.y) <= frame.height / 2 + tolerance { return false }
         // As far out as the shadow shows, and a little more when it is a fine one.
-        let spread = max(node.shadow.blur / 2, 6 / store.viewport.zoom)
-        let shadowFrame = frame.offsetBy(dx: node.shadow.x, dy: node.shadow.y)
+        let spread = max(shadow.blur / 2, 6 / store.viewport.zoom) + grown
+        let shadowFrame = frame.offsetBy(dx: shadow.x, dy: shadow.y)
         let q = Geometry.local(p, in: shadowFrame, rotation: node.rotation)
         return abs(q.x) <= shadowFrame.width / 2 + spread && abs(q.y) <= shadowFrame.height / 2 + spread
     }
@@ -717,12 +862,33 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// What in a group lies under a canvas point, one level down.
     private func hit(_ p: CGPoint, in group: Node) -> UUID? {
         guard let inner = store.doc.placed(p, inside: group.id) else { return nil }
+        if let holder = group.holder {
+            // In a mask, only what shows inside its shape; along its edge, the shape itself, to
+            // take hold of it rather than of what it holds. A hidden shape still cuts off, but is
+            // not there to be taken hold of.
+            guard Mask.inside(holder, inner, tolerance: tolerance) else { return nil }
+            let takes = !holder.locked && !holder.hidden
+            let edge = Renderer.heldOutline(of: holder).copy(strokingWithWidth: 12 / store.viewport.zoom, lineCap: .round, lineJoin: .round, miterLimit: 4)
+            if takes, edge.contains(inner) { return holder.id }
+            return group.children.dropFirst().reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance) }?.id
+                ?? (takes ? holder.id : nil)
+        }
         return group.children.reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance) }?.id
+    }
+
+    /// Something picked inside a mask, where its ghost shows past the mask's shape.
+    private func pickedGhost(at p: CGPoint) -> UUID? {
+        guard let mask = enteredGroup, let holder = mask.holder, let inner = store.doc.placed(p, inside: mask.id),
+              !Mask.inside(holder, inner, tolerance: 0) else { return nil }
+        return mask.children.dropFirst().reversed().first { child in
+            store.selection.contains(child.id) && !child.hidden && !child.locked && Geometry.contains(child, inner, tolerance: tolerance)
+        }?.id
     }
 
     /// What a click picks: something in the group the selection is in, or else what is under it as
     /// usual. Anything lying over that group is picked as usual, as it is what the click meets.
     private func pick(_ p: CGPoint) -> UUID? {
+        if let id = pickedGhost(at: p) { return id }
         if let group = enteredGroup, uncovered(group, at: p), let id = hit(p, in: group) { return id }
         if let id = pickInOtherCell(p) { return id }
         return hit(p)
@@ -789,10 +955,28 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func mouseMoved(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
+        holdWindow()
         lastViewPoint = v
+        rulers.hover(v)
+        guideTool.hover(v)
+        layoutTool.hover(v)
+        if rulers.part(at: v) != nil || guideTool.cursor(at: v) != nil || layoutTool.cursor(at: v) != nil {
+            // On a ruler, a guide or a grid's gutter, nothing under it is outlined.
+            if store.hovered != nil { store.hovered = nil }
+            updateCursor(v, flags: event.modifierFlags)
+            needsDisplay = true
+            return
+        }
+        // The pointer's mark on the rulers: only they are drawn again for it.
+        if Helpers.shared.rulers {
+            let t = Rulers.thickness
+            setNeedsDisplay(CGRect(x: 0, y: 0, width: bounds.width, height: t))
+            setNeedsDisplay(CGRect(x: 0, y: 0, width: t, height: bounds.height))
+        }
         updateHover(v)
         if store.tool == .pen || store.editingPath != nil { pathTool.hover(v, flags: event.modifierFlags) }
         cutoutTool.hover(at: store.editingPicture != nil ? v : nil)
+        developTool.hover(at: v)
         hoverShapeTools(v, flags: event.modifierFlags)
         updateCursor(v, flags: event.modifierFlags)
         updateOverlays(v)
@@ -806,6 +990,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         depthTool.hover(v, flags: flags)
         gridTool.hover(v)
         deckTool.hover(v)
+        maskTool.hover(v)
         knifeTool.hover(v, flags: flags)
     }
 
@@ -830,6 +1015,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func mouseExited(with event: NSEvent) {
         store.hovered = nil
+        developTool.hover(at: nil)
+        rulers.hover(nil)
+        guideTool.hover(nil)
+        layoutTool.hover(nil)
+        needsDisplay = true
         pathTool.hover(nil, flags: [])
         hoverShapeTools(nil, flags: [])
         NSCursor.arrow.set()
@@ -846,11 +1036,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     private func updateCursor(_ v: CGPoint, flags: NSEvent.ModifierFlags) {
         if spaceHeld { NSCursor.openHand.set(); return }
+        if let cursor = guideTool.cursor(at: v) ?? layoutTool.cursor(at: v) { cursor.set(); return }
         if let cursor = pathTool.cursor { cursor.set(); return }
         if let cursor = pictureTool.cursor(at: v) { cursor.set(); return }
+        if let cursor = developTool.cursor(at: v) { cursor.set(); return }
         if let cursor = depthTool.cursor { cursor.set(); return }
         if let cursor = gridTool.cursor(at: v) { cursor.set(); return }
         if let cursor = deckTool.cursor(at: v) { cursor.set(); return }
+        if let cursor = maskTool.cursor(at: v) { cursor.set(); return }
         if let cursor = shapeBuilder.cursor ?? knifeTool.cursor ?? outlineTool.cursor(at: v) { cursor.set(); return }
         switch store.tool {
         case .select:
@@ -879,6 +1072,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func mouseDown(with event: NSEvent) {
         // A word offered after a change is taken before anything else.
         if deckTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
+        if maskTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
         window?.makeFirstResponder(self)
         if store.editingText != nil { endEditing() }
         let v = convert(event.locationInWindow, from: nil)
@@ -892,6 +1086,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             NSCursor.closedHand.set()
             return
         }
+        // The rulers take a press whatever the tool: out of them come guides.
+        if !deckTool.spreading, guideTool.rulerDown(at: v, event: event) { return }
         // Every post of a deck spread out takes every press until it is put away.
         if deckTool.spreading, deckTool.down(at: v, event: event) { return }
 
@@ -931,7 +1127,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             fallthrough
         default:
             let board = store.tool == .artboard ? nil : store.doc.artboard(at: p)?.id
-            let targets = SnapTargets(doc: store.seenDoc, moving: [])
+            var targets = SnapTargets(doc: store.seenDoc, moving: [])
+            // Drawn on an artboard, it catches on its guides and its grid as well.
+            if let b = board.flatMap({ store.seenDoc.node($0) }) { targets.catchOnHelpers(of: b) }
             let start = snapped(p, targets: targets, event: event)
             store.beginGesture()
             interaction = .create(tool: store.tool, start: start, id: nil, board: board, targets: targets)
@@ -954,6 +1152,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             startHandleDrag(handle, at: p)
             return
         }
+        // With the Photo card open, the picture is the control.
+        if developTool.down(at: v, event: event) { return }
+        // With its card open, a selected artboard's grid is changed where it is drawn.
+        if layoutTool.down(at: v, event: event) { return }
+        // A guide's line, where no layer lies under it, or its pins past the artboard's edges.
+        if guideTool.down(at: v, event: event) { return }
 
         // A double click goes into a group, and each quick click after it one level further,
         // however fast they come; on a text, it starts typing; on a path or a shape, it opens its points.
@@ -1042,8 +1246,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         case .shadow:
             // Not a gesture yet: a click here without a drag selects what is under it.
             store.cancelGesture()
-            guard let id = ids.first, let node = store.node(id) else { return }
-            interaction = .shadow(id: id, start: p, original: CGPoint(x: node.shadow.x, y: node.shadow.y), started: false)
+            guard let id = ids.first, let node = store.node(id), let slot = store.shadowSlot(of: node) else { return }
+            interaction = .shadow(id: id, start: p, original: CGPoint(x: node[shadow: slot].x, y: node[shadow: slot].y), started: false)
         case .lineEnd(let end):
             guard let id = ids.first, let node = store.node(id) else { return }
             let o = store.doc.parentOrigin(of: id)
@@ -1059,12 +1263,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func mouseDragged(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
         lastViewPoint = v
+        // The rulers mark where the pointer is while it drags as well.
+        rulers.pointer = v
         drag(to: v, flags: event.modifierFlags)
     }
 
     private func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
+        if guideTool.pressed { guideTool.drag(to: v, flags: flags); updateCursor(v, flags: flags); return }
+        if layoutTool.dragging { layoutTool.drag(to: v, flags: flags); return }
         if pathTool.dragging { pathTool.drag(to: v, flags: flags); return }
         if pictureTool.dragging { pictureTool.drag(to: v, flags: flags); return }
+        if developTool.dragging { developTool.drag(to: v, flags: flags); updateCursor(v, flags: flags); return }
         if shapeBuilder.dragging { shapeBuilder.drag(to: v, flags: flags); return }
         if outlineTool.dragging { outlineTool.drag(to: v, flags: flags); return }
         if depthTool.dragging { depthTool.drag(to: v, flags: flags); return }
@@ -1128,7 +1337,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 dy += shift && dy == 0 ? 0 : shiftBy.y
                 guides = g
             }
-            dx = dx.rounded(); dy = dy.rounded()
+            // A text sitting on a baseline stays on it, rather than on the whole point nearest.
+            let onBaseline = snapping && targets.sitsOnBaseline(bounds.offsetBy(dx: dx, dy: dy))
+            dx = dx.rounded()
+            if !onBaseline { dy = dy.rounded() }
             if snapping { guides += targets.gapGuides(for: bounds.offsetBy(dx: dx, dy: dy)) }
             // Even gaps caught are felt as well as seen, once each time they catch.
             let caught = Set(guides.filter(\.mine).map { Int(hypot($0.to.x - $0.from.x, $0.to.y - $0.from.y).rounded()) })
@@ -1136,12 +1348,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 if !caught.isEmpty { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
                 gapsCaught = caught
             }
-            store.edit("Move") { doc in
+            let place = { (doc: inout BezzleDocument) in
                 for (id, frame) in originals {
                     let o = doc.parentOrigin(of: id)
                     doc.update(id) { $0.frame.origin = CGPoint(x: frame.minX + dx - o.x, y: frame.minY + dy - o.y) }
                 }
             }
+            store.edit("Move", place)
+            // Held over a shape a moment, it goes into it; a shape it went into and was dragged off
+            // lets it go again. Either way it is placed once more, as it now lies.
+            if maskTool.moving(Array(originals.keys), at: v) { store.edit("Move", place) }
             store.guides = guides
 
         case .resize(let handle, let originals, let absolute, let bounds, let rotation, let targets):
@@ -1153,8 +1369,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 p = onFlat
                 flat = true
             }
-            var frame = Geometry.resize(bounds, rotation: rotation, handle: handle, to: p,
-                                        keepAspect: shift || keepsAspect(originals, handle), fromCenter: option)
+            let keep = shift || keepsAspect(originals, handle)
+            var frame = Geometry.resize(bounds, rotation: rotation, handle: handle, to: p, keepAspect: keep, fromCenter: option)
             var guides: [Guide] = []
             if let carousel, let slide = carousel.slideSize, slide.width > 0 {
                 // As many whole slides as the pointer reaches past half of one, from the side
@@ -1164,7 +1380,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 frame = CGRect(x: handle.unit.x == 0 ? bounds.maxX - size.width : bounds.minX, y: bounds.minY, width: size.width, height: size.height)
             } else if rotation == 0 && !flat {
                 if snapping && !option {
-                    (frame, guides) = targets.snap(resizing: frame, handle: handle, threshold: threshold)
+                    if keep, bounds.width > 0, bounds.height > 0 {
+                        // Its proportions hold whatever it catches on: the nearest catch sizes it,
+                        // the other side following, from the corner or side across from the handle.
+                        let u = handle.unit
+                        let still = CGPoint(x: bounds.minX + (1 - u.x) * bounds.width, y: bounds.minY + (1 - u.y) * bounds.height)
+                        (frame, guides) = targets.snap(frame, keeping: bounds.width / bounds.height, anchor: still,
+                                                       along: (u.x != 0.5, u.y != 0.5), threshold: threshold)
+                    } else {
+                        (frame, guides) = targets.snap(resizing: frame, handle: handle, threshold: threshold)
+                    }
                 }
                 frame = Geometry.snapToPixels(frame)
             }
@@ -1201,7 +1426,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                             if fits, let style = original.style { node.fit(style, into: next.size) }
                             if scales {
                                 let byHeight = !single || handle.unit.x == 0.5
-                                node.style = original.style?.scaled(by: byHeight ? next.height / whole.height : next.width / whole.width)
+                                node.scaleType(by: byHeight ? next.height / whole.height : next.width / whole.width)
                             }
                             node.refit()
                             // Its words settle its size to a point or so. The side across from the
@@ -1216,7 +1441,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                                 } else {
                                     let was = whole.offsetBy(dx: -o.x, dy: -o.y)
                                     let aligned: CGFloat = switch node.style?.align ?? .left {
-                                    case .left: 0
+                                    case .left, .justify: 0
                                     case .center: 0.5
                                     case .right: 1
                                     }
@@ -1311,7 +1536,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             var dx = p.x - start.x, dy = p.y - start.y
             if shift { if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 } }
             let x = (original.x + dx).rounded(), y = (original.y + dy).rounded()
-            store.edit("Move Shadow") { doc in doc.update(id) { $0.shadow.x = x; $0.shadow.y = y } }
+            // The shadow whose card is open, or the first under the layer.
+            let slot = store.node(id).flatMap(store.shadowSlot) ?? 0
+            store.edit("Move Shadow") { doc in doc.update(id) { $0[shadow: slot].x = x; $0[shadow: slot].y = y } }
             if let frame = store.doc.absoluteFrame(of: id) {
                 store.measurement = (String(localized: "Shadow \(Self.number(x)), \(Self.number(y))"), frame.offsetBy(dx: x, dy: y))
             }
@@ -1320,7 +1547,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         case .create(let tool, let start, let id, let board, let targets):
             var end = p
             var guides: [Guide] = []
-            if snapping {
+            if snapping, shift, tool != .line {
+                // A square stays square: it catches by whichever moving edge is nearest a target,
+                // the other following, and its far corner is where it is drawn to.
+                let square = Geometry.drawnRect(from: start, to: p, square: true, fromCenter: option)
+                let (r, g) = targets.snap(square, keeping: 1, anchor: start, along: (true, true), threshold: threshold)
+                end = option ? CGPoint(x: r.maxX, y: r.maxY)
+                             : CGPoint(x: abs(r.minX - start.x) < 0.01 ? r.maxX : r.minX, y: abs(r.minY - start.y) < 0.01 ? r.maxY : r.minY)
+                guides = g
+            } else if snapping {
                 let (q, x, y) = targets.snap(point: p, threshold: threshold)
                 end = q
                 guides = targets.guides(for: CGRect(origin: q, size: .zero), x: x, y: y)
@@ -1357,8 +1592,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func mouseUp(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
+        if guideTool.pressed {
+            guideTool.up(at: v, flags: event.modifierFlags)
+            updateCursor(v, flags: event.modifierFlags)
+            return
+        }
+        layoutTool.up()
         pathTool.up(at: v, flags: event.modifierFlags)
         pictureTool.up()
+        developTool.up(at: v)
         shapeBuilder.up(at: v)
         outlineTool.up()
         depthTool.up(at: v, adding: event.modifierFlags.contains(.shift))
@@ -1375,8 +1617,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         case .move(_, let originals, _, _, let started, let duplicate):
             if started {
                 let ids = Array(originals.keys)
+                // Into a mask, or out of one, it is that.
+                let masked = maskTool.released()
                 store.edit("Move") { doc in store.settle(ids, in: &doc) }
-                store.endGesture(duplicate ? "Duplicate" : "Move")
+                store.endGesture(masked ?? (duplicate ? "Duplicate" : "Move"))
             }
         case .resize:
             store.endGesture("Resize")
@@ -1401,6 +1645,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }
         case .create(let tool, let start, let id, let board, _):
             finishCreating(tool, start: start, id: id, board: board)
+        }
+        // A shape just drawn, moved or resized over a picture offers to mask it.
+        switch interaction {
+        case .create, .resize, .move(_, _, _, _, true, _): maskTool.invite()
+        default: break
         }
         interaction = .none
         store.guides = []
@@ -1479,6 +1728,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         window?.makeFirstResponder(self)
         if store.editingText != nil { endEditing() }
         let v = convert(event.locationInWindow, from: nil)
+        // On the rulers, what they show; on a guide, the guide's own.
+        if rulers.part(at: v) != nil {
+            onContextMenu?(windowPoint(v), Helpers.shared.entries(for: store))
+            return
+        }
+        if store.tool == .select, let entries = guideTool.menuEntries(at: v) {
+            onContextMenu?(windowPoint(v), entries)
+            return
+        }
         if let id = titleHit(v) ?? pick(store.viewport.toCanvas(v)), !store.selection.contains(id) {
             store.selection = [id]
         }
@@ -1548,11 +1806,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func keyDown(with event: NSEvent) {
         // A picture first: Return on one places it, where on a path it would open the points.
         if pictureTool.key(event) { return }
+        // Return on a mask picks what it holds.
+        if maskTool.key(event) { return }
         // Building and the knife before the pen: Return ends them, where on a path it would open its points.
         if shapeBuilder.key(event) || knifeTool.key(event) { return }
         if event.keyCode == 53, outlineTool.dragging { outlineTool.cancel(); return }
         if event.keyCode == 53, depthTool.dragging { depthTool.cancel(); return }
         if event.keyCode == 53, gridTool.dragging { gridTool.cancel(); return }
+        if event.keyCode == 53, guideTool.pressed { guideTool.cancel(); return }
+        if event.keyCode == 53, layoutTool.dragging { layoutTool.cancel(); return }
+        if event.keyCode == 53, developTool.cancel() { return }
         if event.keyCode == 53, deckTool.cancel() { return }
         if pathTool.key(event) { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -1571,6 +1834,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 } else { store.selection = [] }
             } else {
                 store.cancelGesture()
+                maskTool.cancel()
                 interaction = .none
             }
         case 36, 76: // return
@@ -1607,7 +1871,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // Shift and Option change a drag in progress at once, without waiting for the pointer to move.
         if pathTool.dragging { pathTool.drag(to: lastViewPoint, flags: event.modifierFlags); return }
         if pictureTool.dragging { pictureTool.drag(to: lastViewPoint, flags: event.modifierFlags); return }
-        if shapeBuilder.dragging || outlineTool.dragging || knifeTool.dragging || depthTool.dragging || gridTool.dragging {
+        if shapeBuilder.dragging || outlineTool.dragging || knifeTool.dragging || depthTool.dragging || gridTool.dragging
+            || guideTool.dragging || layoutTool.dragging {
             drag(to: lastViewPoint, flags: event.modifierFlags)
             updateCursor(lastViewPoint, flags: event.modifierFlags)
             return
@@ -1625,21 +1890,50 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         store.hovered = nil
+        if sender.draggingPasteboard.types?.contains(ResourceDrag.type) == true, let resource = ResourceDrag.current {
+            // The canvas shows the real thing where it will land, so the small picture goes.
+            resourceDropTool.begin(resource)
+            setDragPicture(sender, nil)
+            return draggingUpdated(sender)
+        }
         dropTool.begin(Dropped(sender.draggingPasteboard))
         return draggingUpdated(sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         let p = store.viewport.toCanvas(convert(sender.draggingLocation, from: nil))
+        if resourceDropTool.resource != nil { return resourceDropTool.update(at: p, on: dropTarget(at: p)) ? .copy : [] }
         return dropTool.update(at: p, on: dropTarget(at: p)) ? .copy : []
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        if resourceDropTool.resource != nil, let sender { setDragPicture(sender, ResourceDrag.picture) }
+        resourceDropTool.end()
         dropTool.end()
+    }
+
+    /// Changes the picture the pointer carries: none while the canvas shows the real thing.
+    private func setDragPicture(_ sender: NSDraggingInfo, _ picture: NSImage?) {
+        sender.enumerateDraggingItems(options: [], for: self, classes: [NSPasteboardItem.self], searchOptions: [:]) { item, _, _ in
+            if let picture {
+                let at = self.convert(sender.draggingLocation, from: nil)
+                item.setDraggingFrame(CGRect(x: at.x - picture.size.width / 2, y: at.y - picture.size.height / 2,
+                                             width: picture.size.width, height: picture.size.height), contents: picture)
+            } else {
+                item.imageComponentsProvider = { [] }
+            }
+        }
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let p = store.viewport.toCanvas(convert(sender.draggingLocation, from: nil))
+        if let resource = resourceDropTool.resource {
+            let plan = resourceDropTool.plan ?? store.placing(resource, at: p, on: dropTarget(at: p))
+            resourceDropTool.end()
+            window?.makeFirstResponder(self)
+            guard let plan else { return false }
+            return store.place(plan, resource: resource) != nil
+        }
         let dropped = dropTool.dropped ?? Dropped(sender.draggingPasteboard)
         dropTool.end()
         window?.makeFirstResponder(self)
@@ -1647,6 +1941,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        resourceDropTool.end()
         dropTool.end()
     }
 
@@ -1688,16 +1983,20 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         store.selection = [id]
 
         let storage = NSTextStorage()
-        let manager = NSLayoutManager()
+        let manager = TextLayout.Manager()
         manager.usesFontLeading = true
         storage.addLayoutManager(manager)
         let container = NSTextContainer(size: CGSize(width: 100_000, height: CGFloat.greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
         manager.addTextContainer(container)
 
-        let text = NSTextView(frame: .zero, textContainer: container)
+        let text = TypingView(frame: .zero, textContainer: container)
         text.delegate = self
-        text.isRichText = false
+        // Rich, for words in bold or another colour, but what is pasted comes in as words alone,
+        // looking as the letters around it.
+        text.isRichText = true
+        text.usesFontPanel = false
+        text.usesRuler = false
         text.importsGraphics = false
         text.drawsBackground = false
         text.allowsUndo = true
@@ -1706,11 +2005,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         text.isHorizontallyResizable = false
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
+        text.isAutomaticTextReplacementEnabled = false
+        text.isAutomaticSpellingCorrectionEnabled = false
+        // Misspelt words are underlined as they are typed, and a right-click offers the spellings.
+        let defaults = UserDefaults.standard
+        text.isContinuousSpellCheckingEnabled = defaults.object(forKey: Self.checksSpelling) as? Bool ?? true
+        text.isGrammarCheckingEnabled = defaults.bool(forKey: Self.checksGrammar)
         text.insertionPointColor = CanvasInk.pencil
         text.selectedTextAttributes = [.backgroundColor: CanvasInk.pencil.withAlphaComponent(0.22)]
         text.focusRingType = .none
-        text.string = node.text ?? ""
-        applyEditorStyle(node, to: text)
+        editorShown = nil
+        show(node, in: text)
 
         let host = FlippedView()
         host.addSubview(text)
@@ -1718,18 +2023,89 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         editorHost = host
         editor = text
         editorUndo = UndoManager()
+        store.restyleTyped = { [weak self] action, change in self?.restyleTyped(action, change) }
         syncEditor()
         window?.makeFirstResponder(text)
         text.selectAll(nil)
     }
 
-    private func applyEditorStyle(_ node: Node, to text: NSTextView) {
-        let attrs = TextLayout.attributes(node.style ?? TextStyle(), color: node.fill.on ? node.fill.color : .black)
+    /// Whether misspelt words are underlined while typing, and grammar checked, as last set.
+    private static let checksSpelling = "BezzleChecksSpelling", checksGrammar = "BezzleChecksGrammar"
+
+    /// What the text being typed into is like, as the editor shows it.
+    private struct Shown: Equatable {
+        var runs: [TextSpan]
+        var style: TextStyle
+        var color: RGBA
+    }
+
+    private func shown(_ node: Node) -> Shown {
+        Shown(runs: TextSpan.tidy(node.runs), style: node.style ?? TextStyle(), color: node.fill.on ? node.fill.color : .black)
+    }
+
+    /// Puts a text's words and how each letter looks into the editor, keeping what is picked out
+    /// and, where the words are the same, the letters themselves.
+    private func show(_ node: Node, in text: NSTextView) {
+        guard let storage = text.textStorage else { return }
+        let now = shown(node)
+        let built = TextLayout.attributed(now.runs, style: now.style, color: now.color, cased: false)
         let selected = text.selectedRanges
-        text.textStorage?.setAttributes(attrs, range: NSRange(location: 0, length: text.textStorage?.length ?? 0))
-        text.typingAttributes = attrs
-        text.defaultParagraphStyle = attrs[.paragraphStyle] as? NSParagraphStyle
-        text.selectedRanges = selected
+        storage.beginEditing()
+        if storage.string == built.string {
+            built.enumerateAttributes(in: NSRange(location: 0, length: built.length)) { attrs, range, _ in
+                storage.setAttributes(attrs, range: range)
+            }
+        } else {
+            storage.setAttributedString(built)
+        }
+        storage.endEditing()
+        let length = storage.length
+        text.selectedRanges = selected.map { r in
+            let r = r.rangeValue
+            let at = min(r.location, length)
+            return NSValue(range: NSRange(location: at, length: min(r.length, length - at)))
+        }
+        let plain = TextLayout.attributes(now.style, color: now.color)
+        text.defaultParagraphStyle = plain[.paragraphStyle] as? NSParagraphStyle
+        let caret = text.selectedRange().location
+        text.typingAttributes = length > 0 ? storage.attributes(at: min(max(caret - 1, 0), length - 1), effectiveRange: nil) : plain
+        editorShown = now
+        markTrailingItem(in: text)
+    }
+
+    /// Changes the letters picked out in the editor, or with only the caret what is typed next, as
+    /// a change the editor's Undo takes back. A list goes to the paragraphs the selection is in.
+    private func restyleTyped(_ action: LocalizedStringResource, _ change: (inout Letters) -> Void) {
+        guard let text = editor, let storage = text.textStorage, let id = store.editingText, let node = store.node(id) else { return }
+        let style = node.style ?? TextStyle(), color = node.fill.on ? node.fill.color : .black
+        var range = text.selectedRange()
+        let ns = storage.string as NSString
+        // What the change does to a list, tried on the letters typed next.
+        let typed = (text.typingAttributes[.bezzleLook] as? LookBox)?.look ?? .plain
+        var probe = typed.resolved(over: style, color: color)
+        change(&probe)
+        if probe.list != typed.list, range.length == 0 { range = ns.paragraphRange(for: range) }
+        guard range.length > 0 else {
+            var attrs = TextLayout.attributes(style, look: TextLook(probe, over: style, color: color), color: color)
+            if probe.list != nil { attrs[.paragraphStyle] = text.typingAttributes[.paragraphStyle] ?? attrs[.paragraphStyle] }
+            text.typingAttributes = attrs
+            markTrailingItem(in: text)
+            return
+        }
+        var restyled = node
+        restyled.setRuns(TextSpan.runs(of: storage))
+        restyled.restyleLetters(in: range, change)
+        let built = TextLayout.attributed(TextSpan.tidy(restyled.runs), style: style, color: color, cased: false)
+        guard built.string == storage.string else { return }
+        let whole = NSRange(location: 0, length: storage.length)
+        let picked = text.selectedRanges
+        guard text.shouldChangeText(in: whole, replacementString: nil) else { return }
+        storage.beginEditing()
+        built.enumerateAttributes(in: whole) { attrs, r, _ in storage.setAttributes(attrs, range: r) }
+        storage.endEditing()
+        editorUndo.setActionName(String(localized: action))
+        text.didChangeText()
+        text.selectedRanges = picked
     }
 
     /// Keeps the text view over its layer as the canvas moves, zooms and the layer changes.
@@ -1752,28 +2128,69 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         host.setBoundsSize(CGSize(width: width, height: max(frame.height, 4 / zoom)))
         let sizing = node.style?.sizing ?? .autoWidth
         let align = node.style?.align ?? .left
-        text.textContainer?.size = CGSize(width: sizing == .autoWidth && align == .left ? 100_000 : max(frame.width, 1) + (sizing == .autoWidth ? 0.5 : 0),
+        let loose = sizing == .autoWidth && (align == .left || align == .justify)
+        text.textContainer?.size = CGSize(width: loose ? 100_000 : max(frame.width, 1) + (sizing == .autoWidth ? 0.5 : 0),
                                           height: .greatestFiniteMagnitude)
-        text.frame = CGRect(x: 0, y: 0, width: sizing == .autoWidth && align == .left ? width : max(frame.width, 1), height: max(frame.height, 1))
-        let wanted = TextLayout.attributes(node.style ?? TextStyle(), color: node.fill.on ? node.fill.color : .black)
-        if (text.typingAttributes[.font] as? NSFont) != (wanted[.font] as? NSFont)
-            || (text.typingAttributes[.foregroundColor] as? NSColor) != (wanted[.foregroundColor] as? NSColor)
-            || (text.typingAttributes[.paragraphStyle] as? NSParagraphStyle) != (wanted[.paragraphStyle] as? NSParagraphStyle)
-            || (text.typingAttributes[.kern] as? CGFloat) != (wanted[.kern] as? CGFloat) {
-            applyEditorStyle(node, to: text)
-        }
+        // Lines set in the middle or at the bottom of a box of fixed size are there as they are typed.
+        let down = TextLayout.offset(Node.with(node, frame: frame))
+        let tall = TextLayout.layout(Node.with(node, frame: frame)).usedSize.height
+        text.frame = CGRect(x: 0, y: down, width: loose ? width : max(frame.width, 1), height: max(frame.height - down, tall, 1))
+        if editorShown != shown(node), !text.hasMarkedText() { show(node, in: text) }
+        // Spelling as last chosen in the Edit menu.
+        let defaults = UserDefaults.standard
+        let spelling = defaults.object(forKey: Self.checksSpelling) as? Bool ?? true, grammar = defaults.bool(forKey: Self.checksGrammar)
+        if text.isContinuousSpellCheckingEnabled != spelling { text.isContinuousSpellCheckingEnabled = spelling }
+        if text.isGrammarCheckingEnabled != grammar { text.isGrammarCheckingEnabled = grammar }
     }
 
     func textDidChange(_ notification: Notification) {
-        guard let id = store.editingText, let text = editor else { return }
-        let string = text.string
+        guard let id = store.editingText, let text = editor, let storage = text.textStorage else { return }
+        let runs = TextSpan.runs(of: storage)
         store.edit(editingAction) { doc in
             doc.update(id) { n in
-                n.text = string
+                n.setRuns(runs)
                 n.refit()
             }
         }
+        // Set again from the layer, so that new paragraphs of a list have their markers.
+        if !text.hasMarkedText() { editorShown = nil }
         syncEditor()
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        guard let text = editor else { return }
+        let range = text.selectedRange()
+        if store.typingSelection != range { store.typingSelection = range }
+        markTrailingItem(in: text)
+    }
+
+    /// The empty line at the end of a list being typed has no letters yet, but is an item all
+    /// the same: its marker shows, as the next number or a bullet.
+    private func markTrailingItem(in text: NSTextView) {
+        guard let manager = text.layoutManager as? TextLayout.Manager, let storage = text.textStorage else { return }
+        let look = (text.typingAttributes[.bezzleLook] as? LookBox)?.look
+        let atEnd = storage.length == 0 || storage.string.last.map(TextSpan.endsParagraph) == true
+        var trailing: TextLayout.Manager.Trailing?
+        if atEnd, let list = look?.list, let font = text.typingAttributes[.font] as? NSFont {
+            var number = 1
+            if list == .number, storage.length > 0 {
+                // One after the last item before it, when that is numbered.
+                let ns = storage.string as NSString
+                let last = ns.paragraphRange(for: NSRange(location: storage.length - 1, length: 0))
+                if let marker = storage.attribute(.bezzleMarker, at: last.location, effectiveRange: nil) as? ListMarker,
+                   let n = Int(marker.text.dropLast()) { number = n + 1 }
+            }
+            let paragraph = text.typingAttributes[.paragraphStyle] as? NSParagraphStyle
+            let gap = (font.pointSize * 0.5).rounded()
+            trailing = .init(text: list == .number ? "\(number)." : "•", gap: gap, font: font,
+                             color: text.typingAttributes[.foregroundColor] as? NSColor ?? .black,
+                             indent: max(paragraph?.headIndent ?? 0, ceil(font.pointSize * 0.6 + gap)),
+                             lift: text.typingAttributes[.baselineOffset] as? CGFloat ?? 0)
+        }
+        if manager.trailing != trailing {
+            manager.trailing = trailing
+            text.needsDisplay = true
+        }
     }
 
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -1782,8 +2199,24 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             window?.makeFirstResponder(self)
             return true
         }
-        // In a deck, Tab goes on to the same words in the next post, as in a table; past the
-        // last, it makes one more. Shift-Tab goes back.
+        // Return on an empty item of a list, or Delete at the start of one, ends the list there.
+        if selector == #selector(insertNewline(_:)) || selector == #selector(deleteBackward(_:)), let storage = textView.textStorage {
+            let caret = textView.selectedRange()
+            let ns = storage.string as NSString
+            let paragraph = ns.paragraphRange(for: NSRange(location: caret.location, length: 0))
+            let words = ns.substring(with: paragraph).trimmingCharacters(in: .newlines)
+            // The empty line at the end has no letters: what is typed there says.
+            let look = paragraph.length > 0 && paragraph.location < storage.length
+                ? (storage.attribute(.bezzleLook, at: paragraph.location, effectiveRange: nil) as? LookBox)?.look
+                : (textView.typingAttributes[.bezzleLook] as? LookBox)?.look
+            let ends = selector == #selector(insertNewline(_:)) ? words.isEmpty : caret.location == paragraph.location
+            if caret.length == 0, look?.list != nil, ends {
+                restyleTyped("End List") { $0.list = nil }
+                return true
+            }
+        }
+        // In a deck, Tab goes on to the same words in the next post, as in a table, and Shift-Tab
+        // back; past the first or the last, nothing.
         if selector == #selector(insertTab(_:)) || selector == #selector(insertBacktab(_:)),
            let id = store.editingText, let (deck, post) = store.doc.post(of: id), let post {
             typeOn(in: deck.id, from: id, post: post, forward: selector == #selector(insertTab(_:)))
@@ -1793,19 +2226,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     /// Ends typing into a text in one post of a deck and starts typing into the same text in the
-    /// next post, or the one before; past the last post, in a new one.
+    /// next post, or the one before. Past the last it makes no new post: a key pressed for
+    /// something else must never add one unasked.
     private func typeOn(in deckID: UUID, from id: UUID, post: Int, forward: Bool) {
         guard let deck = store.node(deckID) else { return }
         let posts = deck.posts
         guard let i = posts.firstIndex(of: post) else { return }
         let j = i + (forward ? 1 : -1)
-        guard j >= 0 else { return }
+        guard j >= 0, j < posts.count else { return }
         endEditing()
-        if j < posts.count {
-            store.turn(deckID, to: posts[j])
-        } else {
-            store.addPost(to: deckID)
-        }
+        store.turn(deckID, to: posts[j])
         guard let now = store.node(deckID).flatMap({ store.front(of: $0) }) else { return }
         let next = id.mixed(Deck.key(from: post, to: now))
         guard store.node(next) != nil else { return }
@@ -1824,6 +2254,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     func endEditing() {
         guard let id = store.editingText else { return }
+        store.restyleTyped = nil
+        store.typingSelection = NSRange(location: 0, length: 0)
         editor?.delegate = nil
         editorHost?.removeFromSuperview()
         editorHost = nil
@@ -1858,4 +2290,37 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
 final class FlippedView: NSView {
     nonisolated override var isFlipped: Bool { true }
+}
+
+/// The text view words are typed into on the canvas. What is pasted into it comes in as words
+/// alone, taking the look of the letters it goes among, as words typed do.
+final class TypingView: NSTextView {
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
+
+    // Spelling checked or not here is what the Edit menu says, kept for all text.
+    override func toggleContinuousSpellChecking(_ sender: Any?) {
+        super.toggleContinuousSpellChecking(sender)
+        UserDefaults.standard.set(isContinuousSpellCheckingEnabled, forKey: "BezzleChecksSpelling")
+    }
+
+    override func toggleGrammarChecking(_ sender: Any?) {
+        super.toggleGrammarChecking(sender)
+        UserDefaults.standard.set(isGrammarCheckingEnabled, forKey: "BezzleChecksGrammar")
+    }
+}
+
+/// Hears the pointer come into and leave the strip of the canvas under the title bar, in a window
+/// at the front or behind. Its own owner, so the canvas's hover is not reset at the strip's edge.
+private final class TitleBarWatch: NSResponder {
+    weak var canvas: CanvasView?
+
+    init(canvas: CanvasView) {
+        self.canvas = canvas
+        super.init()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func mouseEntered(with event: NSEvent) { canvas?.holdWindow() }
+    override func mouseExited(with event: NSEvent) { canvas?.holdWindow() }
 }

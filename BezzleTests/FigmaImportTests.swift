@@ -28,12 +28,20 @@ enum TestKiwi {
         ("NumberUnits", 0, ["RAW", "PIXELS", "PERCENT"]),
         ("Number", 2, ["value float", "units NumberUnits"]),
         ("Baseline", 2, ["position Vector"]),
-        ("TextData", 2, ["characters string", "baselines Baseline[]"]),
+        ("LineType", 0, ["PLAIN", "ORDERED_LIST", "UNORDERED_LIST"]),
+        ("TextLineData", 2, ["lineType LineType"]),
+        ("TextData", 2, ["characters string", "baselines Baseline[]", "characterStyleIDs uint[]", "styleOverrideTable NodeChange[]",
+                         "lines TextLineData[]"]),
+        ("TextDecoration", 0, ["NONE", "UNDERLINE", "STRIKETHROUGH"]),
+        ("TextAlignHorizontal", 0, ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]),
+        ("TextAlignVertical", 0, ["TOP", "CENTER", "BOTTOM"]),
+        ("OpenTypeFeature", 0, ["LIGA", "SS01", "TNUM"]),
+        ("FontVariation", 2, ["axisTag uint", "axisName string", "value float"]),
         ("GUIDPath", 2, ["guids GUID[]"]),
         ("SymbolData", 2, ["symbolID GUID", "symbolOverrides NodeChange[]"]),
         ("StrokeAlign", 0, ["CENTER", "INSIDE", "OUTSIDE"]),
         ("TextAutoResize", 0, ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT"]),
-        ("TextCase", 0, ["ORIGINAL", "UPPER", "LOWER", "TITLE"]),
+        ("TextCase", 0, ["ORIGINAL", "UPPER", "LOWER", "TITLE", "SMALL_CAPS"]),
         ("WindingRule", 0, ["NONZERO", "ODD"]),
         ("Path", 2, ["windingRule WindingRule", "commandsBlob uint", "styleID uint"]),
         ("NodeChange", 2, ["guid GUID", "guidPath GUIDPath", "parentIndex ParentIndex", "type NodeType", "name string", "visible bool",
@@ -42,7 +50,10 @@ enum TestKiwi {
                            "rectangleTopLeftCornerRadius float", "rectangleTopRightCornerRadius float", "rectangleBottomRightCornerRadius float",
                            "rectangleBottomLeftCornerRadius float", "frameMaskDisabled bool", "resizeToFit bool", "mask bool", "internalOnly bool",
                            "fontName FontName", "fontSize float", "letterSpacing Number", "textData TextData", "textAutoResize TextAutoResize",
-                           "textCase TextCase", "symbolData SymbolData", "derivedSymbolData NodeChange[]", "fillGeometry Path[]"]),
+                           "textCase TextCase", "symbolData SymbolData", "derivedSymbolData NodeChange[]", "fillGeometry Path[]",
+                           "styleID uint", "textDecoration TextDecoration", "textAlignHorizontal TextAlignHorizontal",
+                           "textAlignVertical TextAlignVertical", "paragraphSpacing float", "lineHeight Number",
+                           "toggledOnOTFeatures OpenTypeFeature[]", "fontVariations FontVariation[]"]),
         ("Blob", 2, ["bytes byte[]"]),
         ("Message", 2, ["nodeChanges NodeChange[]", "blobs Blob[]"]),
     ]
@@ -319,6 +330,84 @@ struct FigmaImportTests {
         let loose = try named("Loose")
         #expect(loose.frame.minX == 100 && loose.frame.minY > board.frame.maxY)
         #expect(report.notes["Pages, laid out under the first"] == 1)
+    }
+
+    static let helvetica: [String: Any] = ["family": "Helvetica", "style": "Regular", "postscript": "Helvetica"]
+
+    /// A board of texts whose letters differ: one with a word in bold, in red and struck through,
+    /// its first paragraph an item of a list, justified, in the middle of its box; one mostly in
+    /// big blue letters, so those are the layer's own; and one with features and axes set.
+    static func lettersMessage() -> [String: Any] {
+        let board = (1, 1), page = (0, 1)
+        let nodes: [[String: Any]] = [
+            ["guid": guid(0, 0), "type": "DOCUMENT", "name": "Document"],
+            node(page, "CANVAS", "Page 1", in: (0, 0), "!"),
+            node(board, "FRAME", "Board", in: page, "!", ["size": size(375, 812), "transform": at(0, 0), "fillPaints": [solid(1, 1, 1)]]),
+            node((1, 2), "TEXT", "Rich", in: board, "!", [
+                "size": size(200, 120), "transform": at(20, 40), "fillPaints": [solid(0, 0, 0)], "fontName": helvetica, "fontSize": 20.0,
+                "textAutoResize": "NONE", "textAlignHorizontal": "JUSTIFIED", "textAlignVertical": "CENTER", "paragraphSpacing": 8.0,
+                "textData": [
+                    "characters": "Hello bold world\nsecond", "characterStyleIDs": Array(repeating: 0, count: 6) + Array(repeating: 1, count: 4),
+                    "styleOverrideTable": [["styleID": 1, "fontName": ["family": "Helvetica", "style": "Bold", "postscript": "Helvetica-Bold"],
+                                            "fillPaints": [solid(1, 0, 0)], "textDecoration": "STRIKETHROUGH"]],
+                    "lines": [["lineType": "UNORDERED_LIST"], ["lineType": "PLAIN"]],
+                ],
+            ]),
+            node((1, 3), "TEXT", "Mostly", in: board, "\"", [
+                "size": size(150, 40), "transform": at(20, 200), "fillPaints": [solid(0, 0, 0)], "fontName": helvetica, "fontSize": 16.0,
+                "textAutoResize": "WIDTH_AND_HEIGHT",
+                "textData": [
+                    "characters": "ab cdefgh", "characterStyleIDs": [0, 0, 0, 1, 1, 1, 1, 1, 1],
+                    "styleOverrideTable": [["styleID": 1, "fontSize": 30.0, "fillPaints": [solid(0, 0, 1)]]],
+                    "baselines": [["position": ["x": 0.0, "y": 28.0]]],
+                ],
+            ]),
+            node((1, 4), "TEXT", "Tuned", in: board, "#", [
+                "size": size(100, 24), "transform": at(20, 300), "fillPaints": [solid(0, 0, 0)], "fontName": helvetica, "fontSize": 16.0,
+                "textAutoResize": "WIDTH_AND_HEIGHT", "textCase": "SMALL_CAPS", "toggledOnOTFeatures": ["SS01", "TNUM"],
+                "fontVariations": [["axisTag": 0x7767_6874, "axisName": "Weight", "value": 600.0]],
+                "textData": ["characters": "Figures 0123"],
+            ]),
+        ]
+        return ["nodeChanges": nodes, "blobs": [] as [Any]]
+    }
+
+    @Test func bringsStyledLettersAcross() throws {
+        let zip = TestZip.make([("canvas.fig", TestKiwi.canvas(Self.lettersMessage())), ("meta.json", Data("{}".utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).fig")
+        try zip.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try FigmaImporter.read(url)
+        func named(_ name: String) throws -> Node { try #require(imported.document.allNodes.first { $0.name == name }) }
+        // Nothing of them is left out or set otherwise.
+        #expect(imported.report.notes.isEmpty)
+
+        // The word keeps its own face, colour and line; the first paragraph is an item of a list.
+        let rich = try named("Rich")
+        #expect(rich.text == "Hello bold world\nsecond")
+        #expect(rich.style?.family == "Helvetica" && rich.style?.face == "Regular" && rich.style?.size == 20 && rich.fill.color.hex == "000000")
+        let runs = rich.runs
+        #expect(runs.map(\.text) == ["Hello ", "bold", " world\n", "second"])
+        #expect(runs[1].look.face == "Bold" && runs[1].look.color?.hex == "FF0000" && runs[1].look.strikethrough == true)
+        #expect(runs[1].look.family == nil && runs[1].look.size == nil && runs[1].look.underline == nil)
+        #expect(runs.map(\.look.list) == [TextList.bullet, .bullet, .bullet, nil])
+        #expect(runs[0].look == TextLook(list: .bullet) && runs[3].look.isPlain)
+        // Justified, with room after each paragraph, its lines in the middle of the box it keeps.
+        #expect(rich.style?.align == .justify && rich.style?.paragraphSpacing == 8)
+        #expect(rich.style?.sizing == .fixed && rich.style?.vertical == .middle)
+        #expect(rich.frame == CGRect(x: 20, y: 40, width: 200, height: 120))
+
+        // Most of its letters are big and blue, so the layer is; the rest are small and black,
+        // and the first baseline is still where Figma put it.
+        let mostly = try named("Mostly")
+        #expect(mostly.style?.size == 30 && mostly.fill.color.hex == "0000FF")
+        #expect(mostly.runs.map(\.text) == ["ab ", "cdefgh"])
+        #expect(mostly.runs[0].look.size == 16 && mostly.runs[0].look.color?.hex == "000000" && mostly.runs[1].look.isPlain)
+        #expect(abs(mostly.frame.minY + TextLayout.firstBaseline(mostly) - 228) < 0.5)
+
+        let tuned = try named("Tuned")
+        #expect(tuned.style?.letterCase == .smallCaps && tuned.spans == nil)
+        #expect(tuned.style?.features == ["ss01": 1, "tnum": 1] && tuned.style?.axes == ["wght": 600])
     }
 
     @Test func writesTheDesignWithItsPictures() throws {

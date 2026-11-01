@@ -1,0 +1,22 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "PackageStructure": ["<PackageStructure>"]
+  "WebP-arm64-apple-macosx-debug.module": ["<WebP-arm64-apple-macosx-debug.module>"]
+  "main": []
+  "test": []
+default: "main"
+nodes:
+  "/Users/erik/Documents/apps/Bezzle/Packages/WebP/Sources/WebP/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+commands:
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/erik/Documents/apps/Bezzle/Packages/WebP/Sources/WebP/","/Users/erik/Documents/apps/Bezzle/Packages/WebP/Package.swift","/Users/erik/Documents/apps/Bezzle/Packages/WebP/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

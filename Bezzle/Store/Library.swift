@@ -150,10 +150,16 @@ final class Library {
     }
 
     /// Makes a new design on disk, with one artboard of `size` if given, and returns where it is.
-    func create(artboard size: CGSize?, name: String? = nil) -> URL? {
+    /// With a `slide` size, the artboard is a carousel of that many slides as one starts with.
+    func create(artboard size: CGSize?, name: String? = nil, slide: CGSize? = nil) -> URL? {
         var doc = BezzleDocument()
         if let size {
-            doc.nodes = [Node(kind: .artboard, name: name ?? String(localized: "Artboard"), frame: CGRect(origin: .zero, size: size))]
+            var board = Node(kind: .artboard, name: name ?? String(localized: "Artboard"), frame: CGRect(origin: .zero, size: size))
+            if let slide {
+                board.slideSize = slide
+                board.frame.size = board.carouselSize(count: Carousel.startingCount)
+            }
+            doc.nodes = [board]
         }
         let url = freeURL(named: String(localized: "Untitled"))
         do {
@@ -191,8 +197,8 @@ final class Library {
     /// The design's thumbnail; nil for an empty design, or while it is first made. A thumbnail is
     /// made in the background, as reading a large design and its pictures takes seconds, and
     /// kept on disk, so the home screen has it at once the next time.
-    /// How large a design's picture on the home screen is made: as large as the latest is shown.
-    nonisolated static let thumbnailSize = CGSize(width: 560, height: 320)
+    /// How large a design's picture on the home screen is made, in the proportions its tables have there.
+    nonisolated static let thumbnailSize = CGSize(width: 480, height: 300)
 
     func thumbnail(for entry: Entry, size: CGSize) -> CGImage? {
         if let (date, image) = thumbnails[entry.url], date == entry.modified { return image }
@@ -224,18 +230,18 @@ final class Library {
     }
 
     private func finishThumbnail(_ url: URL, modified: Date, doc: BezzleDocument?, assets: Assets?, size: CGSize) {
-        let image = doc.flatMap { Renderer.thumbnail(of: $0, size: size, assets: assets) }
+        let image = doc.flatMap { Renderer.thumbnail(of: $0, size: size, assets: assets, cover: true) }
         making.remove(url)
         thumbnails[url] = (modified, image)
         if let image { Self.keep(image, for: url, modified: modified) }
     }
 
-    /// How many pixels each picture in the design takes along its longer side when the whole
-    /// design is drawn as a thumbnail of `size`. The thumbnail draws the canvas at one scale,
+    /// How many pixels each picture in the design takes along its longer side when the design is
+    /// drawn as its thumbnail of `size`. The thumbnail draws the canvas at one scale,
     /// and nothing in a design is scaled on the way down, so a layer's frame says it all.
     nonisolated static func pictureSizes(in doc: BezzleDocument, thumbnail size: CGSize, scale: CGFloat) -> [String: Int] {
         guard let bounds = doc.contentBounds, bounds.width > 0, bounds.height > 0 else { return [:] }
-        let fit = min(size.width / bounds.width, size.height / bounds.height) * 0.86 * scale
+        let fit = Renderer.thumbnailPlacement(of: doc, bounds: bounds, in: size, cover: true).scale * scale
         var sizes: [String: Int] = [:]
         func visit(_ n: Node) {
             if let image = n.fill.image, image.size.width > 0, image.size.height > 0 {
@@ -265,7 +271,7 @@ final class Library {
 
     private nonisolated static func thumbnailFile(_ url: URL, modified: Date) -> URL {
         // Its size in the name, so ones kept at another size are made again.
-        thumbnailFolder.appendingPathComponent("\(thumbnailName(url))-\(Int64(modified.timeIntervalSince1970 * 1000))-\(Int(thumbnailSize.width)).png")
+        thumbnailFolder.appendingPathComponent("\(thumbnailName(url))-\(Int64(modified.timeIntervalSince1970 * 1000))-\(Int(thumbnailSize.width))x\(Int(thumbnailSize.height)).png")
     }
 
     private static func keptThumbnail(_ entry: Entry) -> CGImage? {
@@ -358,7 +364,8 @@ struct Preset: Identifiable, Hashable {
     /// 2026); Android phones at their usual resolution, as wide as their browsers measure. Platforms' formats as they ask for them, in pixels; print in
     /// points, as a PDF has them.
     static let all: [Preset] = [
-        Preset(title: "iPhone Duo, open", size: CGSize(width: 626, height: 890), group: .iPhone),
+        // Open, the Duo is a book held sideways, its inner screen wider than tall (164.6 × 117.8 mm).
+        Preset(title: "iPhone Duo, open", size: CGSize(width: 890, height: 626), group: .iPhone),
         Preset(title: "iPhone Duo, closed", size: CGSize(width: 466, height: 678), group: .iPhone),
         Preset(title: "iPhone 18 Pro Max", size: CGSize(width: 440, height: 956), group: .iPhone),
         Preset(title: "iPhone 18 Pro", size: CGSize(width: 402, height: 874), group: .iPhone),

@@ -351,14 +351,39 @@ struct DeckOfferTests {
         second.insertText("Two", replacementRange: NSRange(location: 0, length: second.string.utf16.count))
         bench.step { _ = bench.canvas.textView(second, doCommandBy: #selector(NSResponder.insertTab(_:))) }
         let third = try! #require(bench.editor)
+        // Past the last post, nothing: a key pressed for something else never makes a post.
         bench.step { _ = bench.canvas.textView(third, doCommandBy: #selector(NSResponder.insertTab(_:))) }
-        // Past the last post, a new one, a copy of the one before.
-        #expect(bench.a.posts.count == 4)
-        #expect(bench.store.front(of: bench.a) == bench.a.posts[3])
-        let fourth = try! #require(bench.editor)
-        fourth.insertText("Four", replacementRange: NSRange(location: 0, length: fourth.string.utf16.count))
+        #expect(bench.a.posts.count == 3)
+        #expect(bench.store.front(of: bench.a) == bench.a.posts[2])
+        #expect(bench.store.editingText == all("Title", bench)[2].id)
+        third.insertText("Three", replacementRange: NSRange(location: 0, length: third.string.utf16.count))
         bench.step { bench.canvas.endEditing() }
-        #expect(all("Title", bench).map(\.text) == ["Tip 1", "Two", "Tip 3", "Four"])
+        #expect(all("Title", bench).map(\.text) == ["Tip 1", "Two", "Three"])
+    }
+
+    @Test func typingGoesOnInThePostTurnedTo() {
+        let bench = deck()
+        let first = all("Title", bench)[0]
+        bench.store.selection = [first.id]
+        bench.canvas.beginEditing(first.id, action: "Typing")
+        let editor = try! #require(bench.editor)
+        editor.insertText("One", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        // Turned while typing, as the menu or the inspector does: the typing goes on there, and
+        // nothing typed is left over the post now in front.
+        bench.step { bench.store.turnPage(by: 1) }
+        #expect(bench.store.editingText == all("Title", bench)[1].id)
+        let second = try! #require(bench.editor)
+        #expect(second !== editor)
+        #expect(second.string == "Tip 2")
+        second.insertText("Two", replacementRange: NSRange(location: 0, length: second.string.utf16.count))
+        // A post added while typing: what was typed stays, and the typing goes on in the new post.
+        bench.step { bench.store.addPost(to: bench.a.id) }
+        #expect(bench.a.posts.count == 4)
+        #expect(bench.store.editingText == all("Title", bench)[2].id)
+        let added = try! #require(bench.editor)
+        added.insertText("New", replacementRange: NSRange(location: 0, length: added.string.utf16.count))
+        bench.step { bench.canvas.endEditing() }
+        #expect(all("Title", bench).map(\.text) == ["One", "Two", "New", "Tip 3"])
     }
 
     @Test func onePostGoesOutAlone() {

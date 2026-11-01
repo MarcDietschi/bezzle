@@ -300,6 +300,47 @@ struct PointEditingTests {
         #expect(points(bench).last == CGPoint(x: 210, y: 210))
     }
 
+    @Test func withCommandAPointGoesWhereverItIsLetGo() {
+        let bench = bench()
+        bench.store.selection = [bench.node("P")!.id]
+        bench.store.editPoints()
+        // Within reach of the top right point's x, and between whole points: nothing catches it.
+        bench.drag(CGPoint(x: 210, y: 210), CGPoint(x: 212.37, y: 260.62), flags: .command)
+        #expect(near(points(bench).last, CGPoint(x: 212.37, y: 260.62)))
+        #expect(bench.store.guides.isEmpty)
+    }
+
+    @Test func aPointCatchesOnWhatIsNearAndElseLandsOnWholePoints() {
+        let bench = bench()
+        bench.store.selection = [bench.node("P")!.id]
+        bench.store.editPoints()
+        bench.drag(CGPoint(x: 210, y: 210), CGPoint(x: 212.37, y: 260.62), release: false)
+        // Caught by the x of the point above it; down, on the nearest whole point.
+        #expect(near(points(bench).last, CGPoint(x: 210, y: 261)))
+        #expect(!bench.store.guides.isEmpty)
+        bench.release(CGPoint(x: 212.37, y: 260.62))
+    }
+
+    @Test func zoomedInAPointMovesInStepsAsFineAsCanBeSeen() {
+        let bench = bench()
+        bench.store.selection = [bench.node("P")!.id]
+        bench.store.editPoints()
+        // Eight times as big, a whole point would jump eight points on the screen; a quarter is two.
+        bench.store.viewport = Viewport(origin: CGPoint(x: 150, y: 150), zoom: 8)
+        bench.drag(CGPoint(x: 210, y: 210), CGPoint(x: 230.37, y: 240.62))
+        #expect(near(points(bench).last, CGPoint(x: 230.25, y: 240.5)))
+    }
+
+    @Test func aPointCaughtByAnEdgeBetweenWholePointsLandsRightOnIt() {
+        // A layer whose left edge is at 350.5 on the canvas.
+        let bar = Node(kind: .rectangle, name: "Bar", frame: CGRect(x: 250.5, y: 40, width: 20, height: 20))
+        let bench = Bench(extra: [Node.path(BezierPath("M 10 10 L 110 10 L 110 110"), name: "P"), bar])
+        bench.store.selection = [bench.node("P")!.id]
+        bench.store.editPoints()
+        bench.drag(CGPoint(x: 210, y: 210), CGPoint(x: 352, y: 262))
+        #expect(near(points(bench).last, CGPoint(x: 350.5, y: 262)))
+    }
+
     @Test func pickedPointsMoveTogetherAndGoWithDelete() {
         let bench = bench()
         bench.store.selection = [bench.node("P")!.id]

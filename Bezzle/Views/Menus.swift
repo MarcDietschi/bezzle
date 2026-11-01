@@ -343,7 +343,7 @@ private struct MenuRow: View {
                     .lineLimit(1)
                 if let detail = entry.detail {
                     Text(detail)
-                        .font(.system(size: 11))
+                        .prose(11)
                         .foregroundStyle(entry.enabled ? Theme.ink3 : Theme.ink4)
                 }
             }

@@ -31,7 +31,20 @@ struct InspectorShots {
         tilted.transform3D = Presets.heldUp
         var frosted = Node(kind: .rectangle, name: "Frosted", frame: CGRect(x: 280, y: 100, width: 100, height: 60))
         frosted.blur = Blur(radius: 12, ramp: .down)
-        board.children = [card, plain, title, shape, field, tilted, frosted]
+        var icon = Node(kind: .rectangle, name: "Icon", frame: CGRect(x: 160, y: 120, width: 32, height: 32))
+        icon.exports = [ExportPreset(), ExportPreset(size: .scale(2)), ExportPreset(size: .scale(3)),
+                        ExportPreset(size: .width(512), format: .webp, suffix: "-store"), ExportPreset(format: .svg)]
+        // Several of each: a gradient over its colour, a ring outside its line, a close shadow
+        // and a soft one under it, and one inside.
+        var layered = Node(kind: .rectangle, name: "Layered", frame: CGRect(x: 20, y: 120, width: 120, height: 80))
+        layered.cornerRadius = 12
+        layered.add(Presets.overlay)
+        layered.border = Border(on: true, color: .black, width: 1, position: .inside)
+        layered.add(Presets.border(over: layered))
+        layered.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.14), x: 0, y: 4, blur: 12, spread: 2)
+        layered.add(Presets.shadow(besides: layered.shadow))
+        layered.add(Presets.shadow(Presets.innerShadows[1], like: layered.shadow))
+        board.children = [card, plain, title, shape, field, tilted, frosted, icon, layered]
         var carousel = Node(kind: .artboard, name: "Launch", frame: CGRect(x: 500, y: 0, width: 3240, height: 1350))
         carousel.slideSize = CGSize(width: 1080, height: 1350)
         var doc = BezzleDocument()
@@ -48,11 +61,14 @@ struct InspectorShots {
         func id(_ name: String) -> UUID { store.doc.allNodes.first { $0.name == name }!.id }
         // Each look with every card folded, and with the card named open.
         let looks: [(String, [String], Tool, Aspect?)] = [
-            ("rectangle", ["Card"], .select, nil), ("rectangle-frame", ["Card"], .select, .frame), ("rectangle-shadow", ["Card"], .select, .shadow),
-            ("rectangle-blur", ["Card"], .select, .blur), ("ellipse", ["Dot"], .select, .fill), ("text", ["Title"], .select, .text),
-            ("path", ["Shape"], .select, .path), ("inset", ["Field"], .select, .shadow), ("3d", ["Tilted"], .select, .depth),
+            ("rectangle", ["Card"], .select, nil), ("rectangle-frame", ["Card"], .select, .frame), ("rectangle-shadow", ["Card"], .select, .shadow(0)),
+            ("rectangle-blur", ["Card"], .select, .blur), ("ellipse", ["Dot"], .select, .fill(0)), ("text", ["Title"], .select, .text),
+            ("path", ["Shape"], .select, .path), ("inset", ["Field"], .select, .shadow(0)), ("3d", ["Tilted"], .select, .depth),
             ("growing", ["Frosted"], .select, .blur), ("several", ["Card", "Dot"], .select, .arrange), ("artboard", ["Board"], .select, .artboard),
             ("carousel", ["Launch"], .select, .artboard), ("nothing", [], .select, nil), ("presets", [], .artboard, nil),
+            ("export", ["Icon"], .select, .export),
+            ("layered", ["Layered"], .select, nil), ("layered-shadow", ["Layered"], .select, .shadow(0)),
+            ("layered-fill", ["Layered"], .select, .fill(1)),
         ]
         for appearance in ["light", "dark"] {
             for (name, picked, tool, open) in looks {

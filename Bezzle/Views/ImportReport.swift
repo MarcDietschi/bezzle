@@ -61,7 +61,7 @@ private struct Note: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Circle().fill(Theme.ink3).frame(width: 4, height: 4).alignmentGuide(.firstTextBaseline) { $0.height + 1 }
             Text(text)
-                .font(.system(size: 12))
+                .prose(12)
                 .foregroundStyle(Theme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)

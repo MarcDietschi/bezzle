@@ -208,6 +208,55 @@ struct XDImportTests {
         #expect(masked.frame == CGRect(x: 0, y: 500, width: 100, height: 100))
     }
 
+    /// An XD file of two texts whose letters differ: one with a word in bold and red, underlined and
+    /// struck through, as XD keeps its ranges of letters, the last one to the end; and one as older
+    /// files keep it, on the pieces of its lines.
+    static func lettersFile() throws -> URL {
+        let manifest = #"{"children":[{"name":"artwork","path":"artwork","children":[{"name":"Board","path":"artboard-1","uxdesign#bounds":{"x":0,"y":0,"width":375,"height":812}}]},{"name":"resources","path":"resources","components":[]}]}"#
+        let helvetica = #""fontFamily":"Helvetica","fontStyle":"Regular","postscriptName":"Helvetica","fontSize":20"#
+        let board = """
+        {"children":[{"type":"artboard","artboard":{"children":[
+          {"type":"text","name":"Rich","transform":{"a":1,"b":0,"c":0,"d":1,"tx":20,"ty":100},
+           "style":{"fill":{"type":"solid","color":{"mode":"RGB","value":{"r":0,"g":0,"b":0}}},"font":{"family":"Helvetica","style":"Regular","postscriptName":"Helvetica","size":20},
+             "textAttributes":{"paragraphAlign":"justify","paragraphAfterSpacing":6}},
+           "meta":{"ux":{"rangedStyles":[{"length":6,\(helvetica),"fill":{"value":4278190080}},
+             {"length":4,"fontFamily":"Helvetica","fontStyle":"Bold","postscriptName":"Helvetica-Bold","fontSize":20,"fill":{"value":4294901760},"underline":true,"strikethrough":true},
+             {"length":0,\(helvetica),"fill":{"value":4278190080}}]}},
+           "text":{"rawText":"Hello bold world","frame":{"type":"positioned"},"paragraphs":[{"lines":[[{"x":0,"y":0,"from":0,"to":16}]]}]}},
+          {"type":"text","name":"Older","transform":{"a":1,"b":0,"c":0,"d":1,"tx":20,"ty":200},
+           "style":{"fill":{"type":"solid","color":{"mode":"RGB","value":{"r":0,"g":0,"b":0}}},"font":{"family":"Helvetica","style":"Regular","postscriptName":"Helvetica","size":20}},
+           "text":{"rawText":"Big bold","frame":{"type":"positioned"},"paragraphs":[{"lines":[[{"x":0,"y":0,"from":0,"to":4},
+             {"x":40,"y":0,"from":4,"to":8,"style":{"font":{"family":"Helvetica","style":"Bold","postscriptName":"Helvetica-Bold","size":20},
+               "fill":{"type":"solid","color":\(red)},"textAttributes":{"decoration":["underline"]}}}]]}]}}
+        ]}}]}
+        """
+        let zip = TestZip.make([("mimetype", Data("application/vnd.adobe.sparkler.project+dcxucf".utf8)), ("manifest", Data(manifest.utf8)),
+                                ("artwork/artboard-1/graphics/graphicContent.agc", Data(board.utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).xd")
+        try zip.write(to: url)
+        return url
+    }
+
+    @Test func bringsStyledLettersAcross() throws {
+        let url = try Self.lettersFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try XDImporter.read(url)
+        func named(_ name: String) throws -> Node { try #require(imported.document.allNodes.first { $0.name == name }) }
+        #expect(imported.report.notes.isEmpty)
+
+        let rich = try named("Rich")
+        #expect(rich.text == "Hello bold world" && rich.style?.face == "Regular" && rich.fill.color.hex == "000000")
+        #expect(rich.runs.map(\.text) == ["Hello ", "bold", " world"])
+        let bold = rich.runs[1].look
+        #expect(bold.face == "Bold" && bold.color?.hex == "FF0000" && bold.underline == true && bold.strikethrough == true && bold.size == nil)
+        #expect(rich.runs[0].look.isPlain && rich.runs[2].look.isPlain)
+        #expect(rich.style?.align == .justify && rich.style?.paragraphSpacing == 6)
+
+        let older = try named("Older")
+        #expect(older.runs.map(\.text) == ["Big ", "bold"])
+        #expect(older.runs[1].look.face == "Bold" && older.runs[1].look.color?.hex == "FF0000" && older.runs[1].look.underline == true)
+    }
+
     @Test func writesTheDesignAsAPackage() throws {
         let url = try Self.file()
         defer { try? FileManager.default.removeItem(at: url) }

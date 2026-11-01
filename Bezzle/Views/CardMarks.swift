@@ -38,6 +38,14 @@ struct CardMarks: View {
             case .fill, .opacity, .background:
                 ctx.fill(outline, with: .color(pencil.opacity(0.18)))
                 ctx.stroke(outline, with: .color(pencil.opacity(0.6)), lineWidth: 1)
+            case .mask:
+                // The shape that holds, wherever what is picked lies in it.
+                let mask = node.isMask ? node : doc.parent(of: id)
+                if let mask, mask.isMask, let shape = Mask.outline(of: mask.id, in: doc) {
+                    let seen = Path(shape).applying(CGAffineTransform(scaleX: vp.zoom, y: vp.zoom).translatedBy(x: -vp.origin.x, y: -vp.origin.y))
+                    ctx.stroke(seen, with: .color(pencil.opacity(0.18)), lineWidth: 6)
+                    ctx.stroke(seen, with: .color(pencil), lineWidth: 1.5)
+                }
             case .border, .text, .path, .cell, .post:
                 ctx.stroke(outline, with: .color(pencil.opacity(0.18)), lineWidth: 6)
                 ctx.stroke(outline, with: .color(pencil), lineWidth: 1.5)
@@ -53,12 +61,16 @@ struct CardMarks: View {
                     layer.clip(to: spots)
                     layer.stroke(outline, with: .color(pencil), lineWidth: 2)
                 }
-            case .shadow:
-                let shadow = node.shadow
+            case .shadow(let slot):
+                let shadow = node[shadow: slot]
                 if shadow.inside {
                     ctx.stroke(outline, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 } else {
-                    let fallen = outline.applying(CGAffineTransform(translationX: shadow.x * vp.zoom, y: shadow.y * vp.zoom))
+                    // Where it falls, as far round as it spreads.
+                    let cast = Renderer.spreads(node, shadow) ? Renderer.spreadOutline(of: node, by: shadow.grown).map {
+                        Path($0.copy(using: [Renderer.localTransform(node)]) ?? $0).applying(toView)
+                    } : nil
+                    let fallen = (cast ?? outline).applying(CGAffineTransform(translationX: shadow.x * vp.zoom, y: shadow.y * vp.zoom))
                     ctx.fill(fallen, with: .color(pencil.opacity(0.08)))
                     ctx.stroke(fallen, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 }
@@ -79,8 +91,21 @@ struct CardMarks: View {
                 ctx.stroke(outline, with: .color(pencil), lineWidth: 1)
             case .depth:
                 ctx.stroke(around, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            case .export:
+                // What goes into the file: the artboard, or all the layer paints, shadow and all.
+                let reach = node.isArtboard ? box : Renderer.reach(of: node).offsetBy(dx: o.x, dy: o.y)
+                let corner = vp.toView(reach.origin)
+                let cut = Path(CGRect(x: corner.x, y: corner.y, width: reach.width * vp.zoom, height: reach.height * vp.zoom))
+                ctx.fill(cut, with: .color(pencil.opacity(0.06)))
+                ctx.stroke(cut, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            case .layout, .guides:
+                // The grid and the guides light up on the canvas themselves; the sheet they lie on is outlined.
+                ctx.stroke(Path(vp.toView(box)), with: .color(pencil.opacity(0.5)), lineWidth: 1)
             case .frame, .arrange, .artboard, .deck, .grid:
                 ctx.stroke(around, with: .color(pencil), lineWidth: 1.5)
+            case .photo:
+                // Nothing over the picture, which has to be seen as it is: only a hairline round it.
+                ctx.stroke(outline, with: .color(pencil.opacity(0.5)), lineWidth: 1)
             }
         }
     }

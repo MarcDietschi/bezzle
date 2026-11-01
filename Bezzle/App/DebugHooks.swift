@@ -10,7 +10,11 @@ import SwiftUI
 ///   BEZZLE_OPEN=path               open this design
 ///   BEZZLE_SELECT=name,name…       select the layers with these names
 ///   BEZZLE_TOOL=rectangle          pick a tool
-///   BEZZLE_EDIT=name               start typing into this text layer
+///   BEZZLE_RESOURCES=seconds[:page[:words]]  bring out the resources panel, on a kit's or icon set's page
+///   BEZZLE_RESOURCE_DRAG=seconds:resource:x,y;…  carry a part or icon over the canvas and hold it there
+///   BEZZLE_CARD=seconds:layout     open this card of the inspector (layout, guides)
+///   BEZZLE_EDIT=name[:start,length]  start typing into this text layer, those letters picked out
+///   BEZZLE_FIND=seconds:words      open the find bar looking for these words, or "spelling" to check spelling
 ///   BEZZLE_MENU=seconds:anchor     open one of Bezzle's menus or panels (fill, border, zoom…)
 ///   BEZZLE_EXPORT=seconds          show the export panel
 ///   BEZZLE_EXPORT_FILES=seconds:folder:png,svg…  export the selected layers, or every artboard, and quit
@@ -87,6 +91,46 @@ enum DebugHooks {
             after(0.6) { store.selection = store.doc.allNodes.filter { wanted.contains($0.name) }.map(\.id) }
         }
         if let tool = env["BEZZLE_TOOL"].flatMap(Tool.init(rawValue:)) { after(0.6) { store.tool = tool } }
+        // BEZZLE_RESOURCES=seconds[:page[:words]] brings out the resources panel, on a kit's or an
+        // icon set's page ("ios", "lucide"…), with words in its search.
+        if let spec = env["BEZZLE_RESOURCES"] {
+            let parts = spec.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            let page: ResourcePage? = parts.count > 1 && !parts[1].isEmpty ? (IconSetID(rawValue: parts[1]).map { .icons($0) } ?? .kit(parts[1])) : nil
+            ResourcesPanel.opening = (page, parts.count > 2 ? parts[2] : "")
+            after(Double(parts[0]) ?? 0.6) { store.showsResources = true }
+        }
+        // BEZZLE_RESOURCE_DRAG=seconds:resource:x,y[;x,y…] carries a part ("ios.tab-bar") or an icon
+        // ("icon/lucide/heart") over these canvas points, a third of a second apart, and holds it at the last.
+        if let spec = env["BEZZLE_RESOURCE_DRAG"] {
+            let parts = spec.split(separator: ":").map(String.init)
+            if parts.count == 3, let s = Double(parts[0]), let resource = try? MCPTools.resource(parts[1], style: nil, weight: nil) {
+                let points = parts[2].split(separator: ";").compactMap { p -> CGPoint? in
+                    let v = p.split(separator: ",").compactMap { Double($0) }
+                    return v.count == 2 ? CGPoint(x: v[0], y: v[1]) : nil
+                }
+                after(s) { store.canvas?.resourceDropTool.begin(resource) }
+                for (i, p) in points.enumerated() {
+                    after(s + 0.05 + Double(i) / 3) { _ = store.canvas?.resourceDropTool.update(at: p, on: nil) }
+                }
+            }
+        }
+        // BEZZLE_CARD=seconds:layout|guides|photo opens that card of the inspector.
+        if let spec = env["BEZZLE_CARD"], let colon = spec.firstIndex(of: ":"), let s = Double(spec[..<colon]) {
+            let card: Aspect? = switch spec[spec.index(after: colon)...] {
+            case "layout": .layout
+            case "guides": .guides
+            case "photo", "photo-color", "photo-detail": .photo
+            case "fill": .fill(0)
+            case "text": .text
+            case "path": .path
+            default: nil
+            }
+            after(s) {
+                store.openAspect = card
+                if spec.hasSuffix("photo-color") { store.developGroup = .color; store.developBand = .green }
+                if spec.hasSuffix("photo-detail") { store.developGroup = .detail }
+            }
+        }
         if let z = env["BEZZLE_ZOOM"].flatMap(Double.init) { after(0.7) { store.zoom(to: z) } }
         if let spec = env["BEZZLE_ZOOMS"], let colon = spec.firstIndex(of: ":"), let s = Double(spec[..<colon]) {
             // As a pinch does: one zoom after another, a frame or two apart.
@@ -106,9 +150,27 @@ enum DebugHooks {
                 }
             }
         }
-        if let name = env["BEZZLE_EDIT"] {
+        // BEZZLE_FIND=seconds:words opens the find bar looking for them; "seconds:spelling" checks spelling.
+        if let spec = env["BEZZLE_FIND"], let colon = spec.firstIndex(of: ":"), let s = Double(spec[..<colon]) {
+            let words = String(spec[spec.index(after: colon)...])
+            after(s) {
+                store.openFind(spelling: words == "spelling")
+                if words != "spelling" {
+                    store.finder?.query = words
+                    store.finder?.replacement = words.uppercased()
+                    store.findNext()
+                }
+            }
+        }
+        // BEZZLE_EDIT=name[:start,length] also picks out those letters.
+        if let spec = env["BEZZLE_EDIT"] {
+            let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
+            let numbers = parts.count > 1 ? parts[1].split(separator: ",").compactMap { Int($0) } : []
             after(0.8) {
-                if let id = store.doc.allNodes.first(where: { $0.name == name })?.id { store.canvas?.beginEditing(id, action: "Typing") }
+                if let id = store.doc.allNodes.first(where: { $0.name == parts[0] })?.id { store.canvas?.beginEditing(id, action: "Typing") }
+                if numbers.count == 2, let editor = store.canvas?.subviews.first?.subviews.first as? NSTextView {
+                    editor.setSelectedRange(NSRange(location: numbers[0], length: numbers[1]))
+                }
             }
         }
         if let spec = env["BEZZLE_MENU"], let colon = spec.firstIndex(of: ":"), let s = Double(spec[..<colon]) {

@@ -110,6 +110,11 @@ extension DocumentStore {
             for (id, parts) in cuts {
                 guard let n = doc.node(id), let at = doc.path(of: id) else { continue }
                 let o = doc.parentOrigin(of: id), parent = at.parent.map { doc[$0].id }
+                // A mask's shape cut apart is a mask for each piece, each showing what it showed there.
+                if let mask = doc.parent(of: id), mask.holder?.id == id {
+                    made += Self.cut(mask, into: parts, origin: o, in: &doc)
+                    continue
+                }
                 let index = at.indices[at.indices.count - 1]
                 // In place of the shape, in the order the pieces came.
                 for (k, part) in parts.enumerated() {
@@ -124,6 +129,32 @@ extension DocumentStore {
         }
         selection = made
         return true
+    }
+
+    /// A mask whose shape is cut into pieces, as a framed picture is cut through, frame and all:
+    /// the first piece is its shape now, holding what it held, and each other piece the shape of a
+    /// mask of its own just above it, holding a copy of all that. What shows stays as it was, in
+    /// pieces that come apart. `origin` is where the mask's own coordinates start on the canvas.
+    /// Returns the pieces.
+    private static func cut(_ mask: Node, into parts: [CGPath], origin o: CGPoint, in doc: inout BezzleDocument) -> [UUID] {
+        guard let shape = mask.holder, var at = doc.path(of: mask.id) else { return [] }
+        let pieces = parts.compactMap { shape.reshaped(to: $0, origin: o) }
+        guard var first = pieces.first else { return [] }
+        // The first keeps being the shape it was, so the mask still knows it.
+        first.id = shape.id
+        doc.update(shape.id) { $0 = first }
+        guard let whole = doc.node(mask.id) else { return [shape.id] }
+        var made = [shape.id]
+        for var piece in pieces.dropFirst() {
+            piece.id = UUID()
+            var copy = whole.freshCopy()
+            copy.children[0] = piece
+            copy.name = Mask.name(in: doc)
+            at.indices[at.indices.count - 1] += 1
+            doc.insert(copy, at: at)
+            made.append(piece.id)
+        }
+        return made
     }
 
     // MARK: Pulling an outline out or in
@@ -161,7 +192,7 @@ extension DocumentStore {
     private var outlinable: [UUID] {
         selection.filter { id in
             guard let n = node(id), !n.locked else { return false }
-            return (Self.cuttable.contains(n.kind) || n.kind == .line) && n.border.on && n.border.width > 0
+            return (Self.cuttable.contains(n.kind) || n.kind == .line) && n.borders.contains { $0.width > 0 }
         }
     }
 
@@ -179,24 +210,36 @@ extension DocumentStore {
                 guard let n = doc.node(id), let line = doc.line(of: id), let at = doc.path(of: id) else { continue }
                 let closed = n.kind != .line && (n.kind != .path || (doc.points(of: id)?.subpaths.allSatisfy(\.closed) ?? false))
                 let inside = doc.outline(of: id) ?? line
-                guard let area = Outlines.covered(by: n.border, along: line, inside: inside, closed: closed) else { continue }
                 let o = doc.parentOrigin(of: id)
-                guard var shape = n.reshaped(to: area, origin: o) else { continue }
-                shape.fill = Fill(color: n.border.color)
-                shape.border = Border()
                 let keepsFill = n.fill.on && n.kind != .line
-                if keepsFill {
-                    shape.id = UUID()
-                    shape.name = String(localized: "\(n.name) Border")
-                    // The layer's shadow falls from the layer, as it did.
-                    shape.shadow.on = false
-                    shape.frame = shape.frame.offsetBy(dx: o.x, dy: o.y)
-                    doc.update(id) { $0.border.on = false }
-                    doc.attach(shape, to: at.parent.map { doc[$0].id }, at: at.indices[at.indices.count - 1] + 1)
-                } else {
-                    doc.update(id) { $0 = shape }
+                // Each border a shape of its own, one over another as they were drawn.
+                var above = at.indices[at.indices.count - 1] + 1
+                for (i, border) in n.borders.enumerated() {
+                    guard let area = Outlines.covered(by: border, along: line, inside: inside, closed: closed),
+                          var shape = n.reshaped(to: area, origin: o) else { continue }
+                    shape.fill = Fill(color: border.color)
+                    shape.moreFills = nil
+                    shape.border = Border()
+                    shape.moreBorders = nil
+                    if keepsFill || i > 0 {
+                        shape.id = UUID()
+                        shape.name = String(localized: "\(n.name) Border")
+                        // The layer's shadows fall from the layer, as they did.
+                        shape.shadows = []
+                        shape.frame = shape.frame.offsetBy(dx: o.x, dy: o.y)
+                        doc.attach(shape, to: at.parent.map { doc[$0].id }, at: above)
+                        above += 1
+                    } else {
+                        doc.update(id) { $0 = shape }
+                    }
+                    made.append(shape.id)
                 }
-                made.append(shape.id)
+                if keepsFill {
+                    doc.update(id) { n in
+                        n.border.on = false
+                        n.moreBorders = nil
+                    }
+                }
             }
         }
         if !made.isEmpty { selection = made }

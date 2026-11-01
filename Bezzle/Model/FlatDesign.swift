@@ -57,6 +57,18 @@ nonisolated struct LayerField: @unchecked Sendable {
     let same: (Node, Node) -> Bool
     let copy: (inout Node, Node) -> Void
     let write: (inout Node, FieldValue) throws -> Void
+    /// For a property that is a dictionary, such as an artboard's guides: its entries, each shared
+    /// and undone on its own as a property is, so two people adding guides to one artboard at once
+    /// both keep theirs. Shared, each entry is a field of its own, named `name/key`.
+    var entries: Entries?
+
+    struct Entries {
+        let keys: (Node) -> Set<String>
+        let same: (Node, Node, String) -> Bool
+        let copy: (inout Node, Node, String) -> Void
+        /// The entry as it is shared; null when there is none.
+        let value: (Node, String) -> FieldValue
+    }
 
     init<T: Codable & Equatable>(_ name: String, _ key: WritableKeyPath<Node, T>) {
         self.name = name
@@ -65,18 +77,38 @@ nonisolated struct LayerField: @unchecked Sendable {
         write = { node, value in node[keyPath: key] = try value.decoded(as: T.self) }
     }
 
+    init<T: Codable & Equatable>(_ name: String, entries key: WritableKeyPath<Node, [String: T]?>) {
+        self.init(name, key)
+        entries = Entries(
+            keys: { Set(($0[keyPath: key] ?? [:]).keys) },
+            same: { a, b, k in a[keyPath: key]?[k] == b[keyPath: key]?[k] },
+            copy: { node, other, k in
+                var all = node[keyPath: key] ?? [:]
+                all[k] = other[keyPath: key]?[k]
+                node[keyPath: key] = all.isEmpty ? nil : all
+            },
+            value: { node, k in node[keyPath: key]?[k].flatMap { try? FieldValue(encoding: $0) } ?? .null })
+    }
+
+    /// The name an entry is shared under.
+    func entryName(_ key: String) -> String { "\(name)/\(key)" }
+
     static let all: [LayerField] = [
         LayerField("kind", \.kind), LayerField("name", \.name), LayerField("frame", \.frame),
         LayerField("rotation", \.rotation), LayerField("fill", \.fill), LayerField("border", \.border),
-        LayerField("shadow", \.shadow), LayerField("opacity", \.opacity), LayerField("cornerRadius", \.cornerRadius),
+        LayerField("shadow", \.shadow),
+        LayerField("moreFills", \.moreFills), LayerField("moreBorders", \.moreBorders), LayerField("moreShadows", \.moreShadows),
+        LayerField("opacity", \.opacity), LayerField("cornerRadius", \.cornerRadius),
         LayerField("corners", \.corners), LayerField("cornerSmoothing", \.cornerSmoothing), LayerField("rising", \.rising),
-        LayerField("text", \.text), LayerField("style", \.style), LayerField("path", \.path),
-        LayerField("pathBox", \.pathBox), LayerField("evenOdd", \.evenOdd), LayerField("mask", \.mask),
+        LayerField("text", \.text), LayerField("style", \.style), LayerField("spans", \.spans), LayerField("path", \.path),
+        LayerField("pathBox", \.pathBox), LayerField("evenOdd", \.evenOdd), LayerField("mask", \.mask), LayerField("clipsToFirst", \.clipsToFirst),
         LayerField("blur", \.blur), LayerField("blend", \.blend), LayerField("hidden", \.hidden),
         LayerField("locked", \.locked), LayerField("clips", \.clips), LayerField("slideSize", \.slideSize),
         LayerField("transform3D", \.transform3D),
         LayerField("grid", \.grid),
         LayerField("deck", \.deck), LayerField("post", \.post), LayerField("own", \.own),
+        LayerField("layout", \.layout), LayerField("guides", entries: \.guides),
+        LayerField("exports", \.exports),
     ]
 
     /// Each property of a layer, without what it holds, read all at once.
@@ -95,11 +127,18 @@ nonisolated struct LayerField: @unchecked Sendable {
         var whole = values
         whole["id"] = .string(id.uuidString)
         whole["children"] = .array([])
+        // A dictionary's entries, each shared on its own, made one again.
+        for field in all where field.entries != nil {
+            let prefix = field.entryName("")
+            var entries: [String: FieldValue] = [:]
+            for (name, value) in values where name.hasPrefix(prefix) && value != .null { entries[String(name.dropFirst(prefix.count))] = value }
+            whole[field.name] = entries.isEmpty ? .null : .object(entries)
+        }
         if let node = try? FieldValue.object(whole).decoded(as: Node.self) { return node }
         let kind = values["kind"].flatMap { try? $0.decoded(as: Node.Kind.self) } ?? .rectangle
         var node = Node(kind: kind, frame: .zero)
         node.id = id
-        for field in all { if let v = values[field.name] { try? field.write(&node, v) } }
+        for field in all { if let v = whole[field.name] { try? field.write(&node, v) } }
         return node
     }
 }
@@ -177,6 +216,7 @@ nonisolated struct FlatDesign: Equatable {
         doc.nodes = (order[nil] ?? []).compactMap { build($0, at: nil, &built) }
         doc.repairGrids()
         doc.repairDecks()
+        doc.repairMasks()
         doc.fitGroups()
         doc.fitCarousels()
         return doc
@@ -263,8 +303,16 @@ extension FlatDesign {
             if let ex = x.entries[id] {
                 guard var ec = out.entries[id] else { continue }
                 if ex.node != ey.node {
-                    for field in LayerField.all where !field.same(ex.node, ey.node) && field.same(ec.node, ex.node) {
-                        field.copy(&ec.node, ey.node)
+                    for field in LayerField.all where !field.same(ex.node, ey.node) {
+                        if let entries = field.entries {
+                            // Entry by entry: a guide someone else moved since stays where they put it.
+                            for k in entries.keys(ex.node).union(entries.keys(ey.node))
+                            where !entries.same(ex.node, ey.node, k) && entries.same(ec.node, ex.node, k) {
+                                entries.copy(&ec.node, ey.node, k)
+                            }
+                        } else if field.same(ec.node, ex.node) {
+                            field.copy(&ec.node, ey.node)
+                        }
                     }
                     out.entries[id] = ec
                 }

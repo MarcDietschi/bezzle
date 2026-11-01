@@ -230,7 +230,11 @@ private struct Converter {
         let across = columns > 1 ? boxes[order[1]].minX - box.minX : num(spec["cellWidth"]) + num(spec["paddingX"])
         let down = rows > 1 ? boxes[order[columns]].minY - box.minY : num(spec["cellHeight"]) + num(spec["paddingY"])
         func content(_ from: Node, into to: inout Node) {
-            if to.kind == .text { to.text = from.text }
+            if to.kind == .text {
+                // Its words, each letter looking as it does in the cell, over the first cell's style.
+                let style = from.style ?? TextStyle(), base = to.style ?? TextStyle(), ink = from.fill.color, color = to.fill.color
+                to.setRuns(from.runs.map { TextSpan(text: $0.text, look: TextLook($0.look.resolved(over: style, color: ink), over: base, color: color)) })
+            }
             to.fill.image = from.fill.image
             for i in to.children.indices where i < from.children.count { content(from.children[i], into: &to.children[i]) }
         }
@@ -406,11 +410,17 @@ private struct Converter {
             let params = dict(f["params"])
             switch f["type"] as? String {
             case "dropShadow":
-                let shadows = list(params["dropShadows"])
-                if let s = shadows.first {
-                    n.shadow = Shadow(on: visible, color: color(s["color"]), x: num(s["dx"]), y: num(s["dy"]), blur: num(s["r"]))
+                // Each shadow XD casts, all of them under the layer.
+                let shadows = list(params["dropShadows"]).map { s in
+                    Shadow(on: true, color: color(s["color"]), x: num(s["dx"]), y: num(s["dy"]), blur: num(s["r"]))
                 }
-                if shadows.count > 1 && visible { report.note("Layers with several shadows, keeping the first") }
+                if visible, !shadows.isEmpty {
+                    n.shadows = shadows
+                } else if let first = shadows.first {
+                    // Kept off, as XD keeps it, to bring back.
+                    n.shadow = first
+                    n.shadow.on = false
+                }
             case "uxdesign#blur":
                 let background = params["backgroundEffect"] as? Bool ?? false
                 n.blur = Blur(on: visible, radius: num(params["blurAmount"]), background: background,
@@ -424,46 +434,67 @@ private struct Converter {
 
     // MARK: Text
 
+    /// A text layer. XD keeps how each range of its letters looks with what it keeps for itself
+    /// (`meta.ux.rangedStyles`), and older files on the pieces of its lines; each range comes
+    /// across with its own look.
     private mutating func text(_ e: JSON, _ m: CGAffineTransform) -> Node? {
         let t = dict(e["text"]), style = dict(e["style"])
         var n = Node(kind: .text, frame: .zero)
-        n.text = t["rawText"] as? String ?? ""
-        let ranges = list(dict(dict(e["meta"])["ux"])["rangedStyles"])
-        // Several styles in one text come across in the one used for most of it.
-        let main = ranges.max { num($0["length"]) < num($1["length"]) } ?? [:]
-        if Set(ranges.map { "\($0["postscriptName"] ?? "")|\($0["fontSize"] ?? "")|\(dict($0["fill"])["value"] ?? "")" }).count > 1 {
+        let words = t["rawText"] as? String ?? ""
+        let attributes = dict(style["textAttributes"])
+        if let fill = style["fill"] as? JSON, let f = self.fill(fill, flipped: false) {
+            n.fill = f.gradient == nil && f.image == nil ? f : Fill(on: true, color: f.color)
+            if f.gradient != nil { report.note("Texts filled with a gradient, in its first colour") }
+        }
+
+        // The ranges, each as long as XD counts (in UTF-16, as JavaScript does), the last to the end.
+        let whole = words as NSString
+        var ranges: [(range: NSRange, style: JSON)] = []
+        let ranged = list(dict(dict(e["meta"])["ux"])["rangedStyles"])
+        var at = 0
+        for (i, r) in ranged.enumerated() {
+            let end = i == ranged.count - 1 ? whole.length : min(at + max(Int(num(r["length"])), 0), whole.length)
+            if end > at { ranges.append((NSRange(location: at, length: end - at), r)) }
+            at = max(at, end)
+        }
+        if ranged.isEmpty {
+            // Older files style the pieces of the lines, as SVG does.
+            for piece in list(t["paragraphs"]).flatMap({ ($0["lines"] as? [[JSON]] ?? []).joined() }) {
+                let from = min(max(Int(num(piece["from"])), at), whole.length), to = min(Int(num(piece["to"])), whole.length)
+                guard to > from else { continue }
+                if from > at { ranges.append((NSRange(location: at, length: from - at), [:])) }
+                ranges.append((NSRange(location: from, length: to - from), Self.ranged(dict(piece["style"]))))
+                at = to
+            }
+            if at < whole.length { ranges.append((NSRange(location: at, length: whole.length - at), [:])) }
+        }
+        if ranges.isEmpty { ranges = [(NSRange(location: 0, length: whole.length), ranged.first ?? [:])] }
+        var runs: [(text: String, letters: Letters)] = []
+        for r in ranges { runs.append((whole.substring(with: r.range), letters(r.style, style, ink: n.fill.color))) }
+
+        // What is the layer's alone comes from the range of most of its letters.
+        let main = ranges.max { $0.range.length < $1.range.length }?.style ?? [:]
+        if Set(ranges.map { $0.style["textTransform"] as? String ?? "none" }).count > 1 {
             report.note("Texts with several styles, shown in their main one")
         }
-        let font = dict(style["font"])
         var ts = TextStyle()
-        let (family, face) = resolveFont(postscript: (main["postscriptName"] ?? font["postscriptName"]) as? String,
-                                         family: (main["fontFamily"] ?? font["family"]) as? String,
-                                         face: (main["fontStyle"] ?? font["style"]) as? String)
-        ts.family = family
-        ts.face = face
-        ts.size = num(main["fontSize"] ?? font["size"], 12)
-        let attributes = dict(style["textAttributes"])
-        ts.tracking = num(main["charSpacing"] ?? attributes["letterSpacing"])
         if let height = attributes["lineHeight"] { ts.lineSpacing = num(height) }
+        if num(attributes["paragraphAfterSpacing"]) > 0 { ts.paragraphSpacing = num(attributes["paragraphAfterSpacing"]) }
         ts.align = switch attributes["paragraphAlign"] as? String {
         case "center": .center
         case "right": .right
+        case "justify": .justify
         default: .left
         }
-        if attributes["paragraphAlign"] as? String == "justify" { report.note("Justified texts, set flush left") }
-        ts.underline = main["underline"] as? Bool ?? false
         ts.letterCase = switch main["textTransform"] as? String {
         case "uppercase": .upper
         case "lowercase": .lower
         case "titlecase": .title
         default: nil
         }
-        if let fill = style["fill"] as? JSON, let f = self.fill(fill, flipped: false) {
-            n.fill = f.gradient == nil && f.image == nil ? f : Fill(on: true, color: f.color)
-            if f.gradient != nil { report.note("Texts filled with a gradient, in its first colour") }
-        } else if let value = dict(main["fill"])["value"] {
-            n.fill = Fill(on: true, color: color(["value": value]))
-        }
+        n.style = ts
+        n.setImportedRuns(runs)
+        ts = n.style ?? ts
 
         // Where each line starts and where its baseline is, measured from the text's origin.
         let lines = list(t["paragraphs"]).flatMap { p in (p["lines"] as? [[JSON]] ?? []).compactMap(\.first) }
@@ -493,10 +524,50 @@ private struct Converter {
         n.frame = placed.frame
         n.rotation = placed.rotation
         if abs(placed.scale.height - 1) > 0.01 {
-            n.style?.size = (ts.size * placed.scale.height * 10).rounded() / 10
+            n.scaleType(by: placed.scale.height)
             report.note("Stretched texts, set at the size they show")
         }
         return n
+    }
+
+    /// How the letters of a range look: as its ranged style says, and where it says nothing, as
+    /// the layer's style does. `ink` is the layer's colour.
+    private mutating func letters(_ r: JSON, _ style: JSON, ink: RGBA) -> Letters {
+        let font = dict(style["font"]), attributes = dict(style["textAttributes"])
+        let decoration = attributes["decoration"] as? [String] ?? []
+        let (family, face) = resolveFont(postscript: (r["postscriptName"] ?? font["postscriptName"]) as? String,
+                                         family: (r["fontFamily"] ?? font["family"]) as? String,
+                                         face: (r["fontStyle"] ?? font["style"]) as? String)
+        let size = num(r["fontSize"] ?? font["size"], 12)
+        // XD spaces letters in thousandths of their size, as Bezzle does.
+        return Letters(family: family, face: face, size: size > 0 ? size : 12,
+                       color: dict(r["fill"])["value"].map { color(["value": $0]) } ?? ink,
+                       underline: r["underline"] as? Bool ?? decoration.contains("underline"),
+                       strikethrough: r["strikethrough"] as? Bool ?? decoration.contains("line-through"),
+                       tracking: num(r["charSpacing"] ?? attributes["letterSpacing"]), list: nil)
+    }
+
+    /// The style of a piece of a line, as a ranged style would say it.
+    private static func ranged(_ style: JSON) -> JSON {
+        let font = dict(style["font"]), attributes = dict(style["textAttributes"])
+        var r: JSON = [:]
+        r["postscriptName"] = font["postscriptName"]
+        r["fontFamily"] = font["family"]
+        r["fontStyle"] = font["style"]
+        r["fontSize"] = font["size"]
+        r["charSpacing"] = attributes["letterSpacing"]
+        if let decoration = attributes["decoration"] as? [String] {
+            r["underline"] = decoration.contains("underline")
+            r["strikethrough"] = decoration.contains("line-through")
+        }
+        if let fill = dict(style["fill"])["color"] as? JSON {
+            // As a ranged style keeps its colour: one number, its alpha, red, green and blue a byte each.
+            let value = dict(fill["value"])
+            func byte(_ v: CGFloat) -> UInt32 { UInt32(min(max(v.rounded(), 0), 255)) }
+            r["fill"] = ["value": NSNumber(value: byte(num(fill["alpha"], 1) * 255) << 24 | byte(num(value["r"])) << 16
+                                                | byte(num(value["g"])) << 8 | byte(num(value["b"])))]
+        }
+        return r
     }
 
     private mutating func resolveFont(postscript: String?, family: String?, face: String?) -> (String, String) {

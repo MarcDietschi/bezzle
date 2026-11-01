@@ -15,6 +15,7 @@ extension MCPTools {
         var fitted = working
         fitted.syncGrids(since: store.doc)
         fitted.syncDecks(since: store.doc, fronts: store.fronts)
+        fitted.keepMasks(since: store.doc)
         fitted.fitGroups(since: store.doc)
         fitted.fitCarousels()
         guard fitted != store.doc else { return false }
@@ -406,7 +407,7 @@ extension MCPTools {
         var warnings: [String] = []
         for group in ids.compactMap({ store.doc.node($0) }) {
             if group.mask?.isEmpty == false { warnings.append("\(group.name)'s mask went with it.") }
-            if group.opacity != 1 || group.blend != nil || group.blur != nil || group.shadow.on {
+            if group.opacity != 1 || group.blend != nil || group.blur != nil || !group.shadows.isEmpty {
                 warnings.append("\(group.name)'s opacity, blend, blur and shadow went with it.")
             }
         }

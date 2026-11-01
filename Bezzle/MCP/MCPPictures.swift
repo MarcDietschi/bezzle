@@ -52,17 +52,21 @@ extension MCPTools {
     func export(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         let doc = store.doc
-        let word = try args.string("format")?.lowercased() ?? "png"
-        guard let format = ExportFormat(rawValue: word == "jpg" ? "jpeg" : word) else { throw MCPError("format is png, jpeg, svg or pdf.") }
+        let format = try Self.format(try args.string("format") ?? "png")
         // Whole numbers, as the Export panel offers them, so the files are named "@2x" and so on.
         let scale = CGFloat(min(max((try args.number("scale") ?? 1).rounded(), 1), 4))
+        let quality = min(max(try args.number("quality") ?? Exporter.defaultQuality, 0), 1)
+        let marked = try args.bool("marked") == true
+        let replacing = try args.bool("replace") == true
         var ids: [UUID] = []
-        if args["layers"] != nil { ids = try Self.layers(args, in: store) } else { ids = store.selection }
+        if args["layers"] != nil { ids = try Self.layers(args, in: store) } else if !marked { ids = store.selection }
         var warnings: [String] = []
         var items: [ExportItem] = []
         for id in ids {
             guard let n = doc.node(id) else { continue }
-            if n.isArtboard {
+            if marked && n.exports?.isEmpty != false {
+                warnings.append("\(n.name) is not marked for export, so it was left out. Give it exports first.")
+            } else if n.isArtboard {
                 items += ExportItem.items(for: n)
             } else if let item = ExportItem(layer: id, in: doc) {
                 items.append(item)
@@ -70,9 +74,13 @@ extension MCPTools {
                 warnings.append("\(n.name) is hidden, so it was left out.")
             }
         }
-        // With nothing named or selected, every artboard: a carousel a picture a slide.
-        if ids.isEmpty { items = doc.artboards.flatMap(ExportItem.items(for:)) }
-        guard !items.isEmpty else { throw MCPError("There is nothing to export: \(store.name) has no artboards.") }
+        // With nothing named or selected, every artboard: a carousel a picture a slide; or, as
+        // marked, everything marked.
+        if ids.isEmpty { items = marked ? ExportItem.marked(in: doc, seen: store.seenDoc) : doc.artboards.flatMap(ExportItem.items(for:)) }
+        guard !items.isEmpty else {
+            throw MCPError(marked ? "There is nothing to export: nothing in \(store.name) is marked for export. Give layers exports with update_layers."
+                                  : "There is nothing to export: \(store.name) has no artboards.")
+        }
 
         var folder: URL
         if let path = try args.string("folder") {
@@ -93,7 +101,13 @@ extension MCPTools {
         } catch {
             throw MCPError("\(folder.path) could not be made: \(error.localizedDescription)\(hint)")
         }
-        let written = Exporter.export(items, format: format, scale: scale, name: store.name, to: folder, assets: store.assets)
+        let files = marked ? Exporter.files(presetsOf: items) : Exporter.files(items, format: format, scale: scale, name: store.name)
+        let assets = store.assets, target = folder
+        // Beside the canvas, which goes on drawing meanwhile.
+        let written = await Task.detached(priority: .userInitiated) { Exporter.write(files, quality: quality, to: target, replacing: replacing, assets: assets) }.value
+        if written.count < files.count {
+            warnings.append("\(files.count - written.count) of the \(files.count) files could not be made\(files.contains { $0.format == .webp } ? " (a webp is at most 16383 pixels a side)" : "").")
+        }
         guard !written.isEmpty else { throw MCPError("Nothing could be written to \(folder.path).\(hint)") }
         return [.text(JSONValue.compact([
             ("files", .array(written.map { .string($0.path) })),

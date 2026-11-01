@@ -77,6 +77,10 @@ private extension Node {
         n.fill = fill.blended(to: other.fill, t)
         n.border = border.blended(to: other.border, t)
         n.shadow = shadow.blended(to: other.shadow, t)
+        // One coming over the others fades in, and one going fades out.
+        n.moreFills = stack(moreFills, other.moreFills, t, off: { var f = $0; f.on = false; return f }) { $0.blended(to: $1, $2) }
+        n.moreBorders = stack(moreBorders, other.moreBorders, t, off: { var b = $0; b.on = false; return b }) { $0.blended(to: $1, $2) }
+        n.moreShadows = stack(moreShadows, other.moreShadows, t, off: { var s = $0; s.on = false; return s }) { $0.blended(to: $1, $2) }
         if let a = blur, let b = other.blur, a.on == b.on, a.background == b.background {
             n.blur?.radius = mix(a.radius, b.radius, t)
             if let ra = a.ramp, let rb = b.ramp {
@@ -101,6 +105,16 @@ private extension Node {
         }
         return n
     }
+}
+
+/// Part of the way from one stack of fills, borders or shadows to another: each mixed with the one
+/// in its place, and those only one of them has coming from nothing or going to it.
+private func stack<T>(_ a: [T]?, _ b: [T]?, _ t: Double, off: (T) -> T, blend: (T, T, Double) -> T) -> [T]? {
+    let a = a ?? [], b = b ?? []
+    guard !a.isEmpty || !b.isEmpty else { return nil }
+    let n = max(a.count, b.count)
+    let from = a + b.dropFirst(a.count).map(off), to = b + a.dropFirst(b.count).map(off)
+    return (0..<n).map { blend(from[$0], to[$0], t) }
 }
 
 private extension Fill {
@@ -135,6 +149,6 @@ private extension Shadow {
         }
         let a = lit(self, as: other), b = lit(other, as: self)
         return Shadow(on: true, color: a.color.mixed(b.color, t), x: mix(a.x, b.x, t), y: mix(a.y, b.y, t), blur: mix(a.blur, b.blur, t),
-                      inset: inset)
+                      inset: inset, spread: a.grown == 0 && b.grown == 0 ? nil : mix(a.grown, b.grown, t))
     }
 }

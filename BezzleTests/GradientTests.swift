@@ -67,6 +67,32 @@ struct GradientTests {
         #expect(near(g.end, CGPoint(x: 0.4, y: 0.1)) && g.across.map { near($0, CGPoint(x: 0.8, y: 0.6)) } == true)
     }
 
+    @Test func aRadialGradientIsSizedByItsCornerAsALayerIs() {
+        let size = CGSize(width: 200, height: 100)
+        var g = Gradient(kind: .radial, stops: [], start: CGPoint(x: 0.5, y: 0.5), end: .zero, radius: 0.5)
+        // The square it sits in is the layer's box, the corner at the bottom right.
+        #expect(near(g.corner, CGPoint(x: 1, y: 1)))
+        // Dragged in, both radii follow it, each its own way: 100 to 60 wide, 50 to 20 tall. The
+        // centre stays, and the corner is where it was dragged.
+        g.resize(to: CGPoint(x: 0.8, y: 0.7), in: size, keepingShape: false)
+        #expect(near(g.end, CGPoint(x: 0.8, y: 0.5)) && g.across.map { near($0, CGPoint(x: 0.5, y: 0.7)) } == true)
+        #expect(near(g.corner, CGPoint(x: 0.8, y: 0.7)) && near(g.start, CGPoint(x: 0.5, y: 0.5)))
+        // With Shift, 60 by 20 grows by one share along the diagonal: to 114 by 38.
+        g.resize(to: CGPoint(x: 1.1, y: 0.7), in: size, keepingShape: true)
+        #expect(near(g.end, CGPoint(x: 1.07, y: 0.5)) && g.across.map { near($0, CGPoint(x: 0.5, y: 0.88)) } == true)
+        // Never through the centre and out the other side.
+        g.resize(to: CGPoint(x: 0.2, y: 0.2), in: size, keepingShape: false)
+        #expect(g.end.x > 0.5 && g.end.x < 0.51 && (g.across?.y ?? 0) > 0.5 && (g.across?.y ?? 1) < 0.52)
+
+        // Turned to point up, its square turns with it, and the corner sizes along the radii as they lie.
+        var turned = Gradient(kind: .radial, stops: [], start: CGPoint(x: 0.5, y: 0.5), end: .zero, radius: 0.5)
+        turned.turn(to: CGPoint(x: 0.5, y: 0), in: size)
+        #expect(near(turned.corner, CGPoint(x: 0.75, y: 0)))
+        turned.resize(to: CGPoint(x: 1, y: -0.2), in: size, keepingShape: false)
+        #expect(near(turned.end, CGPoint(x: 0.5, y: -0.2)) && turned.across.map { near($0, CGPoint(x: 1, y: 0.5)) } == true)
+        #expect(near(turned.corner, CGPoint(x: 1, y: -0.2)))
+    }
+
     @Test func fillsKnowTheirKind() {
         var fill = Fill(color: .white)
         #expect(FillKind(fill) == .solid)

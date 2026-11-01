@@ -14,6 +14,10 @@ struct SnapTargets {
 
     var xs: [Line] = []
     var ys: [Line] = []
+    /// The baselines of the layout grid of the artboard a text being moved lies on, which its
+    /// first line catches on, and how far below its top that line is.
+    var baselines: [Line] = []
+    var firstBaseline: CGFloat?
     /// What lies beside the moving layers, which they keep even gaps to: the layers they lie
     /// with, not what holds them.
     private var neighbours: [CGRect] = []
@@ -66,6 +70,10 @@ struct SnapTargets {
             xs += [Line(value: b.minX, box: b), Line(value: b.midX, box: b), Line(value: b.maxX, box: b)]
             ys += [Line(value: b.minY, box: b), Line(value: b.midY, box: b), Line(value: b.maxY, box: b)]
         }
+        // The guides on the artboard, and the edges of its columns and rows; for one text, its baselines.
+        if let onto, !ids.contains(onto.id) {
+            catchOnHelpers(of: onto, text: ids.count == 1 ? first.flatMap { doc.node($0) }.flatMap { $0.kind == .text ? $0 : nil } : nil)
+        }
         // A design with thousands of layers side by side would take too long to measure.
         if neighbours.count <= 400 {
             gapsAcross = Self.gaps(neighbours, across: true)
@@ -74,6 +82,36 @@ struct SnapTargets {
     }
 
     init() {}
+
+    /// Catches on what is drawn over an artboard to line things up with, as far as it is shown: its
+    /// guides, from edge to edge of it, and the edges of its layout grid's columns and rows. A text
+    /// given catches on the grid's baselines by its first line too.
+    mutating func catchOnHelpers(of board: Node, text: Node? = nil) {
+        let o = board.frame.origin, size = board.frame.size
+        let helpers = Helpers.shared
+        if helpers.guides {
+            for (_, g) in board.guides ?? [:] {
+                let at = g.position(in: size)
+                if g.vertical { xs.append(Line(value: o.x + at, box: board.frame)) } else { ys.append(Line(value: o.y + at, box: board.frame)) }
+            }
+        }
+        guard helpers.grids, let grid = board.layout else { return }
+        for area in LayoutGrid.areas(of: board) {
+            for c in grid.columnRects(in: area) {
+                let box = c.offsetBy(dx: o.x, dy: o.y)
+                xs += [Line(value: box.minX, box: box), Line(value: box.maxX, box: box)]
+            }
+            for r in grid.rowRects(in: area) {
+                let box = r.offsetBy(dx: o.x, dy: o.y)
+                ys += [Line(value: box.minY, box: box), Line(value: box.maxY, box: box)]
+            }
+            if let text {
+                let across = CGRect(x: o.x + area.minX, y: o.y, width: area.width, height: 0)
+                baselines += grid.baselines(in: area).map { Line(value: o.y + $0, box: across.offsetBy(dx: 0, dy: $0)) }
+            }
+        }
+        if let text, !baselines.isEmpty { firstBaseline = TextLayout.firstBaseline(text) }
+    }
 
     /// How far to shift a rectangle so that one of its edges or its centre lies on a target,
     /// within `threshold`, along one axis. `edges` are the rectangle's own values to try.
@@ -99,7 +137,7 @@ struct SnapTargets {
             out.append(Guide(from: CGPoint(x: x, y: top), to: CGPoint(x: x, y: bottom)))
         }
         if let y {
-            let boxes = ys.filter { abs($0.value - y) < 0.5 }.map(\.box)
+            let boxes = (ys + baselines).filter { abs($0.value - y) < 0.5 }.map(\.box)
             let left = boxes.map(\.minX).min().map { min($0, rect.minX) } ?? rect.minX
             let right = boxes.map(\.maxX).max().map { max($0, rect.maxX) } ?? rect.maxX
             out.append(Guide(from: CGPoint(x: left, y: y), to: CGPoint(x: right, y: y)))
@@ -111,7 +149,12 @@ struct SnapTargets {
     /// shift to apply, and the guides to draw for the edges. `gapGuides` marks the gaps.
     func snap(moving rect: CGRect, threshold: CGFloat) -> (CGPoint, [Guide]) {
         let bx = Self.best([rect.minX, rect.midX, rect.maxX], xs, threshold: threshold)
-        let by = Self.best([rect.minY, rect.midY, rect.maxY], ys, threshold: threshold)
+        var by = Self.best([rect.minY, rect.midY, rect.maxY], ys, threshold: threshold)
+        // A text sits on a baseline by its first line, when that is nearer than any edge.
+        if let first = firstBaseline, let on = Self.best([rect.minY + first], baselines, threshold: threshold),
+           by.map({ abs(on.shift) < abs($0.shift) }) ?? true {
+            by = on
+        }
         // An even gap catches only when it is nearer than any edge.
         func nearer(_ edge: CGFloat?, _ gap: CGFloat?) -> CGFloat {
             guard let gap else { return edge ?? 0 }
@@ -125,6 +168,13 @@ struct SnapTargets {
         let x = bx.flatMap { abs($0.shift - shift.x) < 0.5 ? $0.value : nil }
         let y = by.flatMap { abs($0.shift - shift.y) < 0.5 ? $0.value : nil }
         return (shift, guides(for: moved, x: x, y: y))
+    }
+
+    /// Whether a text at `rect` has its first line on a baseline, where it stays, rather than at the
+    /// whole point nearest it.
+    func sitsOnBaseline(_ rect: CGRect) -> Bool {
+        guard let first = firstBaseline else { return false }
+        return baselines.contains { abs($0.value - (rect.minY + first)) < 0.01 }
     }
 
     // MARK: Even gaps
@@ -259,6 +309,55 @@ struct SnapTargets {
             gy = b.value
         }
         return (r.standardized, guides(for: r.standardized, x: gx, y: gy))
+    }
+
+    /// A box resized or drawn with its proportions kept, `ratio` being its width to its height,
+    /// caught by the one target nearest the edges the pointer moves. The other side follows in
+    /// proportion, so a catch never bends its shape. `anchor` is its still point on the canvas: the
+    /// corner or the middle of the side across from the handle, or its middle when it grows from
+    /// there. `along` says which ways the pointer moves its edges.
+    func snap(_ rect: CGRect, keeping ratio: CGFloat, anchor: CGPoint, along: (x: Bool, y: Bool), threshold: CGFloat) -> (CGRect, [Guide]) {
+        guard ratio > 0, ratio.isFinite, rect.width > 0, rect.height > 0 else { return (rect, []) }
+        // Whether the still point is the middle along an axis, both edges moving round it.
+        func middle(_ lo: CGFloat, _ hi: CGFloat, _ still: CGFloat) -> Bool { abs(abs(lo - still) - abs(hi - still)) < 0.01 }
+        // The edges that move: the one away from the still point, or both round a middle. Dragged
+        // past the still point, the box turns over, and it is the other edge.
+        func moving(_ lo: CGFloat, _ hi: CGFloat, _ still: CGFloat) -> [CGFloat] {
+            middle(lo, hi, still) ? [lo, hi] : [abs(lo - still) > abs(hi - still) ? lo : hi]
+        }
+        let bx = along.x ? Self.best(moving(rect.minX, rect.maxX, anchor.x), xs, threshold: threshold) : nil
+        let by = along.y ? Self.best(moving(rect.minY, rect.maxY, anchor.y), ys, threshold: threshold) : nil
+        let byX: Bool
+        switch (bx, by) {
+        case (nil, nil): return (rect, [])
+        case (.some, nil): byX = true
+        case (nil, .some): byX = false
+        case let (x?, y?): byX = abs(x.shift) <= abs(y.shift)
+        }
+        // The caught side reaches from the still point to the target, or twice that round a middle.
+        func length(to target: CGFloat, _ lo: CGFloat, _ hi: CGFloat, _ still: CGFloat) -> CGFloat {
+            abs(target - still) * (middle(lo, hi, still) ? 2 : 1)
+        }
+        // Laid out again from the still point, on the side of it the box lies.
+        func start(_ lo: CGFloat, _ hi: CGFloat, _ still: CGFloat, _ size: CGFloat) -> CGFloat {
+            if middle(lo, hi, still) { return still - size / 2 }
+            return abs(lo - still) < abs(hi - still) ? still : still - size
+        }
+        let w: CGFloat, h: CGFloat
+        if byX, let b = bx {
+            w = length(to: b.value, rect.minX, rect.maxX, anchor.x)
+            h = w / ratio
+        } else if let b = by {
+            h = length(to: b.value, rect.minY, rect.maxY, anchor.y)
+            w = h * ratio
+        } else {
+            return (rect, [])
+        }
+        let r = CGRect(x: start(rect.minX, rect.maxX, anchor.x, w), y: start(rect.minY, rect.maxY, anchor.y, h), width: w, height: h)
+        // The side that followed shows a guide too, should it come to lie on a target exactly.
+        let x = byX ? bx?.value : along.x ? Self.best(moving(r.minX, r.maxX, anchor.x), xs, threshold: 0.5)?.value : nil
+        let y = byX ? (along.y ? Self.best(moving(r.minY, r.maxY, anchor.y), ys, threshold: 0.5)?.value : nil) : by?.value
+        return (r, guides(for: r, x: x, y: y))
     }
 
     /// A point (the corner of something being drawn) caught by the nearest targets.

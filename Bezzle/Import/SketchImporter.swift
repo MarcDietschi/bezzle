@@ -238,7 +238,7 @@ private struct Converter {
                 if int(e["clippingMaskMode"]) == 1 { report.note("Alpha masks, cutting by their outline") }
                 var g = Node(kind: .group, name: n.name, frame: .zero)
                 g.mask = [n]
-                if n.fill.on || n.border.on || n.shadow.on || n.isGroup { g.children = [Self.renewed(n)] }
+                if !n.fills.isEmpty || !n.borders.isEmpty || !n.shadows.isEmpty || n.isGroup { g.children = [Self.renewed(n)] }
                 masked = g
             } else if masked != nil {
                 masked?.children.append(n)
@@ -292,13 +292,33 @@ private struct Converter {
         if let name = e["name"] as? String, !name.isEmpty { n.name = name }
         effects(&n, style)
         // Sketch casts a shape's shadow from its outline, Bezzle from what it draws.
-        if [.rectangle, .ellipse, .path].contains(n.kind), n.shadow.outside, !n.fill.on, !n.border.on {
+        if [.rectangle, .ellipse, .path].contains(n.kind), !n.outerShadows.isEmpty, n.fills.isEmpty, n.borders.isEmpty {
             report.note("Shadows of shapes with no fill or border, not cast")
         }
         if e["isVisible"] as? Bool == false { n.hidden = true }
         if e["isLocked"] as? Bool == true { n.locked = true }
+        n.exports = Self.exports(dict(e["exportOptions"]))
         report.layers += 1
         return n
+    }
+
+    /// What Sketch marks a layer to be exported as: its sizes, formats and suffixes. A format
+    /// Bezzle does not write goes out as PNG; a name Sketch puts before the layer's has nowhere
+    /// to go, so the file is named as Bezzle names it.
+    private static func exports(_ options: JSON) -> [ExportPreset]? {
+        let presets = list(options["exportFormats"]).map { f -> ExportPreset in
+            let size: ExportSize? = switch int(f["visibleScaleType"]) {
+            case 1: ExportSize("\(num(f["absoluteSize"]))w")
+            case 2: ExportSize("\(num(f["absoluteSize"]))h")
+            default: ExportSize("\(num(f["scale"], 1))x")
+            }
+            let word = (f["fileFormat"] as? String ?? "png").lowercased()
+            let format = ExportFormat(rawValue: word == "jpg" ? "jpeg" : word).flatMap { $0.isAvailable ? $0 : nil } ?? .png
+            var preset = ExportPreset(size: size ?? .scale(1), format: format)
+            if int(f["namingScheme"]) == 0, let name = f["name"] as? String, name != preset.nameSuffix { preset.suffix = name }
+            return preset
+        }
+        return presets.isEmpty ? nil : presets
     }
 
     private mutating func group(_ e: JSON, _ m: CGAffineTransform, scope: Scope) -> Node? {
@@ -325,8 +345,16 @@ private struct Converter {
                 n.fill.color = ink.with(alpha: (n.fill.gradient == nil ? n.fill.color.a : 1) * ink.a)
                 n.fill.gradient = nil
             }
+            n.moreFills = n.moreFills?.map { f in
+                var f = f
+                f.color = ink.with(alpha: (f.gradient == nil ? f.color.a : 1) * ink.a)
+                f.gradient = nil
+                return f
+            }
             n.border.color = ink.with(alpha: n.border.color.a * ink.a)
+            n.moreBorders = n.moreBorders?.map { b in var b = b; b.color = ink.with(alpha: b.color.a * ink.a); return b }
             n.shadow.color = ink.with(alpha: n.shadow.color.a * ink.a)
+            n.moreShadows = n.moreShadows?.map { s in var s = s; s.color = ink.with(alpha: s.color.a * ink.a); return s }
             n.children = n.children.map(tinted)
             return n
         }
@@ -492,7 +520,7 @@ private struct Converter {
             // A straight line is a line layer, its ends where they show.
             var n = Node(kind: .line, frame: .zero)
             n.setLineEnds(CGPoint(x: a.x * size.width, y: a.y * size.height).applying(m), CGPoint(x: b.x * size.width, y: b.y * size.height).applying(m))
-            n.border = border(style, open: true)
+            n.borders = borders(style, open: true)
             if int(style["startMarkerType"]) != 0 || int(style["endMarkerType"]) != 0 { report.note("Arrowheads on lines, left off") }
             return n
         }
@@ -655,7 +683,7 @@ private struct Converter {
             let q = CGPoint(x: p.x * size.width, y: p.y * size.height).applying(rest)
             return CGPoint(x: box.width > 0 ? (q.x - box.minX) / box.width : 0.5, y: box.height > 0 ? (q.y - box.minY) / box.height : 0.5)
         }
-        if !closed && n.border.on { n.border.position = .center }
+        if !closed { n.borders = n.borders.map { b in var b = b; b.position = .center; return b } }
         return n
     }
 
@@ -676,27 +704,25 @@ private struct Converter {
             n = outline
             n.fill = fill
         }
-        n.border = border(dict(e["style"]), open: false)
+        n.borders = borders(dict(e["style"]), open: false)
         return n
     }
 
     // MARK: Style
 
-    /// The layer's first fill that Bezzle can draw, and its first border. `map` carries a point in
-    /// the layer's frame, 0 to 1, onto the Bezzle layer's.
+    /// The layer's fills that Bezzle can draw, one over another as Sketch draws them, the first
+    /// lowest, and its borders. Bezzle holds a picture only in the first fill, so what lies under
+    /// the top picture is left out. `map` carries a point in the layer's frame, 0 to 1, onto the
+    /// Bezzle layer's.
     private mutating func paint(_ n: inout Node, _ style: JSON, size: CGSize, flipped: Bool = false, image: Any? = nil,
                                 map: (CGPoint) -> CGPoint = { $0 }) {
-        let fills = list(style["fills"]).filter(enabled)
-        var found: Fill?
-        for f in fills {
-            if let made = fill(f, size: size, image: image, map: map) {
-                found = made
-                break
-            }
+        var found = list(style["fills"]).filter(enabled).compactMap { fill($0, size: size, image: image, map: map) }
+        if let top = found.lastIndex(where: { $0.image != nil }), top > 0 {
+            found.removeFirst(top)
+            report.note("Fills under a picture, left out")
         }
-        if fills.count > 1 { report.note("Layers with several fills, keeping the first") }
-        n.fill = found.map { flipped ? $0.flipped(horizontally: false) : $0 } ?? Fill(on: false, color: n.fill.color)
-        n.border = border(style, open: false)
+        n.fills = found.map { flipped ? $0.flipped(horizontally: false) : $0 }
+        n.borders = borders(style, open: false)
     }
 
     private func color(_ v: Any?) -> RGBA {
@@ -807,10 +833,12 @@ private struct Converter {
         return nil
     }
 
-    private mutating func border(_ style: JSON, open: Bool) -> Border {
-        let borders = list(style["borders"]).filter(enabled)
-        guard let b = borders.first else { return Border(on: false) }
-        if borders.count > 1 { report.note("Layers with several borders, keeping the first") }
+    /// The layer's borders, one over another as Sketch draws them, the first lowest.
+    private mutating func borders(_ style: JSON, open: Bool) -> [Border] {
+        list(style["borders"]).filter(enabled).map { border($0, style, open: open) }
+    }
+
+    private mutating func border(_ b: JSON, _ style: JSON, open: Bool) -> Border {
         var c = color(b["color"])
         if int(b["fillType"]) == 1, let first = list(dict(b["gradient"])["stops"]).first {
             c = color(first["color"])
@@ -839,16 +867,17 @@ private struct Converter {
         if blend != 0 {
             if let mode = Self.blends[blend] { n.blend = mode } else { report.note("Blend modes Bezzle does not know, drawn as normal") }
         }
+        // Every shadow under the layer and inside it, as Sketch casts them.
         let outside = list(style["shadows"]).filter(enabled), inside = list(style["innerShadows"]).filter(enabled)
-        if let s = outside.first ?? inside.first {
+        let shadows: [Shadow] = (outside.map { ($0, false) } + inside.map { ($0, true) }).map { s, inset in
             var c = color(s["color"])
             c.a *= opacity(s)
-            n.shadow = Shadow(on: true, color: c, x: num(s["offsetX"]), y: num(s["offsetY"]), blur: max(num(s["blurRadius"]), 0),
-                              inset: outside.isEmpty ? true : nil)
-            if num(s["spread"]) != 0 { report.note("Shadows that spread, drawn without spreading") }
+            var shadow = Shadow(on: true, color: c, x: num(s["offsetX"]), y: num(s["offsetY"]), blur: max(num(s["blurRadius"]), 0),
+                                inset: inset ? true : nil)
+            if num(s["spread"]) != 0 { shadow.spread = num(s["spread"]) }
+            return shadow
         }
-        if outside.count > 1 || (outside.isEmpty && inside.count > 1) { report.note("Layers with several shadows, keeping the first") }
-        if !outside.isEmpty && !inside.isEmpty { report.note("Layers with shadows inside and out, keeping the one outside") }
+        if !shadows.isEmpty { n.shadows = shadows }
         let blur = dict(style["blur"])
         if blur["isEnabled"] as? Bool == true, num(blur["radius"]) > 0 {
             let radius = num(blur["radius"])
@@ -864,8 +893,9 @@ private struct Converter {
 
     // MARK: Text
 
-    /// A text layer. Sketch keeps each run of its words with its own style; Bezzle gives the
-    /// whole text one, that of the longest run.
+    /// A text layer. Sketch keeps each run of its words with its own style, as the Mac's text
+    /// does, and each run comes across in it; what Bezzle holds for the whole text only comes
+    /// from the longest run.
     private mutating func text(_ e: JSON, _ m: CGAffineTransform, string replaced: String?, restyled: Bool) -> Node? {
         let style = dict(e["style"]), attributed = dict(e["attributedString"])
         let common = dict(dict(style["textStyle"])["encodedAttributes"])
@@ -879,44 +909,60 @@ private struct Converter {
         // A shared text style swapped in by an instance sets the whole text in it.
         if restyled { runs = [] }
         let main = runs.max { num($0["length"]) < num($1["length"]) }.map { dict($0["attributes"]) } ?? common
-        func look(_ a: JSON) -> String {
-            let font = dict(dict(a["MSAttributedStringFontAttribute"])["attributes"]), c = dict(a["MSAttributedStringColorAttribute"])
-            return "\(font["name"] ?? "")|\(font["size"] ?? "")|\(c["red"] ?? "")|\(c["green"] ?? "")|\(c["blue"] ?? "")|\(c["alpha"] ?? "")"
+        if Set(runs.map { Self.typeset(dict($0["attributes"])) }).count > 1 { report.note("Texts with several styles, shown in their main one") }
+
+        // Each run's words, as Sketch counts them (in UTF-16, as the Mac does), and any no run
+        // covers in the longest run's style; new words from an instance are all in that style.
+        let text = replaced ?? words ?? "", whole = text as NSString
+        var pieces: [(text: String, attributes: JSON)] = []
+        if replaced == nil {
+            var at = 0
+            for run in runs.sorted(by: { int($0["location"]) < int($1["location"]) }) {
+                let from = min(max(int(run["location"]), at), whole.length)
+                let to = min(int(run["location"]) + max(int(run["length"]), 0), whole.length)
+                guard to > from else { continue }
+                if from > at { pieces.append((whole.substring(with: NSRange(location: at, length: from - at)), main)) }
+                pieces.append((whole.substring(with: NSRange(location: from, length: to - from)), dict(run["attributes"])))
+                at = to
+            }
+            if at < whole.length { pieces.append((whole.substring(from: at), main)) }
         }
-        if Set(runs.map { look(dict($0["attributes"])) }).count > 1 { report.note("Texts with several styles, shown in their main one") }
+        if pieces.isEmpty { pieces = [(text, main)] }
 
         var n = Node(kind: .text, frame: .zero)
-        n.text = replaced ?? words ?? ""
+        // A fill on a text layer paints its letters over their own colours.
+        var paint: RGBA?
+        if let f = list(style["fills"]).first(where: enabled), let made = fill(f, size: frame(of: e).size, image: nil, map: { $0 }) {
+            paint = made.color
+            if made.gradient != nil { report.note("Texts filled with a gradient, in its first colour") }
+            if made.image != nil { report.note("Texts filled with a picture, in a plain colour") }
+        }
+        if list(style["borders"]).contains(where: enabled) { report.note("Texts with a border, drawn without it") }
+        var letterRuns: [(text: String, letters: Letters)] = []
+        for piece in pieces { letterRuns.append((piece.text, letters(piece.attributes, paint: paint))) }
+
         var ts = TextStyle()
-        let font = dict(dict(main["MSAttributedStringFontAttribute"])["attributes"])
-        ts.size = min(max(num(font["size"], 12), 1), 5000)
-        (ts.family, ts.face) = self.font(font["name"] as? String)
-        ts.tracking = (num(main["kerning"]) / ts.size * 10_000).rounded() / 10
         let paragraph = dict(main["paragraphStyle"])
         let height = num(paragraph["maximumLineHeight"], num(paragraph["minimumLineHeight"]))
         if height > 0 { ts.lineSpacing = height }
         ts.align = switch int(paragraph["alignment"]) {
         case 1: .right
         case 2: .center
+        case 3: .justify
         default: .left
         }
-        if int(paragraph["alignment"]) == 3 { report.note("Justified texts, set flush left") }
-        if num(paragraph["paragraphSpacing"]) > 0, n.text?.contains("\n") == true { report.note("Space between paragraphs, left out") }
-        ts.underline = int(main["underlineStyle"]) != 0
-        if int(main["strikethroughStyle"]) != 0 { report.note("Struck-through texts, drawn without the line") }
+        if num(paragraph["paragraphSpacing"]) > 0 { ts.paragraphSpacing = num(paragraph["paragraphSpacing"]) }
         ts.letterCase = switch int(main["MSAttributedStringTextTransformAttribute"]) {
         case 1: .upper
         case 2: .lower
         default: nil
         }
-        // A fill on a text layer paints its letters over their own colour.
-        n.fill = Fill(on: true, color: color(main["MSAttributedStringColorAttribute"]))
-        if let f = list(style["fills"]).first(where: enabled), let made = fill(f, size: frame(of: e).size, image: nil, map: { $0 }) {
-            n.fill = Fill(on: true, color: made.color)
-            if made.gradient != nil { report.note("Texts filled with a gradient, in its first colour") }
-            if made.image != nil { report.note("Texts filled with a picture, in a plain colour") }
-        }
-        if list(style["borders"]).contains(where: enabled) { report.note("Texts with a border, drawn without it") }
+        let font = dict(dict(main["MSAttributedStringFontAttribute"])["attributes"])
+        ts.axes = Self.axes(font["variation"])
+        n.style = ts
+        n.setImportedRuns(letterRuns)
+        ts = n.style ?? ts
+        ts.features = Self.features(list(font["featureSettings"]), of: Fonts.font(ts))
 
         let box = frame(of: e).size
         ts.sizing = switch int(e["textBehaviour"]) {
@@ -924,12 +970,13 @@ private struct Converter {
         case 2: .fixed
         default: .autoWidth
         }
-        // Words in the middle or at the foot of a box of fixed size sit where they show, in a box as tall as they are.
-        let boxed = ts.sizing == .fixed
-        let vertical = boxed ? int(main["textStyleVerticalAlignmentKey"], int(dict(style["textStyle"])["verticalAlignment"])) : 0
-        if boxed, vertical != 0 {
-            ts.sizing = .autoHeight
-            report.note("Texts set in the middle or at the foot of their box, given a box as tall as their lines")
+        // Where the lines lie in a box of fixed size; in any other, the box fits around them.
+        if ts.sizing == .fixed {
+            ts.vertical = switch int(main["textStyleVerticalAlignmentKey"], int(dict(style["textStyle"])["verticalAlignment"])) {
+            case 1: .middle
+            case 2: .bottom
+            default: nil
+            }
         }
         n.style = ts
         n.frame = CGRect(x: 0, y: 0, width: ts.sizing == .autoWidth ? 0 : box.width, height: box.height)
@@ -938,16 +985,15 @@ private struct Converter {
         var local = CGRect(origin: .zero, size: laid)
         if ts.sizing == .autoWidth {
             local.origin.x = switch ts.align {
-            case .left: 0
+            case .left, .justify: 0
             case .center: (box.width - laid.width) / 2
             case .right: box.width - laid.width
             }
         }
         // Both lay out with Text Kit, so the first lines agree, unless the line height is set:
         // Bezzle shares the room it adds above and below the letters, Sketch puts it all above.
-        if let baseline = Self.firstBaseline(ts) { local.origin.y = baseline - TextLayout.firstBaseline(n) }
-        if vertical == 1 { local.origin.y += (box.height - laid.height) / 2 }
-        if vertical == 2 { local.origin.y += box.height - laid.height }
+        // Both move the lines alike in a box whose lines lie in its middle or at its bottom.
+        if let baseline = Self.firstBaseline(n) { local.origin.y = baseline - (TextLayout.firstBaseline(n) - TextLayout.offset(n)) }
 
         var m = m
         if m.a * m.d - m.b * m.c < 0 {
@@ -964,21 +1010,79 @@ private struct Converter {
         n.frame = placed.frame
         n.rotation = placed.rotation
         if abs(placed.scale.height - 1) > 0.01 || abs(placed.scale.width - 1) > 0.01 {
-            n.style = ts.scaled(by: placed.scale.height)
+            n.scaleType(by: placed.scale.height)
             n.refit()
             report.note("Stretched texts, set at the size they show")
         }
         return n
     }
 
-    /// How far below the top of its box Sketch sets a text's first baseline, when its line height
-    /// is set: as Text Kit does on its own, the letters at the foot of the line.
-    private static func firstBaseline(_ style: TextStyle) -> CGFloat? {
-        guard let height = style.lineSpacing else { return nil }
-        let font = Fonts.font(style), paragraph = NSMutableParagraphStyle()
-        paragraph.minimumLineHeight = height
-        paragraph.maximumLineHeight = height
-        let laid = TextLayout.Laid(NSAttributedString(string: "x", attributes: [.font: font, .paragraphStyle: paragraph]), font: font, width: 10_000)
+    /// How letters in a run with Sketch's `attributes` look; `paint` is the colour a fill on the
+    /// layer paints all of them in.
+    private mutating func letters(_ a: JSON, paint: RGBA?) -> Letters {
+        let font = dict(dict(a["MSAttributedStringFontAttribute"])["attributes"])
+        let size = min(max(num(font["size"], 12), 1), 5000)
+        let (family, face) = self.font(font["name"] as? String)
+        // Sketch spaces letters by points, Bezzle by thousandths of their size.
+        return Letters(family: family, face: face, size: size, color: paint ?? color(a["MSAttributedStringColorAttribute"]),
+                       underline: int(a["underlineStyle"]) != 0, strikethrough: int(a["strikethroughStyle"]) != 0,
+                       tracking: (num(a["kerning"]) / size * 10_000).rounded() / 10, list: nil)
+    }
+
+    /// What of a run Bezzle holds for a whole text only, written out to tell whether runs differ in it.
+    private static func typeset(_ a: JSON) -> String {
+        let font = dict(dict(a["MSAttributedStringFontAttribute"])["attributes"]), p = dict(a["paragraphStyle"])
+        let parts: [Any] = [Double(num(p["maximumLineHeight"])), Double(num(p["minimumLineHeight"])), int(p["alignment"]) % 4,
+                            Double(num(p["paragraphSpacing"])), int(a["MSAttributedStringTextTransformAttribute"]),
+                            font["variation"] ?? [:], font["featureSettings"] ?? []]
+        guard JSONSerialization.isValidJSONObject(parts), let data = try? JSONSerialization.data(withJSONObject: parts, options: .sortedKeys) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Where a variable font is set along its axes, by their tags; Sketch keys each by the number
+    /// a font keeps its tag as.
+    private static func axes(_ v: Any?) -> [String: Double]? {
+        var axes: [String: Double] = [:]
+        for (key, value) in dict(v) {
+            guard let code = UInt32(key) else { continue }
+            axes[Fonts.tag(code)] = Double(num(value))
+        }
+        return axes.isEmpty ? nil : axes
+    }
+
+    /// The OpenType features Sketch keeps with a font, by their tags. It keeps them as Core Text
+    /// names them, by a feature type and a selector, which the font itself says the tags of.
+    private static func features(_ settings: [JSON], of font: NSFont) -> [String: Int]? {
+        guard !settings.isEmpty else { return nil }
+        var tags: [String: Int] = [:]
+        let types = CTFontCopyFeatures(font) as? [[String: Any]] ?? []
+        func number(_ v: Any?) -> Int? { (v as? NSNumber)?.intValue }
+        for s in settings {
+            if let tag = s["CTFeatureOpenTypeTag"] as? String {
+                tags[tag] = int(s["CTFeatureOpenTypeValue"], 1)
+                continue
+            }
+            let type = int(s["CTFeatureTypeIdentifier"], -1), selector = int(s["CTFeatureSelectorIdentifier"], -1)
+            for t in types where number(t[kCTFontFeatureTypeIdentifierKey as String]) == type {
+                for sel in t[kCTFontFeatureTypeSelectorsKey as String] as? [[String: Any]] ?? []
+                where number(sel[kCTFontFeatureSelectorIdentifierKey as String]) == selector {
+                    if let tag = sel[kCTFontOpenTypeFeatureTag as String] as? String {
+                        tags[tag] = number(sel[kCTFontOpenTypeFeatureValue as String]) ?? 1
+                    }
+                }
+            }
+        }
+        return tags.isEmpty ? nil : tags
+    }
+
+    /// How far below the top of its lines Sketch sets a text's first baseline, when its line
+    /// height is set: as Text Kit does on its own, the letters at the foot of the line.
+    private static func firstBaseline(_ n: Node) -> CGFloat? {
+        guard let style = n.style, style.lineSpacing != nil else { return nil }
+        let set = NSMutableAttributedString(attributedString: TextLayout.attributed(n))
+        guard set.length > 0 else { return nil }
+        set.removeAttribute(.baselineOffset, range: NSRange(location: 0, length: set.length))
+        let laid = TextLayout.Laid(set, font: Fonts.font(style), width: style.sizing == .autoWidth ? 100_000 : max(n.frame.width, 1))
         return laid.manager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).minY + laid.manager.location(forGlyphAt: 0).y
     }
 
@@ -993,7 +1097,7 @@ private struct Converter {
     }
 
     /// The words of a text saved by Sketch 43 to 47, kept as an archived attributed string, and
-    /// the style of its first run as later files write it.
+    /// the style of each of its runs as later files write it.
     private static func archived(_ attributed: JSON) -> (String, [JSON])? {
         guard let encoded = dict(attributed["archivedAttributedString"])["_archive"] as? String,
               let data = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters),
@@ -1001,21 +1105,36 @@ private struct Converter {
                                                                                NSParagraphStyle.self, NSDictionary.self, NSArray.self,
                                                                                NSString.self, NSNumber.self], from: data) as? NSAttributedString
         else { return nil }
-        guard text.length > 0 else { return (text.string, []) }
-        let a = text.attributes(at: 0, effectiveRange: nil)
-        var run: JSON = [:]
-        let descriptor = a[NSAttributedString.Key("MSAttributedStringFontAttribute")] as? NSFontDescriptor ?? (a[.font] as? NSFont)?.fontDescriptor
-        if let descriptor {
-            run["MSAttributedStringFontAttribute"] = ["attributes": ["name": descriptor.postscriptName ?? "", "size": Double(descriptor.pointSize)]]
+        var runs: [JSON] = []
+        text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { a, range, _ in
+            var run: JSON = [:]
+            let descriptor = a[NSAttributedString.Key("MSAttributedStringFontAttribute")] as? NSFontDescriptor ?? (a[.font] as? NSFont)?.fontDescriptor
+            if let descriptor {
+                run["MSAttributedStringFontAttribute"] = ["attributes": ["name": descriptor.postscriptName ?? "", "size": Double(descriptor.pointSize)]]
+            }
+            if let c = (a[.foregroundColor] as? NSColor ?? a[NSAttributedString.Key("NSColor")] as? NSColor)?.usingColorSpace(.sRGB) {
+                run["MSAttributedStringColorAttribute"] = ["red": Double(c.redComponent), "green": Double(c.greenComponent),
+                                                           "blue": Double(c.blueComponent), "alpha": Double(c.alphaComponent)]
+            }
+            if let p = a[.paragraphStyle] as? NSParagraphStyle {
+                // As Sketch numbers them, which is not how every Mac does.
+                let alignment = switch p.alignment {
+                case .right: 1
+                case .center: 2
+                case .justified: 3
+                default: 0
+                }
+                run["paragraphStyle"] = ["alignment": alignment, "maximumLineHeight": Double(p.maximumLineHeight),
+                                         "minimumLineHeight": Double(p.minimumLineHeight), "paragraphSpacing": Double(p.paragraphSpacing)]
+            }
+            if let kern = a[.kern] as? NSNumber { run["kerning"] = kern.doubleValue }
+            if let line = a[.underlineStyle] as? NSNumber { run["underlineStyle"] = line.intValue }
+            if let line = a[.strikethroughStyle] as? NSNumber { run["strikethroughStyle"] = line.intValue }
+            if let transform = a[NSAttributedString.Key("MSAttributedStringTextTransformAttribute")] as? NSNumber {
+                run["MSAttributedStringTextTransformAttribute"] = transform.intValue
+            }
+            runs.append(["location": range.location, "length": range.length, "attributes": run])
         }
-        if let c = (a[.foregroundColor] as? NSColor ?? a[NSAttributedString.Key("NSColor")] as? NSColor)?.usingColorSpace(.sRGB) {
-            run["MSAttributedStringColorAttribute"] = ["red": Double(c.redComponent), "green": Double(c.greenComponent),
-                                                       "blue": Double(c.blueComponent), "alpha": Double(c.alphaComponent)]
-        }
-        if let p = a[.paragraphStyle] as? NSParagraphStyle {
-            run["paragraphStyle"] = ["alignment": p.alignment.rawValue, "maximumLineHeight": Double(p.maximumLineHeight)]
-        }
-        if let kern = a[.kern] as? NSNumber { run["kerning"] = kern.doubleValue }
-        return (text.string, [["location": 0, "length": text.length, "attributes": run]])
+        return (text.string, runs)
     }
 }

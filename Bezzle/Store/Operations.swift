@@ -37,6 +37,11 @@ extension DocumentStore {
     static func duplicate(_ ids: [UUID], in doc: inout BezzleDocument, offset: CGPoint) -> [UUID] {
         var copies: [UUID] = []
         for id in ids {
+            // In a deck's post, the same layer of every post is copied too, each with its own words.
+            if let copy = Deck.duplicate(id, in: &doc, offset: offset) {
+                copies.append(copy)
+                continue
+            }
             guard let path = doc.path(of: id) else { continue }
             var copy = doc[path].freshCopy()
             if copy.isArtboard {
@@ -95,7 +100,13 @@ extension DocumentStore {
 
     func setHidden(_ hidden: Bool, _ ids: [UUID]) {
         update(ids, hidden ? "Hide" : "Show") { $0.hidden = hidden }
-        if hidden { selection.removeAll { ids.contains($0) } }
+        if hidden {
+            // Hidden in a deck's post, it is still offered to stay hidden there alone, though it
+            // is no longer selected.
+            let offered = offer
+            selection.removeAll { ids.contains($0) }
+            offer = offered
+        }
     }
 
     func setLocked(_ locked: Bool, _ ids: [UUID]) {

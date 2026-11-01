@@ -399,7 +399,7 @@ private struct Converter {
         let (under, over) = backing(e, box, m, alone: true)
         if held.isEmpty, var only = under ?? over {
             // A frame with nothing in it is its rectangle.
-            if under != nil, let over { only.border = over.border }
+            if under != nil, let over { only.borders = over.borders }
             effects(&only, e)
             return only
         }
@@ -418,20 +418,20 @@ private struct Converter {
     /// The rectangles a frame's fill and border are drawn with, when it has them; its fill only
     /// when it needs one of its own, which it does `alone`.
     private mutating func backing(_ e: Object, _ box: CGRect, _ m: CGAffineTransform, alone: Bool) -> (Node?, Node?) {
-        let fill = self.fill(e["fillPaints"]?.objects ?? [])
-        let border = self.border(e, open: false)
+        let fills = self.fills(e["fillPaints"]?.objects ?? [])
+        let borders = self.borders(e, open: false)
         var under: Node?, over: Node?
-        if let fill, alone, let shaped = boxShape(e, box, m) {
+        if !fills.isEmpty, alone, let shaped = boxShape(e, box, m) {
             var r = shaped.0
             r.name = String(localized: "Background")
-            r.fill = shaped.1 ? fill.flipped(horizontally: false) : fill
-            r.border = Border(on: false)
+            r.fills = shaped.1 ? fills.map { $0.flipped(horizontally: false) } : fills
+            r.borders = []
             under = r
         }
-        if border.on, var r = boxShape(e, box, m)?.0 {
+        if !borders.isEmpty, var r = boxShape(e, box, m)?.0 {
             r.name = String(localized: "Border")
-            r.fill.on = false
-            r.border = border
+            r.fills = []
+            r.borders = borders
             over = r
         }
         return (under, over)
@@ -487,7 +487,7 @@ private struct Converter {
     private mutating func line(_ e: Object, _ m: CGAffineTransform) -> Node? {
         var n = Node(kind: .line, frame: .zero)
         n.setLineEnds(CGPoint.zero.applying(m), CGPoint(x: size(e).width, y: 0).applying(m))
-        n.border = border(e, open: true)
+        n.borders = borders(e, open: true)
         return n
     }
 
@@ -497,28 +497,29 @@ private struct Converter {
     /// the border along its lines.
     private mutating func vector(_ e: Object, _ m: CGAffineTransform) -> Node? {
         let fills = regions(e)
-        let border = self.border(e, open: false)
+        let borders = self.borders(e, open: false)
         let net = e["type"]?.string == "VECTOR" ? network(e) : nil
         guard fills.count > 1 || net?.loose == true else {
             if let only = fills.first, var n = ImportGeometry.outline(PathData.string(only.path), m) {
                 paint(&n, e, flipped: false)
-                if let f = fill(only.paints) { n.fill = f } else { n.fill.on = false }
+                n.fills = self.fills(only.paints)
                 if only.evenOdd { n.evenOdd = true }
                 return n
             }
-            if border.on, let n = lines(e, net, border, m) { return n }
+            if !borders.isEmpty, let n = lines(e, net, borders, m) { return n }
             report.note("Shapes without an outline, left out")
             return nil
         }
         var g = Node(kind: .group, frame: .zero)
         for region in fills {
-            guard let f = fill(region.paints), var n = ImportGeometry.outline(PathData.string(region.path), m) else { continue }
+            let paints = self.fills(region.paints)
+            guard !paints.isEmpty, var n = ImportGeometry.outline(PathData.string(region.path), m) else { continue }
             n.name = String(localized: "Fill")
-            n.fill = f
+            n.fills = paints
             if region.evenOdd { n.evenOdd = true }
             g.children.append(n)
         }
-        if border.on, var n = lines(e, net, border, m) {
+        if !borders.isEmpty, var n = lines(e, net, borders, m) {
             n.name = String(localized: "Border")
             g.children.append(n)
         }
@@ -527,17 +528,16 @@ private struct Converter {
 
     /// A vector's border: along its lines, or where Figma rounds the corners its lines meet at,
     /// which Bezzle cannot, its border's outline as a shape.
-    private mutating func lines(_ e: Object, _ net: (path: CGPath, loose: Bool)?, _ border: Border, _ m: CGAffineTransform) -> Node? {
+    private mutating func lines(_ e: Object, _ net: (path: CGPath, loose: Bool)?, _ borders: [Border], _ m: CGAffineTransform) -> Node? {
         let table = e["vectorData"]?.object?["styleOverrideTable"]?.objects ?? []
         let rounded = e.num("cornerRadius") > 0 || table.contains { $0.num("cornerRadius") > 0 }
         if let net, !rounded, var n = ImportGeometry.outline(PathData.string(net.path), m) {
-            n.fill.on = false
-            n.border = border
-            if net.loose { n.border.position = .center }
+            n.fills = []
+            n.borders = net.loose ? borders.map { b in var b = b; b.position = .center; return b } : borders
             return n
         }
         guard let outline = geometry(e["strokeGeometry"]), var n = ImportGeometry.outline(PathData.string(outline.0), m) else { return nil }
-        n.fill = Fill(on: true, color: border.color)
+        n.fills = borders.map { Fill(on: true, color: $0.color) }
         report.note("Borders on rounded corners, drawn as shapes")
         return n
     }
@@ -687,20 +687,33 @@ private struct Converter {
     }
 
     private mutating func paint(_ n: inout Node, _ e: Object, flipped: Bool) {
-        if let f = fill(e["fillPaints"]?.objects ?? []) {
-            n.fill = flipped ? f.flipped(horizontally: false) : f
-        } else {
-            n.fill.on = false
-        }
-        n.border = border(e, open: false)
+        let fills = self.fills(e["fillPaints"]?.objects ?? [])
+        n.fills = flipped ? fills.map { $0.flipped(horizontally: false) } : fills
+        n.borders = borders(e, open: false)
     }
 
-    /// The fill a layer's paints come to. Figma lays paints over one another, the first
-    /// lowest; Bezzle shows the top one.
+    /// The fills a layer's paints come to, one over another as Figma lays them, the first lowest.
+    /// Bezzle holds a picture only in the first, so what lies under the top picture is left out.
+    private mutating func fills(_ paints: [Object]) -> [Fill] {
+        var fills = shown(paints).compactMap { fill(paint: $0) }
+        if let top = fills.lastIndex(where: { $0.image != nil }), top > 0 {
+            fills.removeFirst(top)
+            report.note("Fills under a picture, left out")
+        }
+        return fills
+    }
+
+    /// The one fill a layer's paints come to where Bezzle takes only one, as an artboard's
+    /// background or the colour of text: the top one.
     private mutating func fill(_ paints: [Object]) -> Fill? {
         let shown = shown(paints)
         guard let p = shown.last else { return nil }
         if shown.count > 1 { report.note("Layers with several fills, keeping the top one") }
+        return fill(paint: p)
+    }
+
+    /// One of Figma's paints as a fill.
+    private mutating func fill(paint p: Object) -> Fill? {
         if let mode = p["blendMode"]?.string, !["NORMAL", "PASS_THROUGH"].contains(mode) { report.note("Fills blended into those under them, drawn over them") }
         let opacity = Double(num(p["opacity"], 1))
         switch p["type"]?.string {
@@ -790,11 +803,24 @@ private struct Converter {
         return result
     }
 
+    /// A layer's borders, one for each of its strokes' paints, the first lowest, all of the
+    /// layer's one weight, as Figma draws them.
+    private mutating func borders(_ e: Object, open: Bool) -> [Border] {
+        let shown = shown(e["strokePaints"]?.objects ?? [])
+        guard e.num("strokeWeight", 1) > 0 else { return [] }
+        return shown.map { border(e, paint: $0, open: open) }
+    }
+
+    /// The one border of a layer that takes only one: its top stroke.
     private mutating func border(_ e: Object, open: Bool) -> Border {
         let shown = shown(e["strokePaints"]?.objects ?? [])
-        let width = e.num("strokeWeight", 1)
-        guard let p = shown.last, width > 0 else { return Border(on: false) }
+        guard let p = shown.last, e.num("strokeWeight", 1) > 0 else { return Border(on: false) }
         if shown.count > 1 { report.note("Layers with several borders, keeping the top one") }
+        return border(e, paint: p, open: open)
+    }
+
+    private mutating func border(_ e: Object, paint p: Object, open: Bool) -> Border {
+        let width = e.num("strokeWeight", 1)
         var c: RGBA
         switch p["type"]?.string {
         case "SOLID":
@@ -830,16 +856,15 @@ private struct Converter {
             let camel = parts.enumerated().map { $0.offset == 0 ? String($0.element) : $0.element.capitalized }.joined()
             if let blend = BlendMode(rawValue: camel) { n.blend = blend } else { report.note("Blend modes Bezzle does not know, drawn as normal") }
         }
-        var shadows = 0
+        var shadows: [Shadow] = []
         for f in e["effects"]?.objects ?? [] where f["visible"]?.bool != false {
             switch f["type"]?.string {
             case "DROP_SHADOW", "INNER_SHADOW":
-                shadows += 1
-                guard shadows == 1 else { continue }
                 let offset = f["offset"]?.object
-                n.shadow = Shadow(on: true, color: color(f["color"]), x: offset?.num("x") ?? 0, y: offset?.num("y") ?? 0, blur: num(f["radius"]))
-                if f["type"]?.string == "INNER_SHADOW" { n.shadow.inset = true }
-                if num(f["spread"]) != 0 { report.note("Shadows that spread, drawn without it") }
+                var s = Shadow(on: true, color: color(f["color"]), x: offset?.num("x") ?? 0, y: offset?.num("y") ?? 0, blur: num(f["radius"]))
+                if f["type"]?.string == "INNER_SHADOW" { s.inset = true }
+                if num(f["spread"]) != 0 { s.spread = num(f["spread"]) }
+                shadows.append(s)
             // Figma's blur radius is twice the deviation Bezzle measures a blur by.
             case "FOREGROUND_BLUR", "BACKGROUND_BLUR":
                 let behind = f["type"]?.string == "BACKGROUND_BLUR"
@@ -855,67 +880,109 @@ private struct Converter {
                 report.note("Effects Bezzle does not know")
             }
         }
-        if shadows > 1 { report.note("Layers with several shadows, keeping the first") }
+        if !shadows.isEmpty { n.shadows = shadows }
     }
 
     // MARK: Text
 
+    /// A text layer. Figma gives each letter the number of a style, the text's own or one that
+    /// changes some of it (`styleOverrideTable`); each run of letters comes across in its own.
     private mutating func text(_ e: Object, _ m: CGAffineTransform) -> Node? {
         let data = e["textData"]?.object
         var n = Node(kind: .text, frame: .zero)
-        n.text = data?["characters"]?.string ?? ""
-        // Several styles in one text come across in the one used for most of it.
+        let words = data?["characters"]?.string ?? ""
+        // Each style by its number: the text's own, with what the style changes laid over it.
+        // Figma counts letters as Unicode does; those past the end of the list are in the text's own.
         let ids = (data?["characterStyleIDs"]?.array ?? []).compactMap(\.int)
+        var styles: [Int: Object] = [0: e]
+        for o in data?["styleOverrideTable"]?.objects ?? [] {
+            if let id = o["styleID"]?.int, id != 0 { styles[id] = e.merged(with: o, except: Self.identity) }
+        }
         var counts: [Int: Int] = [:]
         for id in ids { counts[id, default: 0] += 1 }
-        let rest = (n.text?.unicodeScalars.count ?? 0) - ids.count
-        if rest > 0 { counts[0, default: 0] += rest }
-        let main = counts.max { $0.value < $1.value }?.key ?? 0
-        var s = e
-        if main != 0, let o = (data?["styleOverrideTable"]?.objects ?? []).first(where: { $0["styleID"]?.int == main }) {
-            s = e.merged(with: o, except: Self.identity)
+        let rest = words.unicodeScalars.count - ids.count
+        if rest > 0 || counts.isEmpty { counts[0, default: 0] += max(rest, 0) }
+        // What only the whole layer can have comes from the style most of its letters are in.
+        let main = counts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }?.key ?? 0
+        let s = styles[main] ?? e
+        let used = counts.keys.sorted()
+        if Set(used.map { Self.typeset(styles[$0] ?? e) }).count > 1 { report.note("Texts with several styles, shown in their main one") }
+
+        // The colour of each style's letters. A text shows none only when none of its styles has a
+        // paint; otherwise letters without one are clear.
+        let painted = used.contains { ink(shown(styles[$0]?["fillPaints"]?.objects ?? [])) != nil }
+        n.fill.on = painted
+        let unpainted = painted ? RGBA(r: 0, g: 0, b: 0, a: 0) : n.fill.color
+        var looks: [Int: Letters] = [:]
+        var severalFills = false, gradientInk = false, pictureInk = false, blendedInk = false
+        for id in used {
+            let style = styles[id] ?? e
+            let shown = shown(style["fillPaints"]?.objects ?? [])
+            severalFills = severalFills || shown.count > 1
+            gradientInk = gradientInk || shown.last?["type"]?.string?.hasPrefix("GRADIENT") == true
+            pictureInk = pictureInk || shown.last?["type"]?.string == "IMAGE"
+            blendedInk = blendedInk || shown.last?["blendMode"]?.string.map { !["NORMAL", "PASS_THROUGH"].contains($0) } == true
+            looks[id] = letters(style, ink: ink(shown) ?? unpainted)
         }
-        if counts.count > 1 { report.note("Texts with several styles, shown in their main one") }
+        if severalFills { report.note("Layers with several fills, keeping the top one") }
+        if blendedInk { report.note("Fills blended into those under them, drawn over them") }
+        if gradientInk { report.note("Texts filled with a gradient, in its first colour") }
+        if pictureInk { report.note("Texts filled with a picture, in a plain colour") }
+
+        // Runs of letters in one style and one paragraph, each paragraph in its list, if any.
+        let lists: [TextList?] = (data?["lines"]?.objects ?? []).map {
+            switch $0["lineType"]?.string {
+            case "ORDERED_LIST": .number
+            case "UNORDERED_LIST": .bullet
+            default: nil
+            }
+        }
+        var runs: [(text: String, letters: Letters)] = []
+        var piece = String.UnicodeScalarView(), pieceID = 0, pieceList: TextList?, paragraph = 0
+        func close() {
+            guard !piece.isEmpty else { return }
+            var l = looks[pieceID] ?? looks[main] ?? TextLook.plain.resolved(over: TextStyle(), color: n.fill.color)
+            l.list = pieceList
+            runs.append((String(piece), l))
+            piece = String.UnicodeScalarView()
+        }
+        for (i, c) in words.unicodeScalars.enumerated() {
+            let id = i < ids.count ? ids[i] : 0, list = paragraph < lists.count ? lists[paragraph] : nil
+            if id != pieceID || list != pieceList { close() }
+            pieceID = id
+            pieceList = list
+            piece.append(c)
+            if c == "\n" { paragraph += 1 }
+        }
+        close()
 
         var ts = TextStyle()
-        let font = s["fontName"]?.object
-        (ts.family, ts.face) = fonts.resolve(postscript: font?["postscript"]?.string, family: font?["family"]?.string, face: font?["style"]?.string, report: &report)
-        ts.size = num(s["fontSize"], 12) > 0 ? num(s["fontSize"], 12) : 12
-        if let spacing = s["letterSpacing"]?.object {
-            // Bezzle counts letter spacing in thousandths of the size.
-            let v = spacing.num("value")
-            ts.tracking = spacing["units"]?.string == "PIXELS" ? v / ts.size * 1000 : v * 10
-        }
+        let fontSize = num(s["fontSize"], 12) > 0 ? num(s["fontSize"], 12) : 12
         if let height = s["lineHeight"]?.object {
             let v = height.num("value")
             switch height["units"]?.string {
             case "PIXELS": ts.lineSpacing = v
-            case "RAW": ts.lineSpacing = (ts.size * v * 10).rounded() / 10
+            case "RAW": ts.lineSpacing = (fontSize * v * 10).rounded() / 10
             // A hundred per cent is the font's own spacing.
-            default: if abs(v - 100) > 0.01 { ts.lineSpacing = (ts.size * v / 10).rounded() / 10 }
+            default: if abs(v - 100) > 0.01 { ts.lineSpacing = (fontSize * v / 10).rounded() / 10 }
             }
         }
+        if s.num("paragraphSpacing") > 0 { ts.paragraphSpacing = s.num("paragraphSpacing") }
         ts.align = switch s["textAlignHorizontal"]?.string {
         case "CENTER": .center
         case "RIGHT": .right
+        case "JUSTIFIED": .justify
         default: .left
         }
-        if s["textAlignHorizontal"]?.string == "JUSTIFIED" { report.note("Justified texts, set flush left") }
-        ts.underline = s["textDecoration"]?.string == "UNDERLINE"
-        if s["textDecoration"]?.string == "STRIKETHROUGH" { report.note("Struck-through texts, shown without the line") }
         ts.letterCase = switch s["textCase"]?.string {
         case "UPPER": .upper
         case "LOWER": .lower
         case "TITLE": .title
+        case "SMALL_CAPS", "SMALL_CAPS_FORCED": .smallCaps
         default: nil
         }
-        if ["SMALL_CAPS", "SMALL_CAPS_FORCED"].contains(s["textCase"]?.string) { report.note("Small capitals, set as typed") }
-        if let f = fill(s["fillPaints"]?.objects ?? []) {
-            n.fill = f.gradient == nil && f.image == nil ? f : Fill(on: true, color: f.color)
-            if f.gradient != nil { report.note("Texts filled with a gradient, in its first colour") }
-        } else {
-            n.fill.on = false
-        }
+        ts.features = Self.features(s)
+        ts.axes = Self.axes(s)
         n.border = border(s, open: false)
         if n.border.on { report.note("Texts with a border, shown without it"); n.border.on = false }
 
@@ -925,20 +992,27 @@ private struct Converter {
         case "HEIGHT": .autoHeight
         default: .fixed
         }
-        // Bezzle sets a fixed box's words from its top, so one Figma centres or sets at the bottom
-        // keeps its words where they are and fits its height to them.
-        if ts.sizing == .fixed && (s["textAlignVertical"]?.string ?? "TOP") != "TOP" { ts.sizing = .autoHeight }
+        // Where the lines lie in a box of fixed size; in any other, the box fits around them.
+        if ts.sizing == .fixed {
+            ts.vertical = switch s["textAlignVertical"]?.string {
+            case "CENTER": .middle
+            case "BOTTOM": .bottom
+            default: nil
+            }
+        }
         n.style = ts
+        n.setImportedRuns(runs)
         n.frame = CGRect(origin: .zero, size: size)
         n.refit()
-        // Where Figma put the first baseline, measured from the top of the text.
+        // Where Figma put the first baseline, measured from the top of the text wherever in its box
+        // the lines lie, as `TextLayout.firstBaseline` measures it.
         let baseline = (data?["baselines"]?.objects.first?["position"]?.object).map { $0.num("y") } ?? TextLayout.firstBaseline(n)
         var x: CGFloat = 0
         if ts.sizing == .autoWidth {
             switch ts.align {
             case .center: x = (size.width - n.frame.width) / 2
             case .right: x = size.width - n.frame.width
-            case .left: x = 0
+            case .left, .justify: x = 0
             }
         }
         let local = CGRect(x: x, y: baseline - TextLayout.firstBaseline(n), width: n.frame.width, height: n.frame.height)
@@ -950,9 +1024,92 @@ private struct Converter {
         n.frame = placed.frame
         n.rotation = placed.rotation
         if abs(placed.scale.height - 1) > 0.01 {
-            n.style = ts.scaled(by: placed.scale.height)
+            n.scaleType(by: placed.scale.height)
             report.note("Stretched texts, set at the size they show")
         }
         return n
+    }
+
+    /// How letters in Figma's style `s` look, `ink` their colour.
+    private mutating func letters(_ s: Object, ink: RGBA) -> Letters {
+        let font = s["fontName"]?.object
+        let (family, face) = fonts.resolve(postscript: font?["postscript"]?.string, family: font?["family"]?.string, face: font?["style"]?.string, report: &report)
+        let size = num(s["fontSize"], 12) > 0 ? num(s["fontSize"], 12) : 12
+        var tracking: CGFloat = 0
+        if let spacing = s["letterSpacing"]?.object {
+            // Bezzle counts letter spacing in thousandths of the size.
+            let v = spacing.num("value")
+            tracking = spacing["units"]?.string == "PIXELS" ? v / size * 1000 : v * 10
+        }
+        let decoration = s["textDecoration"]?.string
+        return Letters(family: family, face: face, size: size, color: ink, underline: decoration == "UNDERLINE",
+                       strikethrough: decoration == "STRIKETHROUGH", tracking: tracking, list: nil)
+    }
+
+    /// The colour of letters with these paints: the top one's, a gradient's first; nil when none shows.
+    private func ink(_ shown: [Object]) -> RGBA? {
+        guard let p = shown.last else { return nil }
+        var c: RGBA
+        switch p["type"]?.string {
+        case "SOLID": c = color(p["color"])
+        case "IMAGE": return .shape
+        default: c = (p["stops"]?.objects.first).map { color($0["color"]) } ?? .black
+        }
+        c.a *= Double(num(p["opacity"], 1))
+        return c
+    }
+
+    /// What of a style Bezzle holds for a whole text only, to tell whether runs differ in it.
+    private struct Typeset: Hashable {
+        var lineHeight: String
+        var letterCase: String
+        var features: [String: Int]?
+        var axes: [String: Double]?
+    }
+
+    private static func typeset(_ s: Object) -> Typeset {
+        let height = s["lineHeight"]?.object
+        return Typeset(lineHeight: height.map { "\($0.num("value"))|\($0["units"]?.string ?? "")" } ?? "",
+                       letterCase: s["textCase"]?.string ?? "", features: features(s), axes: axes(s))
+    }
+
+    /// The OpenType features a style turns on or off, by their tags: those Figma names itself,
+    /// and those it sets as the CSS font-variant properties are.
+    private static func features(_ s: Object) -> [String: Int]? {
+        var f: [String: Int] = [:]
+        if s["fontVariantCommonLigatures"]?.bool == false { f["liga"] = 0; f["clig"] = 0 }
+        if s["fontVariantContextualLigatures"]?.bool == false { f["calt"] = 0 }
+        if s["fontVariantDiscretionaryLigatures"]?.bool == true { f["dlig"] = 1 }
+        if s["fontVariantHistoricalLigatures"]?.bool == true { f["hlig"] = 1 }
+        if s["fontVariantOrdinal"]?.bool == true { f["ordn"] = 1 }
+        if s["fontVariantSlashedZero"]?.bool == true { f["zero"] = 1 }
+        let variants: [String: [String: [String]]] = [
+            "fontVariantNumericFigure": ["LINING": ["lnum"], "OLDSTYLE": ["onum"]],
+            "fontVariantNumericSpacing": ["PROPORTIONAL": ["pnum"], "TABULAR": ["tnum"]],
+            "fontVariantNumericFraction": ["DIAGONAL": ["frac"], "STACKED": ["afrc"]],
+            "fontVariantCaps": ["SMALL": ["smcp"], "ALL_SMALL": ["smcp", "c2sc"], "PETITE": ["pcap"], "ALL_PETITE": ["pcap", "c2pc"],
+                                "UNICASE": ["unic"], "TITLING": ["titl"]],
+            "fontVariantPosition": ["SUB": ["subs"], "SUPER": ["sups"]],
+        ]
+        for (field, values) in variants {
+            for tag in s[field]?.string.flatMap({ values[$0] }) ?? [] { f[tag] = 1 }
+        }
+        // Forced small capitals are capitals too.
+        if s["textCase"]?.string == "SMALL_CAPS_FORCED" { f["c2sc"] = 1 }
+        // Figma names features by their tags in capitals.
+        for t in s["toggledOnOTFeatures"]?.array ?? [] { if let tag = t.string?.lowercased() { f[tag] = 1 } }
+        for t in s["toggledOffOTFeatures"]?.array ?? [] { if let tag = t.string?.lowercased() { f[tag] = 0 } }
+        return f.isEmpty ? nil : f
+    }
+
+    /// Where a variable font is set along its axes, by their tags. Figma keeps a tag as the number
+    /// fonts do.
+    private static func axes(_ s: Object) -> [String: Double]? {
+        var a: [String: Double] = [:]
+        for v in s["fontVariations"]?.objects ?? [] {
+            guard let code = v["axisTag"]?.int, let value = v["value"]?.number, value.isFinite else { continue }
+            a[Fonts.tag(UInt32(truncatingIfNeeded: code))] = value
+        }
+        return a.isEmpty ? nil : a
     }
 }

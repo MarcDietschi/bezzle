@@ -48,7 +48,11 @@ struct MenuButton: View {
     }
 }
 
-/// A choice of a few options: a card that slides along a well.
+/// A choice of a few options: a card that slides along a well. Each option is as wide as its
+/// word with the same room either side of every word, rather than all as wide as each other, so
+/// short words and long ones look evenly set. A word never shrinks to fit: where words would
+/// have less than `BalancedSegments.least` either side, they need to be fewer or shorter, or
+/// symbols, and a debug build says so.
 struct SegmentedWell<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(Value, LocalizedStringResource)]
@@ -58,13 +62,20 @@ struct SegmentedWell<Value: Hashable>: View {
     @Namespace private var namespace
 
     var body: some View {
-        HStack(spacing: 0) {
+        BalancedSegments(labels: options.map { String(localized: $0.1) }) {
             ForEach(options, id: \.0) { value, title in
                 let selected = value == selection
                 let working = selected && progress != nil
+                // As wide as the word is when chosen, so choosing it moves nothing.
                 Text(title)
-                    .font(.system(size: 12, weight: selected ? .medium : .regular))
-                    .foregroundStyle(working ? Theme.pencil : selected ? Theme.ink : Theme.ink2)
+                    .font(.system(size: 12, weight: .medium))
+                    .hidden()
+                    .overlay {
+                        Text(title)
+                            .font(.system(size: 12, weight: selected ? .medium : .regular))
+                            .foregroundStyle(working ? Theme.pencil : selected ? Theme.ink : Theme.ink2)
+                            .fixedSize()
+                    }
                     .frame(maxWidth: .infinity)
                     // Inside the well's rim, the whole as tall as any control.
                     .frame(height: Theme.controlHeight - 4)
@@ -101,6 +112,46 @@ struct SegmentedWell<Value: Hashable>: View {
         .well(radius: 9)
         .animation(Theme.spring, value: progress == nil)
     }
+}
+
+/// Segments side by side, each as wide as what it holds and the room left shared out evenly, the
+/// same either side of every one.
+struct BalancedSegments: Layout {
+    /// The least room either side of a word that still looks set rather than squeezed in.
+    static let least: CGFloat = 9
+    /// What the segments say, for a debug build to name those that do not fit.
+    var labels: [String] = []
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let natural = sizes.reduce(0) { $0 + $1.width } + CGFloat(subviews.count) * 2 * Self.least
+        return CGSize(width: proposal.width ?? natural, height: sizes.map(\.height).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let widths = subviews.map { $0.sizeThatFits(.unspecified).width }
+        let room = max(0, (bounds.width - widths.reduce(0, +)) / CGFloat(subviews.count * 2))
+        #if DEBUG
+        if room < Self.least - 0.5, bounds.width > 0 {
+            Self.warn("Segments \(labels) have \(Int(room)) pt either side of their words, less than \(Int(Self.least)): make them fewer, shorter or symbols.")
+        }
+        #endif
+        var x = bounds.minX
+        for (subview, width) in zip(subviews, widths) {
+            let w = width + room * 2
+            subview.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: w, height: bounds.height))
+            x += w
+        }
+    }
+
+    #if DEBUG
+    private nonisolated(unsafe) static var warned: Set<String> = []
+    private static func warn(_ message: String) {
+        guard warned.insert(message).inserted else { return }
+        print("⚠️ \(message)")
+    }
+    #endif
 }
 
 /// An on/off switch: a knob that slides in a well, which fills with ink when on.

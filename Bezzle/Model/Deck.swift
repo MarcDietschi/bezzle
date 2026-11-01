@@ -43,7 +43,7 @@ nonisolated struct Deck: Codable, Hashable {
 
     /// Of a layer's properties, those a post can keep as its own: not what it holds or where it lies
     /// among the others, nor its words and pictures, which are its own anyway.
-    static let keepable: Set<String> = Set(LayerField.all.map(\.name)).subtracting(["kind", "text", "post", "own", "deck", "grid"])
+    static let keepable: Set<String> = Set(LayerField.all.map(\.name)).subtracting(["kind", "text", "post", "own", "deck", "grid", "layout", "guides"])
 }
 
 nonisolated extension Node {
@@ -85,6 +85,20 @@ nonisolated extension Node {
         return n
     }
 
+    /// The same, but for the layers in `known` that are in it, which keep what they kept, and
+    /// nothing in it marked as being in a post: for layers put together on a deck out of some
+    /// that were on it, as a group made in a post is.
+    func forgettingOwn(but known: [UUID: Node]) -> Node {
+        var n = self
+        if known[id] == nil { n.own = nil }
+        n.children = children.map {
+            var c = $0.forgettingOwn(but: known)
+            c.post = nil
+            return c
+        }
+        return n
+    }
+
     /// Whether this layer or anything it holds is marked as being in a deck.
     var marksDeck: Bool { post != nil || own != nil || children.contains(where: \.marksDeck) }
 }
@@ -102,24 +116,58 @@ extension Deck {
         let into = front.flatMap { posts.contains($0) ? $0 : nil } ?? posts[0]
         if let was {
             let before = Set(was.children.map(\.id))
-            let design = Set(board.children.filter { $0.post == nil && before.contains($0.id) }.map(\.id))
+            let present = Set(board.children.map(\.id))
+            // The design's layers: those it had, and one new to it that every post has a copy of,
+            // as a layer duplicated in every post at once is.
+            let design = Set(board.children.filter { c in
+                c.post == nil && (before.contains(c.id) || posts.allSatisfy { present.contains(c.id.mixed(key($0))) })
+            }.map(\.id))
+            // What lay in a post before, however deep, stays in that post and keeps what it kept of
+            // its own wherever it moved in it, as into a group made there or out of one.
+            var known: [UUID: Node] = [:], inPost: [UUID: Int] = [:]
+            for c in was.children {
+                guard let p = c.post else { continue }
+                var here: [UUID: Node] = [:]
+                note(c, in: &here)
+                known.merge(here) { a, _ in a }
+                for id in here.keys { inPost[id] = p }
+            }
             for i in board.children.indices where !before.contains(board.children[i].id) {
                 let c = board.children[i]
+                if c.post == nil, design.contains(c.id) { continue }
                 if let p = c.post, posts.contains(p), design.contains(c.id.mixed(key(p))) { continue }
-                var n = c.forgettingOwn()
-                n.post = into
+                var n = c.forgettingOwn(but: known)
+                n.post = inPost[c.id].flatMap { posts.contains($0) ? $0 : nil } ?? into
                 board.children[i] = n
             }
         }
 
+        var designWas: [UUID: Node] = [:]
+        if let was { for layer in was.layers(of: nil) { note(layer, in: &designWas) } }
         var design = board.layers(of: nil)
         if let was {
             let then = wrapped(was, posts: posts)
             var now = wrapped(board, posts: posts)
             RepeatGrid.carry(from: then, into: &now, step: .zero)
-            if let first = now.children.first { design = first.children }
+            // Layers that came into the design from a post, as one grouped there does, came as that
+            // post has them: what the post keeps of its own is the design's again.
+            if let first = now.children.first { design = first.children.map { designs($0, was: designWas) } }
         }
-        board.children = made(from: design, posts: posts, holding: board)
+        board.children = made(from: design, posts: posts, holding: board, designWas: designWas)
+    }
+
+    /// A layer of the design as the design has it: what it kept of its own in the post it came
+    /// from as it was in the design, and nothing in it marked as being in a post.
+    private static func designs(_ n: Node, was: [UUID: Node]) -> Node {
+        var d = n
+        if let own = d.own, let then = was[d.id] {
+            for name in own { fields[name]?.copy(&d, then) }
+            if d.kind == .text { d.refit() }
+        }
+        d.own = nil
+        d.post = nil
+        d.children = n.children.map { designs($0, was: was) }
+        return d
     }
 
     /// The same deck with what any post is missing put back from the design, and what a post has
@@ -179,8 +227,48 @@ extension Deck {
         }
     }
 
+    /// Copies a layer of a deck's post, and with it the same layer in the design and in every other
+    /// post, each copy just over the layer it copies and moved by `offset`, so that each post's copy
+    /// holds what that post's layer holds. Returns the copy in the post the layer is in.
+    static func duplicate(_ id: UUID, in doc: inout BezzleDocument, offset: CGPoint) -> UUID? {
+        // In a repeat grid, the grid keeps its cells alike itself.
+        guard let (deck, post) = doc.post(of: id), let post, !doc.ancestors(of: id).contains(where: \.isRepeatGrid) else { return nil }
+        let k = key(post)
+        guard let original = doc.node(id.mixed(k)) else { return nil }
+        // The design's copy has new identities; every post's copy is keyed from them, as the
+        // posts' layers are from the design's.
+        let fresh = original.freshCopy()
+        var renamed: [UUID: UUID] = [:]
+        func pair(_ a: Node, _ b: Node) {
+            renamed[a.id] = b.id
+            zip(a.children, b.children).forEach(pair)
+            zip(a.mask ?? [], b.mask ?? []).forEach(pair)
+        }
+        pair(original, fresh)
+        func rekeyed(_ n: Node, _ k: RepeatGrid.Key) -> Node {
+            var c = n
+            c.id = renamed[n.id.mixed(k)].map { $0.mixed(k) } ?? UUID()
+            c.children = n.children.map { rekeyed($0, k) }
+            c.mask = n.mask?.map { rekeyed($0, k) }
+            return c
+        }
+        var made: UUID?
+        for q in [nil] + deck.posts {
+            let at = id.mixed(key(from: post, to: q))
+            guard let path = doc.path(of: at) else { continue }
+            var copy = q == nil ? fresh : rekeyed(doc[path], key(q))
+            copy.frame.origin.x += offset.x
+            copy.frame.origin.y += offset.y
+            var above = path
+            above.indices[above.indices.count - 1] += 1
+            doc.insert(copy, at: above)
+            if q == post { made = copy.id }
+        }
+        return made
+    }
+
     /// Every post made from the design, keeping what each holds of its own.
-    private static func made(from design: [Node], posts: [Int], holding board: Node) -> [Node] {
+    private static func made(from design: [Node], posts: [Int], holding board: Node, designWas: [UUID: Node] = [:]) -> [Node] {
         var children = design
         children.reserveCapacity(design.count * (posts.count + 1))
         var have: [Int: [UUID: Node]] = [:]
@@ -188,7 +276,7 @@ extension Deck {
         for p in posts {
             let k = key(p), held = have[p] ?? [:]
             for m in design {
-                var n = build(m, k, held)
+                var n = build(m, k, held, designWas)
                 n.post = p
                 children.append(n)
             }
@@ -203,22 +291,27 @@ extension Deck {
 
     /// A layer of the design as it is in the post with key `k`: its words and pictures, and what
     /// else it keeps of its own, from the post's layer as it was.
-    private static func build(_ m: Node, _ k: RepeatGrid.Key, _ held: [UUID: Node]) -> Node {
+    private static func build(_ m: Node, _ k: RepeatGrid.Key, _ held: [UUID: Node], _ designWas: [UUID: Node]) -> Node {
         var n = m
         n.id = m.id.mixed(k)
-        n.children = m.children.map { build($0, k, held) }
+        n.children = m.children.map { build($0, k, held, designWas) }
         n.mask = m.mask?.map { RepeatGrid.copy($0, k) }
         n.post = nil
         n.own = nil
         if let was = held[n.id] {
-            if m.kind == .text, was.kind == .text { n.text = was.text }
+            // How its letters look is its own too, but for what was changed of the whole layer, or
+            // of the same words, in the design.
+            if m.kind == .text, was.kind == .text {
+                n.text = was.text
+                n.spans = was.lettersCarried(from: m, was: designWas[m.id], keeps: Set(was.own ?? []))
+            }
             n.fill.image = was.fill.image
             if let own = was.own {
                 for name in own { fields[name]?.copy(&n, was) }
                 n.own = own
             }
         }
-        if n.kind == .text, n.text != m.text { n.refit() }
+        if n.kind == .text, n.text != m.text || n.spans != m.spans { n.refit() }
         return n
     }
 

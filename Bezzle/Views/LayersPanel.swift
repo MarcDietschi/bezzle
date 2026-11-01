@@ -159,17 +159,9 @@ struct LayersPanel: View {
     @ViewBuilder private func list(_ rows: [Row]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(board == nil ? "Nothing here yet." : "Nothing on this artboard yet.")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Theme.ink2)
-                    Text(board == nil ? "Draw an artboard with A, or a shape with R, E or L." : "Draw a shape on it with R, E or L.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.ink3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 6)
+                EmptySlots(store: store, onArtboard: board != nil)
+                    .padding(.horizontal, 8)
+                    .transition(.opacity.combined(with: .offset(y: 6)))
                 Spacer()
             } else {
                 ScrollView {
@@ -199,6 +191,8 @@ struct LayersPanel: View {
                 .edgeFade(length: Self.fade)
             }
         }
+        // The first layer drawn takes the slots' place, and the slots come back when the last goes.
+        .animation(Theme.spring, value: rows.isEmpty)
     }
 
     // MARK: Pages
@@ -594,7 +588,7 @@ private struct LayerRow: View {
             .padding(.leading, CGFloat(row.depth) * 18)
 
             Group {
-                if node.isRepeatGrid { RepeatGridGlyph() } else { KindGlyph(kind: node.kind) }
+                if node.isRepeatGrid { RepeatGridGlyph() } else if node.isMask { MaskGlyph(size: 15) } else { KindGlyph(kind: node.kind) }
             }
             .foregroundStyle(selected ? Theme.ink : Theme.ink3)
 
@@ -618,6 +612,12 @@ private struct LayerRow: View {
                 Text(verbatim: "\(spec.columns)×\(spec.rows)")
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Theme.ink3)
+            }
+            if node.exports?.isEmpty == false, !hovering {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.ink3)
+                    .help("Marked for export")
             }
             if hovering || node.locked {
                 RowIcon(symbol: node.locked ? "lock.fill" : "lock.open", on: node.locked, help: node.locked ? "Unlock" : "Lock") {
@@ -671,5 +671,100 @@ private struct RowIcon: View {
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
             .help(Text(help))
+    }
+}
+
+// MARK: - No layers yet
+
+/// What the list holds before there is a layer in it: the rows still to come, as dashed slots in
+/// the rows' own shape, each a tool with its key. They trail off downwards, as ghosts of a list.
+/// Pointed at, a slot takes the pencil's blue, and a click picks its tool; the tool in hand is
+/// pencilled in, however it was picked. On an empty design the first slot is an artboard, and the
+/// others lie inside it.
+private struct EmptySlots: View {
+    let store: DocumentStore
+    /// Whether the list is an artboard's page, rather than every layer of an empty design.
+    let onArtboard: Bool
+    @State private var shown = false
+
+    private struct Slot: Identifiable {
+        let tool: Tool
+        let depth: Int
+        var id: Tool { tool }
+    }
+
+    private var slots: [Slot] {
+        onArtboard
+            ? [Slot(tool: .rectangle, depth: 0), Slot(tool: .ellipse, depth: 0), Slot(tool: .text, depth: 0)]
+            : [Slot(tool: .artboard, depth: 0), Slot(tool: .rectangle, depth: 1), Slot(tool: .text, depth: 1)]
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ForEach(Array(slots.enumerated()), id: \.element.id) { i, slot in
+                EmptySlot(tool: slot.tool, picked: store.tool == slot.tool, faintness: Double(i) * 0.2) {
+                    store.tool = slot.tool
+                    store.canvas.map { $0.window?.makeFirstResponder($0) }
+                }
+                .padding(.leading, CGFloat(slot.depth) * 18)
+                // They rise into place one after another.
+                .opacity(shown ? 1 : 0)
+                .offset(y: shown ? 0 : 8)
+                .animation(Theme.spring.delay(0.06 + Double(i) * 0.045), value: shown)
+            }
+        }
+        .allowsHitTesting(!store.isReadOnly)
+        .onAppear { shown = true }
+    }
+}
+
+private struct EmptySlot: View {
+    let tool: Tool
+    let picked: Bool
+    /// How much fainter than the first this slot rests.
+    let faintness: Double
+    let pick: () -> Void
+    @State private var hovering = false
+    /// Counts the times the tool was picked, for its picture to answer each one with a nod.
+    @State private var nods = 0
+
+    var body: some View {
+        let lit = hovering || picked
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        HStack(spacing: 8) {
+            ToolGlyph(tool: tool, size: 15)
+                .keyframeAnimator(initialValue: 1.0, trigger: nods) { glyph, scale in
+                    glyph.scaleEffect(scale)
+                } keyframes: { _ in
+                    SpringKeyframe(1.24, duration: 0.11, spring: .snappy)
+                    SpringKeyframe(1, duration: 0.45, spring: .bouncy)
+                }
+            Text(tool.title)
+                .font(.system(size: 12.5, weight: picked ? .medium : .regular))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            KeyCap(.verbatim(tool.key))
+        }
+        .foregroundStyle(lit ? Theme.pencil : Theme.ink3)
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .frame(height: LayersPanel.rowHeight)
+        .background {
+            shape.fill(lit ? Theme.pencilWash : .clear)
+            // Dashed while it waits, drawn through once its tool is in hand.
+            shape.strokeBorder(picked ? Theme.pencil.opacity(0.65) : hovering ? Theme.pencil.opacity(0.45) : Theme.ink.opacity(0.15),
+                               style: StrokeStyle(lineWidth: 1, dash: picked ? [] : [3, 3]))
+        }
+        .opacity(lit ? 1 : 1 - faintness)
+        .contentShape(shape)
+        .onHover { hovering = $0 }
+        .pointingHand()
+        .onTapGesture(perform: pick)
+        .onChange(of: picked) { _, now in if now { nods += 1 } }
+        .animation(Theme.quick, value: hovering)
+        .animation(Theme.quick, value: picked)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: tool.title))
+        .accessibilityAddTraits(picked ? [.isButton, .isSelected] : .isButton)
     }
 }

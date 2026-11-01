@@ -93,19 +93,30 @@ extension SelectionInspector {
     // MARK: Fill
 
     /// What the selection does not have yet and could, as the dashed cards below the others offer it.
-    func addable(fill: Bool, border: Bool) -> [AddBar.Item] {
+    func addable(fill: Bool, border: Bool, inset: Bool = true) -> [AddBar.Item] {
         var items: [AddBar.Item] = []
         if fill && common({ $0.fill.on }) == false {
-            items.append(.init(id: "add-fill", aspect: .fill, title: "Fill", help: "Add a fill", action: "Add Fill") { $0.fill.on = true })
+            items.append(.init(id: "add-fill", aspect: .fill(0), title: "Fill", help: "Add a fill", action: "Add Fill") { $0.fill.on = true })
         }
         if border && common({ $0.border.on }) == false {
-            items.append(.init(id: "add-border", aspect: .border, title: "Border", help: "Add a border", action: "Add Border") { n in
+            items.append(.init(id: "add-border", aspect: .border(0), title: "Border", help: "Add a border", action: "Add Border") { n in
                 n.border.on = true
                 if n.border.width == 0 { n.border.width = 1 }
             })
         }
-        if common({ $0.shadow.on }) == false {
-            items.append(.init(id: "add-shadow", aspect: .shadow, title: "Shadow", help: "Add a shadow", action: "Add Shadow") { Presets.applyShadow(Presets.shadows[1], to: &$0) })
+        // A shadow under the layers; once they have one, a shadow inside them as well, so that
+        // the bar offers what comes next rather than growing.
+        let under = common { !$0.outerShadows.isEmpty }, within = common { !$0.innerShadows.isEmpty }
+        let next = nodes[0].shadow.on ? nodes[0].slots(.shadow) : 0
+        if under == false {
+            items.append(.init(id: "add-shadow", aspect: .shadow(next), title: "Shadow", help: "Add a shadow", action: "Add Shadow") { n in
+                n.add(Presets.shadow(Presets.shadows[1], like: n.shadow))
+            })
+        } else if under == true, within == false, inset {
+            items.append(.init(id: "add-inner-shadow", aspect: .shadow(next), title: "Inner shadow", help: "Add a shadow inside",
+                               action: "Add Inner Shadow") { n in
+                n.add(Presets.shadow(Presets.innerShadows[1], like: n.shadow))
+            })
         }
         if common({ $0.blur?.on == true }) == false {
             items.append(.init(id: "add-blur", aspect: .blur, title: "Blur", help: "Add a blur", action: "Add Blur") { Presets.applyBlur(Presets.blurs[1].radius, to: &$0) })
@@ -113,10 +124,17 @@ extension SelectionInspector {
         if common({ $0.transform3D != nil }) == false {
             items.append(.init(id: "add-3d", aspect: .depth, title: "3D", help: "Add 3D", action: "Add 3D") { $0.transform3D = Presets.heldUp })
         }
+        if let mark = markForExport { items.append(mark) }
         if store.canMakeRepeatGrid {
             items.append(.init(id: "add-repeat", aspect: .grid, title: "Repeat", help: "Add a repeat", action: "Make Repeat Grid", change: { _ in }, add: { store.makeRepeatGrid() }))
         }
         return items
+    }
+
+    /// Marking the selection for export, as a 1× PNG to begin with, when none of it is.
+    var markForExport: AddBar.Item? {
+        guard common({ $0.exports?.isEmpty == false }) == false else { return nil }
+        return .init(id: "add-export", aspect: .export, title: "Export", help: "Mark for export", action: "Mark for Export") { $0.exports = [ExportPreset()] }
     }
 
     /// The design's colours that the selection is not already: one click away beside a colour.
@@ -126,30 +144,36 @@ extension SelectionInspector {
         return Array(store.designColors.lazy.filter { $0.hex != own }.prefix(12))
     }
 
-    /// What fills the layers. For one colour, the drag sets how much of it shows; past nothing,
-    /// the fill comes away.
-    func fillCard(removable: Bool, live: Bool) -> some View {
-        // Text takes one colour; its letters are not drawn with a gradient.
+    /// One of what fills the layers, those over the first in a pile above it. For one colour, the
+    /// drag sets how much of it shows; past nothing, the fill comes away. The first, at the bottom,
+    /// holds the picture there is and how the layer mixes with what lies under it; text takes one
+    /// colour, as its letters are not drawn with a gradient, and no more.
+    func fillCard(slot: Int, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
         let blends = !nodes.contains { $0.kind == .text }
-        let first = nodes[0]
-        let kind = common { FillKind($0.fill) }
-        let fill: Fill? = kind == nil ? nil : common { $0.fill } ?? first.fill
-        let dial = kind == .solid ? Dial(value: first.fill.color.a * 100, range: 0...100, stops: [100], step: 5, action: "Change Fill") { v in
-            store.updateSelection("Change Fill") { $0.fill.color = $0.fill.color.with(alpha: v.rounded() / 100) }
+        let path = Node.fillPath(slot)
+        let those = holding(.fill, slot)
+        let first = those[0]
+        let kind = common(among: those) { FillKind($0[keyPath: path]) }
+        let fill: Fill? = kind == nil ? nil : common(among: those) { $0[keyPath: path] } ?? first[keyPath: path]
+        let dial = kind == .solid ? Dial(value: first[keyPath: path].color.a * 100, range: 0...100, stops: [100], step: 5, action: "Change Fill") { v in
+            store.updateSelection("Change Fill") { $0[keyPath: path].color = $0[keyPath: path].color.with(alpha: v.rounded() / 100) }
         } : nil
-        return AspectCard(aspect: .fill, title: blends ? "Fill" : "Colour", summary: Self.summary(of: fill, blend: blends ? common { $0.blend } : nil),
+        let more = blends ? AddBar.Item(id: "more-fill", aspect: .fill(topSlot(.fill) + 1), title: "Fill", help: "Add another fill",
+                                        action: "Add Fill") { $0.add(Presets.overlay) } : nil
+        return AspectCard(aspect: .fill(slot), title: blends ? "Fill" : "Colour",
+                          summary: Self.summary(of: fill, blend: blends && slot == 0 ? common { $0.blend } : nil),
                           dial: dial,
-                          // The blend mode is shown with the fill, so it goes when the fill does.
-                          remove: removable ? { store.updateSelection("Remove Fill") { $0.fill.on = false; $0.blend = nil } } : nil,
-                          removal: blends ? "Remove fill" : "Remove colour", live: live) {
-            FillSwatch(fill: first.fill, radius: 4)
+                          // The blend mode is shown with the first fill, so it goes when the last does.
+                          remove: removable || slot > 0 ? { removeLook(.fill, slot, "Remove Fill") } : nil,
+                          removal: blends ? "Remove fill" : "Remove colour", live: live, more: more, restack: restack) {
+            FillSwatch(fill: first[keyPath: path], radius: 4)
                 .frame(width: 15, height: 15)
         } picks: {
-            fillControls(blends: blends, action: "Change Fill", suggest: true)
-            if nodes.allSatisfy({ $0.fill.on && $0.fill.image != nil }) {
+            fillControls(blends: blends, action: "Change Fill", suggest: true, slot: slot)
+            if slot == 0, nodes.allSatisfy({ $0.fill.on && $0.fill.image != nil }) {
                 backgroundRow
             }
-            if store.editingPicture != nil {
+            if slot == 0, store.editingPicture != nil {
                 Group {
                     if first.fill.image?.cutout != nil {
                         Caption("Click a subject to keep or drop it. Drag the picture to move it in its frame, or a corner to resize it, and Return ends placing.")
@@ -160,7 +184,7 @@ extension SelectionInspector {
                 .transition(.unfold)
             }
         } exact: {
-            if blends { blendRow }
+            if blends && slot == 0 { blendRow }
         }
     }
 
@@ -176,7 +200,7 @@ extension SelectionInspector {
         .help("Take the background away, leaving what stands out in the picture. Double-click the picture to keep or drop each subject in it. The picture itself is kept, to have it back.")
         if let trouble = store.cutoutTrouble {
             Text(trouble)
-                .font(.system(size: 11))
+                .prose(11)
                 .foregroundStyle(Theme.ink3)
                 .fixedSize(horizontal: false, vertical: true)
                 .transition(.unfold)
@@ -205,13 +229,23 @@ extension SelectionInspector {
 
     /// What fills the selection, a layer's or an artboard's background. Its swatch opens the fill
     /// menu, where one colour or a gradient is chosen and its colours; text takes one colour.
-    @ViewBuilder func fillControls(blends: Bool, action: LocalizedStringResource, suggest: Bool) -> some View {
-        let color = common { $0.fill.color }
+    @ViewBuilder func fillControls(blends: Bool, action: LocalizedStringResource, suggest: Bool, slot: Int = 0) -> some View {
+        let path = Node.fillPath(slot)
+        let those = holding(.fill, slot)
+        let color = common(among: those) { $0[keyPath: path].color }
         let suggested = suggest ? suggestions(besides: color) : []
-        let preview: (RGBA?) -> Void = { c in store.showPreview("fill-colour", c.map { c in { $0.fill.color = c; $0.fill.on = true } }) }
-        let apply: (RGBA) -> Void = { c in store.updateSelection(action) { $0.fill.color = c; $0.fill.on = true } }
+        let preview: (RGBA?) -> Void = { c in store.showPreview("fill-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) }
+        let apply: (RGBA) -> Void = { c in store.updateSelection(action) { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }
         if blends {
-            FillField(fill: nodes[0].fill, color: color, action: action, suggestions: suggested, preview: preview, apply: apply)
+            FillField(fill: those[0][keyPath: path], color: color, action: action, suggestions: suggested, preview: preview, slot: slot, apply: apply)
+        } else if slot == 0 {
+            // Text: the colour of the letters picked out while typing, or of every letter.
+            let letters = store.lettersShown(in: nodes)
+            let shown = letters.first.flatMap { c in letters.allSatisfy { $0.color == c.color } ? c.color : nil }
+            ColorField(id: "fill", color: shown, suggestions: suggest ? suggestions(besides: shown) : [], action: action,
+                       preview: store.pickedLetters == nil ? preview : { _ in }) { c in
+                store.restyleLetters(action) { $0.color = c }
+            }
         } else {
             ColorField(id: "fill", color: color, suggestions: suggested, action: action, preview: preview, apply: apply)
         }
@@ -219,111 +253,130 @@ extension SelectionInspector {
 
     // MARK: Border
 
-    /// The border, or a line's stroke. The drag sets its weight, clicking at each preset; past
-    /// nothing a border comes away, though a line keeps its stroke.
-    func borderCard(lineOnly: Bool, removable: Bool, live: Bool) -> some View {
-        let first = nodes[0]
-        let color = common { $0.border.color }
-        let width = common { $0.border.width }
+    /// One of the borders, or of a line's strokes, those drawn over the first in a pile above it.
+    /// The drag sets its weight, clicking at each preset; past nothing a border comes away,
+    /// though a line keeps its first stroke.
+    func borderCard(slot: Int, lineOnly: Bool, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
+        let path = Node.borderPath(slot)
+        let those = holding(.border, slot)
+        let first = those[0][keyPath: path]
+        let color = common(among: those) { $0[keyPath: path].color }
+        let width = common(among: those) { $0[keyPath: path].width }
         var summary = width.map { "\(Self.said($0)) pt" } ?? Self.several
-        if !lineOnly, let position = common({ $0.border.position }) {
+        if !lineOnly, let position = common(among: those, { $0[keyPath: path].position }) {
             switch position {
             case .inside: summary += " · \(String(localized: "Inside"))"
             case .center: summary += " · \(String(localized: LocalizedStringResource("border.centred", defaultValue: "Centred", comment: "A border lying across the edge of its layer, half in and half out.")))"
             case .outside: summary += " · \(String(localized: "Outside"))"
             }
         }
-        if common({ $0.border.dash > 0 }) == true { summary += " · \(String(localized: "Dashed"))" }
+        if common(among: those, { $0[keyPath: path].dash > 0 }) == true { summary += " · \(String(localized: "Dashed"))" }
         let floor: Double = lineOnly ? 0.5 : 0
-        let dial = Dial(value: Double(first.border.width), range: floor...max(12, Double(first.border.width)), stops: [1, 2, 4], step: 0.5, action: "Change Border") { v in
-            store.updateSelection("Change Border") { $0.border.width = CGFloat(max((v * 2).rounded() / 2, floor)); $0.border.on = true }
+        let dial = Dial(value: Double(first.width), range: floor...max(12, Double(first.width)), stops: [1, 2, 4], step: 0.5, action: "Change Border") { v in
+            store.updateSelection("Change Border") { $0[keyPath: path].width = CGFloat(max((v * 2).rounded() / 2, floor)); $0[keyPath: path].on = true }
         }
-        return AspectCard(aspect: .border, title: lineOnly ? "Line" : "Border", summary: summary, dial: dial,
-                          remove: removable ? { store.updateSelection("Remove Border") { $0.border.on = false } } : nil,
-                          removal: lineOnly ? "Remove line" : "Remove border", live: live) {
-            BorderGlyph(width: first.border.dash > 0 ? nil : first.border.width)
+        let more = AddBar.Item(id: "more-border", aspect: .border(topSlot(.border) + 1), title: lineOnly ? "Line" : "Border",
+                               help: lineOnly ? "Add another line" : "Add another border", action: "Add Border") { $0.add(Presets.border(over: $0)) }
+        return AspectCard(aspect: .border(slot), title: lineOnly ? "Line" : "Border", summary: summary, dial: dial,
+                          remove: removable || slot > 0 ? { removeLook(.border, slot, "Remove Border") } : nil,
+                          removal: lineOnly ? "Remove line" : "Remove border", live: live, more: more, restack: restack) {
+            BorderGlyph(width: first.dash > 0 ? nil : first.width)
         } picks: {
             PresetStrip(action: "Change Border", items: Presets.borders.map { preset in
-                PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { Presets.isBorder(preset.width, $0.border) }) {
-                    Presets.applyBorder(preset.width, to: &$0)
+                PresetItem(id: preset.id, name: preset.name, active: those.allSatisfy { Presets.isBorder(preset.width, $0[keyPath: path]) }) {
+                    Presets.applyBorder(preset.width, to: &$0[keyPath: path])
                 }
             }) { item in
                 BorderGlyph(width: Presets.borders.first { $0.id == item.id }?.width ?? nil)
             }
-            ColorField(id: "border", color: color, suggestions: suggestions(besides: color), action: "Change Border",
-                       preview: { c in store.showPreview("border-colour", c.map { c in { $0.border.color = c; $0.border.on = true } }) }) { c in
-                store.updateSelection("Change Border") { $0.border.color = c; $0.border.on = true }
+            ColorField(id: slot == 0 ? "border" : "border-\(slot)", color: color, suggestions: suggestions(besides: color), action: "Change Border",
+                       preview: { c in store.showPreview("border-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) }) { c in
+                store.updateSelection("Change Border") { $0[keyPath: path].color = c; $0[keyPath: path].on = true }
             }
         } exact: {
             HStack(spacing: 8) {
                 layerField(LocalizedStringResource("border.size", defaultValue: "Size", comment: "How thick a border is."), range: 0...1000, scrub: 0.25, action: "Change Border",
-                           get: { Double($0.border.width) }, set: { $0.border.width = CGFloat($1); $0.border.on = true })
-                layerField("Dash", range: 0...1000, scrub: 0.25, action: "Change Border", get: { Double($0.border.dash) }) { n, v in
-                    n.border.dash = CGFloat(v)
-                    if n.border.gap == 0 { n.border.gap = CGFloat(v) }
+                           get: { Double($0[keyPath: path].width) }, set: { $0[keyPath: path].width = CGFloat($1); $0[keyPath: path].on = true })
+                layerField("Dash", range: 0...1000, scrub: 0.25, action: "Change Border", get: { Double($0[keyPath: path].dash) }) { n, v in
+                    n[keyPath: path].dash = CGFloat(v)
+                    if n[keyPath: path].gap == 0 { n[keyPath: path].gap = CGFloat(v) }
                 }
                 layerField("Gap", range: 0...1000, scrub: 0.25, action: "Change Border",
-                           get: { Double($0.border.gap) }, set: { $0.border.gap = CGFloat($1) })
+                           get: { Double($0[keyPath: path].gap) }, set: { $0[keyPath: path].gap = CGFloat($1) })
             }
             if !lineOnly {
-                IconChoice(selection: common { $0.border.position }, options: [
+                IconChoice(selection: common(among: those) { $0[keyPath: path].position }, options: [
                     (.inside, "square.inset.filled", "Inside"),
                     (.center, "square.dashed", "Centred on the edge"),
                     (.outside, "square.fill", "Outside"),
-                ]) { p in store.updateSelection("Change Border") { $0.border.position = p } }
+                ]) { p in store.updateSelection("Change Border") { $0[keyPath: path].position = p } }
             }
         }
     }
 
     // MARK: Shadow
 
-    /// A shadow under the layers, or inside them as if they were pressed into the page; a line
-    /// has no inside for one to fall in. The drag lifts them, from none through each preset to
-    /// floating, blending two presets between them.
-    func shadowCard(canInset: Bool, live: Bool) -> some View {
-        let first = nodes[0]
-        let inset = canInset && common { $0.shadow.inset == true } == true
+    /// One of the shadows under the layers, or inside them as if they were pressed into the page,
+    /// those cast with the first in a pile above it; a line has no inside for one to fall in. The
+    /// drag lifts them, from none through each preset to floating, blending two presets between
+    /// them. A shape's can spread, cast from its outline grown or shrunk.
+    func shadowCard(slot: Int, canInset: Bool, canSpread: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
+        let path = Node.shadowPath(slot)
+        let those = holding(.shadow, slot)
+        let first = those[0][keyPath: path]
+        let inset = canInset && common(among: those) { $0[keyPath: path].inset == true } == true
         let presets = inset ? Presets.innerShadows : Presets.shadows
-        let summary: String
-        if let named = presets.first(where: { p in nodes.allSatisfy { Presets.isShadow(p, $0.shadow) } }) {
+        var summary: String
+        if let named = presets.first(where: { p in those.allSatisfy { Presets.isShadow(p, $0[keyPath: path]) } }) {
             summary = String(localized: named.name)
-        } else if let s = common({ $0.shadow }) {
-            let at = (s.x != 0 ? ["X \(Self.said(s.x))"] : []) + ["Y \(Self.said(s.y))", "\(String(localized: "B")) \(Self.said(s.blur))"]
-            summary = ((inset ? [String(localized: "Inside")] : []) + at).joined(separator: " · ")
+        } else if let s = common(among: those, { $0[keyPath: path] }) {
+            var at = (s.x != 0 ? ["X \(Self.said(s.x))"] : []) + ["Y \(Self.said(s.y))", "\(String(localized: "B")) \(Self.said(s.blur))"]
+            if canSpread, s.grown != 0 {
+                at.append("\(String(localized: LocalizedStringResource("shadow.spread-short", defaultValue: "S", comment: "A shadow's spread, said in one letter in its card's summary."))) \(Self.said(s.grown))")
+            }
+            summary = at.joined(separator: " · ")
         } else {
             summary = Self.several
         }
-        let dial = Dial(value: Presets.elevation(of: first.shadow), range: 0...Presets.topElevation, stops: [1, 2, 3, 4], step: 1, action: "Change Shadow") { v in
-            store.updateSelection("Change Shadow") { Presets.setElevation(v, on: &$0) }
+        let dial = Dial(value: Presets.elevation(of: first), range: 0...Presets.topElevation, stops: [1, 2, 3, 4], step: 1, action: "Change Shadow") { v in
+            store.updateSelection("Change Shadow") { Presets.setElevation(v, on: &$0[keyPath: path]) }
         }
-        return AspectCard(aspect: .shadow, title: "Shadow", summary: summary, dial: dial,
-                          remove: { store.updateSelection("Remove Shadow") { $0.shadow.on = false } }, removal: "Remove shadow", live: live) {
-            ShadowGlyph(y: first.shadow.y, blur: first.shadow.blur, inset: inset)
+        let more = AddBar.Item(id: "more-shadow", aspect: .shadow(topSlot(.shadow) + 1), title: "Shadow", help: "Add another shadow",
+                               action: "Add Shadow") { $0.add(Presets.shadow(besides: $0[keyPath: path])) }
+        return AspectCard(aspect: .shadow(slot), title: inset ? "Inner shadow" : "Shadow", summary: summary, dial: dial,
+                          remove: { removeLook(.shadow, slot, "Remove Shadow") }, removal: "Remove shadow", live: live, more: more, restack: restack) {
+            ShadowGlyph(y: first.y, blur: first.blur, inset: inset)
         } picks: {
             if canInset {
                 SegmentedWell(selection: Binding(get: { inset }, set: { v in
-                    store.updateSelection("Change Shadow") { Presets.setShadowInset(v, on: &$0) }
+                    store.updateSelection("Change Shadow") { Presets.setShadowInset(v, on: &$0[keyPath: path]) }
                 }), options: [(false, "Outside"), (true, "Inside")])
             }
             PresetStrip(action: "Change Shadow", items: presets.map { preset in
-                PresetItem(id: preset.id, name: preset.name, active: nodes.allSatisfy { Presets.isShadow(preset, $0.shadow) }) {
-                    Presets.applyShadow(preset, to: &$0)
+                PresetItem(id: preset.id, name: preset.name, active: those.allSatisfy { Presets.isShadow(preset, $0[keyPath: path]) }) {
+                    Presets.applyShadow(preset, to: &$0[keyPath: path])
                 }
             }) { item in
                 let preset = presets.first { $0.id == item.id }
                 ShadowGlyph(y: preset?.y ?? 0, blur: preset?.blur ?? 0, inset: inset)
             }
-            ColorField(id: "shadow", color: common { $0.shadow.color }, action: "Change Shadow") { c in
-                store.updateSelection("Change Shadow") { $0.shadow.color = c }
+            ColorField(id: slot == 0 ? "shadow" : "shadow-\(slot)", color: common(among: those) { $0[keyPath: path].color }, action: "Change Shadow") { c in
+                store.updateSelection("Change Shadow") { $0[keyPath: path].color = c }
             }
         } exact: {
             HStack(spacing: 8) {
                 layerField("X", range: -1000...1000, scrub: 0.5, action: "Change Shadow",
-                           get: { Double($0.shadow.x) }, set: { $0.shadow.x = CGFloat($1) })
+                           get: { Double($0[keyPath: path].x) }, set: { $0[keyPath: path].x = CGFloat($1) })
                 layerField("Y", range: -1000...1000, scrub: 0.5, action: "Change Shadow",
-                           get: { Double($0.shadow.y) }, set: { $0.shadow.y = CGFloat($1) })
+                           get: { Double($0[keyPath: path].y) }, set: { $0[keyPath: path].y = CGFloat($1) })
                 layerField("B", range: 0...1000, scrub: 0.5, action: "Change Shadow",
-                           get: { Double($0.shadow.blur) }, set: { $0.shadow.blur = CGFloat($1) })
+                           get: { Double($0[keyPath: path].blur) }, set: { $0[keyPath: path].blur = CGFloat($1) })
+            }
+            if canSpread {
+                Row(title: LocalizedStringResource("shadow.spread", defaultValue: "Spread", comment: "How much bigger than its layer a shadow is cast, or smaller.")) {
+                    layerField("", range: -1000...1000, scrub: 0.25, action: "Change Shadow",
+                               get: { Double($0[keyPath: path].grown) }, set: { $0[keyPath: path].spread = $1 == 0 ? nil : CGFloat($1) })
+                }
             }
             // Inside, the shadow lies under the layer itself, where dragging moves the layer.
             if !inset {

@@ -52,6 +52,7 @@ struct PostLayerCard: View {
         let words: [String: String] = [
             "frame": String(localized: "size and place"), "fill": String(localized: "fill"), "border": String(localized: "border"),
             "shadow": String(localized: "shadow"), "opacity": String(localized: "opacity"), "style": String(localized: "type"),
+            "moreFills": String(localized: "fill"), "moreBorders": String(localized: "border"), "moreShadows": String(localized: "shadow"),
             "rotation": String(localized: "rotation"), "cornerRadius": String(localized: "corners"), "corners": String(localized: "corners"),
             "cornerSmoothing": String(localized: "corners"), "hidden": String(localized: "hidden"), "locked": String(localized: "locked"),
             "blur": String(localized: "blur"), "transform3D": String(localized: "depth"), "blend": String(localized: "blend"),
