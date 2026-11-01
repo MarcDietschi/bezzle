@@ -77,6 +77,12 @@ nonisolated struct Fill: Codable, Hashable {
     var gradient: Gradient?
     /// Drawn instead of the colour or a gradient when there is one.
     var image: ImageFill?
+    /// The design's named colour it is, the same wherever that is used; nil is a colour of its
+    /// own. See `Style`.
+    var named: UUID? = nil
+
+    /// Whether it paints with more than its one colour: a gradient, or a picture.
+    var paints: Bool { image != nil || gradient?.stops.isEmpty == false }
 
     /// The same fill turned over with its layer, left to right or top to bottom.
     func flipped(horizontally: Bool) -> Fill {
@@ -190,6 +196,44 @@ nonisolated struct Border: Codable, Hashable {
     /// Dash and gap lengths; no dash draws a solid line.
     var dash: CGFloat = 0
     var gap: CGFloat = 0
+    /// The design's named colour it is drawn in; nil is a colour of its own. See `Style`.
+    var named: UUID? = nil
+    /// Drawn instead of the colour when there is one, placed in the layer's frame as a fill's is.
+    var gradient: Gradient? = nil
+    /// Drawn instead of the colour or a gradient when there is one, covering all the border may
+    /// reach: the layer's frame, and as far past it as the border lies outside.
+    var image: ImageFill? = nil
+
+    /// What the border is drawn with, as a fill is: one colour, a gradient or a picture.
+    var paint: Fill {
+        get { Fill(on: on, color: color, gradient: gradient, image: image) }
+        set {
+            on = newValue.on
+            color = newValue.color
+            gradient = newValue.gradient
+            image = newValue.image
+        }
+    }
+
+    /// Whether it is drawn with more than its one colour: a gradient, or a picture.
+    var paints: Bool { paint.paints }
+
+    /// How far past the layer's frame it reaches, all round, as it lies on a closed outline.
+    var reach: CGFloat {
+        switch position {
+        case .inside: 0
+        case .center: width / 2
+        case .outside: width
+        }
+    }
+
+    /// The same border turned over with its layer, its gradient and picture with it.
+    func flipped(horizontally: Bool) -> Border {
+        var b = self
+        b.gradient = gradient?.flipped(horizontally: horizontally)
+        b.image = image?.flipped(horizontally: horizontally)
+        return b
+    }
 }
 
 nonisolated struct Shadow: Codable, Hashable {
@@ -204,6 +248,8 @@ nonisolated struct Shadow: Codable, Hashable {
     /// its outline grown all round, inside it the hollow narrowed. Only a layer with an outline
     /// of its own has one; nil is none.
     var spread: CGFloat?
+    /// The design's named shadow it is; nil is a shadow of its own. See `Style`.
+    var named: UUID? = nil
 
     /// A shadow falling under the layer and out past it.
     var outside: Bool { on && inset != true }
@@ -351,13 +397,18 @@ nonisolated struct TextStyle: Codable, Hashable {
     /// Where a variable font is set along its axes, by their tags, such as "wght" for its weight
     /// and "wdth" for its width. Those the font does not have do nothing.
     var axes: [String: Double]?
+    /// The design's named type it is set in, the same wherever that is used; nil is type of its
+    /// own. See `Style`.
+    var named: UUID? = nil
 
     static let system = "System"
 
     /// The same type grown or shrunk by `k`: its size and the distance between its lines, each to a
-    /// tenth of a point. Letter spacing goes with the size by itself.
+    /// tenth of a point. Letter spacing goes with the size by itself. Grown with its box, it is no
+    /// longer the named type it was, which stays as it is everywhere else.
     func scaled(by k: CGFloat) -> TextStyle {
         var s = self
+        if k != 1 { s.named = nil }
         s.size = max(1, (size * k * 10).rounded() / 10)
         s.lineSpacing = lineSpacing.map { max(0, ($0 * k * 10).rounded() / 10) }
         s.paragraphSpacing = paragraphSpacing.map { max(0, ($0 * k * 10).rounded() / 10) }
@@ -448,6 +499,9 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// Rectangles only: how smoothly the corners run into the sides, from 0, a circle's quarter,
     /// to 1; 0.6 is the squircle iOS draws its icons with. See `Squircle`.
     var cornerSmoothing: CGFloat?
+    /// Rectangles only: the design's named corners they have, the same wherever those are used;
+    /// nil is corners of their own. See `Style`.
+    var cornersNamed: UUID?
     /// Lines run from the frame's top left to its bottom right, or, when rising, from its bottom left to its top right.
     var rising = false
     /// Text layers only.
@@ -480,6 +534,12 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     var locked = false
     /// Artboards only: whether what reaches past the edge is cut off there.
     var clips = true
+    /// Artboards only: whether its layers stay where they are when it changes size, rather than
+    /// its design being laid out again for the new size (`Adapt`); nil lays it out again.
+    var pinsLayers: Bool?
+    /// Artboards only: shown dark, every look on it that has a name in its dark look; false shown
+    /// light, with the switch to dark kept at hand; nil light, with no switch. See `Style.dark`.
+    var dark: Bool?
     /// Carousels only: the size of each slide. The artboard is as many of them side by side as
     /// it is wide, and is exported cut into them. See `Carousel`.
     var slideSize: CGSize?
@@ -503,6 +563,19 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// The files the layer goes out as whenever what is marked for export is exported, such as
     /// 1×, 2× and 3× PNGs named "@2x" and "@3x"; nil when it is not marked.
     var exports: [ExportPreset]?
+    /// Copies of components only: the component it is a copy of, which variant, and how it is
+    /// placed. See `Instance`.
+    var instance: Instance?
+    /// Components only, kept apart from the canvas: its variants. See `Master`.
+    var master: Master?
+    /// Text layers only: its letters run along a curve rather than straight, bent into an arc of
+    /// their own or riding a shape's outline. See `TextCurve`.
+    var curve: TextCurve?
+    /// Text layers on a curve only: the curve, as path data in the text's own coordinates (its
+    /// frame's top left at zero), worked out from its bend or the shape it rides. Kept apart from
+    /// `curve`, so that one person reshaping the shape while another slides the text along it
+    /// both keep what they did.
+    var curvePath: String?
 
     init(kind: Kind, name: String? = nil, frame: CGRect) {
         self.kind = kind

@@ -44,6 +44,13 @@ enum TestKiwi {
         ("TextCase", 0, ["ORIGINAL", "UPPER", "LOWER", "TITLE", "SMALL_CAPS"]),
         ("WindingRule", 0, ["NONZERO", "ODD"]),
         ("Path", 2, ["windingRule WindingRule", "commandsBlob uint", "styleID uint"]),
+        ("LayoutGridType", 0, ["MIN", "CENTER", "STRETCH", "MAX"]),
+        ("Axis", 0, ["X", "Y"]),
+        ("LayoutGridPattern", 0, ["STRIPES", "GRID"]),
+        ("LayoutGrid", 2, ["type LayoutGridType", "axis Axis", "visible bool", "numSections int", "offset float", "sectionSize float",
+                           "gutterSize float", "pattern LayoutGridPattern"]),
+        ("Guide", 2, ["axis Axis", "offset float"]),
+        ("MaskType", 0, ["ALPHA", "OUTLINE", "LUMINANCE"]),
         ("NodeChange", 2, ["guid GUID", "guidPath GUIDPath", "parentIndex ParentIndex", "type NodeType", "name string", "visible bool",
                            "opacity float", "size Vector", "transform Matrix", "fillPaints Paint[]", "strokePaints Paint[]", "strokeWeight float",
                            "strokeAlign StrokeAlign", "effects Effect[]", "cornerRadius float", "rectangleCornerRadiiIndependent bool",
@@ -53,7 +60,8 @@ enum TestKiwi {
                            "textCase TextCase", "symbolData SymbolData", "derivedSymbolData NodeChange[]", "fillGeometry Path[]",
                            "styleID uint", "textDecoration TextDecoration", "textAlignHorizontal TextAlignHorizontal",
                            "textAlignVertical TextAlignVertical", "paragraphSpacing float", "lineHeight Number",
-                           "toggledOnOTFeatures OpenTypeFeature[]", "fontVariations FontVariation[]"]),
+                           "toggledOnOTFeatures OpenTypeFeature[]", "fontVariations FontVariation[]", "layoutGrids LayoutGrid[]",
+                           "guides Guide[]", "maskType MaskType"]),
         ("Blob", 2, ["bytes byte[]"]),
         ("Message", 2, ["nodeChanges NodeChange[]", "blobs Blob[]"]),
     ]
@@ -303,11 +311,13 @@ struct FigmaImportTests {
         #expect(shape.fill.color.hex == "00FF00" && shape.cornerRadius == 15)
         #expect(doc.absoluteFrame(of: shape.id) == CGRect(x: 110, y: 450, width: 120, height: 30))
 
-        // A frame in a frame is a group cut to its rounded shape, over its fill.
+        // A frame in a frame cutting off what reaches past it is a mask of Bezzle's, its rounded
+        // background the shape that holds the rest.
         let clip = try named("Clip")
-        #expect(clip.kind == .group && clip.mask?.first?.cornerRadius == 12)
+        #expect(clip.kind == .group && clip.isMask && clip.mask == nil)
         #expect(clip.frame == CGRect(x: 100, y: 500, width: 100, height: 100))
         #expect(clip.children.map(\.name) == ["Background", "Big"] && clip.children[0].fill.color.hex == "808080")
+        #expect(clip.children[0].kind == .rectangle && clip.children[0].cornerRadius == 12)
 
         let frosted = try named("Frosted")
         #expect(frosted.kind == .ellipse && frosted.blur?.radius == 10 && frosted.blur?.background == false)
@@ -321,10 +331,12 @@ struct FigmaImportTests {
         let wedge = try named("Wedge")
         #expect(wedge.kind == .path && wedge.evenOdd == true && wedge.frame == CGRect(x: 10, y: 700, width: 20, height: 20))
 
-        // The mask cuts off the layer above it.
+        // The mask cuts off the layer above it: a mask of Bezzle's, its shape clear, as Figma
+        // does not draw a mask.
         let masked = try named("Masked")
-        let holder = try #require(doc.allNodes.first { $0.children.contains { $0.id == masked.id } })
-        #expect(holder.mask?.first?.name == "Window" && holder.frame == CGRect(x: 300, y: 700, width: 50, height: 50))
+        let mask = try #require(doc.allNodes.first { $0.children.contains { $0.id == masked.id } })
+        #expect(mask.isMask && mask.name == "Mask 1" && mask.frame == CGRect(x: 300, y: 700, width: 50, height: 50))
+        #expect(mask.children.map(\.name) == ["Window", "Masked"] && mask.children[0].fills.isEmpty)
 
         // The second page lies under the first, lined up on its left.
         let loose = try named("Loose")
@@ -408,6 +420,133 @@ struct FigmaImportTests {
         let tuned = try named("Tuned")
         #expect(tuned.style?.letterCase == .smallCaps && tuned.spans == nil)
         #expect(tuned.style?.features == ["ss01": 1, "tnum": 1] && tuned.style?.axes == ["wght": 600])
+    }
+
+    /// A grid of Figma's: its kind, axis, number of bands and their sizes.
+    static func grid(_ type: String, _ axis: String, count: Int, offset: Double = 0, section: Double = 0, gutter: Double = 0,
+                     pattern: String = "STRIPES", visible: Bool = true) -> [String: Any] {
+        ["type": type, "axis": axis, "visible": visible, "numSections": count, "offset": offset, "sectionSize": section, "gutterSize": gutter,
+         "pattern": pattern]
+    }
+
+    /// Masks, layout grids, guides and paints laid over one another: an artboard filled with two
+    /// colours and laid out on columns, baselines and a square grid, with guides; one filled with a
+    /// colour and a gradient, on centred columns; a group that is a mask; a frame whose layer fits
+    /// inside it; a text with a word in capitals and its own line height, in two paints; and a
+    /// mask lying right on the page.
+    static func helpersMessage() -> [String: Any] {
+        let page = (0, 1), board = (1, 1), second = (2, 1)
+        let red = solid(1, 0, 0), halfBlue = solid(0, 0, 1, 0.5)
+        let gradient: [String: Any] = ["type": "GRADIENT_LINEAR", "opacity": 1.0, "visible": true, "transform": at(0, 0),
+                                       "stops": [["color": ["r": 1.0, "g": 1.0, "b": 0.0, "a": 1.0], "position": 0.0],
+                                                 ["color": ["r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0], "position": 1.0]]]
+        let nodes: [[String: Any]] = [
+            ["guid": guid(0, 0), "type": "DOCUMENT", "name": "Document"],
+            node(page, "CANVAS", "Page 1", in: (0, 0), "!", ["guides": [["axis": "X", "offset": 10.0]]]),
+            node(board, "FRAME", "Board", in: page, "!", [
+                "size": size(375, 812), "transform": at(0, 0), "fillPaints": [red, halfBlue],
+                "layoutGrids": [grid("STRETCH", "X", count: 4, offset: 16, gutter: 16),
+                                grid("MIN", "Y", count: Int(Int32.max), section: 8),
+                                grid("STRETCH", "X", count: 12, pattern: "GRID"),
+                                grid("STRETCH", "X", count: 12, visible: false)],
+                "guides": [["axis": "X", "offset": 24.0], ["axis": "Y", "offset": 100.0], ["axis": "X", "offset": 351.0]],
+            ]),
+            node((1, 2), "FRAME", "Pair", in: board, "!", ["resizeToFit": true, "mask": true, "size": size(50, 20), "transform": at(10, 10)]),
+            node((1, 3), "RECTANGLE", "A", in: (1, 2), "!", ["size": size(20, 20), "transform": at(0, 0), "fillPaints": [red]]),
+            node((1, 4), "RECTANGLE", "B", in: (1, 2), "\"", ["size": size(20, 20), "transform": at(30, 0), "fillPaints": [red]]),
+            node((1, 5), "RECTANGLE", "Under", in: board, "\"", ["size": size(60, 20), "transform": at(5, 10), "fillPaints": [halfBlue]]),
+            node((1, 6), "FRAME", "Fits", in: board, "#", ["size": size(100, 100), "transform": at(100, 100), "fillPaints": [red],
+                                                          "layoutGrids": [grid("STRETCH", "X", count: 2, gutter: 10)]]),
+            node((1, 7), "RECTANGLE", "Inside", in: (1, 6), "!", ["size": size(10, 10), "transform": at(10, 10), "fillPaints": [halfBlue]]),
+            node((1, 9), "FRAME", "Rounded", in: board, "%", ["size": size(100, 100), "transform": at(200, 400), "cornerRadius": 16.0]),
+            node((1, 10), "RECTANGLE", "Filling", in: (1, 9), "!", ["size": size(100, 100), "transform": at(0, 0), "fillPaints": [red]]),
+            node((1, 8), "TEXT", "Mixed", in: board, "$", [
+                "size": size(200, 24), "transform": at(20, 300), "fillPaints": [solid(1, 1, 1), solid(0, 0, 0, 0.5)],
+                "fontName": helvetica, "fontSize": 16.0, "textAutoResize": "WIDTH_AND_HEIGHT",
+                "textData": ["characters": "Hello new world", "characterStyleIDs": Array(repeating: 0, count: 6) + [1, 1, 1],
+                             "styleOverrideTable": [["styleID": 1, "textCase": "UPPER", "lineHeight": ["value": 30.0, "units": "PIXELS"]]]],
+            ]),
+            node(second, "FRAME", "Second", in: page, "\"", [
+                "size": size(300, 200), "transform": at(500, 0), "fillPaints": [red, gradient],
+                "layoutGrids": [grid("CENTER", "X", count: 2, section: 100, gutter: 20)],
+            ]),
+            node((2, 2), "RECTANGLE", "Content", in: second, "!", ["size": size(10, 10), "transform": at(10, 10), "fillPaints": [halfBlue]]),
+            node((2, 3), "RECTANGLE", "Ringed", in: second, "\"", ["size": size(40, 40), "transform": at(50, 50), "strokePaints": [gradient],
+                                                                  "strokeWeight": 4.0]),
+            node((2, 4), "TEXT", "Glow", in: second, "#", [
+                "size": size(100, 24), "transform": at(20, 120), "fillPaints": [gradient], "fontName": helvetica, "fontSize": 20.0,
+                "textAutoResize": "WIDTH_AND_HEIGHT", "textData": ["characters": "Glowing"],
+            ]),
+            node((3, 1), "ELLIPSE", "Porthole", in: page, "#", ["mask": true, "size": size(50, 50), "transform": at(1000, 0), "fillPaints": [red]]),
+            node((3, 2), "RECTANGLE", "Seen", in: page, "$", ["size": size(100, 100), "transform": at(1000, 0), "fillPaints": [halfBlue]]),
+        ]
+        return ["nodeChanges": nodes, "blobs": [] as [Any]]
+    }
+
+    @Test func bringsMasksGridsAndPaintsAcross() throws {
+        let zip = TestZip.make([("canvas.fig", TestKiwi.canvas(Self.helpersMessage())), ("meta.json", Data("{}".utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).fig")
+        try zip.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try FigmaImporter.read(url)
+        let doc = imported.document, notes = imported.report.notes
+        func named(_ name: String) throws -> Node { try #require(doc.allNodes.first { $0.name == name }) }
+
+        // Two colours over one another are the one colour they make: red under half a blue.
+        let board = try named("Board")
+        #expect(board.fill.on && board.fill.color.hex == "800080" && board.children.first?.name != "Background")
+        // Its columns stretch between their margins; rows that touch are baselines; the square
+        // grid and the hidden one are left out.
+        #expect(board.layout?.columns == LayoutGrid.Track(count: 4, gutter: 16, margin: 16))
+        #expect(board.layout?.baseline == LayoutGrid.Baseline(step: 8, offset: 0) && board.layout?.rows == nil)
+        #expect(notes["Square grids, left out"] == 1 && notes["Further layout grids of the same kind, left out"] == nil)
+        // Guides near an edge keep to it.
+        let guides = board.sortedGuides().map(\.guide)
+        #expect(guides == [Guideline(vertical: true, edge: .start, offset: 24), Guideline(vertical: true, edge: .end, offset: 24),
+                           Guideline(vertical: false, edge: .start, offset: 100)])
+        #expect(notes["Guides on the canvas, left out"] == 1)
+
+        // A colour and a gradient need a layer of their own under what the artboard holds.
+        let second = try named("Second")
+        #expect(!second.fill.on && second.children.map(\.name) == ["Background", "Content", "Ringed", "Glow"] && second.children[0].fills.count == 2)
+
+        // Borders and letters are painted with the gradient itself.
+        let ringed = try named("Ringed"), glow = try named("Glow")
+        #expect(ringed.border.on && ringed.border.gradient?.stops.count == 2 && ringed.border.color.hex == "FFFF00")
+        #expect(glow.fill.gradient?.kind == .linear && glow.fill.color.hex == "FFFF00" && glow.spans == nil)
+        #expect(notes["Texts filled with a gradient, in its first colour"] == nil && notes["Borders drawn with a gradient, in its first colour"] == nil)
+        #expect(second.layout?.columns == LayoutGrid.Track(count: 2, gutter: 20, margin: 40))
+
+        // A group that is a mask cuts by an outline round both its layers, and shows nothing itself;
+        // as in Figma, it cuts off every layer above it in its frame.
+        let pairMask = try #require(doc.allNodes.first { $0.isMask && $0.children.first?.name == "Pair" })
+        #expect(pairMask.name == "Mask 1" && pairMask.children.map(\.name) == ["Pair", "Under", "Fits", "Mixed", "Rounded"])
+        let holder = pairMask.children[0]
+        #expect(holder.kind == .path && holder.fills.isEmpty && pairMask.frame == CGRect(x: 10, y: 10, width: 50, height: 20))
+        let outline = Renderer.outline(of: holder)
+        #expect(outline.contains(CGPoint(x: 10, y: 10)) && !outline.contains(CGPoint(x: 25, y: 10)) && outline.contains(CGPoint(x: 40, y: 10)))
+
+        // A frame its layer fits in cuts off nothing, so it is a group as any other; its grid has
+        // nowhere to go.
+        let fits = try named("Fits")
+        #expect(!fits.isMask && fits.mask == nil && fits.children.map(\.name) == ["Background", "Inside"])
+        #expect(notes["Layout grids on frames inside frames, left out"] == 1)
+        // One its layer fills to the edge cuts off that layer's corners, so it is a mask, its
+        // outline clear as the frame has no fill.
+        let rounded = try named("Rounded")
+        #expect(rounded.isMask && rounded.children.map(\.name) == ["Edge", "Filling"])
+        #expect(rounded.children[0].cornerRadius == 16 && rounded.children[0].fills.isEmpty)
+
+        // The word in capitals keeps them, written into its letters; the paints come to grey.
+        let mixed = try named("Mixed")
+        #expect(mixed.text == "Hello NEW world" && mixed.style?.letterCase == nil && mixed.fill.color.hex == "808080")
+        #expect(notes["Texts with several line or paragraph spacings, spaced as their main part"] == 1)
+        #expect(notes["Layers with several fills, keeping the top one"] == nil)
+
+        // A mask right on the page cuts off what lies over it there.
+        let porthole = try #require(doc.nodes.first { $0.isMask })
+        #expect(porthole.children.map(\.name) == ["Porthole", "Seen"] && porthole.children[0].kind == .ellipse)
+        #expect(porthole.frame.size == CGSize(width: 50, height: 50))
     }
 
     @Test func writesTheDesignWithItsPictures() throws {

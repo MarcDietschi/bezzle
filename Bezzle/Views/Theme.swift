@@ -22,6 +22,10 @@ enum Theme {
 
     static let pencil = dynamic(0x3559C7, 0x8FA8F2)
     static let pencilWash = dynamic(0x3559C7, 0x8FA8F2, lightAlpha: 0.10, darkAlpha: 0.16)
+    /// Copies of a component, and what links them: a violet beside the pencil, so a linked layer
+    /// shows for what it is wherever it is marked.
+    static let linked = dynamic(0x7650D8, 0xAE93F2)
+    static let linkedWash = dynamic(0x7650D8, 0xAE93F2, lightAlpha: 0.10, darkAlpha: 0.18)
     /// Reserved for things that went wrong.
     static let warning = dynamic(0xB3402F, 0xE4705C)
 
@@ -75,6 +79,8 @@ enum CanvasInk {
     static let pencil = Theme.hex(0x3A63D8)
     /// Gaps as wide as each other, set apart from the guides in pencil.
     static let gap = Theme.hex(0xE0457B)
+    /// Copies of a component, and the light that runs between them when one changes them all.
+    static let linked = Theme.dynamicNS(0x7650D8, 0xAE93F2)
     static let label = Theme.dynamicNS(0x1C1B19, 0xEDEAE4, lightAlpha: 0.50, darkAlpha: 0.50)
     static let labelSelected = Theme.dynamicNS(0x3559C7, 0x8FA8F2)
     static let shadow = Theme.dynamicNS(0x3A3226, 0x000000)
@@ -258,8 +264,9 @@ extension Transition where Self == Unfold {
     static var unfold: Unfold { Unfold() }
 }
 
-/// The room an unfolding part has so far. All the way open it leaves space around the part for
-/// shadows and the lips of wells; partly open, it cuts along the far edge.
+/// The room an unfolding part has so far. All the way open it cuts nothing, so shadows, the lips
+/// of wells and what is moved about inside it, such as a card carried up its pile, all show;
+/// partly open, it cuts along the far edge.
 private nonisolated struct UnfoldClip: Shape {
     let axis: Axis
     var open: CGFloat
@@ -270,12 +277,13 @@ private nonisolated struct UnfoldClip: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
+        // A card carried up or down its pile is drawn moved, but clipped where it lies, so once
+        // open the room reaches far past anywhere a part is moved to.
+        if open >= 1 { return Path(rect.insetBy(dx: -4000, dy: -4000)) }
         var room = rect.insetBy(dx: -40, dy: -40)
-        if open < 1 {
-            switch axis {
-            case .vertical: room.size.height = 40 + rect.height * max(open, 0)
-            case .horizontal: room.size.width = 40 + rect.width * max(open, 0)
-            }
+        switch axis {
+        case .vertical: room.size.height = 40 + rect.height * max(open, 0)
+        case .horizontal: room.size.width = 40 + rect.width * max(open, 0)
         }
         return Path(room)
     }

@@ -61,6 +61,14 @@ struct SelectionInspector: View {
                     GuidesCard(store: store, board: first)
                         .transition(.card)
                 }
+                if first.dark != nil {
+                    DarkCard(store: store, board: first)
+                        .transition(.card)
+                }
+            }
+            if nodes.count == 1, let copy = store.doc.copy(holding: first.id) {
+                ComponentCard(store: store, copy: copy, whole: copy.id == first.id)
+                if copy.id != first.id, first.own?.isEmpty == false { CopyLayerCard(store: store, node: first) }
             }
             if nodes.count == 1, first.isRepeatGrid {
                 RepeatGridCard(store: store, grid: first, live: live.contains(.grid))
@@ -76,6 +84,11 @@ struct SelectionInspector: View {
                 PostLayerCard(store: store, node: first)
             }
             if kinds == [.text] { TextCard(store: store, nodes: nodes, live: live.contains(.text)) }
+            // Words along a curve: bent ones, or ones riding a shape, but not both at once.
+            if kinds == [.text], nodes.allSatisfy({ $0.curve != nil }), nodes.allSatisfy(\.rides) || !nodes.contains(where: \.rides) {
+                CurveCard(store: store, nodes: nodes, live: live.contains(.curve))
+                    .transition(.card)
+            }
             if kinds == [.path] { PathCard(store: store, nodes: nodes) }
             if kinds == [.rectangle] { cornersCard(live: live.contains(.corners)) }
             if !onlyArtboards {
@@ -121,7 +134,8 @@ struct SelectionInspector: View {
                     ExportCard(store: store, nodes: nodes)
                         .transition(.card)
                 }
-                let missing = addable(fill: fills && !kinds.contains(.text), border: borders && !kinds.contains(.line), inset: !kinds.contains(.line))
+                let missing = curveOffer(nodes, kinds: kinds)
+                    + addable(fill: fills && !kinds.contains(.text), border: borders && !kinds.contains(.line), inset: !kinds.contains(.line))
                 if !missing.isEmpty {
                     AddBar(items: missing)
                         .padding(.top, 6)
@@ -133,7 +147,7 @@ struct SelectionInspector: View {
                         .transition(.card)
                 }
                 // What an artboard can gain: a layout grid, and being marked for export.
-                let more = [addLayout(nodes)].compactMap { $0 } + [markForExport].compactMap { $0 }
+                let more = [addLayout(nodes), addDark(nodes)].compactMap { $0 } + [markForExport].compactMap { $0 }
                 if !more.isEmpty {
                     AddBar(items: more)
                         .padding(.top, 6)
@@ -144,9 +158,11 @@ struct SelectionInspector: View {
         .padding(.horizontal, Inspector.gutter)
         .padding(.top, 14)
         .animation(Theme.unfold, value: nodes.map(\.fill.on))
+        .animation(Theme.unfold, value: nodes.map { $0.curve != nil })
         .animation(Theme.unfold, value: nodes.map(\.border.on))
         .animation(Theme.unfold, value: nodes.map { $0.layout != nil })
         .animation(Theme.unfold, value: nodes.map { $0.guides?.isEmpty == false })
+        .animation(Theme.unfold, value: nodes.map(\.dark))
         .animation(Theme.unfold, value: nodes.map(\.shadow.on))
         .animation(Theme.unfold, value: nodes.map { Look.allCases.map($0.slots) })
         .animation(Theme.unfold, value: nodes.map { $0.blur?.on == true })
@@ -173,6 +189,7 @@ struct SelectionInspector: View {
             for slot in 0..<max(was.slots(.border), n.slots(.border)) where was[border: slot] != n[border: slot] { live.insert(.border(slot)) }
             for slot in 0..<max(was.slots(.shadow), n.slots(.shadow)) where was[shadow: slot] != n[shadow: slot] { live.insert(.shadow(slot)) }
             if was.blur != n.blur { live.insert(.blur) }
+            if was.curve != n.curve { live.insert(.curve) }
             if was.fill.image?.develop != n.fill.image?.develop { live.insert(.photo) }
             if was.transform3D != n.transform3D { live.insert(.depth) }
             if was.style != n.style { live.insert(.text) }
@@ -371,6 +388,12 @@ struct SelectionInspector: View {
 
     /// A layer at a new size. Text wraps its words to a new width, or grows its letters and lines.
     static func resize(_ n: inout Node, to size: CGSize, byHeight: Bool) {
+        // An artboard's design is laid out again for its new size.
+        if n.isArtboard {
+            n = Adapting.resized(n, to: size)
+            Adapting.announce([n.id])
+            return
+        }
         let old = n.frame
         if n.kind == .text, old.height > 0, old.width > 0 {
             n.resizeText(to: size, byHeight: byHeight)
@@ -401,13 +424,29 @@ struct SelectionInspector: View {
             store.updateSelection("Resize") { Self.resize(&$0, to: CGSize(width: w, height: h), byHeight: height != nil) }
         } else {
             let ids = store.selection
-            let parentOrigins = Dictionary(uniqueKeysWithValues: ids.map { ($0, store.doc.parentOrigin(of: $0)) })
-            let shared = Set(ids.map { store.doc.parent(of: $0)?.id }).count == 1
-            store.updateSelection("Resize") { n in
-                // The box is in the shared artboard's coordinates, or on the canvas.
-                let o = shared ? .zero : parentOrigins[n.id] ?? .zero
+            store.edit("Resize") { doc in Self.place(&doc, ids, from: f, to: target) }
+            Adapting.announce(ids.filter { store.doc.node($0)?.isArtboard == true })
+        }
+    }
+
+    /// Layers given a new box together, each keeping its place in it. The box is in their shared
+    /// artboard's coordinates, or on the canvas. An artboard among them has its design laid out
+    /// again for its new size.
+    static func place(_ doc: inout BezzleDocument, _ ids: [UUID], from f: CGRect, to target: CGRect) {
+        let parentOrigins = Dictionary(ids.map { ($0, doc.parentOrigin(of: $0)) }, uniquingKeysWith: { a, _ in a })
+        let shared = Set(ids.map { doc.parent(of: $0)?.id }).count == 1
+        for id in ids {
+            doc.update(id) { n in
+                let o = shared ? .zero : parentOrigins[id] ?? .zero
                 let own = n.frame.offsetBy(dx: o.x, dy: o.y)
-                n.frame = Geometry.snapToPixels(Geometry.map(own, from: f, to: target)).offsetBy(dx: -o.x, dy: -o.y)
+                let next = Geometry.snapToPixels(Geometry.map(own, from: f, to: target)).offsetBy(dx: -o.x, dy: -o.y)
+                if n.isArtboard {
+                    n = Adapting.resized(n, to: next.size)
+                    n.frame.origin = next.origin
+                } else {
+                    n.frame = next
+                }
+                n.refit()
             }
         }
     }
@@ -437,8 +476,10 @@ struct SelectionInspector: View {
                             Preset.Group.allCases.enumerated().flatMap { i, group in
                                 (i > 0 ? [MenuEntry.separator] : []) + [MenuEntry.note(group.title)]
                                     + Preset.all(in: group).map { p in
-                                        MenuEntry.item(p.title, detail: .verbatim("\(Int(p.size.width)) × \(Int(p.size.height))"), checked: p == current) {
-                                            store.updateSelection("Resize Artboard") { $0.frame.size = p.size }
+                                        MenuEntry.item(p.title, detail: .verbatim("\(Int(p.size.width)) × \(Int(p.size.height))"), checked: p == current,
+                                                       preview: { on in showSize(on ? p.size : nil, of: board) }) {
+                                            store.showPreview(Self.sizePreview, reshaping: nil)
+                                            store.resizeArtboards(store.selection) { _ in p.size }
                                         }
                                     }
                             }
@@ -455,11 +496,32 @@ struct SelectionInspector: View {
                         }
                     }
                 }
+                if !board.isCarousel {
+                    Row(title: "Adapt layout") {
+                        Switch(isOn: Binding(get: { board.pinsLayers != true }, set: { v in
+                            store.updateSelection(v ? "Adapt Layout" : "Keep Layers in Place") { $0.pinsLayers = v ? nil : true }
+                        }))
+                    }
+                    .onAppear { Adapting.prepare(board, assets: store.assets) }
+                }
                 Row(title: "Clip content") {
                     Switch(isOn: Binding(get: { board.clips }, set: { v in store.updateSelection(v ? "Clip Content" : "Show Overflow") { $0.clips = v } }))
                 }
             }
         }
+    }
+
+    static let sizePreview = "artboard-size"
+
+    /// Shows on the canvas the artboard at a size it could take, its design laid out for it; with
+    /// nil, as it is.
+    private func showSize(_ size: CGSize?, of board: Node) {
+        if let size, let change = store.adaptedPreview(of: board.id, to: size) {
+            store.showPreview(Self.sizePreview, reshaping: change)
+        } else {
+            store.showPreview(Self.sizePreview, reshaping: nil)
+        }
+        Adapting.announce([board.id])
     }
 
     /// A carousel's slide size and how many slides it has. Its layers stay where they are on it

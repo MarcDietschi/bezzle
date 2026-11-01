@@ -15,6 +15,8 @@ extension MCPTools {
         var fitted = working
         fitted.syncGrids(since: store.doc)
         fitted.syncDecks(since: store.doc, fronts: store.fronts)
+        fitted.syncComponents(since: store.doc)
+        fitted.syncStyles(since: store.doc)
         fitted.keepMasks(since: store.doc)
         fitted.fitGroups(since: store.doc)
         fitted.fitCarousels()
@@ -231,10 +233,19 @@ extension MCPTools {
         }
         let doc = store.doc
         var target: UUID?
+        let into = try args.string("into")?.lowercased() ?? "fill"
+        guard ["fill", "border"].contains(into) else { throw MCPError("into is fill or border.") }
         if let ref = try args.string("layer") {
             let id = try Self.layer(ref, in: doc)
-            guard let n = doc.node(id), [.rectangle, .ellipse, .path].contains(n.kind) else { throw MCPError("Pictures fill rectangles, ellipses and paths.") }
+            guard let n = doc.node(id) else { throw MCPError("There is no layer \(ref).") }
+            if into == "border" {
+                guard [.rectangle, .ellipse, .path, .line].contains(n.kind) else { throw MCPError("Pictures paint the borders of rectangles, ellipses, paths and lines.") }
+            } else {
+                guard [.rectangle, .ellipse, .path, .text].contains(n.kind) else { throw MCPError("Pictures fill rectangles, ellipses, paths and the letters of text.") }
+            }
             target = id
+        } else if into == "border" {
+            throw MCPError("Give the layer whose border the picture paints.")
         }
 
         // Into the design's own images, so it goes wherever the design does.
@@ -252,8 +263,16 @@ extension MCPTools {
         if let target {
             try change(store, "Add Picture") { doc in
                 doc.update(target) { n in
-                    n.fill.on = true
-                    n.fill.image = image
+                    if into == "border" {
+                        n.border.on = true
+                        if n.border.width == 0 { n.border.width = 1 }
+                        n.border.image = image
+                    } else {
+                        n.fill.on = true
+                        n.fill.image = image
+                        // Every letter of a text shows it.
+                        n.clearLetterColors()
+                    }
                 }
             }
             store.selection = [target]

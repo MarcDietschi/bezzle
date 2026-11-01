@@ -375,6 +375,10 @@ extension DocumentStore {
     private struct Clip: Codable {
         /// Layers with their frames on the canvas.
         var nodes: [Node]
+        /// The components any of them are copies of, to come along into another design.
+        var components: [Node]?
+        /// The styles any of them are named after, likewise. See `Style`.
+        var styles: [Style]?
     }
 
     func copySelection() {
@@ -383,7 +387,13 @@ extension DocumentStore {
             n.frame = doc.absoluteFrame(of: id) ?? n.frame
             return n
         }
-        guard !nodes.isEmpty, let data = try? JSONEncoder().encode(Clip(nodes: nodes)) else { return }
+        var used = Set(nodes.flatMap(\.componentsUsed))
+        for id in used { used.formUnion(doc.uses(id)) }
+        let masters = doc.masters.filter { used.contains($0.id) }
+        let named = (nodes + masters).reduce(into: Set<UUID>()) { $0.formUnion($1.stylesUsed) }
+        let styles = (doc.styles ?? []).filter { named.contains($0.id) }
+        guard !nodes.isEmpty, let data = try? JSONEncoder().encode(Clip(nodes: nodes, components: masters.isEmpty ? nil : masters,
+                                                                         styles: styles.isEmpty ? nil : styles)) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setData(data, forType: Self.pasteboardType)
@@ -417,7 +427,19 @@ extension DocumentStore {
             }
             for i in nodes.indices { nodes[i].frame = nodes[i].frame.offsetBy(dx: shift.x, dy: shift.y) }
             let target = focusedArtboard?.id
+            var masters = clip.components ?? []
+            let brought = clip.styles ?? []
             edit("Paste") { doc in
+                // Styles new to this design come with the layers named after them.
+                let renamed = doc.takeIn(brought)
+                if !renamed.isEmpty {
+                    nodes = nodes.map { $0.renamingStyles(renamed) }
+                    masters = masters.map { $0.renamingStyles(renamed) }
+                }
+                // Components new to this design come with their copies.
+                let have = Set(doc.masters.map(\.id))
+                let new = masters.filter { !have.contains($0.id) }
+                if !new.isEmpty { doc.masters += new }
                 for n in nodes {
                     let onto = n.isArtboard ? nil : (doc.artboard(at: n.frame.center)?.id ?? target.flatMap { id in doc.node(id)?.frame.intersects(n.frame) == true ? id : nil })
                     doc.attach(n, to: onto)
@@ -492,6 +514,8 @@ extension Node {
     /// The same layer, and what lies on it, with new identities.
     func freshCopy() -> Node {
         var n = self
+        // A copy of a component stays one, its layers keyed from the component as every copy's are.
+        if instance != nil { return Components.freshCopy(of: self) }
         n.id = UUID()
         // A grid's cells stay copies of its first, each with what it holds; so do a deck's posts.
         n.children = isRepeatGrid ? RepeatGrid.freshCells(of: self) : isDeck ? Deck.freshPosts(of: self) : children.map { $0.freshCopy() }

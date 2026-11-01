@@ -152,9 +152,11 @@ extension MCPTools {
             store.selection = [swap]
             return described([swap], in: store, depth: 1)
         }
-        try change(store, resource.component != nil ? "Add Component" : "Add Icon") { doc in doc.attach(made, to: board) }
-        store.selection = [made.id]
-        return described([made.id], in: store, depth: 1)
+        var added = made.id
+        let part = plan.part
+        try change(store, resource.component != nil ? "Add Component" : "Add Icon") { doc in added = DocumentStore.add(made, part: part, to: board, in: &doc) }
+        store.selection = [added]
+        return described([added], in: store, depth: 1)
     }
 
     /// A part's id, or an icon as "set/name" (or "icon/set/name"), with the style asked for.

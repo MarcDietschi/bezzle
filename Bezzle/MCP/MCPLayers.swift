@@ -72,6 +72,9 @@ extension MCPTools {
         if node.kind == .text, let text = node.text {
             pairs.append(("text", .string(full || text.count <= 80 ? text : String(text.prefix(77)) + "…")))
         }
+        if node.isCopy { pairs += copyDetails(node, in: doc) }
+        pairs += curveDetails(node, in: doc)
+        if let own = node.own, !own.isEmpty, doc.inCopy(node.id) { pairs.append(("onlyInThisCopy", .array(own.map { .string($0) }))) }
         if node.isRepeatGrid { pairs += gridDetails(node, in: doc) }
         if node.isDeck { pairs += deckDetails(node, front: nil, broken: DocumentStore.broken(node)) }
         if node.isArtboard { pairs += layoutDetails(node) }
@@ -81,6 +84,7 @@ extension MCPTools {
         }
         if full {
             pairs += style(of: node)
+            pairs += styleDetails(node, in: doc)
         } else if node.kind != .group {
             let fills = node.fills
             pairs.append(("fill", fills.count > 1 ? .array(fills.map(fill)) : fill(node.fill)))
@@ -114,7 +118,7 @@ extension MCPTools {
             .compact([
                 ("color", .string(hex(b.color))), ("width", .number(b.width)), ("position", .string(b.position.rawValue)),
                 ("dash", b.dash > 0 ? .number(b.dash) : nil), ("gap", b.dash > 0 ? .number(b.gap) : nil),
-            ])
+            ] + paint(b.paint))
         }
         let borders = node.borders
         if !borders.isEmpty { pairs.append(("border", borders.count > 1 ? .array(borders.map(border)) : border(borders[0]))) }
@@ -160,6 +164,7 @@ extension MCPTools {
         }
         if let blend = node.blend { pairs.append(("blend", .string(blend.rawValue))) }
         if node.isArtboard && !node.clips { pairs.append(("clips", false)) }
+        if node.isArtboard && node.pinsLayers == true { pairs.append(("adapts", false)) }
         if node.kind == .line {
             let (a, b) = node.lineEnds
             pairs += [("x1", .number(round(a.x))), ("y1", .number(round(a.y))), ("x2", .number(round(b.x))), ("y2", .number(round(b.y)))]
@@ -223,7 +228,12 @@ extension MCPTools {
     static func fill(_ f: Fill) -> JSONValue {
         guard f.on else { return "none" }
         if f.gradient == nil && f.image == nil { return .string(hex(f.color)) }
-        var pairs: [(String, JSONValue?)] = [("color", .string(hex(f.color)))]
+        return .compact([("color", .string(hex(f.color)))] + paint(f))
+    }
+
+    /// The gradient and picture a fill or a border is painted with, as they are given back.
+    private static func paint(_ f: Fill) -> [(String, JSONValue?)] {
+        var pairs: [(String, JSONValue?)] = []
         if let g = f.gradient {
             var gradient: [(String, JSONValue?)] = [
                 ("type", .string(g.kind.rawValue)),
@@ -243,7 +253,7 @@ extension MCPTools {
                 ("develop", Self.describe(i.develop)),
             ])))
         }
-        return .compact(pairs)
+        return pairs
     }
 
     /// A path's outline in its parent, as it lies before it is turned: what `path` takes back.
@@ -296,7 +306,7 @@ extension MCPTools {
     static let propertyKeys: Set<String> = [
         "name", "x", "y", "width", "height", "rotation", "opacity", "hidden", "locked", "fill", "border", "shadow",
         "cornerRadius", "cornerSmoothing", "text", "spans", "font", "blur", "transform3D", "blend", "x1", "y1", "x2", "y2", "path", "evenOdd",
-        "clips", "preset", "carousel", "slides", "exports",
+        "clips", "preset", "carousel", "slides", "exports", "adapts",
     ]
 
     /// Changes a layer as `props` say, as the inspector would. What does not apply to this kind
@@ -309,6 +319,13 @@ extension MCPTools {
         func has(_ key: String) -> Bool { props.keys.contains(key) }
         func value(_ key: String) -> Any? { props[key].flatMap { $0 is NSNull ? nil : $0 } }
         func num(_ key: String) throws -> CGFloat? { try Read.number(value(key), key).map { CGFloat($0) } }
+        // An artboard's design is laid out again for a new size, unless it keeps its layers in place.
+        let before = node
+        if has("adapts"), node.kind == .artboard {
+            node.pinsLayers = try Read.bool(value("adapts"), "adapts") == false ? true : nil
+        } else if has("adapts") {
+            warnings.append("adapts is for artboards: left out on \(node.name), which is a \(node.kind.rawValue).")
+        }
         let name = node.name, kind = node.kind
         func only(_ kinds: [Node.Kind], _ key: String) -> Bool {
             guard has(key) else { return false }
@@ -404,6 +421,13 @@ extension MCPTools {
             default:
                 node.frame.size = size
             }
+        }
+        if kind == .artboard, !node.isCarousel, node.frame.size != before.frame.size {
+            var was = node
+            was.frame.size = before.frame.size
+            was.children = before.children
+            node = Adapting.resized(was, to: node.frame.size)
+            Adapting.announce([node.id])
         }
         if let x { node.frame.origin.x = x }
         if let y { node.frame.origin.y = y }
@@ -752,7 +776,10 @@ extension MCPTools {
         guard let v else { b.on = false; return b }
         if let s = v as? String {
             if s.lowercased() == "none" { b.on = false; return b }
+            // A colour on its own is a solid border, in place of a gradient or a picture.
             b.color = try color(s, "border")
+            b.gradient = nil
+            b.image = nil
             b.on = true
             return b
         }
@@ -761,10 +788,15 @@ extension MCPTools {
             b.on = true
             return b
         }
-        guard let o = v as? [String: Any] else { throw MCPError("border should be \"none\", a colour, a width, or {color, width, position, dash, gap}.") }
-        let unknown = Set(o.keys).subtracting(["on", "color", "width", "position", "dash", "gap"])
-        guard unknown.isEmpty else { throw MCPError("border has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, width, position, dash and gap.") }
+        guard let o = v as? [String: Any] else { throw MCPError("border should be \"none\", a colour, a width, or {color, gradient, width, position, dash, gap}.") }
+        let unknown = Set(o.keys).subtracting(["on", "color", "gradient", "image", "width", "position", "dash", "gap"])
+        guard unknown.isEmpty else { throw MCPError("border has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, gradient, image, width, position, dash and gap.") }
         if let c = o["color"], !(c is NSNull) { b.color = try color(c, "border.color") }
+        if o.keys.contains("gradient") { b.gradient = o["gradient"] is NSNull ? nil : try gradient(o["gradient"]) }
+        if o.keys.contains("image") {
+            guard o["image"] is NSNull else { throw MCPError("border.image can only be null, to take its picture away.") }
+            b.image = nil
+        }
         if let w = try Read.number(o["width"], "border.width") { b.width = CGFloat(max(w, 0)) }
         if let p = try Read.string(o["position"], "border.position") {
             guard let position = Border.Position(rawValue: p.lowercased() == "centre" ? "center" : p.lowercased()) else { throw MCPError("border.position is inside, center or outside.") }

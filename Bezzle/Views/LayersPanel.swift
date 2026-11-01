@@ -6,8 +6,10 @@ import AppKit
 /// an artboard's name to put it in there, open or shut.
 /// While something on one artboard is selected, the list is a page of that artboard's layers
 /// alone, with the way back to every layer at the top. The artboard itself is picked among the rest.
+/// A right click on a row opens what can be done with that layer, as on the canvas.
 struct LayersPanel: View {
     let store: DocumentStore
+    @Environment(MenuHost.self) private var menus
     /// Artboards are open until shut; groups are shut until opened, as there can be thousands.
     @State private var collapsed: Set<UUID> = []
     @State private var openGroups: Set<UUID> = []
@@ -24,8 +26,12 @@ struct LayersPanel: View {
     /// When the list last turned to another page, so that the second click of a double click
     /// does not rename whichever row came to be under the pointer.
     @State private var turnedAt: TimeInterval = 0
-    /// How far down each page is, apart, so the page sliding away stays where it was.
-    @State private var scrolls: [UUID?: ScrollPosition] = [:]
+    /// How far down each page is, apart, so the page sliding away stays where it was. By each time
+    /// a page is turned to, not by the page: turned away from and back to before it has finished
+    /// sliding, a page is in the list twice for a moment, and two lists scrolled by one position
+    /// each put it back to where they are, over and over, and nothing else gets done.
+    @State private var scrolls: [Visit: ScrollPosition] = [:]
+    @State private var visit = 0
     @State private var sight = Sight()
 
     static let rowHeight: CGFloat = 28
@@ -51,6 +57,15 @@ struct LayersPanel: View {
         case gap(Int)
         case onto(Int)
     }
+
+    /// One time a page was turned to.
+    private struct Visit: Hashable {
+        var page: UUID?
+        var number: Int
+    }
+
+    /// The page shown now, as this time it was turned to.
+    private var current: Visit { Visit(page: board?.id, number: visit) }
 
     struct Row: Identifiable {
         let node: Node
@@ -119,6 +134,7 @@ struct LayersPanel: View {
                                draft: $draft,
                                rename: { startRenaming(board) },
                                finishRename: { keep in endRenaming(board.id, keep: keep) })
+                    .contextMenuReplacement { openMenu(for: board, at: $0) }
                 }
                 Spacer(minLength: 8)
                 Text(verbatim: (board.map { BezzleDocument.layerCount(listed(in: $0)) } ?? store.layerCount).formatted())
@@ -135,7 +151,7 @@ struct LayersPanel: View {
             // The pages lie over each other as one slides away and the next comes in.
             ZStack(alignment: .topLeading) {
                 list(rows)
-                    .id(board?.id)
+                    .id(current)
                     .transition(PageTurn(turn: turning))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -178,6 +194,7 @@ struct LayersPanel: View {
                                      rename: { if !justTurned { startRenaming(row.node) } },
                                      finishRename: { keep in endRenaming(row.id, keep: keep) })
                             .gesture(drag(row, rows: rows))
+                            .contextMenuReplacement { openMenu(for: row.node, at: $0) }
                         }
                     }
                     .overlay(alignment: .topLeading) { dropMark(rows) }
@@ -185,7 +202,7 @@ struct LayersPanel: View {
                     .padding(.bottom, Self.bottomPadding)
                     .coordinateSpace(name: "layers")
                 }
-                .scrollPosition(scrolled(board?.id))
+                .scrollPosition(scrolled(current))
                 .onScrollGeometryChange(for: CGRect.self) { $0.visibleRect } action: { [sight] _, rect in sight.rect = rect }
                 .scrollIndicators(.never)
                 .edgeFade(length: Self.fade)
@@ -219,9 +236,15 @@ struct LayersPanel: View {
         turning.way = current == nil ? 1 : target == nil ? -1 : 0
         turnedAt = ProcessInfo.processInfo.systemUptime
         // The new page starts at its top, however far down it was last time.
-        scrolls[target] = ScrollPosition(edge: .top)
+        let next = visit + 1
+        scrolls = scrolls.filter { $0.key.number >= next - 2 }
+        scrolls[Visit(page: target, number: next)] = ScrollPosition(edge: .top)
         sight.rect.origin = .zero
-        withAnimation(Theme.unfold) { page = target }
+        // In one animated change, so the page slides as it did.
+        withAnimation(Theme.unfold) {
+            visit = next
+            page = target
+        }
         return true
     }
 
@@ -281,7 +304,7 @@ struct LayersPanel: View {
         }
         let farthest = CGFloat(rows.count) * Self.rowHeight + Self.bottomPadding - shown.height
         let target = min(max(y, 0), max(farthest, 0))
-        let page = board?.id
+        let page = current
         if animated {
             withAnimation(Theme.unfold) { scrolls[page, default: ScrollPosition(edge: .top)].scrollTo(y: target) }
         } else {
@@ -289,7 +312,7 @@ struct LayersPanel: View {
         }
     }
 
-    private func scrolled(_ page: UUID?) -> Binding<ScrollPosition> {
+    private func scrolled(_ page: Visit) -> Binding<ScrollPosition> {
         Binding(get: { scrolls[page] ?? ScrollPosition(edge: .top) }, set: { scrolls[page] = $0 })
     }
 
@@ -323,6 +346,45 @@ struct LayersPanel: View {
         }
         // Picking an artboard here, or going into one, shows it on the canvas as well.
         if let target = artboard(for: store.selection), target != board?.id { store.show(target) }
+    }
+
+    // MARK: Right-click menu
+
+    /// Picks the layer, unless it is picked already among others, and opens its menu where the
+    /// pointer is.
+    private func openMenu(for node: Node, at point: CGPoint) {
+        store.canvas?.endEditing()
+        if renaming != node.id { endRenaming(keep: true) }
+        if !store.selection.contains(node.id) {
+            store.selection = [node.id]
+            anchor = node.id
+            if let target = artboard(for: store.selection), target != board?.id { store.show(target) }
+        }
+        menus.show(at: point, width: 230, entries: menu(for: node))
+    }
+
+    /// What the list offers before what the canvas offers for the selection: naming the layer,
+    /// typing into a text, picking what a group or artboard holds, and finding it on the canvas.
+    /// The canvas's part follows what the layer is: points for a path, cells for a grid, variants
+    /// for a component's copy, posts for a stack, and so on.
+    private func menu(for node: Node) -> [MenuEntry] {
+        let alone = store.selection == [node.id]
+        var entries: [MenuEntry] = []
+        if alone && !store.isReadOnly {
+            entries.append(.item("Rename") { startRenaming(node) })
+            if node.kind == .text, !node.locked, !node.hidden {
+                entries.append(.item("Edit Text", shortcut: "↩") {
+                    store.show(node.id)
+                    store.canvas?.beginEditing(node.id, action: "Typing")
+                })
+            }
+        }
+        if alone, node.isContainer, !node.isRepeatGrid {
+            let inside = listed(in: node).filter { !$0.hidden && !$0.locked }.map(\.id)
+            entries.append(.item("Select Layers Inside", enabled: !inside.isEmpty) { store.selection = inside })
+        }
+        entries.append(.item("Zoom to Selection", shortcut: "⌘2") { store.zoomToSelection() })
+        return entries + [.separator] + CanvasMenus.entries(for: store)
     }
 
     // MARK: Moving layers by dragging
@@ -588,7 +650,10 @@ private struct LayerRow: View {
             .padding(.leading, CGFloat(row.depth) * 18)
 
             Group {
-                if node.isRepeatGrid { RepeatGridGlyph() } else if node.isMask { MaskGlyph(size: 15) } else { KindGlyph(kind: node.kind) }
+                if node.isCopy {
+                    // A copy of a component, in its violet wherever it is marked.
+                    ComponentGlyph(size: 13).foregroundStyle(Theme.linked)
+                } else if node.isRepeatGrid { RepeatGridGlyph() } else if node.isMask { MaskGlyph(size: 15) } else { KindGlyph(kind: node.kind) }
             }
             .foregroundStyle(selected ? Theme.ink : Theme.ink3)
 

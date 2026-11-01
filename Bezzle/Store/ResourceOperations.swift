@@ -4,12 +4,15 @@ import AppKit
 nonisolated enum Resource: Hashable, Sendable {
     case component(String)
     case icon(IconSetID, String, IconStyle)
+    /// One of the design's own components, by its id: another copy of it.
+    case design(UUID)
 
     /// As it travels on the pasteboard and to the AI: "ios.tab-bar", "icon/lucide/heart".
     var key: String {
         switch self {
         case .component(let id): id
         case .icon(let set, let name, _): "icon/\(set.rawValue)/\(name)"
+        case .design(let id): "component/\(id.uuidString)"
         }
     }
 
@@ -35,6 +38,9 @@ struct ResourcePlacing {
     var swap: UUID?
     /// How it fits the artboard: along an edge, or across it; `.free` where it is let go.
     var fit: Component.Fit = .free
+    /// A kit's part, as it was made, light or dark: dropped again, it is another copy of the
+    /// component the first one became. See `Master.part`.
+    var part: String?
 }
 
 extension DocumentStore {
@@ -86,7 +92,18 @@ extension DocumentStore {
             if fit == .free {
                 node.frame.origin = CGPoint(x: (center.x - node.frame.width / 2).rounded(), y: (center.y - node.frame.height / 2).rounded())
             }
-            return ResourcePlacing(node: node, board: usable?.id, fit: fit)
+            let part = dark ? "\(id)/dark" : id
+            // Dropped before, it is another copy of the component it became, as the design has it now.
+            if let master = doc.masters.first(where: { $0.master?.part == part }) {
+                node = Components.newCopy(of: master, at: node.frame.origin, size: node.frame.size)
+            }
+            return ResourcePlacing(node: node, board: usable?.id, fit: fit, part: part)
+
+        case .design(let id):
+            guard let master = doc.master(id) else { return nil }
+            let size = Components.box(of: master, variant: nil).size
+            let origin = CGPoint(x: (center.x - size.width / 2).rounded(), y: (center.y - size.height / 2).rounded())
+            return ResourcePlacing(node: Components.newCopy(of: master, at: origin), board: usable?.id)
 
         case .icon(_, _, let style):
             guard let icon = resource.icon else { return nil }
@@ -143,11 +160,33 @@ extension DocumentStore {
             return swap
         }
         let node = plan.node
-        edit(resource.component != nil ? "Add Component" : "Add Icon") { doc in
-            doc.attach(node, to: plan.board)
+        var made = node.id
+        edit(resource.icon == nil ? "Add Component" : "Add Icon") { doc in
+            made = Self.add(node, part: plan.part, to: plan.board, in: &doc)
         }
-        selection = [node.id]
-        return node.id
+        selection = [made]
+        return made
+    }
+}
+
+extension DocumentStore {
+    /// Puts a part or icon onto an artboard, or the canvas, and returns it. A kit's part is a
+    /// component: the first time it is dropped into a design it becomes one, and every time after
+    /// that it is another copy of it, as the design has it then, as big as the part was made, so
+    /// changing one of them changes them all.
+    static func add(_ node: Node, part: String?, to board: UUID?, in doc: inout BezzleDocument) -> UUID {
+        guard let part, !node.isCopy else {
+            doc.attach(node, to: board)
+            return node.id
+        }
+        if let master = doc.masters.first(where: { $0.master?.part == part }) {
+            let copy = Components.newCopy(of: master, at: node.frame.origin, size: node.frame.size)
+            doc.attach(copy, to: board)
+            return copy.id
+        }
+        doc.attach(node, to: board)
+        doc.fitGroups()
+        return makeComponent(from: [node.id], in: &doc, name: node.name, part: part) ?? node.id
     }
 }
 

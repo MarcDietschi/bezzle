@@ -310,7 +310,7 @@ final class Collaboration {
     static func pictures(in nodes: [Node]) -> Set<String> {
         var names = Set<String>()
         func visit(_ n: Node) {
-            if let image = n.fill.image { names.formUnion(image.assets) }
+            for image in n.paintedPictures { names.formUnion(image.assets) }
             n.children.forEach(visit)
             n.mask?.forEach(visit)
         }

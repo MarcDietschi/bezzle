@@ -21,7 +21,7 @@ struct GradientHandles: View {
 
     var body: some View {
         if menus.open?.id == FillMenu.id, store.selection.count == 1, let id = store.selection.first, let node = store.node(id),
-           case let fill = node[keyPath: Node.fillPath(session.slot)], fill.on, fill.image == nil, let gradient = fill.gradient, gradient.stops.count >= 2,
+           case let fill = node[keyPath: session.target.path], fill.on, fill.image == nil, let gradient = fill.gradient, gradient.stops.count >= 2,
            let frame = store.doc.absoluteFrame(of: id) {
             GradientRig(store: store, gradient: gradient, map: LayerMap(frame: frame, rotation: node.rotation, viewport: store.viewport))
                 .transition(.opacity)
@@ -226,14 +226,14 @@ private struct GradientRig: View {
                 case .start, .end: moveEnd(grip == .start, to: g.location, other: grip == .start ? b : a)
                 case .across:
                     let u = map.unit(g.location)
-                    let path = Node.fillPath(session.slot)
+                    let path = session.target.path
                     store.updateSelection("Shape Gradient") { n in
                         let size = n.frame.size
                         n[keyPath: path].gradient?.stretch(to: u, in: size)
                     }
                 case .corner:
                     let u = map.unit(CGPoint(x: g.location.x - grabbed.width, y: g.location.y - grabbed.height))
-                    let path = Node.fillPath(session.slot), keep = NSEvent.modifierFlags.contains(.shift)
+                    let path = session.target.path, keep = NSEvent.modifierFlags.contains(.shift)
                     store.updateSelection("Shape Gradient") { n in
                         let size = n.frame.size
                         n[keyPath: path].gradient?.resize(to: u, in: size, keepingShape: keep)
@@ -244,7 +244,7 @@ private struct GradientRig: View {
                     guard gradient.stops.indices.contains(session.stop) else { return }
                     let (moved, at) = gradient.stops.placing(session.stop, at: along)
                     session.stop = at
-                    store.updateSelection("Move Gradient Colour") { $0[keyPath: Node.fillPath(session.slot)].gradient?.stops = moved }
+                    store.updateSelection("Move Gradient Colour") { $0[keyPath: session.target.path].gradient?.stops = moved }
                 case .line: break
                 }
             }
@@ -272,14 +272,14 @@ private struct GradientRig: View {
         }
         let u = map.unit(p)
         store.updateSelection("Shape Gradient") { n in
-            guard var g = n[keyPath: Node.fillPath(session.slot)].gradient else { return }
+            guard var g = n[keyPath: session.target.path].gradient else { return }
             switch (g.kind, start) {
             case (.linear, true): g.start = u
             case (.linear, false): g.end = u
             case (.radial, true): g.centre(at: u)
             case (.radial, false): g.turn(to: u, in: n.frame.size)
             }
-            n[keyPath: Node.fillPath(session.slot)].gradient = g
+            n[keyPath: session.target.path].gradient = g
         }
     }
 
@@ -287,7 +287,7 @@ private struct GradientRig: View {
         let stop = GradientStop(offset: offset, color: gradient.color(at: offset))
         let (stops, at) = (gradient.stops + [stop]).placing(gradient.stops.count, at: offset)
         session.stop = at
-        store.updateSelection("Add Gradient Colour") { $0[keyPath: Node.fillPath(session.slot)].gradient?.stops = stops }
+        store.updateSelection("Add Gradient Colour") { $0[keyPath: session.target.path].gradient?.stops = stops }
     }
 
     private func remove(_ i: Int) {
@@ -295,7 +295,7 @@ private struct GradientRig: View {
         var stops = gradient.stops
         stops.remove(at: i)
         session.stop = max(i - 1, 0)
-        store.updateSelection("Remove Gradient Colour") { $0[keyPath: Node.fillPath(session.slot)].gradient?.stops = stops }
+        store.updateSelection("Remove Gradient Colour") { $0[keyPath: session.target.path].gradient?.stops = stops }
     }
 }
 

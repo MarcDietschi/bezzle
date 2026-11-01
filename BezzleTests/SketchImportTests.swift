@@ -143,9 +143,11 @@ struct SketchImportTests {
         let descent = Fonts.font(note.style ?? TextStyle()).descender
         #expect(abs(note.frame.minY + TextLayout.firstBaseline(note) - (300 + 30 + descent)) < 0.6)
 
-        // The mask cuts off the layer above it, up to the one that breaks the chain, and is drawn under it.
-        let masks = try #require(doc.allNodes.first { $0.mask != nil && $0.name == "Round" })
-        #expect(masks.mask?.first?.kind == .ellipse)
+        // The mask cuts off the layer above it, up to the one that breaks the chain, and is drawn
+        // under it: a mask of Bezzle's, its circle the shape that holds the rest.
+        let masks = try #require(doc.allNodes.first { $0.isMask && $0.children.first?.name == "Round" })
+        #expect(masks.mask == nil && masks.name == "Mask 1" && masks.children[0].kind == .ellipse)
+        #expect(masks.children[0].fill.on && masks.children[0].fill.color.hex == "808080")
         #expect(doc.absoluteFrame(of: masks.id) == CGRect(x: 100, y: 550, width: 100, height: 100))
         #expect(masks.children.map(\.name) == ["Round", "Big"])
         #expect(doc.parent(of: try named("Free").id)?.name == "Masked")
@@ -229,6 +231,74 @@ struct SketchImportTests {
         big.size = 40
         let descent = Fonts.font(big).descender
         #expect(abs(mixed.frame.minY + TextLayout.firstBaseline(mixed) - (650 + 50 + descent)) < 0.6)
+    }
+
+    /// An artboard laid out on Sketch's columns and square grid, with guides out of both rulers, an
+    /// alpha mask, a text with a word in capitals, and an artboard inside a group whose layer
+    /// reaches past its edge.
+    static func helpersFile() throws -> URL {
+        let layout = #""layout":{"_class":"layoutGrid","isEnabled":true,"columnWidth":60,"gutterWidth":20,"guttersOutside":false,"horizontalOffset":30,"numberOfColumns":4,"drawVertical":true,"drawHorizontal":false,"gutterHeight":10,"rowHeightMultiplication":3,"totalWidth":300},"grid":{"_class":"simpleGrid","isEnabled":true,"gridSize":8,"thickGridTimes":8}"#
+        let rulers = #""horizontalRulerData":{"_class":"rulerData","base":0,"guides":[40,320]},"verticalRulerData":{"_class":"rulerData","base":0,"guides":[100]}"#
+        let fade = """
+            {"_class":"group","name":"Faded","frame":\(frame(0, 0, 200, 200)),"layers":[
+              {"_class":"oval","name":"Fader","frame":\(frame(0, 0, 100, 100)),"hasClippingMask":true,"clippingMaskMode":1,"style":{"fills":[\(fill(gray))]}},
+              \(rectangle("Faded picture", frame(0, 0, 200, 200), style: "{\"fills\":[\(fill(blue))]}"))]}
+            """
+        let words = #"{"_class":"text","name":"Shout","frame":\#(frame(20, 300, 200, 24)),"textBehaviour":0,"style":{},"attributedString":{"_class":"attributedString","string":"Hello new world","attributes":["#
+            + [run(0, 6, font: "Helvetica", size: 16, color: blue), run(6, 3, font: "Helvetica", size: 16, color: blue, #","MSAttributedStringTextTransformAttribute":1"#),
+               run(9, 6, font: "Helvetica", size: 16, color: blue)].joined(separator: ",") + "]}}"
+        let inner = """
+            {"_class":"group","name":"Holder","frame":\(frame(0, 400, 200, 200)),"layers":[
+              {"_class":"artboard","name":"Inner","frame":\(frame(0, 0, 100, 100)),"hasBackgroundColor":true,"backgroundColor":\(red),"layers":[
+                \(rectangle("Spill", frame(50, 50, 100, 100), style: "{\"fills\":[\(fill(blue))]}"))]}]}
+            """
+        let ring = rectangle("Ring", frame(200, 20, 40, 40), style: """
+            {"borders":[{"_class":"border","isEnabled":true,"fillType":1,"color":\(red),"position":0,"thickness":4,"gradient":{"_class":"gradient","gradientType":0,"from":"{0, 0.5}","to":"{1, 0.5}",
+              "stops":[{"_class":"gradientStop","position":0,"color":\(red)},{"_class":"gradientStop","position":1,"color":\(blue)}]}}]}
+            """)
+        let board = #"{"_class":"artboard","name":"Board","frame":\#(frame(0, 0, 360, 800)),\#(layout),\#(rulers),"layers":[\#([fade, words, inner, ring].joined(separator: ","))]}"#
+        let page = #"{"_class":"page","name":"Page 1","layers":[\#(board)]}"#
+        let document = #"{"_class":"document","colorSpace":1,"pages":[{"_ref":"pages/P1"}]}"#
+        let zip = TestZip.make([("document.json", Data(document.utf8)), ("meta.json", Data(#"{"appVersion":"70","version":136}"#.utf8)),
+                                ("pages/P1.json", Data(page.utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).sketch")
+        try zip.write(to: url)
+        return url
+    }
+
+    @Test func bringsMasksGridsAndGuidesAcross() throws {
+        let url = try Self.helpersFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try SketchImporter.read(url)
+        let doc = imported.document, notes = imported.report.notes
+        func named(_ name: String) throws -> Node { try #require(doc.allNodes.first { $0.name == name }) }
+
+        // Four columns of 60 with gutters of 20, 30 in from the left of 360: in the middle, as they were.
+        let board = try named("Board")
+        #expect(board.layout == LayoutGrid(columns: LayoutGrid.Track(count: 4, gutter: 20, margin: 30), rows: nil, baseline: nil))
+        #expect(notes["Square grids, left out"] == 1 && notes["Layout grids with uneven margins, centred"] == nil)
+        // The top ruler's guides run down the artboard, the side ruler's across it.
+        #expect(board.sortedGuides().map(\.guide) == [Guideline(vertical: true, edge: .start, offset: 40), Guideline(vertical: true, edge: .end, offset: 40),
+                                                     Guideline(vertical: false, edge: .start, offset: 100)])
+
+        // An alpha mask is not drawn itself, only cuts.
+        let faded = try #require(doc.allNodes.first { $0.isMask && $0.children.first?.name == "Fader" })
+        #expect(faded.children[0].fills.isEmpty && faded.children.map(\.name) == ["Fader", "Faded picture"])
+        #expect(notes["Alpha masks, cutting by their outline"] == 1)
+
+        let shout = try named("Shout")
+        #expect(shout.text == "Hello NEW world" && shout.style?.letterCase == nil)
+
+        // A border is drawn with its gradient, measured on the layer as a fill's is.
+        let ring = try named("Ring")
+        #expect(ring.border.gradient?.start == CGPoint(x: 0, y: 0.5) && ring.border.gradient?.end == CGPoint(x: 1, y: 0.5))
+        #expect(notes["Borders with a gradient, in its first colour"] == nil)
+
+        // An artboard in a group cuts off what reaches past its edge, its background the shape
+        // that holds it.
+        let inner = try #require(doc.allNodes.first { $0.isMask && $0.children.contains { $0.name == "Spill" } })
+        #expect(inner.children.map(\.name) == ["Background", "Spill"] && inner.children[0].fill.color.hex == "FF0000")
+        #expect(doc.absoluteFrame(of: inner.id) == CGRect(x: 0, y: 400, width: 100, height: 100))
     }
 
     @Test func writesTheDesignAsAPackage() throws {

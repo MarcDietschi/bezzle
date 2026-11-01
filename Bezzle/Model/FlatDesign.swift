@@ -99,16 +99,19 @@ nonisolated struct LayerField: @unchecked Sendable {
         LayerField("shadow", \.shadow),
         LayerField("moreFills", \.moreFills), LayerField("moreBorders", \.moreBorders), LayerField("moreShadows", \.moreShadows),
         LayerField("opacity", \.opacity), LayerField("cornerRadius", \.cornerRadius),
-        LayerField("corners", \.corners), LayerField("cornerSmoothing", \.cornerSmoothing), LayerField("rising", \.rising),
+        LayerField("corners", \.corners), LayerField("cornerSmoothing", \.cornerSmoothing), LayerField("cornersNamed", \.cornersNamed),
+        LayerField("rising", \.rising),
         LayerField("text", \.text), LayerField("style", \.style), LayerField("spans", \.spans), LayerField("path", \.path),
         LayerField("pathBox", \.pathBox), LayerField("evenOdd", \.evenOdd), LayerField("mask", \.mask), LayerField("clipsToFirst", \.clipsToFirst),
         LayerField("blur", \.blur), LayerField("blend", \.blend), LayerField("hidden", \.hidden),
-        LayerField("locked", \.locked), LayerField("clips", \.clips), LayerField("slideSize", \.slideSize),
+        LayerField("locked", \.locked), LayerField("clips", \.clips), LayerField("pinsLayers", \.pinsLayers), LayerField("dark", \.dark), LayerField("slideSize", \.slideSize),
         LayerField("transform3D", \.transform3D),
         LayerField("grid", \.grid),
         LayerField("deck", \.deck), LayerField("post", \.post), LayerField("own", \.own),
         LayerField("layout", \.layout), LayerField("guides", entries: \.guides),
         LayerField("exports", \.exports),
+        LayerField("instance", \.instance), LayerField("master", \.master),
+        LayerField("curve", \.curve), LayerField("curvePath", \.curvePath),
     ]
 
     /// Each property of a layer, without what it holds, read all at once.
@@ -157,11 +160,15 @@ nonisolated struct FlatDesign: Equatable {
     var entries: [UUID: Entry] = [:]
     /// What each artboard and group holds, and the canvas under nil, bottom first.
     var order: [UUID?: [UUID]] = [:]
+    /// The design's named looks, by their ids. See `Style`.
+    var styles: [UUID: Style] = [:]
 
     init() {}
 
     init(_ doc: BezzleDocument) {
-        add(doc.nodes, in: nil, at: nil)
+        // Components lie on the canvas here, after everything on it, each marked as one (`Node.master`).
+        add(doc.nodes + doc.masters, in: nil, at: nil)
+        styles = doc.stylesByID
     }
 
     private mutating func add(_ nodes: [Node], in parent: UUID?, at origin: CGPoint?) {
@@ -190,14 +197,18 @@ nonisolated struct FlatDesign: Equatable {
     /// the other. A large design is changed an artboard at a time, and is not gone through whole for it.
     static func changes(from a: BezzleDocument, to b: BezzleDocument) -> (old: FlatDesign, new: FlatDesign) {
         var was: [UUID: Node] = [:]
-        for node in a.nodes { was[node.id] = node }
-        let changed = b.nodes.filter { was[$0.id] != $0 }
-        let changedIDs = Set(changed.map(\.id)), there = Set(b.nodes.map(\.id))
+        let aTop = a.nodes + a.masters, bTop = b.nodes + b.masters
+        for node in aTop { was[node.id] = node }
+        let changed = bTop.filter { was[$0.id] != $0 }
+        let changedIDs = Set(changed.map(\.id)), there = Set(bTop.map(\.id))
         var old = FlatDesign(), new = FlatDesign()
-        old.add(a.nodes.filter { !there.contains($0.id) || changedIDs.contains($0.id) }, in: nil, at: nil)
+        old.add(aTop.filter { !there.contains($0.id) || changedIDs.contains($0.id) }, in: nil, at: nil)
         new.add(changed, in: nil, at: nil)
-        old.order[nil] = a.nodes.map(\.id)
-        new.order[nil] = b.nodes.map(\.id)
+        old.order[nil] = aTop.map(\.id)
+        new.order[nil] = bTop.map(\.id)
+        // The styles are few, and go whole.
+        old.styles = a.stylesByID
+        new.styles = b.stylesByID
         return (old, new)
     }
 
@@ -207,16 +218,23 @@ nonisolated struct FlatDesign: Equatable {
         for parent in old.order.keys { order[parent] = nil }
         for (id, entry) in new.entries { entries[id] = entry }
         for (parent, list) in new.order { order[parent] = list }
+        styles = new.styles
     }
 
     /// The design these layers make, its groups fitted around what they hold.
     func document() -> BezzleDocument {
         var doc = BezzleDocument()
         var built = Set<UUID>()
-        doc.nodes = (order[nil] ?? []).compactMap { build($0, at: nil, &built) }
+        let top = (order[nil] ?? []).compactMap { build($0, at: nil, &built) }
+        doc.nodes = top.filter { $0.master == nil }
+        doc.masters = top.filter { $0.master != nil }
+        let named = styles.values.sorted { ($0.rank, $0.id.uuidString) < ($1.rank, $1.id.uuidString) }
+        doc.styles = named.isEmpty ? nil : named
         doc.repairGrids()
         doc.repairDecks()
         doc.repairMasks()
+        doc.repairComponents()
+        doc.repairStyles()
         doc.fitGroups()
         doc.fitCarousels()
         return doc
@@ -346,6 +364,20 @@ extension FlatDesign {
             out.move(id, to: parent, above: below)
         }
         for id in x.entries.keys where y.entries[id] == nil { out.remove(id) }
+        // Styles as layers are: what someone else changed of one since stays as they made it.
+        for (id, sy) in y.styles {
+            if let sx = x.styles[id] {
+                guard var sc = out.styles[id], sx != sy else { continue }
+                if sx.name != sy.name, sc.name == sx.name { sc.name = sy.name }
+                if sx.look != sy.look, sc.look == sx.look { sc.look = sy.look }
+                if sx.rank != sy.rank, sc.rank == sx.rank { sc.rank = sy.rank }
+                if sx.dark != sy.dark, sc.dark == sx.dark { sc.dark = sy.dark }
+                out.styles[id] = sc
+            } else if out.styles[id] == nil {
+                out.styles[id] = sy
+            }
+        }
+        for id in x.styles.keys where y.styles[id] == nil { out.styles[id] = nil }
         return out
     }
 }

@@ -20,9 +20,12 @@ struct DeckCard: View {
             IconButton(symbol: "chevron.left", help: "The post before (Page Up)", size: 22) { store.turnPage(by: -1) }
                 .opacity(index > 0 ? 1 : 0.35)
                 .allowsHitTesting(index > 0)
+            // Always one line as wide as it needs: the summary beside it gives way instead.
             Text("\(index + 1) of \(count)")
                 .font(.system(size: 12).monospacedDigit())
                 .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .fixedSize()
                 .frame(minWidth: 44)
                 .contentTransition(.numericText())
                 .animation(Theme.quick, value: index)

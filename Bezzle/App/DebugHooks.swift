@@ -114,15 +114,18 @@ enum DebugHooks {
                 }
             }
         }
-        // BEZZLE_CARD=seconds:layout|guides|photo opens that card of the inspector.
+        // BEZZLE_CARD=seconds:layout|guides|photo|fill|border|text|path opens that card of the inspector.
         if let spec = env["BEZZLE_CARD"], let colon = spec.firstIndex(of: ":"), let s = Double(spec[..<colon]) {
             let card: Aspect? = switch spec[spec.index(after: colon)...] {
             case "layout": .layout
             case "guides": .guides
             case "photo", "photo-color", "photo-detail": .photo
             case "fill": .fill(0)
+            case "border": .border(0)
             case "text": .text
             case "path": .path
+            case "curve": .curve
+            case "component": .component
             default: nil
             }
             after(s) {

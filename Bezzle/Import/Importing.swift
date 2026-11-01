@@ -228,3 +228,205 @@ nonisolated extension Node {
         setRuns(runs.map { TextSpan(text: $0.text, look: TextLook($0.letters, over: style, color: fill.color)) })
     }
 }
+
+/// What other apps' texts have that every importer brings across alike.
+enum ImportText {
+    /// Runs of a text's words, each in the letter case it was set in. A text has one case of its
+    /// own, so where its runs differ in it, each run's case is written into its letters and the
+    /// text has none; small capitals are no letters of their own, so those runs are set as they
+    /// are. Returns the runs and the text's case.
+    static func cased(_ runs: [(text: String, letters: Letters)], _ cases: [LetterCase?],
+                      report: inout ImportReport) -> (runs: [(text: String, letters: Letters)], letterCase: LetterCase?) {
+        let used = Set(runs.indices.filter { !runs[$0].text.isEmpty }.map { $0 < cases.count ? cases[$0] : nil })
+        guard used.count > 1 else { return (runs, used.first ?? nil) }
+        if used.contains(.smallCaps) { report.note("Small capitals in part of a text, set in plain letters") }
+        // Cased whole, so words are capitalised across runs as a text in one case is, unless that
+        // changes how long the words are.
+        let whole = runs.map(\.text).joined()
+        var wholes: [LetterCase: NSString?] = [:]
+        var out = runs, at = 0
+        for i in runs.indices {
+            let length = runs[i].text.utf16.count
+            defer { at += length }
+            guard i < cases.count, let c = cases[i], c != .smallCaps else { continue }
+            if wholes[c] == nil {
+                let set = c.apply(whole)
+                wholes[c] = .some(set.utf16.count == whole.utf16.count ? set as NSString : nil)
+            }
+            if let set = wholes[c] ?? nil {
+                out[i].text = set.substring(with: NSRange(location: at, length: length))
+            } else {
+                out[i].text = c.apply(runs[i].text)
+            }
+        }
+        return (out, nil)
+    }
+
+    /// The colour paints lying one over another come to, the first lowest: what shows of each
+    /// through those over it, as the apps lay colours over one another. Nil when there are none.
+    static func composite(_ colors: [RGBA]) -> RGBA? {
+        guard var out = colors.first else { return nil }
+        for top in colors.dropFirst() {
+            let a = top.a + out.a * (1 - top.a)
+            guard a > 0 else {
+                out = RGBA(r: top.r, g: top.g, b: top.b, a: 0)
+                continue
+            }
+            func mix(_ t: Double, _ b: Double) -> Double { (t * top.a + b * out.a * (1 - top.a)) / a }
+            out = RGBA(r: mix(top.r, out.r), g: mix(top.g, out.g), b: mix(top.b, out.b), a: a)
+        }
+        return out
+    }
+}
+
+// MARK: - Masks, for every importer
+
+/// Masks brought in from other apps as Bezzle's own (see `Mask`): a group whose first layer, a
+/// shape, holds the rest, cut off at its outline. Figma and XD cut by a mask without drawing it,
+/// so its shape is clear there; Sketch draws it under what it holds.
+enum ImportMask {
+    /// The shape a mask cuts with, as a layer that can hold others: the layer itself when it is a
+    /// shape, and for a group one outline round everything in it, clear. `drawn` keeps how the
+    /// shape looks. Nil for a layer with no outline of its own to cut by, such as a text.
+    static func holder(_ layer: Node, drawn: Bool) -> Node? {
+        var h: Node
+        switch layer.kind {
+        case .rectangle, .ellipse, .path:
+            h = layer
+            if !drawn { clear(&h) }
+        case .group:
+            guard let outline = outline(of: layer), var n = ImportGeometry.outline(PathData.string(outline), .identity) else { return nil }
+            n.name = layer.name
+            n.locked = layer.locked
+            clear(&n)
+            h = n
+        default:
+            return nil
+        }
+        h.hidden = false
+        h.transform3D = nil
+        return h
+    }
+
+    /// A shape that shows nothing of itself, only where it cuts.
+    static func clear(_ n: inout Node) {
+        n.fill = Fill(on: false, color: .shape)
+        n.moreFills = nil
+        n.borders = []
+        n.shadows = []
+        n.blur = nil
+        n.blend = nil
+        n.opacity = 1
+    }
+
+    /// A mask of `holder` holding `held`; nil when it holds nothing, as such a mask cuts nothing.
+    static func mask(_ holder: Node, holding held: [Node], name: String) -> Node? {
+        guard !held.isEmpty else { return nil }
+        var g = Node(kind: .group, name: name, frame: .zero)
+        g.clipsToFirst = true
+        g.children = [holder] + held
+        return g
+    }
+
+    /// Whether any of `held` shows past the outline of `edge`, a shape in the same coordinates,
+    /// with its borders and shadows, so that cutting them off there changes what is seen: past
+    /// its box, or into a rounded corner. Groups not yet fitted round what they hold are looked
+    /// into. Anything but an upright rectangle is taken to cut something off.
+    static func reaches(_ held: [Node], outside edge: Node) -> Bool {
+        guard edge.kind == .rectangle, edge.rotation == 0 else { return true }
+        let box = edge.frame, inside = box.insetBy(dx: -0.5, dy: -0.5), r = edge.radii
+        let corners = [CGRect(x: box.minX, y: box.minY, width: r[0], height: r[0]),
+                       CGRect(x: box.maxX - r[1], y: box.minY, width: r[1], height: r[1]),
+                       CGRect(x: box.maxX - r[2], y: box.maxY - r[2], width: r[2], height: r[2]),
+                       CGRect(x: box.minX, y: box.maxY - r[3], width: r[3], height: r[3])].filter { $0.width > 0.5 }
+        return held.contains { n in
+            guard let reach = reach(of: n) else { return false }
+            return !inside.contains(reach) || corners.contains { $0.intersects(reach) }
+        }
+    }
+
+    private static func reach(of n: Node) -> CGRect? {
+        guard !n.hidden else { return nil }
+        var box: CGRect?
+        if n.isGroup {
+            if let cut = n.cutBy {
+                box = Geometry.bounds(of: cut)
+            } else {
+                box = n.children.compactMap(reach).reduce(nil as CGRect?) { $0?.union($1) ?? $1 }
+            }
+            box = box?.offsetBy(dx: n.frame.minX, dy: n.frame.minY)
+        } else {
+            box = Geometry.bounds(of: n)
+            let border = n.borders.filter { $0.position != .inside || n.kind == .line }.map(\.width).max() ?? 0
+            box = box?.insetBy(dx: -border, dy: -border)
+        }
+        let cast = n.outerShadows.map { s in s.blur * 1.5 + max(abs(s.x), abs(s.y)) + max(s.spread ?? 0, 0) }.max() ?? 0
+        let blurred = n.blur.map { $0.on && !$0.background ? $0.radius * 3 : 0 } ?? 0
+        let out = cast + blurred
+        return out > 0 ? box?.insetBy(dx: -out, dy: -out) : box
+    }
+
+    /// The outline round everything a layer shows, in its parent's coordinates; a mask's, its
+    /// shape's, as that is all of it that shows.
+    static func outline(of layer: Node) -> CGPath? {
+        guard !layer.hidden else { return nil }
+        guard layer.isGroup else { return layer.kind == .line ? nil : Renderer.placedOutline(of: layer) }
+        let parts: [CGPath]
+        if let cut = layer.cutBy {
+            parts = [Renderer.placedOutline(of: cut)]
+        } else {
+            parts = layer.children.compactMap(outline(of:))
+        }
+        guard var whole = parts.first else { return nil }
+        for p in parts.dropFirst() { whole = whole.union(p) }
+        var t = CGAffineTransform(translationX: layer.frame.minX, y: layer.frame.minY)
+        return whole.copy(using: &t)
+    }
+}
+
+// MARK: - Layout grids and guides, for every importer
+
+/// The columns, rows and guides artboards in other apps are laid out on, as Bezzle's.
+enum ImportLayout {
+    /// Bands `size` long and `gutter` apart, the first `start` in, along a side `length` long, as
+    /// Bezzle's columns or rows, which lie between equal margins and stretch with the artboard.
+    /// They lie where they did when they were in the middle; otherwise they keep their size and
+    /// go to the middle.
+    static func track(count: Int, size: CGFloat, gutter: CGFloat, start: CGFloat, along length: CGFloat,
+                      report: inout ImportReport) -> LayoutGrid.Track? {
+        guard count > 0, size.isFinite, gutter.isFinite, start.isFinite, length > 0 else { return nil }
+        let gutter = max(gutter, 0)
+        if count > LayoutGrid.Track.counts.upperBound {
+            report.note("Layout grids of more than 48 columns or rows, kept to 48")
+            return LayoutGrid.Track(count: LayoutGrid.Track.counts.upperBound, gutter: gutter, margin: max(start, 0))
+        }
+        let margin = (length - CGFloat(count) * size - CGFloat(count - 1) * gutter) / 2
+        if abs(margin - start) > 0.5 { report.note("Layout grids with uneven margins, centred") }
+        return LayoutGrid.Track(count: count, gutter: gutter, margin: max(margin, 0))
+    }
+
+    /// Bands stretching between a margin of `start` at one end and `end` at the other, as Bezzle's,
+    /// which have one margin for both: halfway between the two when they differ.
+    static func stretched(count: Int, gutter: CGFloat, start: CGFloat, end: CGFloat, report: inout ImportReport) -> LayoutGrid.Track? {
+        guard count > 0, gutter.isFinite, start.isFinite, end.isFinite else { return nil }
+        if abs(start - end) > 0.5 { report.note("Layout grids with uneven margins, centred") }
+        if count > LayoutGrid.Track.counts.upperBound { report.note("Layout grids of more than 48 columns or rows, kept to 48") }
+        return LayoutGrid.Track(count: min(count, LayoutGrid.Track.counts.upperBound), gutter: max(gutter, 0), margin: max((start + end) / 2, 0))
+    }
+
+    /// Guides at these places across an artboard of `size` (running down it) and down it (running
+    /// across it), each once; those off the artboard have nothing to line up and are left out.
+    static func guides(across xs: [CGFloat], down ys: [CGFloat], in size: CGSize) -> [String: Guideline]? {
+        var out: [String: Guideline] = [:]
+        var seen = Set<Guideline>()
+        for (positions, vertical) in [(xs, true), (ys, false)] {
+            let length = vertical ? size.width : size.height
+            for p in positions where p.isFinite && p >= 0 && p <= length {
+                let guide = Guideline.at(p, vertical: vertical, in: size)
+                guard seen.insert(guide).inserted else { continue }
+                out[Guideline.key(besides: out.keys)] = guide
+            }
+        }
+        return out.isEmpty ? nil : out
+    }
+}

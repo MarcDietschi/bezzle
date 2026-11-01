@@ -95,6 +95,11 @@ final class DocumentStore {
     var fronts: [UUID: Int] = [:]
     /// What is offered for a moment after a change to a deck. See `DeckOffer`.
     var offer: DeckOffer?
+    /// What is offered for a moment after a change to a copy of a component. See `ComponentOffer`.
+    var componentOffer: ComponentOffer?
+    /// What the last change did to copies of components, and when, for the canvas to show the
+    /// other copies following. See `ComponentTool`.
+    @ObservationIgnored var componentEcho: (echo: ComponentEcho, at: CFTimeInterval, was: BezzleDocument?)?
     /// Each deck's posts that something no longer fits on, as the deck was when they were found.
     @ObservationIgnored var brokenWorkedOut: [UUID: (node: Node, posts: Set<Int>)] = [:]
     /// The layer under the pointer, outlined on the canvas.
@@ -200,6 +205,8 @@ final class DocumentStore {
     var importReport: ImportReport?
     /// Set while the design is shared through iCloud.
     var sharing: Collaboration?
+    /// What the canvas shows of the design's named looks. See `Style`.
+    let styleShow = StyleShow()
 
     private struct Snapshot {
         var doc: BezzleDocument
@@ -247,15 +254,20 @@ final class DocumentStore {
         change(&next)
         next.syncGrids(since: doc, start: gestureStart?.doc)
         next.syncDecks(since: doc, fronts: fronts)
+        let echo = next.syncComponents(since: doc, start: gestureStart?.doc)
+        next.syncStyles(since: doc)
         next.keepMasks(since: doc)
         next.fitGroups(since: doc)
         next.fitCarousels()
         guard next != doc else { return }
         doc = next
+        noteEcho(echo, was: gestureStart == nil ? before.doc : nil)
         if gestureStart == nil {
             record(before, action)
             considerOffer(after: before.doc)
+            considerComponentOffer(after: before.doc, echo: echo, action: action)
         }
+        noteStyles(after: before.doc, settled: gestureStart == nil)
         scheduleSave()
     }
 
@@ -276,6 +288,7 @@ final class DocumentStore {
             record(start, action)
             considerOffer(after: start.doc)
         }
+        noteStyles(after: start.doc, settled: true, dragged: true)
         guides = []
         measurement = nil
         sharing?.showIfIdle()
@@ -381,6 +394,7 @@ final class DocumentStore {
         next.update(id) { $0 = node }
         next.syncGrids(since: doc)
         next.syncDecks(since: doc, fronts: fronts)
+        next.syncComponents(since: doc)
         return next
     }
 
@@ -627,6 +641,7 @@ final class DocumentStore {
         // A mask whose shape someone else took away while layers were put in it here holds none
         // of them by the first of those, as this Mac alone knows which its shape was.
         next.keepMasks(since: old)
+        next.reconcileComponents()
         next.fitGroups(since: old)
         // Artboards nobody changed stay as they were, sharing their storage, so what is worked
         // out from them is not worked out again.

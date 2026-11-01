@@ -60,12 +60,13 @@ enum DropPlan {
 
 extension DocumentStore {
     /// What dropping something at a canvas point, on a layer (or on nothing), would do: pictures
-    /// fill the shape they are dropped on, one each for a shape repeated in a grid, and anywhere
-    /// else are each a layer of their own; words fill a grid's text layers. Nil where it can go nowhere.
+    /// fill the shape or the letters of the text they are dropped on, one each for one repeated in
+    /// a grid, and anywhere else are each a layer of their own; words fill a grid's text layers.
+    /// Nil where it can go nowhere.
     func plan(for dropped: Dropped, at p: CGPoint, on target: UUID?) -> DropPlan? {
         guard !isReadOnly else { return nil }
         if !dropped.pictures.isEmpty {
-            if let target, let node = doc.node(target), [.rectangle, .ellipse, .path].contains(node.kind), !node.locked {
+            if let target, let node = doc.node(target), [.rectangle, .ellipse, .path, .text].contains(node.kind), !node.locked {
                 if dropped.pictures.count > 1, let grid = grid(holding: target), let slot = slot(of: target) {
                     return .fill(copies(of: slot, in: grid))
                 }
@@ -118,6 +119,8 @@ extension DocumentStore {
                     doc.update(id) { n in
                         n.fill.on = true
                         n.fill.image = fills[i % fills.count]
+                        // All of a text's letters show it.
+                        n.clearLetterColors()
                     }
                 }
             }

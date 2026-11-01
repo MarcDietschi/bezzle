@@ -552,7 +552,7 @@ enum Damage {
     private static func curvesMoved(_ x: Node, _ y: Node, _ ao: CGPoint, _ bo: CGPoint) -> CGRect? {
         guard x.kind == .path, y.kind == .path, x.path != y.path, !y.borders.contains(where: { $0.dash > 0 }),
               Perspective(x) == nil, Perspective(y) == nil else { return nil }
-        if x.frame.size != y.frame.size, y.fills.contains(where: { $0.gradient != nil || $0.image != nil }) { return nil }
+        if x.frame.size != y.frame.size, y.fills.contains(where: { $0.gradient != nil || $0.image != nil }) || y.borders.contains(where: \.paints) { return nil }
         func outlineless(_ n: Node) -> Node {
             var n = shell(n)
             n.frame = .zero
@@ -618,6 +618,11 @@ nonisolated extension Renderer {
             for child in node.children where !child.hidden { r = r.union(reach(of: child)) }
             return r.isNull ? own : r
         case .text:
+            // Along a curve, the frame is the box round the letters, which lean out of it a little.
+            if node.isCurved {
+                let size = max(node.style?.size ?? 24, node.spans?.compactMap(\.look.size).max() ?? 0)
+                return own.insetBy(dx: -size / 4, dy: -size / 4)
+            }
             // Words may run past the frame, and letters lean out of their boxes.
             let used = TextLayout.layout(node).usedSize
             let size = max(node.style?.size ?? 24, node.spans?.compactMap(\.look.size).max() ?? 0)

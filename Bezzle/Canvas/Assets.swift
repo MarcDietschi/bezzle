@@ -157,8 +157,8 @@ nonisolated final class Assets: @unchecked Sendable {
 }
 
 nonisolated extension Node {
-    /// Whether this layer, or any it holds, is filled with the picture.
+    /// Whether this layer, or any it holds, is filled or bordered with the picture.
     func shows(picture name: String) -> Bool {
-        fill.image?.assets.contains(name) == true || children.contains { $0.shows(picture: name) }
+        paintedPictures.contains { $0.assets.contains(name) } || children.contains { $0.shows(picture: name) }
     }
 }

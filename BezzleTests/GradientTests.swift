@@ -100,6 +100,8 @@ struct GradientTests {
         #expect(FillKind(fill) == .linear)
         fill.gradient?.kind = .radial
         #expect(FillKind(fill) == .radial)
-        #expect(FillKind.choices(with: .radial).count == 3 && FillKind.choices(with: .picture).count == 4)
+        // A picture is offered where one can be painted with, and always while there is one.
+        #expect(FillKind.choices(with: .radial, pictures: false).count == 3 && FillKind.choices(with: .picture, pictures: false).count == 4)
+        #expect(FillKind.choices(with: .solid, pictures: true).map(\.0) == [.solid, .linear, .radial, .picture])
     }
 }

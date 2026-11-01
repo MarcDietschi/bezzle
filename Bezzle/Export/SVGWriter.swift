@@ -188,24 +188,60 @@ nonisolated struct SVGWriter {
     /// The fill as attributes: a colour, or a gradient written into the definitions.
     private mutating func paint(_ fill: Fill, size: CGSize, alpha: Double) -> String {
         if let g = fill.gradient, !g.stops.isEmpty {
-            let stops = g.stops.sorted { $0.offset < $1.offset }.map { s in
-                "<stop offset=\"\(n(s.offset))\" stop-color=\"#\(s.color.hex)\"\(s.color.a < 1 ? " stop-opacity=\"\(n(s.color.a))\"" : "")/>"
-            }.joined()
-            let gradient = newID("gradient")
-            switch g.kind {
-            case .linear:
-                defs.append("<linearGradient id=\"\(gradient)\" gradientUnits=\"userSpaceOnUse\" x1=\"\(n(g.start.x * size.width))\" y1=\"\(n(g.start.y * size.height))\" x2=\"\(n(g.end.x * size.width))\" y2=\"\(n(g.end.y * size.height))\">\(stops)</linearGradient>")
-            case .radial:
-                let t = g.spread(in: size)
-                guard abs(t.a * t.d - t.b * t.c) > 1e-6 else {
-                    let last = g.stops.max { $0.offset < $1.offset }!.color
-                    return color(last, alpha: alpha)
-                }
-                defs.append("<radialGradient id=\"\(gradient)\" gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\" gradientTransform=\"matrix(\(n(t.a)) \(n(t.b)) \(n(t.c)) \(n(t.d)) \(n(t.tx)) \(n(t.ty)))\">\(stops)</radialGradient>")
+            guard let gradient = gradient(g, size: size) else {
+                let last = g.stops.max { $0.offset < $1.offset }!.color
+                return color(last, alpha: alpha)
             }
             return "fill=\"url(#\(gradient))\"" + (alpha < 1 ? " fill-opacity=\"\(n(alpha))\"" : "")
         }
         return color(fill.color, alpha: alpha)
+    }
+
+    /// A gradient across a layer of `size`, written into the definitions: its id, or nil for a
+    /// radial one spread to nothing, which is all its last colour.
+    private mutating func gradient(_ g: Gradient, size: CGSize) -> String? {
+        let stops = g.stops.sorted { $0.offset < $1.offset }.map { s in
+            "<stop offset=\"\(n(s.offset))\" stop-color=\"#\(s.color.hex)\"\(s.color.a < 1 ? " stop-opacity=\"\(n(s.color.a))\"" : "")/>"
+        }.joined()
+        let gradient = newID("gradient")
+        switch g.kind {
+        case .linear:
+            defs.append("<linearGradient id=\"\(gradient)\" gradientUnits=\"userSpaceOnUse\" x1=\"\(n(g.start.x * size.width))\" y1=\"\(n(g.start.y * size.height))\" x2=\"\(n(g.end.x * size.width))\" y2=\"\(n(g.end.y * size.height))\">\(stops)</linearGradient>")
+        case .radial:
+            let t = g.spread(in: size)
+            guard abs(t.a * t.d - t.b * t.c) > 1e-6 else { return nil }
+            defs.append("<radialGradient id=\"\(gradient)\" gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\" gradientTransform=\"matrix(\(n(t.a)) \(n(t.b)) \(n(t.c)) \(n(t.d)) \(n(t.tx)) \(n(t.ty)))\">\(stops)</radialGradient>")
+        }
+        return gradient
+    }
+
+    /// What paints a border or a text's letters, as an attribute's value: a colour, or a gradient
+    /// or a picture written into the definitions. A gradient lies across a layer of `size`; a
+    /// picture is placed in `place`, the layer's frame unless said otherwise, and shows once over
+    /// all of `box`, as on the canvas.
+    private mutating func ink(_ fill: Fill, size: CGSize, box: CGRect, place: CGRect? = nil) -> (value: String, opacity: Double?) {
+        if let image = fill.image {
+            guard let href = dataURI(asset: image.shown, developed: image.develop) ?? (image.cutout != nil ? dataURI(asset: image.asset, developed: image.develop) : nil)
+            else { return ("#D9D9D9", nil) }
+            let pattern = newID("pattern")
+            // In the pattern's own space, whose top left is the box's.
+            let placed = place ?? CGRect(origin: .zero, size: size)
+            let r = Renderer.imageRect(image, in: placed.size).offsetBy(dx: placed.minX - box.minX, dy: placed.minY - box.minY)
+            var element = "<image x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\" preserveAspectRatio=\"none\" xlink:href=\"\(href)\""
+            if image.flippedX == true || image.flippedY == true {
+                let sx: CGFloat = image.flippedX == true ? -1 : 1, sy: CGFloat = image.flippedY == true ? -1 : 1
+                element += " transform=\"matrix(\(n(sx)) 0 0 \(n(sy)) \(n((1 - sx) * r.midX)) \(n((1 - sy) * r.midY)))\""
+            }
+            // Its tile is as big as all it may paint, so it never shows twice.
+            defs.append("<pattern id=\"\(pattern)\" patternUnits=\"userSpaceOnUse\" x=\"\(n(box.minX))\" y=\"\(n(box.minY))\" width=\"\(n(box.width))\" height=\"\(n(box.height))\">\(element)/></pattern>")
+            return ("url(#\(pattern))", nil)
+        }
+        if let g = fill.gradient, !g.stops.isEmpty {
+            if let gradient = gradient(g, size: size) { return ("url(#\(gradient))", nil) }
+            let last = g.stops.max { $0.offset < $1.offset }!.color
+            return ("#\(last.hex)", last.a < 1 ? last.a : nil)
+        }
+        return ("#\(fill.color.hex)", fill.color.a < 1 ? fill.color.a : nil)
     }
 
     private func color(_ c: RGBA, alpha: Double) -> String {
@@ -235,7 +271,11 @@ nonisolated struct SVGWriter {
     private mutating func stroke(_ b: Border, of node: Node, geometry: String, closed: Bool) -> String {
         guard b.on, b.width > 0 else { return "" }
         let sides = closed && b.position != .center
-        var attrs = "fill=\"none\" stroke=\"#\(b.color.hex)\"\(b.color.a < 1 ? " stroke-opacity=\"\(n(b.color.a))\"" : "") stroke-width=\"\(n(sides ? b.width * 2 : b.width))\""
+        // A gradient or a picture, which covers all the border may reach.
+        let reach = closed ? b.reach : b.width / 2
+        let rim = CGRect(origin: .zero, size: node.frame.size).insetBy(dx: -reach, dy: -reach)
+        let (stroke, opacity) = ink(b.paint, size: node.frame.size, box: rim, place: rim)
+        var attrs = "fill=\"none\" stroke=\"\(stroke)\"\(opacity.map { " stroke-opacity=\"\(n($0))\"" } ?? "") stroke-width=\"\(n(sides ? b.width * 2 : b.width))\""
         attrs += " stroke-linejoin=\"miter\" stroke-linecap=\"\(closed || b.dash > 0 ? "butt" : "round")\""
         if b.dash > 0 { attrs += " stroke-dasharray=\"\(n(b.dash)) \(n(max(b.gap, 0.5)))\"" }
         let line = geometry + " \(attrs)/>"
@@ -371,14 +411,16 @@ nonisolated struct SVGWriter {
     /// Text that stays text: line by line where the canvas sets it, in its font, size and colour,
     /// and letters that look different from the rest in spans of their own; justified lines as
     /// wide as they are set, and the markers of a list's items before them.
-    private func text(_ node: Node) -> String {
+    private mutating func text(_ node: Node) -> String {
+        if let curved = CurvedText.laid(node) { return curvedText(node, curved) }
         let style = node.style ?? TextStyle()
         let laid = TextLayout.layout(node)
         let font = Fonts.font(style)
         let storage = laid.storage
         let string = storage.string as NSString
         let down = TextLayout.offset(node)
-        let baseColor: RGBA? = node.fill.on ? node.fill.color : nil
+        // As the letters are laid out: painted ones are solid, to be painted through.
+        let baseColor = node.letterColor
         var lines: [String] = []
         laid.manager.enumerateLineFragments(forGlyphRange: laid.manager.glyphRange(for: laid.container)) { rect, used, _, glyphs, _ in
             var characters = laid.manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
@@ -414,7 +456,13 @@ nonisolated struct SVGWriter {
         if style.tracking != 0 { attrs.append("letter-spacing=\"\(n(style.tracking / 1000 * style.size))\"") }
         let decorations = [style.underline ? "underline" : nil, style.strikethrough == true ? "line-through" : nil].compactMap { $0 }
         if !decorations.isEmpty { attrs.append("text-decoration=\"\(decorations.joined(separator: " "))\"") }
-        attrs.append(node.fill.on ? color(node.fill.color, alpha: 1) : "fill=\"none\"")
+        if node.fill.on, node.fill.paints {
+            // Letters of the text's own colour painted with its gradient or picture.
+            let (fill, opacity) = ink(node.fill, size: node.frame.size, box: Renderer.ink(of: node))
+            attrs.append("fill=\"\(fill)\"" + (opacity.map { " fill-opacity=\"\(n($0))\"" } ?? ""))
+        } else {
+            attrs.append(node.fill.on ? color(node.fill.color, alpha: 1) : "fill=\"none\"")
+        }
         return "<g \(attrs.joined(separator: " ")) xml:space=\"preserve\">\(lines.joined())</g>"
     }
 
@@ -563,3 +611,40 @@ nonisolated struct SVGWriter {
 
 nonisolated private func n(_ v: CGFloat) -> String { PathData.number(v) }
 nonisolated private func n(_ v: Double) -> String { PathData.number(CGFloat(v)) }
+
+nonisolated extension SVGWriter {
+    /// Words along a curve that stay words: each letter a text of its own, placed and turned
+    /// where it lies on the curve, in its font, size and colour.
+    fileprivate mutating func curvedText(_ node: Node, _ laid: CurvedText.Laid) -> String {
+        let style = node.style ?? TextStyle()
+        let font = Fonts.font(style)
+        let words = CurvedText.words(of: node)
+        let string = words.string as NSString
+        let baseColor = node.letterColor
+        var letters: [String] = []
+        for letter in laid.letters where NSMaxRange(letter.characters) <= string.length {
+            let drawn = string.substring(with: letter.characters)
+            guard !drawn.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            let attrs = words.attributes(at: letter.characters.location, effectiveRange: nil)
+            let own = Self.letterAttributes(attrs, against: font, style: style, color: baseColor)
+            // SVG sets letters with y running down, as the layer has it.
+            let m = CGAffineTransform(scaleX: 1, y: -1).concatenating(letter.place)
+            let place = "transform=\"matrix(\(n(m.a)) \(n(m.b)) \(n(m.c)) \(n(m.d)) \(n(m.tx)) \(n(m.ty)))\""
+            letters.append("<text \(([place] + own).joined(separator: " "))>\(Self.escape(drawn))</text>")
+        }
+        guard !letters.isEmpty else { return "" }
+        var attrs = ["font-family=\"\(Self.escape(Self.family(of: font, style: style)))\"", "font-size=\"\(n(style.size))\""]
+        let weight = Self.weight(of: font)
+        if weight != 400 { attrs.append("font-weight=\"\(weight)\"") }
+        if font.fontDescriptor.symbolicTraits.contains(.italic) { attrs.append("font-style=\"italic\"") }
+        let decorations = [style.underline ? "underline" : nil, style.strikethrough == true ? "line-through" : nil].compactMap { $0 }
+        if !decorations.isEmpty { attrs.append("text-decoration=\"\(decorations.joined(separator: " "))\"") }
+        if node.fill.on, node.fill.paints {
+            let (fill, opacity) = ink(node.fill, size: node.frame.size, box: Renderer.ink(of: node))
+            attrs.append("fill=\"\(fill)\"" + (opacity.map { " fill-opacity=\"\(n($0))\"" } ?? ""))
+        } else {
+            attrs.append(node.fill.on ? color(node.fill.color, alpha: 1) : "fill=\"none\"")
+        }
+        return "<g \(attrs.joined(separator: " ")) xml:space=\"preserve\">\(letters.joined())</g>"
+    }
+}

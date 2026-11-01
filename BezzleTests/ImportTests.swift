@@ -202,9 +202,11 @@ struct XDImportTests {
         #expect(pill.kind == .rectangle && pill.cornerRadius == 15 && pill.fill.color.hex == "0000FF")
         #expect(pill.frame == CGRect(x: 10, y: 400, width: 80, height: 30))
 
-        // The mask from the shared resources cuts the group down to its circle.
+        // The mask from the shared resources cuts the group down to its circle: a mask of
+        // Bezzle's, its circle clear, as XD does not draw it.
         let masked = try named("Masked")
-        #expect(masked.mask?.first?.kind == .ellipse)
+        #expect(masked.isMask && masked.mask == nil && masked.children.map(\.name) == ["Round", "Big"])
+        #expect(masked.children[0].kind == .ellipse && masked.children[0].fills.isEmpty)
         #expect(masked.frame == CGRect(x: 0, y: 500, width: 100, height: 100))
     }
 
@@ -255,6 +257,46 @@ struct XDImportTests {
         let older = try named("Older")
         #expect(older.runs.map(\.text) == ["Big ", "bold"])
         #expect(older.runs[1].look.face == "Bold" && older.runs[1].look.color?.hex == "FF0000" && older.runs[1].look.underline == true)
+    }
+
+    /// An XD artboard laid out on columns with uneven margins and a top margin, with guides, and a
+    /// text with a word in capitals.
+    static func helpersFile() throws -> URL {
+        let manifest = #"{"children":[{"name":"artwork","path":"artwork","children":[{"name":"Board","path":"artboard-1","uxdesign#bounds":{"x":0,"y":0,"width":375,"height":812}}]},{"name":"resources","path":"resources","components":[]}]}"#
+        let helvetica = #""fontFamily":"Helvetica","fontStyle":"Regular","postscriptName":"Helvetica","fontSize":16"#
+        let board = """
+        {"children":[{"type":"artboard","meta":{"ux":{
+            "gridStyle":{"type":"layout","visible":true,"columns":4,"gutter":16,"marginLeft":20,"marginRight":28,"marginTop":10,"marginBottom":0,"rowSpacing":8,"columnSpacing":8},
+            "guidesModel":{"verticalGuides":{"guides":[{"position":20},{"position":500}]},"horizontalGuides":{"guides":[{"position":406}]}}}},
+          "artboard":{"children":[
+          {"type":"text","name":"Shout","transform":{"a":1,"b":0,"c":0,"d":1,"tx":20,"ty":100},
+           "style":{"fill":{"type":"solid","color":{"mode":"RGB","value":{"r":0,"g":0,"b":0}}},"font":{"family":"Helvetica","style":"Regular","postscriptName":"Helvetica","size":16}},
+           "meta":{"ux":{"rangedStyles":[{"length":6,\(helvetica)},{"length":3,"textTransform":"uppercase",\(helvetica)},{"length":0,\(helvetica)}]}},
+           "text":{"rawText":"Hello new world","frame":{"type":"positioned"},"paragraphs":[{"lines":[[{"x":0,"y":0,"from":0,"to":15}]]}]}}
+        ]}}]}
+        """
+        let zip = TestZip.make([("mimetype", Data("application/vnd.adobe.sparkler.project+dcxucf".utf8)), ("manifest", Data(manifest.utf8)),
+                                ("artwork/artboard-1/graphics/graphicContent.agc", Data(board.utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).xd")
+        try zip.write(to: url)
+        return url
+    }
+
+    @Test func bringsLayoutGridsAndGuidesAcross() throws {
+        let url = try Self.helpersFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try XDImporter.read(url)
+        let notes = imported.report.notes
+        let board = try #require(imported.document.artboards.first)
+        // Bezzle's columns have one margin for both sides: halfway between XD's two.
+        #expect(board.layout == LayoutGrid(columns: LayoutGrid.Track(count: 4, gutter: 16, margin: 24), rows: nil, baseline: nil))
+        #expect(notes["Layout grids with uneven margins, centred"] == 1 && notes["Top and bottom margins of layout grids, left out"] == 1)
+        // A guide off the artboard has nothing to line up and is left out; the one in the middle keeps to it.
+        #expect(board.sortedGuides().map(\.guide) == [Guideline(vertical: true, edge: .start, offset: 20), Guideline(vertical: false, edge: .middle, offset: 0)])
+
+        let shout = try #require(imported.document.allNodes.first { $0.name == "Shout" })
+        #expect(shout.text == "Hello NEW world" && shout.style?.letterCase == nil)
+        #expect(notes["Texts with several styles, shown in their main one"] == nil)
     }
 
     @Test func writesTheDesignAsAPackage() throws {

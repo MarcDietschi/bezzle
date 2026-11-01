@@ -355,6 +355,9 @@ struct AddBar: View {
         /// Done instead of changing each selected layer, for what is more than that, such as
         /// repeating them in a grid.
         var add: (() -> Void)? = nil
+        /// What it does to the design as a whole, shown on the canvas while it is pointed at, for
+        /// what changes more than the selected layers, such as an artboard turned dark.
+        var reshape: ((inout BezzleDocument) -> Void)? = nil
     }
 
     @Environment(DocumentStore.self) private var store
@@ -364,10 +367,15 @@ struct AddBar: View {
         Flow(spacing: 6) {
             ForEach(items) { item in
                 AddChip(title: item.title, help: item.help) { inside in
-                    store.showPreview(item.id, inside ? item.change : nil)
+                    if let reshape = item.reshape {
+                        store.showPreview(item.id, reshaping: inside ? reshape : nil)
+                    } else {
+                        store.showPreview(item.id, inside ? item.change : nil)
+                    }
                     if inside { store.pointedAspect = item.aspect } else if store.pointedAspect == item.aspect { store.pointedAspect = nil }
                 } add: {
                     store.showPreview(item.id, nil)
+                    store.showPreview(item.id, reshaping: nil)
                     store.pointedAspect = nil
                     withAnimation(Theme.unfold) {
                         if let add = item.add { add() } else { store.updateSelection(item.action, item.change) }
@@ -384,7 +392,7 @@ struct AddBar: View {
 
 /// Its views side by side at the size they want, going on in a new row below when the next one
 /// would not fit beside the others, rather than squeezing them all into one.
-private struct Flow: Layout {
+struct Flow: Layout {
     let spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

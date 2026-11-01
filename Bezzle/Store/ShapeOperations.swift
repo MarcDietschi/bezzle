@@ -198,7 +198,7 @@ extension DocumentStore {
 
     var canOutlineBorders: Bool { !outlinable.isEmpty }
 
-    /// Turns each selected layer's border into a shape filled with its colour, which scales as
+    /// Turns each selected layer's border into a shape filled with its paint, which scales as
     /// a shape does rather than keeping its width. It goes just above the layer, which keeps its
     /// fill; a layer that was all border becomes the shape.
     func outlineBorders() {
@@ -215,9 +215,12 @@ extension DocumentStore {
                 // Each border a shape of its own, one over another as they were drawn.
                 var above = at.indices[at.indices.count - 1] + 1
                 for (i, border) in n.borders.enumerated() {
+                    // Filled as the border was drawn: a gradient lying where it lay.
+                    var painted = n
+                    painted.fill = border.paint
+                    painted.fill.on = true
                     guard let area = Outlines.covered(by: border, along: line, inside: inside, closed: closed),
-                          var shape = n.reshaped(to: area, origin: o) else { continue }
-                    shape.fill = Fill(color: border.color)
+                          var shape = painted.reshaped(to: area, origin: o) else { continue }
                     shape.moreFills = nil
                     shape.border = Border()
                     shape.moreBorders = nil

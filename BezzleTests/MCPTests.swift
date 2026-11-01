@@ -32,6 +32,31 @@ struct MCPTests {
         (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
     }
 
+    @Test func componentsAreMadePlacedAndVaried() async {
+        rect("Shape", CGRect(x: 20, y: 20, width: 120, height: 40))
+        let made = await call("make_component", ["layers": ["Shape"], "name": "Chip"])
+        #expect(!made.failed, "\(made.text)")
+        let copy = bench.store.doc.copies(of: bench.store.doc.masters.first?.id ?? UUID()).first
+        #expect(copy != nil)
+        let added = await call("add_copy", ["component": "Chip", "artboard": "A", "x": 20, "y": 120, "width": 200])
+        #expect(!added.failed, "\(added.text)")
+        #expect(bench.store.doc.copies(of: bench.store.doc.masters[0].id).count == 2)
+        let listed = json(await call("list_components", [:]).text)
+        let components = listed["components"] as? [[String: Any]] ?? []
+        #expect(components.first?["name"] as? String == "Chip")
+        #expect((components.first?["copies"] as? [Any])?.count == 2)
+        let variant = await call("add_variant", ["layer": copy!.id.uuidString, "name": "Quiet"])
+        #expect(!variant.failed, "\(variant.text)")
+        #expect(variant.text.contains("\"variant\":\"Quiet\""))
+        let other = bench.store.doc.copies(of: bench.store.doc.masters[0].id).first { $0.id != copy!.id }!
+        let shown = await call("set_variant", ["layers": [other.id.uuidString], "variant": "Quiet"])
+        #expect(!shown.failed, "\(shown.text)")
+        #expect(bench.store.doc.node(other.id)?.instance?.variant == bench.store.doc.masters[0].master?.variants.first)
+        let unlinked = await call("unlink_copies", ["layers": [other.id.uuidString]])
+        #expect(!unlinked.failed)
+        #expect(bench.store.doc.node(other.id)?.isCopy == false)
+    }
+
     @Test func addingBuildsLayersInTheirParentsCoordinates() async {
         let answer = await call("add_layers", ["parent": "A", "layers": [
             ["kind": "rectangle", "name": "Box", "x": 10, "y": 20, "width": 30, "height": 40, "fill": "#FF0000"],

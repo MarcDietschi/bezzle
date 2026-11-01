@@ -71,21 +71,35 @@ enum Welcome {
         func lessons(_ all: [Lesson]) {
             for lesson in all {
                 number += 1
-                place(sheet(lesson, number: number))
+                let (made, beside) = sheet(lesson, number: number)
+                let y = top
+                place(made)
+                // Its foot level with its sheet's, where the sheet's note points; its right edge
+                // where the other sheets end; listed after its sheet.
+                if var beside {
+                    beside.frame.origin = CGPoint(x: width - beside.frame.width, y: y + made.frame.height - beside.frame.height)
+                    doc.nodes.insert(beside, at: 0)
+                }
             }
         }
         place(cover())
-        lessons([moving, corners, layering, typing, styling, drawing, cutting, repeating])
+        lessons([moving, corners, layering, typing, styling, painting, curving, drawing, cutting, repeating, linking, naming, darkening])
         number += 1
         let (stack, own) = stackSheet(number: number)
         // Room under the stack for the posts behind it, which show below its foot.
         place(stack, after: 60)
-        lessons([lining, tipping, lifting, developing, framing, marking, sharing])
+        lessons([lining, adapting, tipping, lifting, developing, framing, marking, sharing])
 
         // The stack is made as the app makes one, from the sheet and the words for each post.
         let store = DocumentStore(url: FileManager.default.temporaryDirectory, document: doc)
         store.spread(own.map { id, texts in (layer: id, fill: { (n: inout Node, i: Int) in n.text = texts[i] }) }, count: 3, action: "Make Posts")
         doc = store.doc
+        // The buttons of the lesson on components are one component, as the app makes one.
+        if let made = DocumentStore.makeComponent(from: [buttonIDs[0]], in: &doc, name: String(localized: "Pill button")),
+           let master = doc.node(made)?.instance?.of {
+            doc.fitGroups()
+            for id in buttonIDs.dropFirst() { DocumentStore.link(id, to: master, in: &doc) }
+        }
         doc.fitGroups()
         return doc
     }
@@ -128,7 +142,7 @@ enum Welcome {
             y = max(y + 24, line.frame.maxY) + 10
         }
         y += 26
-        let count = words(String(localized: "Sixteen lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
+        let count = words(String(localized: "Twenty-two lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
         let start = note(String(localized: "Scroll down to start"), at: CGPoint(x: left, y: count.frame.maxY + 10), tilt: -3)
         layers += [count, start]
         let height = max(640, (start.frame.maxY + 76).rounded())
@@ -194,13 +208,19 @@ enum Welcome {
         var mat: ClosedRange<CGFloat> = 396...840
         /// Anything the sheet itself has besides its layers, such as a layout grid.
         var dress: (@MainActor (inout Node) -> Void)?
+        /// An artboard of its own to try it on, for what is done to a whole artboard: it lies
+        /// beside the sheet where the mat would, and the sheet is only as wide as its words.
+        var beside: (@MainActor () -> Node)?
+        /// A note under the words, pointing across at the artboard beside them.
+        var towards: String?
         /// The things to try, laid out on the mat whose frame it is given.
-        var scene: @MainActor (CGRect) -> [Node]
+        var scene: @MainActor (CGRect) -> [Node] = { _ in [] }
     }
 
-    /// A lesson's sheet: its words down the left, and its mat on the right with the things to try.
+    /// A lesson's sheet: its words down the left, and its mat on the right with the things to try;
+    /// or, for a lesson tried on an artboard of its own, the words alone and that artboard.
     /// Words that run long, as German ones do, make the sheet taller rather than crowd it.
-    private static func sheet(_ lesson: Lesson, number: Int) -> Node {
+    private static func sheet(_ lesson: Lesson, number: Int) -> (sheet: Node, beside: Node?) {
         var layers: [Node] = []
         var y: CGFloat = 56
         let kicker = words(String(localized: "Lesson \(number)"), Style.kicker, Ink.pencil, at: CGPoint(x: left, y: y))
@@ -232,12 +252,29 @@ enum Welcome {
             layers += [rule, text]
             y = text.frame.maxY + 16
         }
+        if let other = lesson.beside?() {
+            let edge = left * 2 + column
+            var pointed: [Node] = []
+            if let towards = lesson.towards {
+                let hint = note(towards, at: CGPoint(x: left + 6, y: y + 10), tilt: -4)
+                // Across to the sheet's edge, at the foot of the artboard beside it.
+                let pointer = arrow(from: CGPoint(x: min(hint.frame.maxX + 8, edge - 60), y: hint.frame.midY + 2),
+                                    to: CGPoint(x: edge - 12, y: hint.frame.minY - 14), bend: 12)
+                pointed.append(pointing(hint, pointer))
+                y = hint.frame.maxY + 16
+            }
+            let height = max(560, (y + 40).rounded(), other.frame.height)
+            var board = Node(kind: .artboard, name: lesson.name(number), frame: CGRect(x: 0, y: 0, width: edge, height: height))
+            board.children = [read(lesson.title, layers)] + pointed
+            lesson.dress?(&board)
+            return (board, other)
+        }
         let height = max(560, (y + 40).rounded())
         let mat = CGRect(x: lesson.mat.lowerBound, y: 40, width: lesson.mat.upperBound - lesson.mat.lowerBound, height: height - 80)
         var board = Node(kind: .artboard, name: lesson.name(number), frame: CGRect(x: 0, y: 0, width: width, height: height))
         board.children = [backdrop(mat), read(lesson.title, layers)] + lesson.scene(mat)
         lesson.dress?(&board)
-        return board
+        return (board, nil)
     }
 
     // MARK: The lessons
@@ -416,6 +453,42 @@ enum Welcome {
         return [card, title, list, method, pointing(hint, pointer)]
     }
 
+    private static let painting = Lesson(
+        name: { String(localized: "\($0). Gradients and pictures") },
+        title: String(localized: "Paint with anything."),
+        steps: [
+            String(localized: "Click the word and open its Fill card. Click its colour, then Linear or Radial at the top of the menu: every letter takes the gradient. Drag the handles on the canvas to aim it."),
+            String(localized: "Drop a photo from the Finder on the word. The photo shows through its letters, as it does in the word below, and they stay words you can type in."),
+            String(localized: "Click the ring. Its Border card has the same choices: a gradient or a photo runs all the way round the border."),
+        ],
+        tip: String(localized: "Letters given a colour of their own while typing keep it over the paint."),
+        scene: paints)
+
+    /// A word to paint, a word the tour's photo shows through, and a ring whose border to paint.
+    private static func paints(_ m: CGRect) -> [Node] {
+        let heavy = TextStyle(family: "Charter", face: "Black", size: 84)
+        var glow = words(String(localized: "Glow", comment: "A big word in the tour, there to be painted with a gradient."), heavy, Ink.coral,
+                         at: CGPoint(x: m.minX + 44, y: m.minY + 74))
+        glow.name = String(localized: "Words to paint")
+        glow.locked = false
+        var lake = words(String(localized: "Lake", comment: "A big word in the tour whose letters the tour's photo of a lake shows through."), heavy, Ink.navy,
+                         at: CGPoint(x: m.minX + 44, y: glow.frame.maxY + 18))
+        lake.name = String(localized: "Painted words")
+        lake.fill.image = ImageFill(asset: photoAsset, mode: .cover, size: WelcomePhoto.size)
+        lake.locked = false
+        let side: CGFloat = 128
+        var ring = shape(.ellipse, CGRect(x: m.maxX - 48 - side, y: m.maxY - 44 - side, width: side, height: side), Ink.sun)
+        ring.name = String(localized: "Ring")
+        ring.fill.on = false
+        ring.border = Border(on: true, color: Ink.sun, width: 18, position: .inside)
+        let paint = note(String(localized: "paint my letters"), at: CGPoint(x: m.minX + 150, y: m.minY + 26), tilt: -4)
+        let toGlow = arrow(from: CGPoint(x: paint.frame.minX - 6, y: paint.frame.midY + 4), to: CGPoint(x: m.minX + 96, y: glow.frame.minY + 14), bend: 14)
+        var border = note(String(localized: "and my border"), at: CGPoint(x: 0, y: ring.frame.minY - 50), tilt: -5)
+        border.frame.origin.x = (min(ring.frame.midX - border.frame.width / 2, m.maxX - 18 - border.frame.width)).rounded()
+        let toRing = arrow(from: CGPoint(x: border.frame.minX + 24, y: border.frame.maxY + 4), to: CGPoint(x: ring.frame.minX + 14, y: ring.frame.minY + 20), bend: 16)
+        return [glow, lake, ring, pointing(paint, toGlow), pointing(border, toRing)]
+    }
+
     private static let drawing = Lesson(
         name: { String(localized: "\($0). Pen") },
         title: String(localized: "Join the dots."),
@@ -515,6 +588,163 @@ enum Welcome {
         ],
         tip: String(localized: "Drop a folder of photos or a text file on a grid to fill every card at once."),
         scene: card)
+
+    private static let linking = Lesson(
+        name: { String(localized: "\($0). Components") },
+        title: String(localized: "Change one, change them all."),
+        steps: [
+            String(localized: "These three buttons are copies of one component. Click one, then click its shape and give it another colour. The others take it as the light reaches them."),
+            String(localized: "Double-click a label and type. The words are each copy's own, and its button grows round them."),
+            String(localized: "Change a colour again and click New Variant in the word that comes up. The variants lie beside a selected button, to switch between."),
+        ],
+        keys: ["⌥", "⌘", "K"],
+        tip: String(localized: "Select anything and press these keys to make it a component. Parts from the resources panel are components already: drop one twice and both change together."),
+        scene: buttons)
+
+    /// The buttons of the lesson on components, made one component when the tour is put together.
+    private static let buttonIDs = [
+        UUID(uuidString: "6B1D2C9E-5A41-4C7E-9B0E-3F2A1D8C7E01")!,
+        UUID(uuidString: "6B1D2C9E-5A41-4C7E-9B0E-3F2A1D8C7E02")!,
+        UUID(uuidString: "6B1D2C9E-5A41-4C7E-9B0E-3F2A1D8C7E03")!,
+    ]
+
+    private static func buttons(_ m: CGRect) -> [Node] {
+        let labels = [String(localized: "Continue"), String(localized: "Save"), String(localized: "Share")]
+        let x = m.minX + 96
+        var made: [Node] = []
+        for (i, label) in labels.enumerated() {
+            let y = m.minY + 120 + CGFloat(i) * 76
+            var text = words(label, TextStyle(face: "Semibold", size: 16, align: .center), RGBA.white, at: .zero)
+            let w = max(140, (text.frame.width + 64).rounded())
+            var pill = shape(.rectangle, CGRect(x: x, y: y, width: w, height: 48), Ink.pencil)
+            pill.cornerRadius = 24
+            pill.shadow = Shadow(on: true, color: RGBA(r: 0.2, g: 0.27, b: 0.6, a: 0.22), x: 0, y: 6, blur: 14)
+            text.frame.origin = CGPoint(x: (pill.frame.midX - text.frame.width / 2).rounded(), y: (pill.frame.midY - text.frame.height / 2).rounded())
+            var button = group(String(localized: "Pill button"), [pill, text].map { var n = $0; n.locked = false; return n })
+            button.id = buttonIDs[i]
+            made.append(button)
+        }
+        let hint = note(String(localized: "change one"), at: CGPoint(x: x + 210, y: m.minY + 84), tilt: -4)
+        let pointer = arrow(from: CGPoint(x: hint.frame.minX - 6, y: hint.frame.midY + 4), to: CGPoint(x: x + 150, y: m.minY + 126), bend: 14)
+        return made + [pointing(hint, pointer)]
+    }
+
+    private static let naming = Lesson(
+        name: { String(localized: "\($0). Styles") },
+        title: String(localized: "Give a look a name."),
+        steps: [
+            String(localized: "Click the button and open its Fill card. Click + Style, then press ↩ to keep the name Bezzle offers."),
+            String(localized: "Two more layers have the same colour, so Bezzle offers to name them too: click Name Them Too. Now change the colour and watch it run over all three."),
+            String(localized: "Click an empty spot on the canvas. The design’s styles are at the top of the inspector: change one there, and every layer that has it follows."),
+        ],
+        tip: String(localized: "Type, shadows and corners can have names too. Looks that several layers share wait among the styles, dashed: one click names them all."),
+        scene: studio)
+
+    /// The colours of the card in the lesson on styles, its own: naming one names every layer of
+    /// the tour that has it.
+    private enum Studio {
+        static let teal = RGBA(hex: "1E9E8A")!
+        static let card = RGBA(hex: "FFFCF7")!
+        static let ink = RGBA(hex: "26302E")!
+        static let ink2 = RGBA(hex: "5F6B68")!
+        static let paper = RGBA(hex: "F7FFFC")!
+    }
+
+    /// A card for an open day, its colour on a tag, a rule and a button, without a name yet. Its
+    /// words stay put, so a click on them goes to what they lie on.
+    private static func studio(_ m: CGRect) -> [Node] {
+        let o = CGPoint(x: (m.midX - 150).rounded(), y: (m.midY - 168).rounded())
+        let inner: CGFloat = 244
+        var day = words(String(localized: "Saturday"), TextStyle(face: "Semibold", size: 11, tracking: 120, letterCase: .upper), Studio.paper, at: .zero)
+        var tag = shape(.rectangle, CGRect(x: o.x + 28, y: o.y + 30, width: (day.frame.width + 24).rounded(), height: 24), Studio.teal)
+        tag.name = String(localized: "Tag")
+        tag.cornerRadius = 12
+        day.frame.origin = CGPoint(x: (tag.frame.midX - day.frame.width / 2).rounded(), y: (tag.frame.midY - day.frame.height / 2).rounded())
+        let title = words(String(localized: "Open studio"), TextStyle(family: "Charter", face: "Bold", size: 30, lineSpacing: 34), Studio.ink,
+                          at: CGPoint(x: o.x + 28, y: tag.frame.maxY + 16), width: inner)
+        var rule = shape(.rectangle, CGRect(x: o.x + 28, y: title.frame.maxY + 12, width: 36, height: 4), Studio.teal)
+        rule.name = String(localized: "Rule")
+        rule.cornerRadius = 2
+        let body = words(String(localized: "Paint, print and throw pots with us, from ten till four."), TextStyle(size: 14, lineSpacing: 21), Studio.ink2,
+                         at: CGPoint(x: o.x + 28, y: rule.frame.maxY + 14), width: inner)
+        var label = words(String(localized: "Join us"), TextStyle(face: "Semibold", size: 15), Studio.paper, at: .zero)
+        var button = shape(.rectangle, CGRect(x: o.x + 28, y: body.frame.maxY + 22, width: max(124, label.frame.width + 48).rounded(), height: 44), Studio.teal)
+        button.name = String(localized: "Join button")
+        button.cornerRadius = 22
+        label.frame.origin = CGPoint(x: (button.frame.midX - label.frame.width / 2).rounded(), y: (button.frame.midY - label.frame.height / 2).rounded())
+        var card = shape(.rectangle, CGRect(x: o.x, y: o.y, width: inner + 56, height: (button.frame.maxY + 30 - o.y).rounded()), Studio.card)
+        card.name = String(localized: "Event card")
+        card.cornerRadius = 18
+        card.cornerSmoothing = 0.6
+        card.shadow = Shadow(on: true, color: RGBA(r: 0.12, g: 0.24, b: 0.2, a: 0.14), x: 0, y: 12, blur: 30)
+        // Its right end kept on the mat, however long the words.
+        var hint = note(String(localized: "name my colour"), at: CGPoint(x: 0, y: card.frame.maxY + 26), tilt: -4)
+        hint.frame.origin.x = (min(button.frame.maxX + 40, m.maxX - 18 - hint.frame.width)).rounded()
+        let pointer = arrow(from: CGPoint(x: hint.frame.minX - 6, y: hint.frame.midY - 2), to: CGPoint(x: button.frame.maxX - 18, y: button.frame.maxY + 8), bend: -14)
+        return [card, tag, day, title, rule, body, button, label, pointing(hint, pointer)]
+    }
+
+    private static let darkening = Lesson(
+        name: { String(localized: "\($0). Light and dark") },
+        title: String(localized: "Turn the lights down."),
+        steps: [
+            String(localized: "Click the name above the weather screen’s corner. Point at Dark at the foot of the inspector: the screen shows how it looks at night. Click to keep it."),
+            String(localized: "Each of its colours now has a name and a dark look, made for you. Change one on the dark screen, and only its dark look changes."),
+            String(localized: "Open its Dark card and click Light One Beside It. The sun and moon on the card switch the screen between the two."),
+        ],
+        tip: String(localized: "With nothing selected, the styles show each colour’s light and dark looks side by side."),
+        beside: weather,
+        towards: String(localized: "try it on this screen"))
+
+    /// The colours of the weather screen, its own and found nowhere else in the tour: shown dark,
+    /// the screen names every colour it has, and so would the same colours on every other sheet.
+    private enum Sky {
+        static let ground = RGBA(hex: "EAF1FA")!
+        static let card = RGBA(hex: "FAFCFF")!
+        static let ink = RGBA(hex: "142033")!
+        static let ink2 = RGBA(hex: "5B6B80")!
+        static let sun = RGBA(hex: "FFB21F")!
+        static let blue = RGBA(hex: "2F6FE4")!
+        static let paper = RGBA(hex: "FBFDFF")!
+    }
+
+    /// A weather app's screen, light, to turn dark. One colour each, no gradients: a light colour
+    /// in a gradient goes dark in the dark as a ground does, and a sun would turn black inside.
+    private static func weather() -> Node {
+        let w: CGFloat = 360, h: CGFloat = 548, x: CGFloat = 32
+        let today = words(String(localized: "Today"), TextStyle(face: "Semibold", size: 11, tracking: 140, letterCase: .upper), Sky.ink2, at: CGPoint(x: x, y: 44))
+        let sky = words(String(localized: "Sunny spells"), TextStyle(family: "Charter", face: "Bold", size: 30, lineSpacing: 34), Sky.ink,
+                        at: CGPoint(x: x, y: today.frame.maxY + 8), width: 180)
+        let degrees = words("21°", TextStyle(face: "Light", size: 96), Sky.ink, at: CGPoint(x: x - 5, y: sky.frame.maxY + 6))
+        let wind = words(String(localized: "A light breeze, no rain."), TextStyle(size: 15, lineSpacing: 22), Sky.ink2, at: CGPoint(x: x, y: degrees.frame.maxY + 2))
+        var sun = shape(.ellipse, CGRect(x: w - x - 104, y: sky.frame.maxY + 18, width: 104, height: 104), Sky.sun)
+        sun.shadow = Shadow(on: true, color: Sky.sun.with(alpha: 0.5), x: 0, y: 10, blur: 36)
+        var layers = [today, sky, degrees, wind, sun]
+        let top = wind.frame.maxY + 30, side = ((w - x * 2 - 24) / 3).rounded(.down)
+        for (i, (time, temperature)) in [("9:00", "17°"), ("12:00", "21°"), ("15:00", "19°")].enumerated() {
+            let f = CGRect(x: x + CGFloat(i) * (side + 12), y: top, width: side, height: 104)
+            var card = shape(.rectangle, f, Sky.card)
+            card.cornerRadius = 16
+            card.cornerSmoothing = 0.6
+            card.shadow = Shadow(on: true, color: RGBA(r: 0.08, g: 0.13, b: 0.2, a: 0.08), x: 0, y: 4, blur: 12)
+            var hour = words(time, TextStyle(face: "Medium", size: 12), Sky.ink2, at: .zero)
+            hour.frame.origin = CGPoint(x: (f.midX - hour.frame.width / 2).rounded(), y: f.minY + 16)
+            let dot = shape(.ellipse, CGRect(x: f.midX - 8, y: f.minY + 40, width: 16, height: 16), Sky.sun)
+            var warm = words(temperature, TextStyle(face: "Semibold", size: 20), Sky.ink, at: .zero)
+            warm.frame.origin = CGPoint(x: (f.midX - warm.frame.width / 2).rounded(), y: f.minY + 64)
+            layers.append(group(time, [card, hour, dot, warm].map { var n = $0; n.locked = false; return n }))
+        }
+        var label = words(String(localized: "Next 7 days"), TextStyle(face: "Semibold", size: 15), Sky.paper, at: .zero)
+        // At the foot of the screen, as an app has it.
+        var button = shape(.rectangle, CGRect(x: x, y: h - 36 - 48, width: w - x * 2, height: 48), Sky.blue)
+        button.cornerRadius = 24
+        label.frame.origin = CGPoint(x: (button.frame.midX - label.frame.width / 2).rounded(), y: (button.frame.midY - label.frame.height / 2).rounded())
+        layers += [button, label]
+        var board = Node(kind: .artboard, name: String(localized: "Weather"), frame: CGRect(x: 0, y: 0, width: w, height: h))
+        board.fill.color = Sky.ground
+        board.children = layers.map { var n = $0; n.locked = false; return n }
+        return board
+    }
 
     private static func card(_ m: CGRect) -> [Node] {
         let o = CGPoint(x: m.minX + 56, y: m.minY + 108)
@@ -621,6 +851,46 @@ enum Welcome {
         return [picture, side, wide, small, pointing(hint, pointer)]
     }
 
+    private static let adapting = Lesson(
+        name: { String(localized: "\($0). Adaptive layout") },
+        title: String(localized: "One design, every size."),
+        steps: [
+            String(localized: "Click the name above the flyer’s corner and drag its right edge out. Bezzle lays the design out again as it grows: given room, the photo moves beside the words."),
+            String(localized: "Open its Artboard card and point at the sizes in its Size menu: the flyer tries each one on. Click one, and its layers spring into their new places."),
+            String(localized: "Press ⌘Z to go back: the design is just as it was. Turn off Adapt layout in the same card to resize an artboard without moving anything."),
+        ],
+        beside: flyer,
+        towards: String(localized: "try it on this flyer"))
+
+    /// The colours of the flyer, apart from every other sheet's.
+    private enum Lakeside {
+        static let ground = RGBA(hex: "FFF6EA")!
+        static let ink = RGBA(hex: "22313A")!
+        static let ink2 = RGBA(hex: "56656C")!
+        static let accent = RGBA(hex: "DE5A40")!
+        static let paper = RGBA(hex: "FFFCF5")!
+    }
+
+    /// A flyer for an evening by the lake: the tour's photo across its top, words and a button under it.
+    private static func flyer() -> Node {
+        let w: CGFloat = 380, h: CGFloat = 475, x: CGFloat = 32
+        let picture = photo(CGRect(x: 0, y: 0, width: w, height: 216))
+        let when = words(String(localized: "Saturday, 6 pm"), TextStyle(face: "Semibold", size: 11, tracking: 140, letterCase: .upper), Lakeside.accent,
+                         at: CGPoint(x: x, y: picture.frame.maxY + 30))
+        let title = words(String(localized: "Summer by the lake"), TextStyle(family: "Charter", face: "Bold", size: 32, lineSpacing: 36), Lakeside.ink,
+                          at: CGPoint(x: x, y: when.frame.maxY + 8), width: w - x * 2)
+        let body = words(String(localized: "Swim, picnic and stay for the sunset. Bring a friend."), TextStyle(size: 15, lineSpacing: 22), Lakeside.ink2,
+                         at: CGPoint(x: x, y: title.frame.maxY + 10), width: w - x * 2)
+        var label = words(String(localized: "Count me in"), TextStyle(face: "Semibold", size: 15), Lakeside.paper, at: .zero)
+        var button = shape(.rectangle, CGRect(x: x, y: body.frame.maxY + 24, width: max(140, label.frame.width + 48).rounded(), height: 44), Lakeside.accent)
+        button.cornerRadius = 22
+        label.frame.origin = CGPoint(x: (button.frame.midX - label.frame.width / 2).rounded(), y: (button.frame.midY - label.frame.height / 2).rounded())
+        var board = Node(kind: .artboard, name: String(localized: "Flyer"), frame: CGRect(x: 0, y: 0, width: w, height: max(h, (button.frame.maxY + 32).rounded())))
+        board.fill.color = Lakeside.ground
+        board.children = [picture, when, title, body, button, label].map { var n = $0; n.locked = false; return n }
+        return board
+    }
+
     private static let tipping = Lesson(
         name: { String(localized: "\($0). 3D") },
         title: String(localized: "Tip it into depth."),
@@ -712,6 +982,39 @@ enum Welcome {
         let hint = note(String(localized: "a little flat, isn’t it?"), at: CGPoint(x: f.minX + 8, y: f.maxY + 30), tilt: -3)
         let pointer = arrow(from: CGPoint(x: hint.frame.maxX + 8, y: hint.frame.midY), to: CGPoint(x: f.midX + 70, y: f.maxY + 8), bend: 18)
         return [framed, pointing(hint, pointer)]
+    }
+
+    private static let curving = Lesson(
+        name: { String(localized: "\($0). Curves") },
+        title: String(localized: "Bend the words."),
+        steps: [
+            String(localized: "Click the headline. Swing a bead at one of its ends down and round: the words bend after it, and straight below they close into a ring."),
+            String(localized: "Drag the label onto the edge of the badge and hold it still. After a moment the words jump onto it. Keep dragging to slide them round, to either side."),
+            String(localized: "Resize the badge or drag its points: the words follow. Pull them well clear of it to take them off."),
+        ],
+        tip: String(localized: "Double-click words on a curve to type: they straighten while you do."),
+        scene: badge)
+
+    /// Words to bend, a badge to lay words round, and the words to lay round it.
+    private static func badge(_ m: CGRect) -> [Node] {
+        var headline = words(String(localized: "Make it bend"), TextStyle(family: "Charter", face: "Bold", size: 40), Ink.coral,
+                             at: CGPoint(x: m.minX + 48, y: m.minY + 60))
+        headline.name = String(localized: "Words to bend")
+        headline.locked = false
+        var label = words(String(localized: "Fresh from the oven"), TextStyle(face: "Semibold", size: 15, tracking: 120, letterCase: .upper), Ink.ink,
+                          at: CGPoint(x: m.minX + 48, y: m.minY + 230))
+        label.name = String(localized: "Label")
+        label.locked = false
+        let side: CGFloat = 170
+        var disc = shape(.ellipse, CGRect(x: m.maxX - 64 - side, y: max(m.maxY - 56 - side, label.frame.maxY + 90), width: side, height: side), Ink.sun)
+        disc.name = String(localized: "Badge")
+        disc.shadow = Shadow(on: true, color: RGBA(r: 0.35, g: 0.24, b: 0.05, a: 0.22), x: 0, y: 10, blur: 22)
+        // The bead shows a little past the headline's end, on its baseline.
+        let bead = note(String(localized: "swing my end"), at: CGPoint(x: headline.frame.maxX - 70, y: headline.frame.maxY + 34), tilt: -5)
+        let toBead = arrow(from: CGPoint(x: bead.frame.maxX - 30, y: bead.frame.minY - 4), to: CGPoint(x: headline.frame.maxX + 20, y: headline.frame.maxY - 8), bend: -14)
+        let edge = note(String(localized: "hold me on its edge"), at: CGPoint(x: m.minX + 44, y: label.frame.maxY + 22), tilt: -4)
+        let toEdge = arrow(from: CGPoint(x: edge.frame.midX, y: edge.frame.maxY + 6), to: CGPoint(x: disc.frame.minX - 8, y: disc.frame.midY), bend: -26)
+        return [disc, headline, label, pointing(bead, toBead), pointing(edge, toEdge)]
     }
 
     private static let framing = Lesson(

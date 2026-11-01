@@ -386,7 +386,14 @@ extension RepeatGrid {
         let now = placed(x), then = placed(xb)
         let mineNow = placed(firstNow), mineThen = placed(firstWas)
 
-        // What was changed about layers that were there before.
+        // What was changed about layers that were there before; where they moved to, from the
+        // outermost in, each placed in what holds it as that has moved by then.
+        var moves: [(depth: Int, target: UUID, at: CGPoint, size: CGSize)] = []
+        func depth(_ id: UUID) -> Int {
+            var d = 0, at = now[id]?.parent
+            while let up = at { d += 1; at = now[up]?.parent }
+            return d
+        }
         for (id, p) in now {
             guard let q = then[id] else { continue }
             let target = id.mixed(key)
@@ -406,7 +413,7 @@ extension RepeatGrid {
                     var a = p.node.fill, b = q.node.fill
                     a.image = nil
                     b.image = nil
-                    if a != b { changes.append { $0.fill = Fill(on: a.on, color: a.color, gradient: a.gradient, image: $0.fill.image) } }
+                    if a != b { changes.append { $0.fill = Fill(on: a.on, color: a.color, gradient: a.gradient, image: $0.fill.image, named: a.named) } }
                 case "mask":
                     let mask = p.node.mask?.map { copy($0, key) }
                     changes.append { $0.mask = mask }
@@ -424,14 +431,20 @@ extension RepeatGrid {
             // Moved or resized; but not grown or shrunk to its words as they were typed or restyled.
             let typed = p.node.kind == .text && (p.node.text != q.node.text || p.node.spans != q.node.spans)
             if p.node.frame != q.node.frame, !typed, !own.contains("frame"), mWas.map({ $0.frame == m.node.frame }) ?? true {
-                let at = p.origin + p.node.frame.origin - shift
-                let frame = CGRect(origin: at - m.origin, size: p.node.frame.size)
-                changes.append { node in
+                moves.append((depth(id), target, p.origin + p.node.frame.origin - shift, p.node.frame.size))
+            }
+            if !changes.isEmpty { modify(&first, target) { n in changes.forEach { $0(&n) } } }
+        }
+        for level in Set(moves.map(\.depth)).sorted() {
+            let mine = placed(first)
+            for move in moves where move.depth == level {
+                guard let m = mine[move.target] else { continue }
+                let frame = CGRect(origin: move.at - m.origin, size: move.size)
+                modify(&first, move.target) { node in
                     node.frame = frame
                     node.refit()
                 }
             }
-            if !changes.isEmpty { modify(&first, target) { n in changes.forEach { $0(&n) } } }
         }
 
         // Layers taken out of the cell, from the first; layers put into it, into the first, where

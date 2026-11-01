@@ -40,6 +40,10 @@ struct Workspace: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .overlay {
+                        StyleMarks(store: store)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .overlay {
                         GradientHandles(store: store)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }

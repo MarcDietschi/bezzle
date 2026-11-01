@@ -50,6 +50,8 @@ private struct Converter {
     /// The kind of each picture in the archive, by its name there.
     private var imageTypes: [String: String] = [:]
     private var fonts = FontMatch()
+    /// How many masks have been made, to name those XD left unnamed.
+    private var masks = 0
 
     init(archive: ZipArchive) {
         self.archive = archive
@@ -119,6 +121,11 @@ private struct Converter {
         if let fill = root["style"].flatMap({ dict($0)["fill"] }) as? JSON, let f = self.fill(fill, flipped: false) {
             board.fill = f
         }
+        let ux = dict(dict(root["meta"])["ux"])
+        board.layout = layoutGrid(dict(ux["gridStyle"]), width: frame.width)
+        let guides = dict(ux["guidesModel"])
+        func positions(_ v: Any?) -> [CGFloat] { list(dict(v)["guides"]).map { num($0["position"], -1) } }
+        board.guides = ImportLayout.guides(across: positions(guides["verticalGuides"]), down: positions(guides["horizontalGuides"]), in: frame.size)
         let toBoard = CGAffineTransform(translationX: -frame.minX, y: -frame.minY)
         for e in topLevel(scene) {
             // Layers right on the artboard say where they are on the canvas, and also, when the
@@ -197,12 +204,19 @@ private struct Converter {
         var g = Node(kind: .group, frame: .zero)
         g.children = children(of: e).compactMap { convert($0, into: m) }
         let ux = dict(dict(e["meta"])["ux"])
-        // The mask is kept with the group, or in older files among the shared resources.
+        // The mask is kept with the group, or in older files among the shared resources. XD cuts
+        // by it without drawing it, so it becomes a mask of Bezzle's, its shape clear.
         let ref = dict(dict(e["style"])["clipPath"])["ref"] as? String
-        let mask = list(dict(ux["clipPathResources"])["children"]).first ?? ref.flatMap { list(clipPaths[$0]?["children"]).first }
-        if let mask, let shape = convert(mask, into: m) {
+        let clip = list(dict(ux["clipPathResources"])["children"]).first ?? ref.flatMap { list(clipPaths[$0]?["children"]).first }
+        if let clip, var shape = convert(clip, into: m), !g.children.isEmpty {
+            shape.hidden = false
+            if let holder = ImportMask.holder(shape, drawn: false) {
+                masks += 1
+                return ImportMask.mask(holder, holding: g.children, name: String(localized: "Mask \(masks)"))
+            }
+            report.note("Masks of text or lines, cutting by their box")
             g.mask = [shape]
-        } else if ref != nil {
+        } else if ref != nil, clip == nil {
             report.note("Masks that could not be found")
         }
         if ux["repeatGrid"] != nil {
@@ -210,6 +224,21 @@ private struct Converter {
             report.note("Repeat grids, brought in as groups")
         }
         return g.children.isEmpty ? nil : g
+    }
+
+    /// The columns an artboard is laid out on, from XD's grid for it: columns stretching between
+    /// margins at the left and right. XD's square grid has nothing in Bezzle to go to.
+    private mutating func layoutGrid(_ style: JSON, width: CGFloat) -> LayoutGrid? {
+        guard style["visible"] as? Bool ?? false else { return nil }
+        guard style["type"] as? String ?? "layout" == "layout" else {
+            report.note("Square grids, left out")
+            return nil
+        }
+        let count = Int(num(style["columns"]))
+        guard count > 0, let columns = ImportLayout.stretched(count: count, gutter: num(style["gutter"]), start: num(style["marginLeft"]),
+                                                             end: num(style["marginRight"]), report: &report) else { return nil }
+        if num(style["marginTop"]) > 0 || num(style["marginBottom"]) > 0 { report.note("Top and bottom margins of layout grids, left out") }
+        return LayoutGrid(columns: columns, rows: nil, baseline: nil)
     }
 
     /// An XD repeat grid as one of Bezzle's: its cells read from the top left, the first one the
@@ -442,9 +471,11 @@ private struct Converter {
         var n = Node(kind: .text, frame: .zero)
         let words = t["rawText"] as? String ?? ""
         let attributes = dict(style["textAttributes"])
+        // A gradient or a picture paints the letters of the text's own colour.
+        var paint: Fill?
         if let fill = style["fill"] as? JSON, let f = self.fill(fill, flipped: false) {
-            n.fill = f.gradient == nil && f.image == nil ? f : Fill(on: true, color: f.color)
-            if f.gradient != nil { report.note("Texts filled with a gradient, in its first colour") }
+            n.fill = f
+            if f.paints { paint = f }
         }
 
         // The ranges, each as long as XD counts (in UTF-16, as JavaScript does), the last to the end.
@@ -471,12 +502,17 @@ private struct Converter {
         if ranges.isEmpty { ranges = [(NSRange(location: 0, length: whole.length), ranged.first ?? [:])] }
         var runs: [(text: String, letters: Letters)] = []
         for r in ranges { runs.append((whole.substring(with: r.range), letters(r.style, style, ink: n.fill.color))) }
-
-        // What is the layer's alone comes from the range of most of its letters.
-        let main = ranges.max { $0.range.length < $1.range.length }?.style ?? [:]
-        if Set(ranges.map { $0.style["textTransform"] as? String ?? "none" }).count > 1 {
-            report.note("Texts with several styles, shown in their main one")
+        // Each range may be in a letter case of its own.
+        let cases = ranges.map { r -> LetterCase? in
+            switch (r.style["textTransform"] ?? attributes["textTransform"]) as? String {
+            case "uppercase": .upper
+            case "lowercase": .lower
+            case "titlecase": .title
+            default: nil
+            }
         }
+        let cased = ImportText.cased(runs, cases, report: &report)
+
         var ts = TextStyle()
         if let height = attributes["lineHeight"] { ts.lineSpacing = num(height) }
         if num(attributes["paragraphAfterSpacing"]) > 0 { ts.paragraphSpacing = num(attributes["paragraphAfterSpacing"]) }
@@ -486,14 +522,15 @@ private struct Converter {
         case "justify": .justify
         default: .left
         }
-        ts.letterCase = switch main["textTransform"] as? String {
-        case "uppercase": .upper
-        case "lowercase": .lower
-        case "titlecase": .title
-        default: nil
-        }
+        ts.letterCase = cased.letterCase
         n.style = ts
-        n.setImportedRuns(runs)
+        n.setImportedRuns(cased.runs)
+        if let paint, n.fill.color != paint.color {
+            // Most of its letters have colours of their own, so the paint is theirs alone.
+            n.fill.gradient = nil
+            n.fill.image = nil
+            report.note(paint.gradient != nil ? "Texts filled with a gradient, in its first colour" : "Texts filled with a picture, in a plain colour")
+        }
         ts = n.style ?? ts
 
         // Where each line starts and where its baseline is, measured from the text's origin.

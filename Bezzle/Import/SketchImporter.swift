@@ -106,6 +106,8 @@ private struct Converter {
     /// Colours are in Display P3 rather than sRGB.
     private var p3 = false
     private var fonts = FontMatch()
+    /// How many masks have been made, to name each.
+    private var masks = 0
 
     private static let shapes: Set<String> = ["rectangle", "oval", "shapePath", "polygon", "star", "triangle"]
     private static let blends: [Int: BlendMode] = [1: .darken, 2: .multiply, 3: .colorBurn, 4: .lighten, 5: .screen, 6: .colorDodge,
@@ -146,6 +148,9 @@ private struct Converter {
 
         var stacked: [[Node]] = []
         for page in pages {
+            if !Self.guides(page["horizontalRulerData"]).isEmpty || !Self.guides(page["verticalRulerData"]).isEmpty {
+                report.note("Guides on the canvas, left out")
+            }
             var boards: [Node] = [], loose: [Node] = [], run: [JSON] = []
             for e in list(page["layers"]) {
                 if ["artboard", "symbolMaster"].contains(e["_class"] as? String) {
@@ -216,38 +221,105 @@ private struct Converter {
         report.artboards += 1
         board.fill = e["hasBackgroundColor"] as? Bool == true ? Fill(color: color(e["backgroundColor"])) : Fill(on: false, color: .white)
         board.children = layers(list(e["layers"]), into: .identity, scope: Scope())
+        board.layout = layoutGrid(dict(e["layout"]), grid: dict(e["grid"]), size: board.frame.size)
+        // The guides pulled out of the ruler across the top run down the artboard, and those out
+        // of the one down its side run across it.
+        board.guides = ImportLayout.guides(across: Self.guides(e["horizontalRulerData"]), down: Self.guides(e["verticalRulerData"]), in: board.frame.size)
         if e["isVisible"] as? Bool == false { board.hidden = true }
         if e["isLocked"] as? Bool == true { board.locked = true }
         return board
     }
 
     /// Layers side by side in one parent, bottom first. A layer that is a mask cuts off those
-    /// above it, up to one that breaks the chain; they go into a group of their own with it as
-    /// its mask, drawn under them as Sketch draws it.
+    /// above it, up to one that breaks the chain; they become a mask of Bezzle's with it as its
+    /// shape, drawn under them as Sketch draws an outline mask. An alpha mask is not drawn.
     private mutating func layers(_ list: [JSON], into outer: CGAffineTransform, scope: Scope) -> [Node] {
         var out: [Node] = []
-        var masked: Node?
+        var cut: (shape: Node, drawn: Bool, held: [Node])?
+        func close(_ out: inout [Node], _ cut: inout (shape: Node, drawn: Bool, held: [Node])?) {
+            defer { cut = nil }
+            guard let (shape, drawn, held) = cut else { return }
+            // A mask that cuts nothing is only its shape, as Sketch draws it.
+            guard !held.isEmpty else {
+                if drawn { out.append(shape) }
+                return
+            }
+            if let holder = ImportMask.holder(shape, drawn: drawn) {
+                // A group is drawn as it is, and cut by an outline round it.
+                let shown = shape.isGroup && drawn ? [shape] : []
+                if let mask = ImportMask.mask(holder, holding: shown + held, name: maskName()) { out.append(mask) }
+                if drawn, !holder.borders.isEmpty || !holder.innerShadows.isEmpty {
+                    report.note("Borders and inner shadows of masks, drawn over what they hold")
+                }
+            } else {
+                // Only a shape can hold others; anything else cuts by its box, as it always did.
+                report.note("Masks of text or lines, cutting by their box")
+                var g = Node(kind: .group, frame: .zero)
+                g.mask = [shape]
+                g.children = (drawn ? [Self.renewed(shape)] : []) + held
+                if !g.children.isEmpty { out.append(g) }
+            }
+        }
         for e in list {
             let visible = e["isVisible"] as? Bool ?? true
-            if e["hasClippingMask"] as? Bool == true || e["shouldBreakMaskChain"] as? Bool == true {
-                if let g = masked { out.append(g) }
-                masked = nil
-            }
+            if e["hasClippingMask"] as? Bool == true || e["shouldBreakMaskChain"] as? Bool == true { close(&out, &cut) }
             guard let n = convert(e, into: outer, scope: scope) else { continue }
             if e["hasClippingMask"] as? Bool == true, visible {
-                if int(e["clippingMaskMode"]) == 1 { report.note("Alpha masks, cutting by their outline") }
-                var g = Node(kind: .group, name: n.name, frame: .zero)
-                g.mask = [n]
-                if !n.fills.isEmpty || !n.borders.isEmpty || !n.shadows.isEmpty || n.isGroup { g.children = [Self.renewed(n)] }
-                masked = g
-            } else if masked != nil {
-                masked?.children.append(n)
+                let alpha = int(e["clippingMaskMode"]) == 1
+                if alpha { report.note("Alpha masks, cutting by their outline") }
+                cut = (n, !alpha, [])
+            } else if cut != nil {
+                cut?.held.append(n)
             } else {
                 out.append(n)
             }
         }
-        if let g = masked { out.append(g) }
+        close(&out, &cut)
         return out
+    }
+
+    /// The name of the next mask: "Mask 1", "Mask 2", as Bezzle names its own.
+    private mutating func maskName() -> String {
+        masks += 1
+        return String(localized: "Mask \(masks)")
+    }
+
+    /// What reaches past `box` is cut off there, as an artboard cuts it off: the layers become a
+    /// mask whose shape is the background, or a clear edge where there is none.
+    private func edged(_ g: inout Node, back: Node?, box: CGRect, _ m: CGAffineTransform) {
+        let held = Array(g.children.dropFirst(back == nil ? 0 : 1))
+        guard !held.isEmpty, var edge = back ?? rectangle(box, m, name: String(localized: "Edge"), color: .shape),
+              ImportMask.reaches(held, outside: edge) else { return }
+        if back == nil { ImportMask.clear(&edge) }
+        g.children = [edge] + held
+        g.clipsToFirst = true
+    }
+
+    /// Where the guides pulled out of a ruler lie, from its ruler data.
+    private static func guides(_ ruler: Any?) -> [CGFloat] {
+        (dict(ruler)["guides"] as? [Any] ?? []).map { num($0) }
+    }
+
+    /// The columns and rows an artboard is laid out on, from Sketch's layout settings. Sketch
+    /// sets columns side by side in an area of a width of their own, starting at an offset from
+    /// the left, with half a gutter outside the first and last when it says so; rows run from the
+    /// top, each a number of gutters tall. Sketch's square grid has nothing in Bezzle to go to.
+    private mutating func layoutGrid(_ layout: JSON, grid: JSON, size: CGSize) -> LayoutGrid? {
+        if grid["isEnabled"] as? Bool == true, num(grid["gridSize"]) > 0 { report.note("Square grids, left out") }
+        guard !layout.isEmpty, enabled(layout) else { return nil }
+        var out = LayoutGrid()
+        let count = int(layout["numberOfColumns"]), gutter = max(num(layout["gutterWidth"]), 0), column = max(num(layout["columnWidth"]), 0)
+        if layout["drawVertical"] as? Bool ?? true, count > 0 {
+            let start = num(layout["horizontalOffset"]) + (layout["guttersOutside"] as? Bool == true ? gutter / 2 : 0)
+            out.columns = ImportLayout.track(count: count, size: column, gutter: gutter, start: start, along: size.width, report: &report)
+        }
+        let rowGutter = max(num(layout["gutterHeight"]), 0), row = rowGutter * max(num(layout["rowHeightMultiplication"]), 0)
+        if layout["drawHorizontal"] as? Bool == true, row > 0 {
+            // As many rows as fit down the artboard.
+            let rows = max(Int(((size.height + rowGutter) / (row + rowGutter)).rounded(.down)), 1)
+            out.rows = ImportLayout.track(count: rows, size: row, gutter: rowGutter, start: 0, along: size.height, report: &report)
+        }
+        return out.orNil
     }
 
     /// A copy of a layer, it and all it holds with ids of their own.
@@ -367,11 +439,9 @@ private struct Converter {
     private mutating func inset(_ e: JSON, _ m: CGAffineTransform, scope: Scope) -> Node? {
         let box = CGRect(origin: .zero, size: frame(of: e).size)
         var g = Node(kind: .group, frame: .zero)
-        if e["hasBackgroundColor"] as? Bool == true, let back = rectangle(box, m, color: color(e["backgroundColor"])) {
-            g.children.append(back)
-        }
-        g.children += layers(list(e["layers"]), into: m, scope: scope)
-        g.mask = rectangle(box, m, name: String(localized: "Edge"), color: .shape).map { [$0] }
+        let back = e["hasBackgroundColor"] as? Bool == true ? rectangle(box, m, color: color(e["backgroundColor"])) : nil
+        g.children = [back].compactMap { $0 } + layers(list(e["layers"]), into: m, scope: scope)
+        edged(&g, back: back, box: box, m)
         return g.children.isEmpty ? nil : g
     }
 
@@ -426,19 +496,14 @@ private struct Converter {
         let into = CGAffineTransform(scaleX: k, y: k).concatenating(m)
         var g = Node(kind: .group, frame: .zero)
         let box = CGRect(origin: .zero, size: target)
-        if master["hasBackgroundColor"] as? Bool == true, master["includeBackgroundColorInInstance"] as? Bool == true,
-           let back = rectangle(box, into, color: color(master["backgroundColor"])) {
-            g.children.append(back)
-        }
+        let back = master["hasBackgroundColor"] as? Bool == true && master["includeBackgroundColorInInstance"] as? Bool == true
+            ? rectangle(box, into, color: color(master["backgroundColor"])) : nil
         let content = Self.resized(list(master["layers"]), from: source, to: target)
         expanding.append(id)
-        g.children += layers(content, into: into, scope: inner)
+        g.children = [back].compactMap { $0 } + layers(content, into: into, scope: inner)
         expanding.removeLast()
         // The master is an artboard, so what reaches past its edges is cut off there.
-        let reach = content.map { Geometry.bounds(of: frame(of: $0), rotation: -Double(num($0["rotation"]))) }.reduce(box) { $0.union($1) }
-        if !box.insetBy(dx: -0.5, dy: -0.5).contains(reach) {
-            g.mask = rectangle(box, into, name: String(localized: "Edge"), color: .shape).map { [$0] }
-        }
+        edged(&g, back: back, box: box, into)
         return g.children.isEmpty ? nil : g
     }
 
@@ -722,7 +787,7 @@ private struct Converter {
             report.note("Fills under a picture, left out")
         }
         n.fills = found.map { flipped ? $0.flipped(horizontally: false) : $0 }
-        n.borders = borders(style, open: false)
+        n.borders = borders(style, open: false, size: size, map: map).map { flipped ? $0.flipped(horizontally: false) : $0 }
     }
 
     private func color(_ v: Any?) -> RGBA {
@@ -833,19 +898,21 @@ private struct Converter {
         return nil
     }
 
-    /// The layer's borders, one over another as Sketch draws them, the first lowest.
-    private mutating func borders(_ style: JSON, open: Bool) -> [Border] {
-        list(style["borders"]).filter(enabled).map { border($0, style, open: open) }
+    /// The layer's borders, one over another as Sketch draws them, the first lowest. A gradient
+    /// is measured on the layer's frame, `size` big, as a fill's is, and carried onto the Bezzle
+    /// layer's by `map`.
+    private mutating func borders(_ style: JSON, open: Bool, size: CGSize = .zero, map: (CGPoint) -> CGPoint = { $0 }) -> [Border] {
+        list(style["borders"]).filter(enabled).map { border($0, style, open: open, size: size, map: map) }
     }
 
-    private mutating func border(_ b: JSON, _ style: JSON, open: Bool) -> Border {
+    private mutating func border(_ b: JSON, _ style: JSON, open: Bool, size: CGSize, map: (CGPoint) -> CGPoint) -> Border {
         var c = color(b["color"])
-        if int(b["fillType"]) == 1, let first = list(dict(b["gradient"])["stops"]).first {
-            c = color(first["color"])
-            report.note("Borders with a gradient, in its first colour")
-        }
         c.a *= opacity(b)
         var out = Border(on: true, color: c, width: max(num(b["thickness"], 1), 0))
+        if int(b["fillType"]) == 1, let g = gradient(dict(b["gradient"]), size: size, opacity: opacity(b), map: map) {
+            out.color = g.stops[0].color
+            out.gradient = g
+        }
         out.position = switch int(b["position"]) {
         case 1: open ? .center : .inside
         case 2: open ? .center : .outside
@@ -909,7 +976,12 @@ private struct Converter {
         // A shared text style swapped in by an instance sets the whole text in it.
         if restyled { runs = [] }
         let main = runs.max { num($0["length"]) < num($1["length"]) }.map { dict($0["attributes"]) } ?? common
-        if Set(runs.map { Self.typeset(dict($0["attributes"])) }).count > 1 { report.note("Texts with several styles, shown in their main one") }
+        // Each run has its own font, size, colour and lines; how far apart the lines lie, how the
+        // paragraphs are aligned and the font's features are the whole text's.
+        let typesets = runs.map { Self.typeset(dict($0["attributes"])) }
+        if Set(typesets.map(\.spacing)).count > 1 { report.note("Texts with several line or paragraph spacings, spaced as their main part") }
+        if Set(typesets.map(\.alignment)).count > 1 { report.note("Texts with paragraphs aligned differently, aligned as their main part") }
+        if Set(typesets.map(\.font)).count > 1 { report.note("Texts with font features or axes in part of them, set as their main part") }
 
         // Each run's words, as Sketch counts them (in UTF-16, as the Mac does), and any no run
         // covers in the longest run's style; new words from an instance are all in that style.
@@ -930,16 +1002,27 @@ private struct Converter {
         if pieces.isEmpty { pieces = [(text, main)] }
 
         var n = Node(kind: .text, frame: .zero)
-        // A fill on a text layer paints its letters over their own colours.
+        // Fills on a text layer paint its letters over their own colours, one over another as
+        // they lie, in the colour they come to; what an opaque one covers does not show.
         var paint: RGBA?
-        if let f = list(style["fills"]).first(where: enabled), let made = fill(f, size: frame(of: e).size, image: nil, map: { $0 }) {
-            paint = made.color
-            if made.gradient != nil { report.note("Texts filled with a gradient, in its first colour") }
-            if made.image != nil { report.note("Texts filled with a picture, in a plain colour") }
+        let fills = list(style["fills"]).filter(enabled).compactMap { fill($0, size: frame(of: e).size, image: nil, map: { $0 }) }
+        // One gradient or picture showing paints them all with it.
+        var painting: Fill?
+        if !fills.isEmpty {
+            let showing = fills[(fills.lastIndex { $0.gradient == nil && $0.image == nil && $0.color.a >= 0.999 } ?? 0)...]
+            paint = ImportText.composite(showing.map(\.color))
+            if showing.count == 1, let only = showing.first, only.paints {
+                painting = only
+            } else {
+                if showing.contains(where: { $0.gradient != nil }) { report.note("Texts filled with a gradient, in its first colour") }
+                if showing.contains(where: { $0.image != nil }) { report.note("Texts filled with a picture, in a plain colour") }
+            }
         }
         if list(style["borders"]).contains(where: enabled) { report.note("Texts with a border, drawn without it") }
         var letterRuns: [(text: String, letters: Letters)] = []
         for piece in pieces { letterRuns.append((piece.text, letters(piece.attributes, paint: paint))) }
+        // Each run may be in a letter case of its own.
+        let cased = ImportText.cased(letterRuns, pieces.map { Self.letterCase($0.attributes) }, report: &report)
 
         var ts = TextStyle()
         let paragraph = dict(main["paragraphStyle"])
@@ -952,15 +1035,15 @@ private struct Converter {
         default: .left
         }
         if num(paragraph["paragraphSpacing"]) > 0 { ts.paragraphSpacing = num(paragraph["paragraphSpacing"]) }
-        ts.letterCase = switch int(main["MSAttributedStringTextTransformAttribute"]) {
-        case 1: .upper
-        case 2: .lower
-        default: nil
-        }
+        ts.letterCase = cased.letterCase
         let font = dict(dict(main["MSAttributedStringFontAttribute"])["attributes"])
         ts.axes = Self.axes(font["variation"])
         n.style = ts
-        n.setImportedRuns(letterRuns)
+        n.setImportedRuns(cased.runs)
+        if let painting {
+            n.fill.gradient = painting.gradient
+            n.fill.image = painting.image
+        }
         ts = n.style ?? ts
         ts.features = Self.features(list(font["featureSettings"]), of: Fonts.font(ts))
 
@@ -1029,14 +1112,32 @@ private struct Converter {
                        tracking: (num(a["kerning"]) / size * 10_000).rounded() / 10, list: nil)
     }
 
-    /// What of a run Bezzle holds for a whole text only, written out to tell whether runs differ in it.
-    private static func typeset(_ a: JSON) -> String {
+    /// The letter case a run with Sketch's `attributes` is set in.
+    private static func letterCase(_ a: JSON) -> LetterCase? {
+        switch int(a["MSAttributedStringTextTransformAttribute"]) {
+        case 1: .upper
+        case 2: .lower
+        default: nil
+        }
+    }
+
+    /// What of a run Bezzle holds for a whole text only, to tell whether runs differ in it: how
+    /// far apart its lines and paragraphs lie, how its paragraph is aligned, and its font's
+    /// features and axes, each written out.
+    private struct Typeset: Hashable {
+        var spacing: String
+        var alignment: Int
+        var font: String
+    }
+
+    private static func typeset(_ a: JSON) -> Typeset {
         let font = dict(dict(a["MSAttributedStringFontAttribute"])["attributes"]), p = dict(a["paragraphStyle"])
-        let parts: [Any] = [Double(num(p["maximumLineHeight"])), Double(num(p["minimumLineHeight"])), int(p["alignment"]) % 4,
-                            Double(num(p["paragraphSpacing"])), int(a["MSAttributedStringTextTransformAttribute"]),
-                            font["variation"] ?? [:], font["featureSettings"] ?? []]
-        guard JSONSerialization.isValidJSONObject(parts), let data = try? JSONSerialization.data(withJSONObject: parts, options: .sortedKeys) else { return "" }
-        return String(decoding: data, as: UTF8.self)
+        func written(_ parts: [Any]) -> String {
+            guard JSONSerialization.isValidJSONObject(parts), let data = try? JSONSerialization.data(withJSONObject: parts, options: .sortedKeys) else { return "" }
+            return String(decoding: data, as: UTF8.self)
+        }
+        return Typeset(spacing: written([Double(num(p["maximumLineHeight"])), Double(num(p["minimumLineHeight"])), Double(num(p["paragraphSpacing"]))]),
+                       alignment: int(p["alignment"]) % 4, font: written([font["variation"] ?? [:], font["featureSettings"] ?? []]))
     }
 
     /// Where a variable font is set along its axes, by their tags; Sketch keys each by the number

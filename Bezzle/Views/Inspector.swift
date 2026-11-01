@@ -28,6 +28,8 @@ struct Inspector: View {
                     if store.tool == .artboard || store.doc.artboards.isEmpty {
                         PresetList(store: store)
                     } else {
+                        // The design's named looks, and those it has alike without a name.
+                        StyleKit(store: store)
                         NothingSelected(store: store)
                     }
                 } else {

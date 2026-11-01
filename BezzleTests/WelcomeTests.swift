@@ -6,14 +6,26 @@ import AppKit
 /// free, a stack made as the app makes one, and the canvas opening on the first sheet.
 @MainActor
 struct WelcomeTests {
-    @Test func sheetsRunDownFromTheWelcome() {
+    @Test func sheetsRunDownFromTheWelcome() throws {
         let doc = Welcome.design()
         // Listed from the first down: the welcome sheet lies on top.
-        let sheets = Array(doc.nodes.reversed())
-        #expect(sheets.count == 17)
-        #expect(sheets.allSatisfy { $0.isArtboard })
-        #expect(sheets.first?.id == Welcome.coverID)
-        #expect(sheets.map(\.name).dropFirst().allSatisfy { $0.first?.isNumber == true })
+        let all = Array(doc.nodes.reversed())
+        #expect(all.count == 25)
+        #expect(all.allSatisfy { $0.isArtboard })
+        #expect(all.first?.id == Welcome.coverID)
+        // Two lessons are tried on an artboard of their own, listed after their sheet and lying
+        // beside it, its foot level with the sheet's, its right edge where the other sheets end.
+        let beside = Welcome.besideSheets(doc)
+        #expect(beside.map(\.name) == ["Weather", "Flyer"])
+        for other in beside {
+            let sheet = all[try #require(all.firstIndex(of: other)) - 1]
+            #expect(sheet.name.first?.isNumber == true)
+            #expect(sheet.frame.maxY == other.frame.maxY && sheet.frame.maxX < other.frame.minX - 40)
+            #expect(other.frame.minY >= sheet.frame.minY && other.frame.maxX == all[0].frame.maxX)
+        }
+        let sheets = all.filter { !beside.contains($0) }
+        #expect(sheets.dropFirst().enumerated().allSatisfy { i, sheet in sheet.name.hasPrefix("\(i + 1). ") })
+        #expect(sheets.count == 23)
         for (above, below) in zip(sheets, sheets.dropFirst()) {
             #expect(below.frame.minY > above.frame.maxY + 100)
             #expect(below.frame.minX == above.frame.minX)
@@ -22,17 +34,24 @@ struct WelcomeTests {
 
     @Test func wordsAreLockedAndThingsToTryAreFree() {
         let doc = Welcome.design()
-        for name in ["Sun", "Poster", "Tile", "Button", "Lemon", "Card", "Panel", "Block", "Photo frame", "Photo", "Arch", "App icon", "Sticker"] {
+        for name in ["Sun", "Poster", "Tile", "Button", "Lemon", "Card", "Panel", "Block", "Photo frame", "Photo", "Arch", "App icon", "Sticker", "Badge", "Words to bend", "Label",
+                     "Words to paint", "Painted words", "Ring", "Event card", "Tag", "Rule", "Join button"] {
             let found = doc.allNodes.filter { $0.name == name }
             #expect(!found.isEmpty, "no \(name)")
             #expect(found.contains { !$0.locked && !doc.ancestors(of: $0.id).contains { $0.locked } }, "\(name) is locked")
         }
         // Words straight on a sheet are there to be read, and stay put; but for the headline to type
-        // over, and the recipe to restyle.
-        for sheet in doc.nodes {
+        // over, the recipe to restyle, and the words to bend and paint.
+        let beside = Welcome.besideSheets(doc)
+        for sheet in doc.nodes where !beside.contains(sheet) {
             for layer in sheet.children where layer.kind == .text {
-                #expect(layer.locked == (layer.text != "Your words here." && layer.spans == nil), "\(layer.name)")
+                let free = layer.text == "Your words here." || layer.spans != nil || ["Words to bend", "Label", "Words to paint", "Painted words"].contains(layer.name)
+                #expect(layer.locked == !free, "\(layer.name)")
             }
+        }
+        // An artboard to try a lesson on is a design like any other, all of it free.
+        for other in beside {
+            #expect(!other.locked && other.children.allSatisfy { !$0.locked }, "\(other.name)")
         }
     }
 
@@ -71,10 +90,38 @@ struct WelcomeTests {
         let columns = try #require(lined.layout?.columns).bands(along: lined.frame.width)
         #expect(lined.children.first?.frame.minX == columns[5].start && lined.children.first?.frame.maxX == columns[11].end)
 
+        // For the photo editor, the mask, the letters it shows through and the flyer.
         let photos = doc.allNodes.filter { $0.fill.image != nil }
-        #expect(photos.count == 2 && photos.allSatisfy { $0.fill.image?.asset == Welcome.photoAsset })
+        #expect(photos.count == 4 && photos.allSatisfy { $0.fill.image?.asset == Welcome.photoAsset })
+        #expect(photos.contains { $0.kind == .text })
+        let ring = try #require(doc.allNodes.first { $0.name == "Ring" })
+        #expect(ring.border.on && !ring.border.paints && !ring.fill.on)
         let icon = try #require(doc.allNodes.first { $0.name == "App icon" })
         #expect(icon.exports?.map(\.size) == [.scale(1), .scale(2), .scale(3)])
+    }
+
+    /// Each lesson on looks with names has colours of its own, so trying it names nothing on the
+    /// other sheets: naming the button's colour finds just the tag and the rule beside it, and the
+    /// weather screen shown dark names only its own colours.
+    @Test func namedLooksStayWithTheirLesson() throws {
+        var doc = Welcome.design()
+        let button = try #require(doc.allNodes.first { $0.name == "Join button" })
+        let look = try #require(StylePlace.fill(0).look(of: button))
+        let alike = Set(doc.looksAlike(look, besides: [button.id]).map(\.layer))
+        #expect(alike == Set(doc.allNodes.filter { ["Tag", "Rule"].contains($0.name) }.map(\.id)))
+
+        let screen = try #require(doc.nodes.first { $0.name == "Weather" })
+        #expect(screen.dark == nil && doc.styles == nil)
+        let made = doc.show(screen.id, dark: true, name: { _ in "Colour" })
+        #expect(made.count >= 6)
+        #expect(doc.node(screen.id)?.showsDark == true)
+        func named(_ n: Node) -> Bool { StylePlace.all(in: n).contains { $0.named(in: n) != nil } || n.children.contains(where: named) }
+        for top in doc.nodes where top.id != screen.id {
+            #expect(!named(top), "\(top.name)")
+        }
+        // The flyer lays its design out again for a new size, as every artboard does at first.
+        let flyer = try #require(doc.nodes.first { $0.name == "Flyer" })
+        #expect(flyer.pinsLayers == nil)
     }
 
     @Test func photoIsPaintedTheSameEachTime() throws {
@@ -109,5 +156,13 @@ struct WelcomeTests {
         other.canvasSize = CGSize(width: 860, height: 820)
         other.lookFirst()
         #expect(other.viewport.zoom == 1)
+    }
+}
+
+extension Welcome {
+    /// The artboards lessons are tried on, each beside its sheet, from the first down: unlike the
+    /// sheets, named without a number.
+    static func besideSheets(_ doc: BezzleDocument) -> [Node] {
+        doc.nodes.reversed().filter { $0.id != coverID && $0.name.first?.isNumber != true }
     }
 }

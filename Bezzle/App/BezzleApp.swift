@@ -188,6 +188,10 @@ struct BezzleCommands: Commands {
             Button { if let store, let mask = store.selectedMask { store.releaseMask(mask.id) } } label: { Text(DocumentStore.unmasking) }
                 .keyboardShortcut("m", modifiers: [.command, .control, .shift])
                 .disabled(store?.canReleaseMask != true)
+            Button { store?.rideSelection() } label: { Text(DocumentStore.riding) }
+                .disabled(store?.ridePair == nil)
+            Button { store?.straightenSelection() } label: { Text(DocumentStore.straightening) }
+                .disabled(store?.canStraighten != true)
             Divider()
             Button("Bring to Front") { store?.arrange(.front) }.keyboardShortcut("]", modifiers: [.command, .shift])
             Button("Bring Forward") { store?.arrange(.forward) }.keyboardShortcut("]")
@@ -230,6 +234,16 @@ struct BezzleCommands: Commands {
             Button("Ungroup Grid") { if let store, let grid = store.selectedGrid { store.ungroupGrid(grid.id) } }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(store?.selectedGrid == nil)
+            Divider()
+            Button("Make Component") { store?.makeComponent() }
+                .keyboardShortcut("k", modifiers: [.command, .option])
+                .disabled(store?.canMakeComponent != true)
+            Button("New Variant") { if let store, let copy = store.selectedCopy { store.addVariant(from: copy.id) } }
+                .disabled(store?.selectedCopy == nil || store?.isReadOnly == true)
+            Button("Look Like the Others") { if let store, let copy = store.selectedCopy { store.resetCopy(copy.id) } }
+                .disabled(store?.selectedCopy.map { store?.hasOwnLooks($0) == true } != true)
+            Button("Unlink Copy") { store?.unlinkComponent() }
+                .disabled(store?.canUnlink != true)
             Divider()
             Button("Add Post") {
                 if let store, let board = store.postableBoard { store.addPost(to: board.id) }

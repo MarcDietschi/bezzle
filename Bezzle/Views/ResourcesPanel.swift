@@ -80,7 +80,7 @@ struct ResourcesPanel: View {
         switch page {
         case nil:
             if words.isEmpty {
-                Shelf(dark: dark, iconsReady: iconsReady) { open($0) }
+                Shelf(store: store, dark: dark, iconsReady: iconsReady) { open($0) }
             } else {
                 Found(store: store, query: words, dark: dark, iconsReady: iconsReady) { open($0) }
             }
@@ -179,6 +179,7 @@ private struct ResourceSearch: View {
 
 /// Every library: the kits, each shown by a few of its parts, and the icon sets by a few icons.
 private struct Shelf: View {
+    let store: DocumentStore
     let dark: Bool
     let iconsReady: Bool
     let open: (ResourcePage) -> Void
@@ -189,6 +190,16 @@ private struct Shelf: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                // The design's own components first: what it is made of, to use again.
+                if !store.doc.masters.isEmpty {
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(store.doc.masters, id: \.id) { master in
+                            OwnComponentTile(store: store, master: master, width: (ResourcesPanel.inner - ResourcesPanel.gap) / 2)
+                        }
+                    }
+                    .transition(.opacity.combined(with: .offset(y: -6)))
+                    Hairline()
+                }
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(Kits.all) { kit in
                         LibraryCard(title: String(localized: kit.title), count: kit.components.count) {
@@ -394,6 +405,68 @@ private struct PartRows: View {
 
 /// One part, drawn as it would come out, on its kit's paper, with its name under it. A click
 /// adds it to the artboard in view; a drag carries it onto the canvas.
+/// One of the design's components on the shelf, drawn as a new copy of it would look: a click
+/// puts a copy onto the artboard in view, a drag carries one onto the canvas.
+private struct OwnComponentTile: View {
+    let store: DocumentStore
+    let master: Node
+    let width: CGFloat
+    @State private var hovering = false
+    @State private var pressed = false
+
+    var body: some View {
+        let image = ComponentPictures.image(of: master, store: store, size: CGSize(width: width - 12, height: 64))
+        let count = store.doc.copies(of: master.id).count
+        VStack(alignment: .leading, spacing: 5) {
+            ZStack {
+                Theme.card
+                if let image {
+                    Image(decorative: image, scale: 2)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .padding(6)
+                }
+            }
+            .frame(width: width, height: 76)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(hovering ? Theme.linked.opacity(0.6) : Theme.hairline, lineWidth: 1)
+            }
+            .shadow(color: Theme.shadow.opacity(hovering ? 0.16 : 0.05), radius: hovering ? 8 : 2, y: hovering ? 4 : 1)
+            .scaleEffect(pressed ? 0.97 : hovering ? 1.02 : 1)
+            .overlay {
+                DragSource(resource: .design(master.id), tip: master.name,
+                           picture: { Thumbnails.picture(image, width: min(width * 0.9, 180)) },
+                           hovering: $hovering, pressed: $pressed) {
+                    store.place(.design(master.id))
+                    store.canvas.map { $0.window?.makeFirstResponder($0) }
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                ComponentGlyph(size: 9).foregroundStyle(Theme.linked)
+                Text(verbatim: master.name)
+                    .foregroundStyle(hovering ? Theme.ink : Theme.ink2)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                Text(verbatim: count.formatted())
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.ink3)
+            }
+            .font(.system(size: 11))
+            .padding(.horizontal, 2)
+        }
+        .frame(width: width, alignment: .leading)
+        .contextMenu {
+            Button("Delete Component") { store.deleteComponent(master.id) }
+        }
+        .help(Text("\(count) copies in this design"))
+        .animation(Theme.spring, value: hovering)
+        .animation(Theme.quick, value: pressed)
+    }
+}
+
 private struct PartTile: View {
     let store: DocumentStore
     let kit: Kit

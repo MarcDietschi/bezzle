@@ -384,6 +384,8 @@ nonisolated enum TextLayout {
         let font: NSFont
         let color: NSColor
         let at: CGPoint
+        /// Whether its letters have a colour of their own, rather than the text's.
+        var own = false
     }
 
     /// The markers of the list items whose first letters are among `characters`, or all of them.
@@ -405,7 +407,8 @@ nonisolated enum TextLayout {
                     let color = storage.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor ?? .black
                     let lift = storage.attribute(.baselineOffset, at: at, effectiveRange: nil) as? CGFloat ?? 0
                     let x = fragment.minX + place.x - marker.gap - width(of: marker.text, in: font)
-                    out.append(Marker(text: marker.text, font: font, color: color, at: CGPoint(x: x, y: fragment.minY + place.y - lift)))
+                    out.append(Marker(text: marker.text, font: font, color: color, at: CGPoint(x: x, y: fragment.minY + place.y - lift),
+                                      own: Manager.ownColor(storage.attribute(.bezzleLook, at: at, effectiveRange: nil))))
                 }
                 at = NSMaxRange(paragraph)
             }
@@ -428,10 +431,110 @@ nonisolated enum TextLayout {
 
         var trailing: Trailing?
 
+        /// What the letters of the text's own colour are painted with, when that is a gradient or
+        /// a picture: it paints the space the text is drawn in, and shows through those letters
+        /// alone, their lines under and through them and their list markers. Letters of a colour
+        /// of their own are drawn in it, as they are.
+        var painting: ((CGContext) -> Void)?
+
+        /// Which letters are being drawn while some are painted.
+        private enum Part { case own, painted }
+        private var drawing: Part?
+        /// Into a PDF, the outlines of the letters to paint, gathered rather than drawn, in the
+        /// space the drawing began in.
+        private var outlines: (path: CGMutablePath, space: CGAffineTransform)?
+
         override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+            guard let painting, let ctx = NSGraphicsContext.current?.cgContext else {
+                super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+                drawMarkers(forGlyphRange: glyphsToShow, at: origin)
+                return
+            }
+            drawing = .own
             super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+            drawMarkers(forGlyphRange: glyphsToShow, at: origin)
+            drawing = .painted
+            ctx.saveGState()
+            defer {
+                ctx.restoreGState()
+                drawing = nil
+                outlines = nil
+            }
+            if ctx.width == 0 {
+                // A PDF cannot keep only what lies on what was drawn before, so the paint is cut
+                // to the letters' outlines, which keeps them sharp. Lines under and through them
+                // keep the text's colour.
+                let path = CGMutablePath()
+                outlines = (path, ctx.ctm)
+                super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+                drawMarkers(forGlyphRange: glyphsToShow, at: origin)
+                outlines = nil
+                guard !path.isEmpty else { return }
+                ctx.addPath(path)
+                ctx.clip()
+                painting(ctx)
+            } else {
+                // The letters, and the paint over them, keeping only what lies on them: drawn
+                // whole in a layer of its own first, so that where it leaves nothing, the
+                // letters go too.
+                let used = boundingRect(forGlyphRange: glyphsToShow, in: textContainers[0]).offsetBy(dx: origin.x, dy: origin.y)
+                let room = used.insetBy(dx: -max(used.height, 24), dy: -max(used.height, 24))
+                ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
+                super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+                drawMarkers(forGlyphRange: glyphsToShow, at: origin)
+                ctx.setBlendMode(.sourceIn)
+                ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
+                ctx.saveGState()
+                painting(ctx)
+                ctx.restoreGState()
+                ctx.endTransparencyLayer()
+                ctx.endTransparencyLayer()
+            }
+        }
+
+        override func showCGGlyphs(_ glyphs: UnsafePointer<CGGlyph>, positions: UnsafePointer<CGPoint>, count: Int, font: NSFont,
+                                   textMatrix: CGAffineTransform, attributes: [NSAttributedString.Key: Any] = [:], in ctx: CGContext) {
+            if let drawing, drawing != (Self.ownColor(attributes[.bezzleLook]) ? .own : .painted) { return }
+            guard let outlines else {
+                super.showCGGlyphs(glyphs, positions: positions, count: count, font: font, textMatrix: textMatrix, attributes: attributes, in: ctx)
+                return
+            }
+            let toSpace = ctx.ctm.concatenating(outlines.space.inverted())
+            for i in 0..<count {
+                var place = CGAffineTransform(a: textMatrix.a, b: textMatrix.b, c: textMatrix.c, d: textMatrix.d,
+                                              tx: positions[i].x, ty: positions[i].y).concatenating(toSpace)
+                if let glyph = CTFontCreatePathForGlyph(font, glyphs[i], &place) { outlines.path.addPath(glyph) }
+            }
+        }
+
+        override func drawUnderline(forGlyphRange glyphRange: NSRange, underlineType: NSUnderlineStyle, baselineOffset: CGFloat,
+                                    lineFragmentRect: NSRect, lineFragmentGlyphRange: NSRange, containerOrigin: NSPoint) {
+            guard drawn(glyphRange) else { return }
+            super.drawUnderline(forGlyphRange: glyphRange, underlineType: underlineType, baselineOffset: baselineOffset,
+                                lineFragmentRect: lineFragmentRect, lineFragmentGlyphRange: lineFragmentGlyphRange, containerOrigin: containerOrigin)
+        }
+
+        override func drawStrikethrough(forGlyphRange glyphRange: NSRange, strikethroughType: NSUnderlineStyle, baselineOffset: CGFloat,
+                                        lineFragmentRect: NSRect, lineFragmentGlyphRange: NSRange, containerOrigin: NSPoint) {
+            guard drawn(glyphRange) else { return }
+            super.drawStrikethrough(forGlyphRange: glyphRange, strikethroughType: strikethroughType, baselineOffset: baselineOffset,
+                                    lineFragmentRect: lineFragmentRect, lineFragmentGlyphRange: lineFragmentGlyphRange, containerOrigin: containerOrigin)
+        }
+
+        /// Whether the letters of `glyphs` are among those being drawn now.
+        private func drawn(_ glyphs: NSRange) -> Bool {
+            guard let drawing, let storage = textStorage, storage.length > 0 else { return true }
+            let at = min(characterIndexForGlyph(at: glyphs.location), storage.length - 1)
+            return drawing == (Self.ownColor(storage.attribute(.bezzleLook, at: at, effectiveRange: nil)) ? .own : .painted)
+        }
+
+        /// Whether letters of this look have a colour of their own, rather than the text's.
+        static func ownColor(_ look: Any?) -> Bool { (look as? LookBox)?.look.color != nil }
+
+        /// The markers of the list items among `glyphs`, those being drawn now.
+        private func drawMarkers(forGlyphRange glyphs: NSRange, at origin: NSPoint) {
             guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-            let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+            let characters = characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
             var markers = TextLayout.markers(self, characters: characters)
             if let t = trailing, !extraLineFragmentRect.isEmpty {
                 let rect = extraLineFragmentRect
@@ -439,17 +542,38 @@ nonisolated enum TextLayout {
                 markers.append(Marker(text: t.text, font: t.font, color: t.color,
                                       at: CGPoint(x: rect.minX + t.indent - t.gap - TextLayout.width(of: t.text, in: t.font), y: baseline)))
             }
-            for marker in markers {
+            for marker in markers where drawing.map({ $0 == (marker.own ? .own : .painted) }) ?? true {
                 let line = CTLineCreateWithAttributedString(NSAttributedString(string: marker.text, attributes: [
                     .font: marker.font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
                 ]))
+                let at = CGPoint(x: origin.x + marker.at.x, y: origin.y + marker.at.y)
+                if let outlines {
+                    TextLayout.addOutlines(of: line, at: at, to: outlines.path, transform: ctx.ctm.concatenating(outlines.space.inverted()))
+                    continue
+                }
                 ctx.saveGState()
                 ctx.setFillColor(marker.color.cgColor)
                 // The context's y runs down, as the text's does.
                 ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-                ctx.textPosition = CGPoint(x: origin.x + marker.at.x, y: origin.y + marker.at.y)
+                ctx.textPosition = at
                 CTLineDraw(line, ctx)
                 ctx.restoreGState()
+            }
+        }
+    }
+
+    /// The outlines of a line's letters as it is drawn with its baseline's left end at `at`, in a
+    /// space whose y runs down, carried by `transform`.
+    static func addOutlines(of line: CTLine, at: CGPoint, to path: CGMutablePath, transform: CGAffineTransform) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let count = CTRunGetGlyphCount(run)
+            guard count > 0, let font = (CTRunGetAttributes(run) as NSDictionary)[kCTFontAttributeName] else { continue }
+            var glyphs = [CGGlyph](repeating: 0, count: count), positions = [CGPoint](repeating: .zero, count: count)
+            CTRunGetGlyphs(run, CFRange(location: 0, length: count), &glyphs)
+            CTRunGetPositions(run, CFRange(location: 0, length: count), &positions)
+            for i in 0..<count {
+                var place = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: at.x + positions[i].x, ty: at.y - positions[i].y).concatenating(transform)
+                if let glyph = CTFontCreatePathForGlyph(font as! CTFont, glyphs[i], &place) { path.addPath(glyph) }
             }
         }
     }
@@ -479,9 +603,13 @@ nonisolated enum TextLayout {
             return CGSize(width: used.width, height: height)
         }
 
-        /// Draws with the text's top left at `origin`, in a flipped graphics context.
-        func draw(at origin: CGPoint) {
+        /// Draws with the text's top left at `origin`, in a flipped graphics context: the letters
+        /// of the text's own colour painted by `painting`, when they are painted with a gradient
+        /// or a picture. See `Manager.painting`.
+        func draw(at origin: CGPoint, painting: ((CGContext) -> Void)? = nil) {
             let range = manager.glyphRange(for: container)
+            manager.painting = painting
+            defer { manager.painting = nil }
             manager.drawBackground(forGlyphRange: range, at: origin)
             manager.drawGlyphs(forGlyphRange: range, at: origin)
         }
@@ -493,7 +621,8 @@ nonisolated enum TextLayout {
         let text: String
         let spans: [TextSpan]?
         let style: TextStyle
-        let fill: Fill?
+        /// The colour of the letters without one of their own.
+        let color: RGBA?
         /// The width laid out at; none for a text's natural width.
         let width: CGFloat?
     }
@@ -519,7 +648,7 @@ nonisolated enum TextLayout {
     }
 
     static func attributed(_ node: Node) -> NSAttributedString {
-        attributed(node.runs, style: node.style ?? TextStyle(), color: node.fill.on ? node.fill.color : nil)
+        attributed(node.runs, style: node.style ?? TextStyle(), color: node.letterColor)
     }
 
     private static func laid(_ node: Node, width: CGFloat) -> Laid {
@@ -537,7 +666,7 @@ nonisolated enum TextLayout {
     static func layout(_ node: Node) -> Laid {
         let style = node.style ?? TextStyle()
         let width = style.sizing == .autoWidth ? naturalWidth(node) + 0.5 : max(node.frame.width, 1)
-        let key = Key(text: node.text ?? "", spans: node.spans, style: style, fill: node.fill, width: width)
+        let key = Key(text: node.text ?? "", spans: node.spans, style: style, color: node.letterColor, width: width)
         let kept = layouts
         if let laid = kept.cache[key] { return laid }
         let laid = laid(node, width: width)
@@ -552,7 +681,7 @@ nonisolated enum TextLayout {
         style.align = .left
         var probe = node
         probe.style = style
-        let key = Key(text: node.text ?? "", spans: node.spans, style: style, fill: nil, width: nil)
+        let key = Key(text: node.text ?? "", spans: node.spans, style: style, color: nil, width: nil)
         let kept = layouts
         if let laid = kept.cache[key] { return ceil(laid.usedSize.width) }
         let laid = laid(probe, width: 100_000)
@@ -593,6 +722,13 @@ nonisolated enum TextLayout {
 }
 
 extension Node {
+    /// The colour a text's letters without one of their own are drawn in: its fill's, or none.
+    /// Painted with a gradient or a picture, they are drawn solid, to be painted through.
+    nonisolated var letterColor: RGBA? {
+        guard fill.on else { return nil }
+        return fill.paints ? fill.color.with(alpha: 1) : fill.color
+    }
+
     nonisolated static func with(_ node: Node, frame: CGRect) -> Node {
         var n = node
         n.frame = frame
@@ -661,6 +797,11 @@ extension Node {
     /// For text layers: the frame refitted to the words after a change.
     mutating func refit() {
         guard kind == .text else { return }
+        // Along a curve, its frame is the box round its letters there.
+        if curve != nil {
+            refitCurve()
+            return
+        }
         let old = frame
         let fitted = TextLayout.fittedFrame(self)
         // Centred and right-aligned text grows around its anchor rather than to the right.

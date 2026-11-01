@@ -69,12 +69,18 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         didSet { index = PathIndex() }
     }
     var viewport: Viewport?
+    /// The looks the design has given names to, each the same wherever it is used, in the order
+    /// they are listed; nil while there are none. See `Style`.
+    var styles: [Style]?
+    /// The design's components, each a group that every copy of it on the canvas is made from,
+    /// never drawn itself; nil while there are none. See `Instance`.
+    var components: [Node]?
     private var index = PathIndex()
 
-    enum CodingKeys: String, CodingKey { case version, nodes, viewport }
+    enum CodingKeys: String, CodingKey { case version, nodes, viewport, styles, components }
 
     static func == (a: BezzleDocument, b: BezzleDocument) -> Bool {
-        a.version == b.version && a.viewport == b.viewport && a.nodes == b.nodes
+        a.version == b.version && a.viewport == b.viewport && a.styles == b.styles && a.nodes == b.nodes && a.components == b.components
     }
 
     // MARK: Finding layers
@@ -260,6 +266,9 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         // Not -0, which a file would keep.
         if n.rotation != 0 { n.rotation = CanvasView.normalized(-n.rotation) }
         n.fill = n.fill.flipped(horizontally: horizontally)
+        n.moreFills = n.moreFills?.map { $0.flipped(horizontally: horizontally) }
+        n.border = n.border.flipped(horizontally: horizontally)
+        n.moreBorders = n.moreBorders?.map { $0.flipped(horizontally: horizontally) }
         switch n.kind {
         case .rectangle:
             // Top left, top right, bottom right, bottom left.
@@ -335,7 +344,9 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         guard turn != 0 else { return (node.frame, 0) }
         let pivot = node.frame.center
         let upright = turned(node, by: -turn, about: pivot)
-        guard let box = (upright.cutBy.map { [$0] } ?? upright.children).map({ Geometry.bounds(of: $0) }).reduce(nil as CGRect?, { $0?.union($1) ?? $1 }) else {
+        // By what the layers in it cover, however deep: a group in it keeps the frame it had
+        // turned, until it is fitted again, which is the box round its layers turned, not upright.
+        guard let box = (upright.cutBy.map { [$0] } ?? upright.children).map({ RepeatGrid.box(of: $0) }).reduce(nil as CGRect?, { $0?.union($1) ?? $1 }) else {
             return (node.frame, 0)
         }
         let middle = Geometry.rotated(CGPoint(x: node.frame.minX + box.midX, y: node.frame.minY + box.midY), about: pivot, by: turn)
@@ -362,6 +373,14 @@ nonisolated struct BezzleDocument: Codable, Equatable {
     /// on the canvas, and takes away groups left empty.
     mutating func fitGroups() {
         Self.fit(&nodes, before: nil)
+        fitMasters(before: nil)
+    }
+
+    /// Fits the components' groups too, which lie apart from the canvas.
+    private mutating func fitMasters(before: [Node]?) {
+        guard components != nil else { return }
+        Self.fit(&components!, before: before)
+        if components?.isEmpty == true { components = nil }
     }
 
     /// The same, only where something changed since `before`, which was fitted already. An
@@ -371,6 +390,7 @@ nonisolated struct BezzleDocument: Codable, Equatable {
         // was left empty and went.
         let kept = index
         if !Self.fit(&nodes, before: before.nodes) { index = kept }
+        fitMasters(before: before.components)
     }
 
     /// Whether the two have the same layers in the same places, as far as can be told at once:
@@ -395,6 +415,8 @@ nonisolated struct BezzleDocument: Codable, Equatable {
     }
 
     private static func fitGroup(_ group: inout Node) {
+        // Words riding a shape in it go where the shape now is, before the group fits round them.
+        group.followCurves()
         // A masked group is as big as its mask, and a mask as big as its shape.
         let box = group.cutBy.map { Geometry.bounds(of: $0) }
             ?? group.children.map { Geometry.bounds(of: $0) }.reduce(nil as CGRect?) { $0?.union($1) ?? $1 }
@@ -404,6 +426,8 @@ nonisolated struct BezzleDocument: Codable, Equatable {
             for j in group.mask!.indices { group.mask![j].frame = group.mask![j].frame.offsetBy(dx: -box.minX, dy: -box.minY) }
         }
         group.frame = CGRect(x: group.frame.minX + box.minX, y: group.frame.minY + box.minY, width: box.width, height: box.height)
+        // A copy's layers are laid out in a box of its own, which goes with them.
+        if let inst = group.instance { group.instance?.box = inst.box.offsetBy(dx: -box.minX, dy: -box.minY) }
     }
 
     /// Unique names, XD style: "Rectangle 3".

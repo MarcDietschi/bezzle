@@ -52,11 +52,24 @@ enum CanvasMenus {
                 }
                 entries.append(.item(DocumentStore.unmasking, shortcut: "⌃⇧⌘M") { store.releaseMask(mask.id) })
             }
-            if store.canGroup || store.canUngroup || store.canMask || store.selectedMask != nil { entries.append(.separator) }
+            // Words along a shape's outline, and straight again.
+            if store.ridePair != nil { entries.append(.item(DocumentStore.riding) { store.rideSelection() }) }
+            if store.canStraighten {
+                let riding = store.selectedNodes.contains(where: \.rides)
+                entries.append(.item(riding ? DocumentStore.takingOffPath : DocumentStore.straightening) { store.straightenSelection() })
+            }
+            if store.canGroup || store.canUngroup || store.canMask || store.selectedMask != nil || store.ridePair != nil || store.canStraighten {
+                entries.append(.separator)
+            }
             let nodes = store.selectedNodes
             let locked = nodes.allSatisfy(\.locked)
             entries.append(.item(locked ? "Unlock" : "Lock", shortcut: "⌘L") { store.setLocked(!locked, store.selection) })
-            entries.append(.item("Hide", shortcut: "⇧⌘H") { store.setHidden(true, store.selection) })
+            // Hidden layers can only be picked in the layers list, where this shows them again.
+            if nodes.allSatisfy(\.hidden) {
+                entries.append(.item("Show") { store.setHidden(false, store.selection) })
+            } else {
+                entries.append(.item("Hide", shortcut: "⇧⌘H") { store.setHidden(true, store.selection) })
+            }
             // Return places a picture, so a path filled with one opens its points from here.
             let picture = store.canEditPicture
             if picture {
@@ -64,6 +77,11 @@ enum CanvasMenus {
                 entries += [.separator, .item(placing ? "Done Placing Picture" : "Place Picture", shortcut: "↩") {
                     if placing { store.editingPicture = nil } else { store.editPicture() }
                 }]
+            }
+            if store.canRemoveBackground || store.canRestoreBackground {
+                if !picture { entries.append(.separator) }
+                if store.canRemoveBackground { entries.append(.item("Remove Background") { store.removeBackground() }) }
+                if store.canRestoreBackground { entries.append(.item("Restore Background") { store.restoreBackground() }) }
             }
             if nodes.count == 1, nodes[0].kind == .path, !nodes[0].locked {
                 if store.editingPath == nodes[0].id {
@@ -92,6 +110,40 @@ enum CanvasMenus {
                 }
                 if nodes[0].id != grid.id { entries.append(.item("Select Grid") { store.selection = [grid.id] }) }
                 entries.append(.item("Ungroup Grid", shortcut: "⇧⌘R") { store.ungroupGrid(grid.id) })
+            }
+            if store.canMakeComponent {
+                entries += [.separator, .item("Make Component", shortcut: "⌥⌘K") { store.makeComponent() }]
+            } else if let copy = store.selectedCopy, let master = store.master(of: copy), !copy.locked {
+                entries.append(.separator)
+                // Each variant, the copy turning into it on the canvas while it is highlighted.
+                let variants = Components.variants(of: master)
+                let current = Components.variant(copy.instance?.variant, of: master)
+                if variants.count > 1 {
+                    for v in variants {
+                        entries.append(.item(.verbatim(Components.name(of: v, in: master)), checked: v == current, preview: { on in
+                            guard on, v != current else { store.showPreview("component.menu", reshaping: nil); return }
+                            store.showPreview("component.menu", reshaping: { doc in
+                                let before = doc
+                                doc.update(copy.id) { $0 = Components.switched($0, to: v, in: master) }
+                                doc.syncComponents(since: before)
+                            })
+                        }) {
+                            store.showPreview("component.menu", reshaping: nil)
+                            store.setVariant(v, for: [copy.id])
+                        })
+                    }
+                }
+                entries.append(.item("New Variant") { store.addVariant(from: copy.id) })
+                if nodes.count == 1, nodes[0].id != copy.id {
+                    if nodes[0].kind == .text || nodes[0].fill.image != nil {
+                        entries.append(.item("Same in Every Copy") { store.giveEveryCopy([nodes[0].id], from: copy.id) })
+                    }
+                    if nodes[0].own?.isEmpty == false {
+                        entries.append(.item("Follow the Other Copies") { store.followComponent([nodes[0].id]) })
+                    }
+                }
+                if store.hasOwnLooks(copy) { entries.append(.item("Look Like the Others") { store.resetCopy(copy.id) }) }
+                entries.append(.item("Unlink Copy") { store.unlinkComponent([copy.id]) })
             }
             if let board = store.postableBoard {
                 entries.append(.separator)

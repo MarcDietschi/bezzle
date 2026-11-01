@@ -226,10 +226,10 @@ nonisolated enum Renderer {
 
         switch node.kind {
         case .text:
-            drawText(node, in: ctx)
-            for shadow in inner { drawInnerShadow(shadow, of: node, in: ctx, options: options) { drawText(node, in: ctx) } }
+            drawText(node, in: ctx, options: options)
+            for shadow in inner { drawInnerShadow(shadow, of: node, in: ctx, options: options) { drawText(node, in: ctx, options: options) } }
         case .line:
-            for border in node.borders { stroke(outline(of: node), border: border, in: ctx, closed: false) }
+            for border in node.borders { stroke(outline(of: node), border: border, size: node.frame.size, in: ctx, closed: false, options: options) }
         case .group:
             drawChildren(of: node, in: ctx, options: options)
             for shadow in inner { drawInnerShadow(shadow, of: node, in: ctx, options: options) { drawChildren(of: node, in: ctx, options: options) } }
@@ -259,9 +259,9 @@ nonisolated enum Renderer {
                 let closed = silhouette != nil || node.kind != .path || isClosed(path)
                 for border in borders {
                     if let silhouette {
-                        stroke(silhouette, border: border, in: ctx, closed: true, rule: .evenOdd)
+                        stroke(silhouette, border: border, size: node.frame.size, in: ctx, closed: true, rule: .evenOdd, options: options)
                     } else {
-                        stroke(path, border: border, in: ctx, closed: closed)
+                        stroke(path, border: border, size: node.frame.size, in: ctx, closed: closed, options: options)
                     }
                 }
             }
@@ -328,13 +328,16 @@ nonisolated enum Renderer {
         drawNode(over, in: ctx, options: options)
     }
 
-    /// A fill inside an outline: a colour, a gradient stretched to the layer, or a picture.
-    static func paint(_ fill: Fill, in path: CGPath, size: CGSize, evenOdd: Bool, in ctx: CGContext, options: Options) {
+    /// A fill inside an outline: a colour, a gradient stretched to the layer, or a picture. The
+    /// picture is placed in the layer's frame, a layer of `size` with its top left at zero, or in
+    /// `pictureBox` where it is placed in another, as a border's is in all it may reach.
+    static func paint(_ fill: Fill, in path: CGPath, size: CGSize, evenOdd: Bool, in ctx: CGContext, options: Options, pictureBox: CGRect? = nil) {
         guard fill.on else { return }
         let rule: CGPathFillRule = evenOdd ? .evenOdd : .winding
         if let image = fill.image {
             // Read at about the size it is drawn, not the size it was shot at.
-            let drawn = imageRect(image, in: size)
+            let box = pictureBox ?? CGRect(origin: .zero, size: size)
+            let drawn = imageRect(image, in: box.size).offsetBy(dx: box.minX, dy: box.minY)
             let pixels = max(drawn.width, drawn.height) * Renderer.pixelScale(ctx)
             // Cut out, it casts its shadow from its subject alone, as that is all that is drawn.
             // A cutout someone sharing the design made shows the picture as it was until it comes.
@@ -480,17 +483,37 @@ nonisolated enum Renderer {
         return closed
     }
 
-    private static func drawText(_ node: Node, in ctx: CGContext) {
+    private static func drawText(_ node: Node, in ctx: CGContext, options: Options) {
+        if let curved = CurvedText.laid(node) {
+            CurvedText.draw(curved, in: ctx, painting: letterPaint(of: node, options: options))
+            return
+        }
         let laid = TextLayout.layout(node)
         let previous = NSGraphicsContext.current
         if previous?.cgContext !== ctx {
             NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
         }
-        laid.draw(at: CGPoint(x: 0, y: TextLayout.offset(node)))
+        laid.draw(at: CGPoint(x: 0, y: TextLayout.offset(node)), painting: letterPaint(of: node, options: options))
         NSGraphicsContext.current = previous
     }
 
-    private static func stroke(_ path: CGPath, border: Border, in ctx: CGContext, closed: Bool, rule: CGPathFillRule = .winding) {
+    /// What paints a text's letters when it is filled with a gradient or a picture rather than a
+    /// colour: the fill laid over all that is being drawn, placed in the layer's own coordinates,
+    /// its frame's top left `down` points above where the text is drawn. Letters of a colour of
+    /// their own keep it. Nil for a text of one colour.
+    static func letterPaint(of node: Node, options: Options, down: CGFloat = 0) -> ((CGContext) -> Void)? {
+        let fill = node.fill, size = node.frame.size
+        guard node.kind == .text, fill.on, fill.paints else { return nil }
+        return { ctx in
+            if down != 0 { ctx.translateBy(x: 0, y: -down) }
+            paint(fill, in: CGPath(rect: ctx.boundingBoxOfClipPath, transform: nil), size: size, evenOdd: false, in: ctx, options: options)
+        }
+    }
+
+    /// A border along an outline, in a layer of `size`: of one colour, or a gradient or picture
+    /// painted where it lies.
+    private static func stroke(_ path: CGPath, border: Border, size: CGSize, in ctx: CGContext, closed: Bool,
+                               rule: CGPathFillRule = .winding, options: Options) {
         guard border.on, border.width > 0 else { return }
         ctx.saveGState()
         defer { ctx.restoreGState() }
@@ -505,16 +528,28 @@ nonisolated enum Renderer {
                 ctx.clip(using: rule)
             }
         }
-        ctx.addPath(path)
-        ctx.setLineWidth(width)
-        ctx.setStrokeColor(border.color.cgColor)
         // A subject's outline turns sharply where hair does: rounded, it reads as one edge.
-        ctx.setLineJoin(rule == .evenOdd ? .round : .miter)
-        ctx.setLineCap(closed ? .butt : (border.dash > 0 ? .butt : .round))
-        if border.dash > 0 {
-            ctx.setLineDash(phase: 0, lengths: [border.dash * (closed && border.position != .center ? 1 : 1), max(border.gap, 0.5)])
+        let join: CGLineJoin = rule == .evenOdd ? .round : .miter
+        let cap: CGLineCap = closed ? .butt : (border.dash > 0 ? .butt : .round)
+        let dashes = [border.dash, max(border.gap, 0.5)]
+        guard border.paints else {
+            ctx.addPath(path)
+            ctx.setLineWidth(width)
+            ctx.setStrokeColor(border.color.cgColor)
+            ctx.setLineJoin(join)
+            ctx.setLineCap(cap)
+            if border.dash > 0 { ctx.setLineDash(phase: 0, lengths: dashes) }
+            ctx.strokePath()
+            return
         }
-        ctx.strokePath()
+        // What the line covers, filled with the gradient or the picture. The picture covers all
+        // the border may reach, past the frame as far as it lies outside, and a line's ends.
+        let line = border.dash > 0 ? path.copy(dashingWithPhase: 0, lengths: dashes) : path
+        let band = line.copy(strokingWithWidth: width, lineCap: cap, lineJoin: join, miterLimit: 10)
+        guard !band.isEmpty else { return }
+        let reach = closed ? border.reach : border.width / 2
+        paint(border.paint, in: band, size: size, evenOdd: false, in: ctx, options: options,
+              pictureBox: CGRect(origin: .zero, size: size).insetBy(dx: -reach, dy: -reach))
     }
 
     /// Core Graphics measures shadows in the context's base space (pixels, y up), whatever the

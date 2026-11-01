@@ -48,6 +48,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var laidOut = false
     /// A preview eases in and out, drawn again each frame while it does.
     private let previewMotion = PreviewMotion()
+    /// Layers moving to where a design laid out again puts them, and what was understood of it.
+    let adaptTool = AdaptTool()
+    /// The artboards being resized by an edge, each one's design laid out again as it goes.
+    private var adaptSessions: [UUID: Adapting.Session] = [:]
     private var easing: CADisplayLink?
 
     // Text being typed into, in a text view laid over the canvas.
@@ -158,9 +162,28 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Masks: what is dragged held over a shape goes into it, the word offering one, and the
     /// ghost of what a mask cuts off.
+    /// Components: copies outlined as such, the light running between them as one changes them
+    /// all, a selected copy's variants under it, and the word offered after a change to one.
+    private(set) lazy var componentTool: ComponentTool = {
+        let tool = ComponentTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
     private(set) lazy var maskTool: MaskTool = {
         let tool = MaskTool(store: store)
         tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
+    /// Words along curves: bending a text by its beads, catching it on a shape's edge and sliding
+    /// it along, and every letter springing to its place as that changes.
+    private(set) lazy var curveTool: CurveTool = {
+        let tool = CurveTool(store: store)
+        tool.redraw = { [weak self] in
+            self?.needsDisplay = true
+            if self?.curveTool.animating == true { self?.keepEasing() }
+        }
         return tool
     }()
 
@@ -306,7 +329,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     @objc private func easeStep(_ link: CADisplayLink) {
         needsDisplay = true
-        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating {
+        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating && !adaptTool.isAnimating && !componentTool.isAnimating && !curveTool.animating {
             link.invalidate()
             easing = nil
         }
@@ -340,15 +363,24 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }
         }
         if let editing = store.editingText { options.skipping = [editing] }
-        let shown = previewMotion.frame(of: store.shownDoc, preview: store.preview, at: CACurrentMediaTime())
-        options.settling = previewMotion.isMoving
+        // Letters springing to new places are drawn on their way over the design, not in it.
+        curveTool.step(store.shownDoc)
+        options.skipping.formUnion(curveTool.flying)
+        if let id = store.editingText, let host = editorHost {
+            let alpha: CGFloat = curveTool.flying.contains(id) ? 0 : 1
+            if host.alphaValue != alpha { host.alphaValue = alpha }
+        }
+        let shown = adaptTool.frame(of: previewMotion.frame(of: store.shownDoc, preview: store.preview, at: CACurrentMediaTime()), at: CACurrentMediaTime())
+        options.settling = previewMotion.isMoving || adaptTool.isMoving
         drawDesign(shown, in: ctx, options: options)
         ctx.restoreGState()
-        if previewMotion.isMoving || deckTool.isAnimating { keepEasing() }
+        if previewMotion.isMoving || deckTool.isAnimating || adaptTool.isAnimating { keepEasing() }
         cutoutTool.draw(ctx, scale: deviceScale)
         if cutoutTool.animating { redrawSoon() }
         maskTool.draw(ctx, scale: deviceScale, in: bounds)
         if maskTool.animating { keepEasing() }
+        curveTool.draw(ctx, scale: deviceScale)
+        if curveTool.animating { keepEasing() }
 
         drawSlideCuts(ctx)
         // Layout grids and guides over the work, under the marks drawn over what is selected.
@@ -375,8 +407,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         knifeTool.draw(ctx, scale: deviceScale)
         if pictureTool.animating { redrawSoon() }
         drawGuides(ctx)
+        adaptTool.draw(ctx, viewport: store.viewport, scale: deviceScale)
         drawMarquee(ctx)
         drawMeasurement(ctx)
+        if !deckTool.spreading { componentTool.draw(ctx, scale: deviceScale, in: bounds) }
+        if componentTool.isAnimating { keepEasing() }
         deckTool.draw(ctx, scale: deviceScale, in: bounds)
         if deckTool.isAnimating { keepEasing() }
         if !deckTool.spreading { rulers.draw(ctx, in: bounds, scale: deviceScale, tabs: guideTool.tabs()) }
@@ -418,7 +453,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let frame = 1 / CFTimeInterval(max(window?.screen?.maximumFramesPerSecond ?? 60, 30))
         let deadline = now + (still ? 0.03 : max(frame - 0.005, 0.002))
         let visible = options.visible ?? .infinite
-        let typingOn = store.editingText.flatMap { doc.artboard(of: $0)?.id }
+        // The artboard being typed on, and those with letters on their way, are drawn whole, as
+        // they change from frame to frame, leaving those layers out.
+        let typingOn = Set(([store.editingText].compactMap { $0 } + curveTool.flying).compactMap { doc.artboard(of: $0)?.id })
         var again = false
         tiles.begin(scale: store.viewport.zoom * deviceScale, now: now, artboards: Set(doc.nodes.lazy.filter(\.isArtboard).map(\.id)))
         for whole in doc.nodes where !whole.hidden {
@@ -437,7 +474,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 ctx.setAlpha(0)
             }
             defer { if away { ctx.restoreGState() } }
-            if node.id == typingOn {
+            if typingOn.contains(node.id) {
                 Renderer.drawArtboard(node, in: ctx, options: options)
                 continue
             }
@@ -628,7 +665,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         } else {
             ctx.addPath(outlinePath(points, closed: points.count > 2))
         }
-        ctx.setStrokeColor(CanvasInk.pencil.cgColor)
+        ctx.setStrokeColor((store.node(id)?.isCopy == true ? CanvasInk.linked : CanvasInk.pencil).cgColor)
         ctx.setLineWidth(1.5)
         ctx.strokePath()
         ctx.restoreGState()
@@ -664,6 +701,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
     }
 
+    /// Words along a curve are typed straight: the corners of the line they are typed on, on screen.
+    private func typingCorners(of id: UUID) -> [CGPoint]? {
+        guard let node = store.node(id), node.isCurved, let whole = store.doc.absoluteFrame(of: id) else { return nil }
+        let (flat, frame) = CurvedText.straight(node, frame: whole)
+        return Geometry.corners(of: frame, rotation: flat.rotation).map(store.viewport.toView)
+    }
+
     private func drawSelection(_ ctx: CGContext) {
         let ids = store.selection
         // A path whose points show has those instead of a frame and handles.
@@ -673,7 +717,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // Shapes being built with show their pieces instead.
         if store.building != nil { return }
         guard !ids.isEmpty, store.editingText == nil || ids.count > 1 else {
-            if let editing = store.editingText, let points = viewCorners(of: editing) {
+            if let editing = store.editingText, let points = typingCorners(of: editing) ?? viewCorners(of: editing) {
                 ctx.addPath(outlinePath(points, closed: true))
                 ctx.setStrokeColor(CanvasInk.pencil.withAlphaComponent(0.5).cgColor)
                 ctx.setLineWidth(1)
@@ -686,9 +730,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         ctx.setLineWidth(1)
         for id in ids {
             guard let points = gridTool.outline(of: id) ?? viewCorners(of: id) else { continue }
+            ctx.setStrokeColor((store.node(id)?.isCopy == true ? CanvasInk.linked : CanvasInk.pencil).cgColor)
             ctx.addPath(outlinePath(points, closed: points.count > 2))
             ctx.strokePath()
         }
+        ctx.setStrokeColor(CanvasInk.pencil.cgColor)
         if ids.count > 1, let (frame, _, _) = handleFrame {
             ctx.addPath(outlinePath(Geometry.corners(of: frame, rotation: 0).map(store.viewport.toView), closed: true))
             ctx.setLineDash(phase: 0, lengths: [3, 3])
@@ -990,7 +1036,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         depthTool.hover(v, flags: flags)
         gridTool.hover(v)
         deckTool.hover(v)
+        componentTool.hover(v)
         maskTool.hover(v)
+        curveTool.hover(v)
         knifeTool.hover(v, flags: flags)
     }
 
@@ -1043,6 +1091,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if let cursor = depthTool.cursor { cursor.set(); return }
         if let cursor = gridTool.cursor(at: v) { cursor.set(); return }
         if let cursor = deckTool.cursor(at: v) { cursor.set(); return }
+        if let cursor = componentTool.cursor(at: v) { cursor.set(); return }
+        if let cursor = curveTool.cursor(at: v) { cursor.set(); return }
         if let cursor = maskTool.cursor(at: v) { cursor.set(); return }
         if let cursor = shapeBuilder.cursor ?? knifeTool.cursor ?? outlineTool.cursor(at: v) { cursor.set(); return }
         switch store.tool {
@@ -1073,6 +1123,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // A word offered after a change is taken before anything else.
         if deckTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
         if maskTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
+        if !deckTool.spreading, componentTool.down(at: convert(event.locationInWindow, from: nil)) { return }
         window?.makeFirstResponder(self)
         if store.editingText != nil { endEditing() }
         let v = convert(event.locationInWindow, from: nil)
@@ -1145,6 +1196,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if gridTool.down(at: v, event: event) { return }
         // A turned layer's knob aims it in depth.
         if depthTool.down(at: v, event: event) { return }
+        // A selected text's beads bend it.
+        if curveTool.down(at: v, event: event) { return }
         // A path's corner dots and a shape's edge with Option, unless a resize handle is in the way.
         let handle = handleHit(v)
         if case .resize = handle {} else if outlineTool.down(at: v, event: event) { return }
@@ -1210,6 +1263,18 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         interaction = .marquee(start: p, base: base, inside: store.doc.artboard(at: p)?.id)
     }
 
+    /// The drag resizing an artboard is over: its design is laid out from the same design next
+    /// time, while it is left as it is now.
+    private func endAdapting() {
+        guard !adaptSessions.isEmpty else { return }
+        for session in adaptSessions.values {
+            if let n = store.doc.node(session.id) { Adapting.remember(source: session.source, laid: n) }
+        }
+        adaptSessions = [:]
+        adaptTool.hide()
+        keepEasing()
+    }
+
     private func startMove(at p: CGPoint, duplicate: Bool) {
         let ids = store.selection.filter { store.node($0)?.locked == false }
         guard !ids.isEmpty, let bounds = store.selectionBounds else { return }
@@ -1232,6 +1297,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             guard let (frame, rotation, _) = handleFrame else { return }
             interaction = .resize(handle: handle, originals: originals, absolute: absolute, bounds: frame, rotation: rotation,
                                   targets: SnapTargets(doc: store.seenDoc, moving: Set(ids)))
+            // An artboard's design is read once, to be laid out again at each size the drag reaches.
+            adaptSessions = [:]
+            for (id, node) in originals { if let session = Adapting.Session(node, assets: store.assets) { adaptSessions[id] = session } }
         case .rotate:
             guard let (frame, _, _) = handleFrame else { return }
             let c = frame.center
@@ -1277,6 +1345,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if shapeBuilder.dragging { shapeBuilder.drag(to: v, flags: flags); return }
         if outlineTool.dragging { outlineTool.drag(to: v, flags: flags); return }
         if depthTool.dragging { depthTool.drag(to: v, flags: flags); return }
+        if curveTool.dragging { curveTool.drag(to: v, flags: flags); return }
         if gridTool.dragging { gridTool.drag(to: v, flags: flags); return }
         if deckTool.dragging { deckTool.drag(to: v, flags: flags); return }
         if knifeTool.dragging { knifeTool.drag(to: v, flags: flags); return }
@@ -1328,6 +1397,20 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 drag(to: v, flags: flags)
                 return
             }
+            // Words held on a shape's edge catch on it, and then slide along it rather than move.
+            switch curveTool.moving(Array(originals.keys), from: start, at: v) {
+            case .handled:
+                maskTool.cancel()
+                store.guides = []
+                return
+            case .restart(let fresh, let freshBounds):
+                maskTool.cancel()
+                store.guides = []
+                interaction = .move(start: start, originals: fresh, bounds: freshBounds, targets: targets, started: true, duplicate: duplicate)
+                return
+            case .normal:
+                break
+            }
             var dx = p.x - start.x, dy = p.y - start.y
             if shift { if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 } }
             var guides: [Guide] = []
@@ -1357,7 +1440,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             store.edit("Move", place)
             // Held over a shape a moment, it goes into it; a shape it went into and was dragged off
             // lets it go again. Either way it is placed once more, as it now lies.
-            if maskTool.moving(Array(originals.keys), at: v) { store.edit("Move", place) }
+            if curveTool.claims { maskTool.cancel() } else if maskTool.moving(Array(originals.keys), at: v) { store.edit("Move", place) }
             store.guides = guides
 
         case .resize(let handle, let originals, let absolute, let bounds, let rotation, let targets):
@@ -1393,6 +1476,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 }
                 frame = Geometry.snapToPixels(frame)
             }
+            var adapted: [UUID: (result: Adapt.Result, rearranged: Bool, origin: CGPoint)] = [:]
             store.edit("Resize") { doc in
                 for (id, original) in originals {
                     guard let whole = absolute[id] else { continue }
@@ -1413,10 +1497,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                             let single = originals.count == 1
                             // From a side, one text's words wrap to the new width: text of auto size
                             // takes a fixed width, its height what its lines take.
-                            let wraps = single && handle.unit.y == 0.5
+                            // Along a curve, it is one line: every handle grows its letters.
+                            let wraps = single && handle.unit.y == 0.5 && original.curve == nil
                             // From a corner its box is what is dragged, from the corner across to the
                             // pointer, of fixed size, with its letters and lines as big as fit inside.
-                            let fits = single && handle.isCorner && !shift
+                            let fits = single && handle.isCorner && !shift && original.curve == nil
                             // From the top or bottom, or a corner with Shift, its letters and lines grow
                             // with its box, and a fixed width with them, so its words wrap where they did:
                             // by the side the handle moves, the longer one from a corner as text is wide.
@@ -1455,8 +1540,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                             node.rising = original.rising
                         }
                     }
-                    // An artboard's contents stay where they are on the canvas as its edges move.
-                    if original.isArtboard {
+                    if original.isArtboard, let session = adaptSessions[id] {
+                        // Its design is laid out again for the size it is being given.
+                        let (r, rearranged) = session.compose(next.size)
+                        // A deck's posts stay as the last step made them, which the deck then makes
+                        // again from its design; set back to where the drag began, they would read
+                        // as changes to carry into it.
+                        let last = store.doc.node(id)
+                        doc.update(id) { b in b.children = Adapting.merged(r.board, into: last ?? b, from: session.source) }
+                        adapted[id] = (r, rearranged, next.origin)
+                    } else if original.isArtboard {
+                        // An artboard's contents stay where they are on the canvas as its edges move.
                         let shift = CGPoint(x: original.frame.minX - next.minX, y: original.frame.minY - next.minY)
                         doc.update(id) { b in
                             for i in b.children.indices { b.children[i].frame = b.children[i].frame.offsetBy(dx: shift.x, dy: shift.y) }
@@ -1465,6 +1559,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 }
             }
             store.guides = guides
+            // What was understood shows on one artboard; arranged another way, any one's layers travel there.
+            if adapted.count == 1, let one = adapted.first?.value {
+                adaptTool.show(one.result.skeleton, at: one.origin, rearranged: one.rearranged)
+            }
+            let rearranged = adapted.filter { $0.value.rearranged }.map(\.key)
+            if !rearranged.isEmpty { adaptTool.move(rearranged, withBoard: false) }
             // Text ends up the size its words take, not quite the box dragged out.
             var shown = frame
             if originals.count == 1, let (id, original) = originals.first, original.kind == .text, let f = store.doc.absoluteFrame(of: id) {
@@ -1487,10 +1587,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             store.edit("Rotate") { doc in
                 for (id, original) in originals {
                     guard let whole = absolute[id] else { continue }
+                    // Turned where it lay when the drag began, then put where that is in what holds
+                    // it now: a group holding it is fitted round it as it turns, and moves its own
+                    // origin, which would otherwise carry the layer off a little more at every step.
+                    let began = CGPoint(x: whole.minX - original.frame.minX, y: whole.minY - original.frame.minY)
                     let o = doc.parentOrigin(of: id)
-                    _ = whole
                     doc.update(id) { node in
-                        node = BezzleDocument.turned(original, by: delta, about: CGPoint(x: center.x - o.x, y: center.y - o.y))
+                        node = BezzleDocument.turned(original, by: delta, about: CGPoint(x: center.x - began.x, y: center.y - began.y))
+                        node.frame.origin = node.frame.origin + began - o
                     }
                 }
             }
@@ -1604,6 +1708,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         shapeBuilder.up(at: v)
         outlineTool.up()
         depthTool.up(at: v, adding: event.modifierFlags.contains(.shift))
+        curveTool.up()
         gridTool.up()
         deckTool.up(at: v)
         knifeTool.up(at: v)
@@ -1618,12 +1723,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             if started {
                 let ids = Array(originals.keys)
                 // Into a mask, or out of one, it is that.
+                let rode = curveTool.released()
                 let masked = maskTool.released()
                 store.edit("Move") { doc in store.settle(ids, in: &doc) }
-                store.endGesture(masked ?? (duplicate ? "Duplicate" : "Move"))
+                store.endGesture(rode ?? masked ?? (duplicate ? "Duplicate" : "Move"))
             }
         case .resize:
             store.endGesture("Resize")
+            endAdapting()
         case .rotate:
             store.endGesture("Rotate")
         case .lineEnd:
@@ -1812,6 +1919,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if shapeBuilder.key(event) || knifeTool.key(event) { return }
         if event.keyCode == 53, outlineTool.dragging { outlineTool.cancel(); return }
         if event.keyCode == 53, depthTool.dragging { depthTool.cancel(); return }
+        if event.keyCode == 53, curveTool.dragging {
+            store.cancelGesture()
+            curveTool.cancel()
+            return
+        }
         if event.keyCode == 53, gridTool.dragging { gridTool.cancel(); return }
         if event.keyCode == 53, guideTool.pressed { guideTool.cancel(); return }
         if event.keyCode == 53, layoutTool.dragging { layoutTool.cancel(); return }
@@ -1835,6 +1947,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             } else {
                 store.cancelGesture()
                 maskTool.cancel()
+                endAdapting()
+                curveTool.cancel()
                 interaction = .none
             }
         case 36, 76: // return
@@ -2015,6 +2129,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         text.selectedTextAttributes = [.backgroundColor: CanvasInk.pencil.withAlphaComponent(0.22)]
         text.focusRingType = .none
         editorShown = nil
+        editorPainted = nil
         show(node, in: text)
 
         let host = FlippedView()
@@ -2040,8 +2155,18 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func shown(_ node: Node) -> Shown {
-        Shown(runs: TextSpan.tidy(node.runs), style: node.style ?? TextStyle(), color: node.fill.on ? node.fill.color : .black)
+        Shown(runs: TextSpan.tidy(node.runs), style: node.style ?? TextStyle(), color: node.letterColor ?? .black)
     }
+
+    /// What the letters being typed are painted with, when it is a gradient or a picture, and
+    /// where: the layer's size and how far down its lines begin.
+    private struct Painted: Equatable {
+        var fill: Fill
+        var size: CGSize
+        var down: CGFloat
+    }
+
+    private var editorPainted: Painted?
 
     /// Puts a text's words and how each letter looks into the editor, keeping what is picked out
     /// and, where the words are the same, the letters themselves.
@@ -2077,7 +2202,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// a change the editor's Undo takes back. A list goes to the paragraphs the selection is in.
     private func restyleTyped(_ action: LocalizedStringResource, _ change: (inout Letters) -> Void) {
         guard let text = editor, let storage = text.textStorage, let id = store.editingText, let node = store.node(id) else { return }
-        let style = node.style ?? TextStyle(), color = node.fill.on ? node.fill.color : .black
+        let style = node.style ?? TextStyle(), color = node.letterColor ?? .black
         var range = text.selectedRange()
         let ns = storage.string as NSString
         // What the change does to a list, tried on the letters typed next.
@@ -2111,10 +2236,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// Keeps the text view over its layer as the canvas moves, zooms and the layer changes.
     func syncEditor() {
         guard let host = editorHost, let text = editor else { return }
-        guard let id = store.editingText, let node = store.node(id), let frame = store.doc.absoluteFrame(of: id) else {
+        guard let id = store.editingText, let held = store.node(id), let whole = store.doc.absoluteFrame(of: id) else {
             endEditing()
             return
         }
+        // Words along a curve are typed straight, where the curve runs through the point they are placed from.
+        let (node, frame) = CurvedText.straight(held, frame: whole)
         let zoom = store.viewport.zoom
         let width = max(frame.width, 1) + 6
         let r = store.viewport.toView(frame)
@@ -2136,6 +2263,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let tall = TextLayout.layout(Node.with(node, frame: frame)).usedSize.height
         text.frame = CGRect(x: 0, y: down, width: loose ? width : max(frame.width, 1), height: max(frame.height - down, tall, 1))
         if editorShown != shown(node), !text.hasMarkedText() { show(node, in: text) }
+        // Letters painted with a gradient or a picture show it as they are typed.
+        let painted = node.fill.on && node.fill.paints ? Painted(fill: node.fill, size: frame.size, down: down) : nil
+        if painted != editorPainted, let manager = text.layoutManager as? TextLayout.Manager {
+            editorPainted = painted
+            manager.painting = Renderer.letterPaint(of: Node.with(node, frame: frame), options: Renderer.Options(assets: store.assets), down: down)
+            text.needsDisplay = true
+        }
         // Spelling as last chosen in the Edit menu.
         let defaults = UserDefaults.standard
         let spelling = defaults.object(forKey: Self.checksSpelling) as? Bool ?? true, grammar = defaults.bool(forKey: Self.checksGrammar)

@@ -409,6 +409,13 @@ nonisolated extension Node {
     /// Whether some of its letters look different from the rest.
     var hasStyledLetters: Bool { spans?.contains { !$0.look.isPlain } == true }
 
+    /// Takes away the colours any letters have of their own, so that all of them are the text's
+    /// colour, or show its gradient or picture.
+    mutating func clearLetterColors() {
+        guard spans?.contains(where: { $0.look.color != nil }) == true else { return }
+        spans = TextSpan.stored(runs.map { TextSpan(text: $0.text, look: $0.look.without([.color])) })
+    }
+
     /// How the letters in `range` (in UTF-16, as the editor counts), or all of them, are drawn: a
     /// run's worth each.
     func letters(in range: NSRange? = nil) -> [Letters] {

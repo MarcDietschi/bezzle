@@ -34,6 +34,16 @@ nonisolated extension ImageFill {
 }
 
 nonisolated extension Node {
+    /// The pictures the layer itself paints with, whether they are on or not: its first fill's,
+    /// which text's letters show too, and any of its borders'.
+    var paintedPictures: [ImageFill] {
+        var out: [ImageFill] = []
+        if let image = fill.image { out.append(image) }
+        if let image = border.image { out.append(image) }
+        for b in moreBorders ?? [] { if let image = b.image { out.append(image) } }
+        return out
+    }
+
     /// What a cut-out picture leaves of this layer: the subject's outline in the layer's own
     /// coordinates, cut to the layer's outline. None for a layer that shows no cutout.
     var silhouette: CGPath? {

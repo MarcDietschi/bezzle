@@ -148,11 +148,12 @@ extension MCPTools {
                        description: "Makes rectangles, ellipses and lines paths, whose outline can then be given as SVG path data.",
                        properties: .object([design, layers]), run: { [unowned self] in try await self.convertToPath($0) }),
             Definition(name: "place_image", title: "Place a picture",
-                       description: "Puts a picture file into the design: as a new rectangle filled with it, at its own size unless that is too big, or into an existing rectangle, ellipse or path's fill. The file is copied into the design.",
+                       description: "Puts a picture file into the design: as a new rectangle filled with it, at its own size unless that is too big; or into an existing rectangle, ellipse or path's fill, the letters of a text, or a layer's first border. The file is copied into the design.",
                        properties: .object([
                            design,
                            ("file", Self.text("The picture's path: PNG, JPEG, HEIC, GIF, TIFF, WebP…")),
-                           ("layer", Self.text("A rectangle, ellipse or path to fill with it, in place of a new layer.")),
+                           ("layer", Self.text("A rectangle, ellipse, path or text to fill with it, in place of a new layer; or with into: border, a shape or line whose border it paints.")),
+                           ("into", Self.choice(["fill", "border"], "With layer: fill (the usual) or its first border, which comes on if it was off.")),
                            ("mode", Self.choice(["cover", "fit", "stretch"], "cover fills the layer and crops what overflows (the usual); fit shows it whole; stretch squeezes it to the layer.")),
                            ("parent", Self.text("For a new layer: the artboard or group it goes in, or \"canvas\".")),
                            ("name", Self.text("For a new layer: its name; the file's otherwise.")),
@@ -219,6 +220,29 @@ extension MCPTools {
                                     "description": "Guides to add, each {direction: \"vertical\" or \"horizontal\", at: distance, from: \"start\", \"middle\" or \"end\"}. start is the left or top edge."]),
                            ("remove", Self.list("Ids of guides to take away, or [\"all\"].")),
                        ]), run: { [unowned self] in try await self.guides($0) }),
+            Definition(name: "styles", title: "List, name, use or change styles",
+                       description: "Styles are looks with names: colours (a fill's, a text's, a border's), text styles (font, size, spacing), shadows and corners. A layer using a style looks as it does, and the style is the same on every layer: change it here, or change that look on any layer that uses it with update_layers, and every layer using it changes. With nothing but design, lists the styles (with their dark looks), how many layers use each, and the looks several layers share without a name. appearance shows an artboard dark or light. name with layer (and place, all_alike) names a layer's look. style with layers gives them the style; with rename, color, type, shadow or corners, changes it; with remove, takes it away, leaving its layers as they look. unname with layers lets them go of their names.",
+                       properties: .object([
+                           design,
+                           ("name", Self.text("Makes a style of the look layer has at place, called this (\"\" for a name that says what it is).")),
+                           ("layer", Self.text("With name: the layer whose look is named, by id or name.")),
+                           ("place", Self.text("Where on a layer: fill, border, shadow, text or corners, with a number for the second and on (\"fill 2\"). Left out, the first that can be named.")),
+                           ("all_alike", Self.boolean("With name: every other layer with the same look, unnamed, takes the new style too.")),
+                           ("style", Self.text("A style, by id or name.")),
+                           layers,
+                           ("use", Self.boolean("With style: gives the selection the style, when layers is left out.")),
+                           ("rename", Self.text("With style: its new name.")),
+                           ("color", Self.text("With a colour style: its new colour, \"#RRGGBB\" or \"#RRGGBBAA\".")),
+                           ("type", ["type": "object", "description": "With a text style: any of family, face, size, line_spacing (null for the font's own), letter_spacing (thousandths of the size), paragraph_spacing, case (upper, lower, title, smallCaps, none), underline, strikethrough."]),
+                           ("shadow", ["type": "object", "description": "With a shadow style: any of x, y, blur, spread, color, inset."]),
+                           ("corners", Self.number("With a corners style: the radius.")),
+                           ("smoothing", Self.number("With corners: how smoothly they run into the sides, 0 to 1 (0.6 is the iOS squircle).")),
+                           ("remove", Self.boolean("With style: takes it away. Its layers keep their looks.")),
+                           ("unname", Self.boolean("With layers (and place): they keep their looks without a style's name.")),
+                           ("appearance", Self.choice(["dark", "light", "none"], "With layer, an artboard: shows it dark, every style on it in its dark look, or light again (none: light, without the switch to dark). Made dark, its colours without a name are named first, so all of it turns dark.")),
+                           ("dark_color", Self.text("With a colour style: its colour in the dark, \"#RRGGBB\".")),
+                           ("dark_auto", Self.boolean("With style: its dark look is made from its light one by itself again.")),
+                       ]), run: { [unowned self] in try await self.styles($0) }),
             Definition(name: "deck", title: "Make or change a deck",
                        description: "A deck is one artboard that is many posts lying one behind another, such as social posts in the same design: only the post in front shows, and each is exported as a file of its own. Every post is a copy of one design: a change to how a layer looks in any post (update_layers, add_layers onto it, delete_layers) is made in every post, while each post's words and pictures are its own. Give layer (an artboard, or a layer on one) and any of: add (that many new posts, copies of the post in front or of `after`; an artboard that is no deck becomes one), values with text_layer (words, one a post from post `from` on, adding posts as needed), pictures with shape_layer (the same for pictures), remove, move, show (bring a post to the front on screen), post (list that post's layers and ids), unstack. Posts are counted from 1. get_layers on a deck lists its first post and every post's words.",
                        properties: .object([
@@ -316,7 +340,7 @@ extension MCPTools {
                            design,
                            ("within", Self.text("Only inside this artboard, group or text layer.")),
                        ]), readOnly: true, run: { [unowned self] in try await self.checkSpelling($0) }),
-        ] + resourceDefinitions(design: design)
+        ] + resourceDefinitions(design: design) + componentDefinitions(design: design) + curveDefinitions(design: design)
     }
 
     /// What a layer can be given, when it is added or changed.
@@ -331,8 +355,8 @@ extension MCPTools {
             ("opacity", number("0 to 1.")),
             ("hidden", boolean("Hidden layers are neither drawn nor exported.")),
             ("locked", boolean("Locked layers cannot be picked or moved on the canvas.")),
-            ("fill", ["description": "A colour (\"#RRGGBB\", or \"#RRGGBBAA\" with transparency) for a solid fill; \"none\"; or an object {color, gradient, image, on}. gradient: {type: \"linear\" or \"radial\", stops: a list of colours, or of {offset 0–1, color}; angle: in degrees as CSS counts it, 180 running downward, the usual; or start and end {x, y}, 0–1 across the layer; radial: start is the middle, radius 0–1}; null takes it away. image: {mode: cover, fit or stretch; offset {x, y}, each -1 to 1; scale, 1 or more} adjusts a picture place_image put in; null takes it away. Text is coloured by its fill. A list of these is several fills, bottom first, each painted over the one before (such as a picture with a gradient over it); a picture can only be the first. One fill on its own changes the first; \"none\" takes them all away."]),
-            ("border", ["description": "\"none\", a colour, a width, or {color, width, position: inside, center or outside; dash and gap, in points, for a dashed line}. A list of these is several borders, bottom first, each drawn over the one before (such as a ring outside and a line inside). One on its own changes the first; \"none\" takes them all away."]),
+            ("fill", ["description": "A colour (\"#RRGGBB\", or \"#RRGGBBAA\" with transparency) for a solid fill; \"none\"; or an object {color, gradient, image, on}. gradient: {type: \"linear\" or \"radial\", stops: a list of colours, or of {offset 0–1, color}; angle: in degrees as CSS counts it, 180 running downward, the usual; or start and end {x, y}, 0–1 across the layer; radial: start is the middle, radius 0–1}; null takes it away. image: {mode: cover, fit or stretch; offset {x, y}, each -1 to 1; scale, 1 or more} adjusts a picture place_image put in; null takes it away. Text is coloured by its fill: a gradient or a picture paints every letter that has no colour of its own in spans. A list of these is several fills, bottom first, each painted over the one before (such as a picture with a gradient over it); a picture can only be the first. One fill on its own changes the first; \"none\" takes them all away."]),
+            ("border", ["description": "\"none\", a colour, a width, or {color, gradient, width, position: inside, center or outside; dash and gap, in points, for a dashed line}. gradient is as fill's, placed across the layer the same way, and paints the border in place of its colour; null takes it away. A border painted with a picture (as one imported or set in the app) gives it back as image; image: null takes it away. A colour on its own, as a string, makes it solid again. A list of these is several borders, bottom first, each drawn over the one before (such as a ring outside and a line inside). One on its own changes the first; \"none\" takes them all away."]),
             ("shadow", ["description": "\"none\"; a preset: \"subtle\", \"soft\", \"lifted\" or \"floating\" under the layer, or \"etched\", \"pressed\", \"sunken\" or \"deep\" inside it; a colour; or {color, x, y, blur, spread, inset}. inset: true puts the shadow inside the layer, as if pressed into the page (not on lines). spread grows the shape the shadow is cast from by that many points all round, or shrinks it below 0 (shapes and lines only; inside a shape it narrows the hollow). A list of these is several shadows, cast together, under the layer and inside it at once if you like (a close one and a soft one under it look most real). One on its own changes the first; \"none\" takes them all away."]),
             ("cornerRadius", ["description": "Rectangles: a radius; four, [top left, top right, bottom right, bottom left]; or \"pill\", for ends fully round."]),
             ("cornerSmoothing", number("Rectangles: how smoothly the corners run into the sides, from 0 (quarter circles) to 1. 0.6 is the squircle of iOS icons.")),
@@ -367,6 +391,7 @@ extension MCPTools {
             ("preset", text("Artboards: a size by name: \(Preset.all.map(\.name).joined(separator: ", ")).")),
             ("carousel", ["description": .string("Artboards: makes it a carousel of slides side by side, exported a picture a slide: a format, \(Carousel.formats.map { "\"\($0.name)\" (\(Int($0.size.width))×\(Int($0.size.height)))" }.joined(separator: ", ")), or {width, height} of a slide; null makes it one artboard again. Its width is always a whole number of slides.")]),
             ("slides", integer("Carousels: how many slides, 1 to 20.")),
+            ("adapts", boolean("Artboards: whether its design is laid out again whenever its size changes (by width, height or preset), as resizing it on the canvas does: read as backdrops, bars, blocks in rows and columns and the gaps between them, then grown or shrunk to suit the new size, its type with it, bars and panels stretched, text rewrapped, pictures cropped round what they show, a picture beside its words on a wide format and above them on a tall one, cards in a row wrapped into a grid. True unless set; false keeps its layers where they are.")),
             ("exports", ["description": .string("Marks it for export: the files it goes out as whenever what is marked is exported (export with marked), each {size: pixels to a point, \"2x\", or pixels wide or tall, \"512w\" or \"64h\"; format: \(ExportFormat.offered.map(\.rawValue).joined(separator: ", ")); suffix: what goes after its name, \"@2x\" at 2x otherwise, a / making a folder}. [\"1x\", \"2x\", \"3x\"] makes the PNGs iOS takes. \"none\" unmarks it.")]),
         ]
     }

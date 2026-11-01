@@ -5,9 +5,15 @@ import AppKit
 /// which card is open, and which the pointer is on, for the canvas to outline what that card changes.
 enum Aspect: Hashable {
     case arrange, frame, artboard, background, deck, grid, cell, post, text, path
+    /// An artboard shown dark, its named looks in their dark looks. See `Style.dark`.
+    case appearance
+    /// Words bent into an arc, or riding a shape's outline. See `CurveCard`.
+    case curve
     case corners, opacity, blur, depth, export
     /// A mask, or a layer inside one. See `MaskCard`.
     case mask
+    /// A copy of a component, or a layer in one. See `ComponentCard`.
+    case component
     case layout, guides
     /// A picture's development: its light, colours and detail. See `PhotoCard`.
     case photo
@@ -92,8 +98,14 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
     let exact: Exact
 
     @State private var hovering = false
+    /// Whether the pointer is on the folded line, where a sideways drag turns the dial.
+    @State private var onHead = false
     @State private var turn: Turn?
     @State private var caught: Double?
+
+    /// Between the folded line and what an open card holds: clear of the level the line fills
+    /// with as it is pointed at, as far as the rows below are apart.
+    static var openGap: CGFloat { 8 }
 
     /// A press on the folded line, and the drag it may become: sideways it turns the dial, up or
     /// down it moves the card in its pile.
@@ -127,6 +139,16 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 
     private var opens: Bool { Picks.self != EmptyView.self || Exact.self != EmptyView.self }
 
+    /// The design's style the selected layers' look is, when the card shows one that has a name.
+    private var named: Style? { aspect.stylePlace.flatMap { store.sharedStyle(at: $0) } }
+
+    /// Whether the open card offers the design's styles of its kind first: not while letters
+    /// picked out are what the text card changes.
+    private var offersStyles: Bool {
+        guard let place = aspect.stylePlace, !store.holding(place).isEmpty else { return false }
+        return place != .text || store.pickedLetters == nil
+    }
+
     var body: some View {
         let open = opens && store.openAspect == aspect
         let turning = turn?.on == true
@@ -136,11 +158,12 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
             if open {
                 // Every row the same distance from the next, picked or exact.
                 VStack(alignment: .leading, spacing: 8) {
+                    if offersStyles, let place = aspect.stylePlace { StyleRow(place: place) }
                     picks
                     if Exact.self != EmptyView.self { exact }
                 }
                 .padding(.horizontal, Inspector.cardInset)
-                .padding(.top, 2)
+                .padding(.top, Self.openGap)
                 .padding(.bottom, Inspector.cardInset)
                 .transition(.unfold)
             }
@@ -164,11 +187,13 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 
     private func head(open: Bool, turning: Bool) -> some View {
         let tearing = turn?.tearing == true
+        let named = named
         return HStack(spacing: 8) {
             HStack(spacing: 8) {
                 glyph
                     .foregroundStyle(Theme.ink2)
                     .frame(width: 22, height: 22)
+                    .overlay { NameRing(on: named != nil) }
                 Text(title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.ink)
@@ -178,9 +203,14 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
                 Group {
                     if tearing {
                         Text("Release to remove")
+                    } else if let named {
+                        NamedSummary(name: named.name)
+                            .id(named.id)
+                            .transition(InkStamp())
                     } else {
                         Text(verbatim: summary)
                             .contentTransition(.numericText())
+                            .transition(.opacity)
                     }
                 }
                 .font(.system(size: 12).monospacedDigit())
@@ -188,6 +218,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .animation(Theme.quick, value: summary)
+                .animation(Theme.pop, value: named?.id)
             }
             // One element for VoiceOver, which opens the card and steps its dial; the controls
             // beside it stay their own.
@@ -217,12 +248,14 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
             if turning, let dial { Notches(dial: dial, caught: caught).transition(.opacity) }
         }
         .contentShape(Rectangle())
+        .onHover { onHead = $0 }
         .gesture(pressing)
         .pointerStyle(turn?.restacking == true ? .grabActive : dial == nil ? PointerStyle.default : .frameResize(position: .trailing))
     }
 
     /// How much there is, as pencil filling the line from the left: faint while the pointer is
-    /// on the card, to say it can be dragged, and full while it is.
+    /// on the line, to say it can be dragged, and full while it is. Not while the pointer is on
+    /// an open card's rows, which have nothing to do with it.
     private func level(turning: Bool) -> some View {
         GeometryReader { geo in
             let share = dial.map { d in
@@ -234,8 +267,8 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
                 .frame(width: geo.size.width * min(max(share, 0), 1))
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .opacity(dial == nil ? 0 : turning ? 1 : hovering ? 0.55 : 0)
-        .animation(turning ? nil : .easeOut(duration: 0.25), value: hovering)
+        .opacity(dial == nil ? 0 : turning ? 1 : onHead ? 0.55 : 0)
+        .animation(turning ? nil : .easeOut(duration: 0.25), value: onHead)
         .allowsHitTesting(false)
     }
 

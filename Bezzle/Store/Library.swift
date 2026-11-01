@@ -244,7 +244,7 @@ final class Library {
         let fit = Renderer.thumbnailPlacement(of: doc, bounds: bounds, in: size, cover: true).scale * scale
         var sizes: [String: Int] = [:]
         func visit(_ n: Node) {
-            if let image = n.fill.image, image.size.width > 0, image.size.height > 0 {
+            for image in n.paintedPictures where image.size.width > 0 && image.size.height > 0 {
                 // Covering its layer, it may reach past it the long way.
                 let cover = max(n.frame.width / image.size.width, n.frame.height / image.size.height) * max(image.scale, 1)
                 let pixels = Int((max(image.size.width, image.size.height) * cover * fit).rounded(.up))

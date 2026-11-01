@@ -4,6 +4,1342 @@
     "" : {
       "shouldTranslate" : false
     },
+    "%lld of %lld adjusted" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld von %2$lld angepasst"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld sur %2$lld ajustés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld su %2$lld modificati"
+          }
+        }
+      }
+    },
+    "%lld. Adaptive layout" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Adaptives Layout"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Mise en page adaptative"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Layout adattivo"
+          }
+        }
+      }
+    },
+    "%lld. Gradients and pictures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Verläufe und Bilder"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Dégradés et images"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Sfumature e immagini"
+          }
+        }
+      }
+    },
+    "%lld. Light and dark" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Hell und dunkel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Clair et sombre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Chiaro e scuro"
+          }
+        }
+      }
+    },
+    "%lld. Styles" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Stile"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Styles"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Stili"
+          }
+        }
+      }
+    },
+    "A light breeze, no rain." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leichter Wind, kein Regen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brise légère, pas de pluie."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brezza leggera, niente pioggia."
+          }
+        }
+      }
+    },
+    "and my border" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "und meinen Rahmen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "et ma bordure"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e il mio bordo"
+          }
+        }
+      }
+    },
+    "appearance.dark" : {
+      "comment" : "An artboard shown dark, its colours in their dark looks.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dark"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sombre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scuro"
+          }
+        }
+      }
+    },
+    "appearance.light" : {
+      "comment" : "An artboard shown light, as opposed to dark.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Light"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hell"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chiaro"
+          }
+        }
+      }
+    },
+    "Beige" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beige"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beige"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beige"
+          }
+        }
+      }
+    },
+    "Click an empty spot on the canvas. The design’s styles are at the top of the inspector: change one there, and every layer that has it follows." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf eine leere Stelle der Arbeitsfläche. Die Stile des Designs stehen oben im Inspektor: Ändere dort einen, und jede Ebene, die ihn hat, folgt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur un endroit vide de la zone de travail. Les styles du design sont en haut de l’inspecteur : changez-en un ici, et chaque calque qui l’a suit."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic su un punto vuoto dell’area di lavoro. Gli stili del design sono in cima all’ispettore: cambiane uno lì, e ogni livello che lo ha lo segue."
+          }
+        }
+      }
+    },
+    "Click the button and open its Fill card. Click + Style, then press ↩ to keep the name Bezzle offers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf den Button und öffne seine Karte Füllung. Klick auf + Stil und drück ↩, um den Namen zu behalten, den Bezzle vorschlägt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le bouton et ouvrez sa carte Remplissage. Cliquez sur + Style, puis appuyez sur ↩ pour garder le nom que Bezzle propose."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sul pulsante e apri la sua scheda Riempimento. Fai clic su + Stile, poi premi ↩ per tenere il nome che Bezzle propone."
+          }
+        }
+      }
+    },
+    "Click the name above the flyer’s corner and drag its right edge out. Bezzle lays the design out again as it grows: given room, the photo moves beside the words." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf den Namen über der Ecke des Flyers und zieh seinen rechten Rand nach außen. Bezzle legt das Design beim Wachsen neu an: Hat es Platz, rückt das Foto neben den Text."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le nom au-dessus du coin du flyer et tirez son bord droit vers l’extérieur. Bezzle recompose le design à mesure qu’il grandit : s’il y a la place, la photo passe à côté du texte."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sul nome sopra l’angolo del volantino e trascina il suo bordo destro verso l’esterno. Bezzle ricompone il design mentre cresce: se c’è spazio, la foto si sposta accanto al testo."
+          }
+        }
+      }
+    },
+    "Click the name above the weather screen’s corner. Point at Dark at the foot of the inspector: the screen shows how it looks at night. Click to keep it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf den Namen über der Ecke der Wetter-App. Zeig unten im Inspektor auf Dunkel: Die App zeigt, wie sie nachts aussieht. Klick, um es zu behalten."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le nom au-dessus du coin de l’écran météo. Survolez Sombre en bas de l’inspecteur : l’écran montre son allure de nuit. Cliquez pour la garder."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sul nome sopra l’angolo della schermata meteo. Passa su Scuro in fondo all’ispettore: la schermata mostra come appare di notte. Fai clic per tenerla così."
+          }
+        }
+      }
+    },
+    "Click the ring. Its Border card has the same choices: a gradient or a photo runs all the way round the border." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf den Ring. Seine Karte Rahmen bietet dieselbe Auswahl: Ein Verlauf oder ein Foto läuft ganz um den Rahmen herum."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur l’anneau. Sa carte Bordure offre les mêmes choix : un dégradé ou une photo fait tout le tour de la bordure."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sull’anello. La sua scheda Bordo offre le stesse scelte: una sfumatura o una foto corre tutto intorno al bordo."
+          }
+        }
+      }
+    },
+    "Click the word and open its Fill card. Click its colour, then Linear or Radial at the top of the menu: every letter takes the gradient. Drag the handles on the canvas to aim it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf das Wort und öffne seine Karte Füllung. Klick auf die Farbe, dann oben im Menü auf Linear oder Radial: Jeder Buchstabe bekommt den Verlauf. Zieh die Griffe auf der Arbeitsfläche, um ihn auszurichten."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le mot et ouvrez sa carte Remplissage. Cliquez sur sa couleur, puis sur Linéaire ou Radial en haut du menu : chaque lettre prend le dégradé. Faites glisser ses poignées sur la zone de travail pour l’orienter."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sulla parola e apri la sua scheda Riempimento. Fai clic sul suo colore, poi su Lineare o Radiale in cima al menu: ogni lettera prende la sfumatura. Trascina le maniglie sull’area di lavoro per orientarla."
+          }
+        }
+      }
+    },
+    "Count me in" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ich bin dabei"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "J’en suis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ci sono"
+          }
+        }
+      }
+    },
+    "Drop a photo from the Finder on the word. The photo shows through its letters, as it does in the word below, and they stay words you can type in." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zieh ein Foto aus dem Finder auf das Wort. Das Foto scheint durch seine Buchstaben, wie im Wort darunter, und sie bleiben Text, in den du tippen kannst."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déposez une photo du Finder sur le mot. La photo apparaît à travers ses lettres, comme dans le mot en dessous, et elles restent des mots où vous pouvez écrire."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trascina una foto dal Finder sulla parola. La foto traspare dalle sue lettere, come nella parola qui sotto, e restano parole in cui puoi scrivere."
+          }
+        }
+      }
+    },
+    "Each of its colours now has a name and a dark look, made for you. Change one on the dark screen, and only its dark look changes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jede ihrer Farben hat jetzt einen Namen und einen dunklen Look, für dich gemacht. Ändere eine in der dunklen App, und nur ihr dunkler Look ändert sich."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chacune de ses couleurs a maintenant un nom et une apparence sombre, faite pour vous. Changez-en une sur l’écran sombre, et seule son apparence sombre change."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ognuno dei suoi colori ha ora un nome e un aspetto scuro, fatto per te. Cambiane uno sulla schermata scura, e cambia solo il suo aspetto scuro."
+          }
+        }
+      }
+    },
+    "Event card" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Veranstaltungskarte"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carte d’événement"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scheda evento"
+          }
+        }
+      }
+    },
+    "Flyer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flyer"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flyer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volantino"
+          }
+        }
+      }
+    },
+    "Give a look a name." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gib einem Look einen Namen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donnez un nom à une apparence."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dai un nome a un aspetto."
+          }
+        }
+      }
+    },
+    "Glow" : {
+      "comment" : "A big word in the tour, there to be painted with a gradient.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Glut"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Éclat"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Luce"
+          }
+        }
+      }
+    },
+    "Ivory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elfenbein"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ivoire"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avorio"
+          }
+        }
+      }
+    },
+    "Join button" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mitmach-Button"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bouton d’inscription"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pulsante di adesione"
+          }
+        }
+      }
+    },
+    "Join us" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mach mit"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Venez"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unisciti a noi"
+          }
+        }
+      }
+    },
+    "Lake" : {
+      "comment" : "A big word in the tour whose letters the tour's photo of a lake shows through.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "See"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lac"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lago"
+          }
+        }
+      }
+    },
+    "Letters given a colour of their own while typing keep it over the paint." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buchstaben, denen du beim Tippen eine eigene Farbe gibst, behalten sie über der Füllung."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les lettres auxquelles vous donnez leur propre couleur en écrivant la gardent par-dessus le remplissage."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le lettere a cui dai un colore proprio mentre scrivi lo mantengono sopra il riempimento."
+          }
+        }
+      }
+    },
+    "name my colour" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "benenn meine Farbe"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nommez ma couleur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nomina il mio colore"
+          }
+        }
+      }
+    },
+    "Next 7 days" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nächste 7 Tage"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "7 prochains jours"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prossimi 7 giorni"
+          }
+        }
+      }
+    },
+    "No dark look" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne dunklen Look"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sans apparence sombre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Senza aspetto scuro"
+          }
+        }
+      }
+    },
+    "Off-white" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gebrochenes Weiß"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blanc cassé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bianco sporco"
+          }
+        }
+      }
+    },
+    "One design, every size." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Design, jede Größe."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un design, toutes les tailles."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un design, ogni dimensione."
+          }
+        }
+      }
+    },
+    "Open its Artboard card and point at the sizes in its Size menu: the flyer tries each one on. Click one, and its layers spring into their new places." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffne seine Karte Zeichenfläche und zeig auf die Formate im Menü Größe: Der Flyer probiert jedes an. Klick auf eines, und seine Ebenen springen an ihre neuen Plätze."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrez sa carte Plan de travail et survolez les formats du menu Taille : le flyer les essaie un par un. Cliquez sur l’un d’eux, et ses calques bondissent à leur nouvelle place."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apri la sua scheda Tavola da disegno e passa sui formati del menu Dimensione: il volantino li prova uno a uno. Fai clic su uno, e i suoi livelli balzano al loro nuovo posto."
+          }
+        }
+      }
+    },
+    "Open its Dark card and click Light One Beside It. The sun and moon on the card switch the screen between the two." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffne ihre Karte Dunkel und klick auf Helle daneben. Sonne und Mond auf der Karte schalten die App zwischen beiden um."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrez sa carte Sombre et cliquez sur Version claire à côté. Le soleil et la lune sur la carte font passer l’écran de l’une à l’autre."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apri la sua scheda Scuro e fai clic su Versione chiara accanto. Il sole e la luna sulla scheda passano la schermata dall’una all’altra."
+          }
+        }
+      }
+    },
+    "Open studio" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Offenes Atelier"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atelier ouvert"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atelier aperto"
+          }
+        }
+      }
+    },
+    "paint my letters" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "mal meine Buchstaben an"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "peignez mes lettres"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "dipingi le mie lettere"
+          }
+        }
+      }
+    },
+    "Paint with anything." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mal mit allem."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Peignez avec tout."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dipingi con tutto."
+          }
+        }
+      }
+    },
+    "Paint, print and throw pots with us, from ten till four." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mal, druck und töpfer mit uns, von zehn bis vier."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Peignez, imprimez et tournez des pots avec nous, de dix à seize heures."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dipingi, stampa e modella vasi con noi, dalle dieci alle sedici."
+          }
+        }
+      }
+    },
+    "Painted words" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bemaltes Wort"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mot peint"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parola dipinta"
+          }
+        }
+      }
+    },
+    "Press ⌘Z to go back: the design is just as it was. Turn off Adapt layout in the same card to resize an artboard without moving anything." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drück ⌘Z, um zurückzugehen: Das Design ist genau wie vorher. Schalte in derselben Karte Layout anpassen aus, um eine Zeichenfläche ohne Verschieben zu skalieren."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appuyez sur ⌘Z pour revenir : le design est exactement comme avant. Désactivez Adapter la mise en page dans la même carte pour redimensionner un plan de travail sans rien déplacer."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Premi ⌘Z per tornare indietro: il design è esattamente com’era. Disattiva Adatta il layout nella stessa scheda per ridimensionare una tavola senza spostare nulla."
+          }
+        }
+      }
+    },
+    "Remove Dark" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkel entfernen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retirer le mode sombre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rimuovi scuro"
+          }
+        }
+      }
+    },
+    "Ring" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ring"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anneau"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anello"
+          }
+        }
+      }
+    },
+    "Rule" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linie"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filet"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filetto"
+          }
+        }
+      }
+    },
+    "Saturday" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Samstag"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Samedi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sabato"
+          }
+        }
+      }
+    },
+    "Saturday, 6 pm" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Samstag, 18 Uhr"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Samedi, 18 h"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sabato, ore 18"
+          }
+        }
+      }
+    },
+    "Summer by the lake" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sommer am See"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’été au bord du lac"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Estate al lago"
+          }
+        }
+      }
+    },
+    "Sunny spells" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeitweise sonnig"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Éclaircies"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schiarite"
+          }
+        }
+      }
+    },
+    "Swim, picnic and stay for the sunset. Bring a friend." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schwimmen, picknicken und bis zum Sonnenuntergang bleiben. Bring jemanden mit."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Baignade, pique-nique et coucher de soleil. Venez avec un ami."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nuoto, picnic e tramonto. Porta un amico."
+          }
+        }
+      }
+    },
+    "Tag" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Etikett"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Étiquette"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Etichetta"
+          }
+        }
+      }
+    },
+    "Today" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heute"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aujourd’hui"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oggi"
+          }
+        }
+      }
+    },
+    "try it on this flyer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "probier es an diesem Flyer"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "essayez sur ce flyer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "provalo su questo volantino"
+          }
+        }
+      }
+    },
+    "try it on this screen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "probier es an dieser App"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "essayez sur cet écran"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "provalo su questa schermata"
+          }
+        }
+      }
+    },
+    "Turn the lights down." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mach das Licht aus."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Baissez la lumière."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abbassa le luci."
+          }
+        }
+      }
+    },
+    "Twenty-two lessons, about a minute each." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zweiundzwanzig Lektionen, je etwa eine Minute."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vingt-deux leçons, environ une minute chacune."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ventidue lezioni, circa un minuto l’una."
+          }
+        }
+      }
+    },
+    "Two more layers have the same colour, so Bezzle offers to name them too: click Name Them Too. Now change the colour and watch it run over all three." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zwei weitere Ebenen haben dieselbe Farbe, also bietet Bezzle an, sie auch zu benennen: Klick auf Auch benennen. Ändere jetzt die Farbe und sieh zu, wie sie über alle drei läuft."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deux autres calques ont la même couleur, alors Bezzle propose de les nommer aussi : cliquez sur Les nommer aussi. Changez maintenant la couleur et regardez-la gagner les trois."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Altri due livelli hanno lo stesso colore, così Bezzle propone di dare il nome anche a loro: fai clic su Assegna anche a loro. Ora cambia il colore e guardalo scorrere su tutti e tre."
+          }
+        }
+      }
+    },
+    "Type, shadows and corners can have names too. Looks that several layers share wait among the styles, dashed: one click names them all." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auch Schrift, Schatten und Ecken können Namen haben. Looks, die mehrere Ebenen teilen, warten gestrichelt bei den Stilen: Ein Klick benennt sie alle."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le texte, les ombres et les coins peuvent aussi avoir un nom. Les apparences que partagent plusieurs calques attendent parmi les styles, en pointillés : un clic les nomme toutes."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anche testo, ombre e angoli possono avere un nome. Gli aspetti che più livelli condividono aspettano tra gli stili, tratteggiati: un clic li nomina tutti."
+          }
+        }
+      }
+    },
+    "Weather" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wetter"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Météo"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meteo"
+          }
+        }
+      }
+    },
+    "With nothing selected, the styles show each colour’s light and dark looks side by side." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ist nichts ausgewählt, zeigen die Stile den hellen und dunklen Look jeder Farbe nebeneinander."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quand rien n’est sélectionné, les styles montrent côte à côte l’apparence claire et sombre de chaque couleur."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quando non è selezionato nulla, gli stili mostrano affiancati l’aspetto chiaro e scuro di ogni colore."
+          }
+        }
+      }
+    },
+    "Words to paint" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wort zum Bemalen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mot à peindre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parola da dipingere"
+          }
+        }
+      }
+    },
     "“%@” could not be shared" : {
       "localizations" : {
         "de" : {
@@ -294,6 +1630,28 @@
         }
       }
     },
+    "%@ Light" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hell"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ chiaro"
+          }
+        }
+      }
+    },
     "%@ Outset" : {
       "localizations" : {
         "de" : {
@@ -564,6 +1922,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld colonne in 1 cella"
+          }
+        }
+      }
+    },
+    "%lld copies in this design" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Kopie in diesem Design"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Kopien in diesem Design"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld copie dans ce design"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld copies dans ce design"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld copia in questo design"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld copie in questo design"
+                }
+              }
+            }
           }
         }
       }
@@ -973,6 +2389,140 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld righe nei post %lld–%lld, %lld post in più"
+          }
+        }
+      }
+    },
+    "%lld more layers look the same" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld weitere Ebene sieht gleich aus"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld weitere Ebenen sehen gleich aus"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more layer looks the same"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more layers look the same"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld autre calque est identique"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld autres calques sont identiques"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld altro livello è uguale"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Altri %lld livelli sono uguali"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld more look the same" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld weitere sieht gleich aus"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld weitere sehen gleich aus"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld autre est identique"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld autres sont identiques"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld altro è identico"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Altri %lld sono identici"
+                }
+              }
+            }
           }
         }
       }
@@ -1435,6 +2985,28 @@
         }
       }
     },
+    "%lld. Components" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Komponenten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Composants"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Componenti"
+          }
+        }
+      }
+    },
     "%lld. Corners and shadows" : {
       "localizations" : {
         "de" : {
@@ -1453,6 +3025,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld. Angoli e ombre"
+          }
+        }
+      }
+    },
+    "%lld. Curves" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Kurven"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Courbes"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Curve"
           }
         }
       }
@@ -2539,6 +4133,28 @@
         }
       }
     },
+    "A light one beside it" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine helle daneben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une version claire à côté"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una chiara accanto"
+          }
+        }
+      }
+    },
     "A line a cell, or a CSV's column" : {
       "localizations" : {
         "de" : {
@@ -2667,6 +4283,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "al mese"
+          }
+        }
+      }
+    },
+    "A new variant of the component, as this copy looks now. What is changed in its copies stays in it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine neue Variante der Komponente, so wie diese Kopie jetzt aussieht. Was in ihren Kopien geändert wird, bleibt in ihr."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une nouvelle variante du composant, telle que cette copie est maintenant. Ce qui est modifié dans ses copies y reste."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una nuova variante del componente, com’è ora questa copia. Ciò che si cambia nelle sue copie resta in essa."
           }
         }
       }
@@ -3314,6 +4952,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ada, Theo e altri 5"
+          }
+        }
+      }
+    },
+    "Adapt layout" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Layout anpassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adapter la mise en page"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adatta il layout"
+          }
+        }
+      }
+    },
+    "Adapt Layout" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Layout anpassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adapter la mise en page"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adatta il layout"
+          }
+        }
+      }
+    },
+    "Add" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hinzufügen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aggiungi"
           }
         }
       }
@@ -4106,6 +5810,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Aggiungi griglia di layout"
+          }
+        }
+      }
+    },
+    "Add Light Version" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helle Version hinzufügen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter une version claire"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aggiungi versione chiara"
           }
         }
       }
@@ -5014,6 +6740,64 @@
         }
       }
     },
+    "All %lld copies" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Kopie"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Alle %lld Kopien"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld copie"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Les %lld copies"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld copia"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Tutte le %lld copie"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "All %lld posts" : {
       "localizations" : {
         "de" : {
@@ -5361,6 +7145,82 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Maschere alfa, che ritagliano secondo il loro contorno"
+          }
+        }
+      }
+    },
+    "Also on %lld more layers" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Auch auf %lld weiteren Ebene"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Auch auf %lld weiteren Ebenen"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Also on %lld more layer"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Also on %lld more layers"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Aussi sur %lld autre calque"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Aussi sur %lld autres calques"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Anche su %lld altro livello"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Anche su altri %lld livelli"
+                }
+              }
+            }
           }
         }
       }
@@ -6106,6 +7966,28 @@
         }
       }
     },
+    "Automatic in the Dark" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatisch im Dunkeln"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatique en sombre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatico in scuro"
+          }
+        }
+      }
+    },
     "Autosave" : {
       "localizations" : {
         "de" : {
@@ -6415,6 +8297,50 @@
         }
       }
     },
+    "Bend the text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text biegen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Courber le texte"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Curva il testo"
+          }
+        }
+      }
+    },
+    "Bend the words." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bieg die Wörter."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Courbez les mots."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Piega le parole."
+          }
+        }
+      }
+    },
     "Best" : {
       "localizations" : {
         "de" : {
@@ -6565,6 +8491,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Più grande"
+          }
+        }
+      }
+    },
+    "Black" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schwarz"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noir"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nero"
           }
         }
       }
@@ -6849,6 +8797,28 @@
         }
       }
     },
+    "Body" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fließtext"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Corps de texte"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Corpo del testo"
+          }
+        }
+      }
+    },
     "Bold" : {
       "localizations" : {
         "de" : {
@@ -7019,46 +8989,24 @@
         }
       }
     },
-    "Borders drawn with a gradient, in its first colour" : {
+    "Borders and inner shadows of masks, drawn over what they hold" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Rahmen mit Verlauf, in dessen erster Farbe"
+            "value" : "Rahmen und Innenschatten von Masken, über ihrem Inhalt gezeichnet"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bordures en dégradé, dans sa première couleur"
+            "value" : "Bordures et ombres intérieures des masques, dessinées par-dessus leur contenu"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bordi disegnati con una sfumatura, nel suo primo colore"
-          }
-        }
-      }
-    },
-    "Borders drawn with a picture, in grey" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rahmen mit Bild, in Grau"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bordures en image, en gris"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bordi disegnati con un’immagine, in grigio"
+            "value" : "Bordi e ombre interne delle maschere, disegnati sopra ciò che contengono"
           }
         }
       }
@@ -7103,28 +9051,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bordi su angoli arrotondati, disegnati come forme"
-          }
-        }
-      }
-    },
-    "Borders with a gradient, in its first colour" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rahmen mit Verlauf, in dessen erster Farbe"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bordures avec dégradé, dans sa première couleur"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bordi con una sfumatura, nel suo primo colore"
           }
         }
       }
@@ -7323,6 +9249,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Importato da %@"
+          }
+        }
+      }
+    },
+    "Brown" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Braun"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brun"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Marrone"
           }
         }
       }
@@ -7767,6 +9715,28 @@
         }
       }
     },
+    "Caption" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bildunterschrift"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Légende"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Didascalia"
+          }
+        }
+      }
+    },
     "Card" : {
       "localizations" : {
         "de" : {
@@ -8089,6 +10059,28 @@
         }
       }
     },
+    "Change a colour again and click New Variant in the word that comes up. The variants lie beside a selected button, to switch between." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ändere noch einmal eine Farbe und klicke im Hinweis, der erscheint, auf Neue Variante. Die Varianten liegen neben einem ausgewählten Button, zum Wechseln."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changez encore une couleur et cliquez sur Nouvelle variante dans le message qui apparaît. Les variantes se trouvent à côté d’un bouton sélectionné, pour passer de l’une à l’autre."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambia ancora un colore e fai clic su Nuova variante nel messaggio che compare. Le varianti stanno accanto a un pulsante selezionato, per passare dall’una all’altra."
+          }
+        }
+      }
+    },
     "Change Background" : {
       "localizations" : {
         "de" : {
@@ -8217,6 +10209,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cambia maiuscole e minuscole"
+          }
+        }
+      }
+    },
+    "Change Colour" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Farbe ändern"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier la couleur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifica colore"
           }
         }
       }
@@ -8551,6 +10565,28 @@
         }
       }
     },
+    "change one" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "eine ändern"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "changez-en un"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "cambiane uno"
+          }
+        }
+      }
+    },
     "Change one card, its colour or its size, and they all follow. The words in each stay their own." : {
       "localizations" : {
         "de" : {
@@ -8569,6 +10605,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cambia una scheda, il colore o la dimensione, e tutte la seguono. I testi di ognuna restano suoi."
+          }
+        }
+      }
+    },
+    "Change one, change them all." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine ändern, alle ändern."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changez-en un, changez-les tous."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambiane uno, cambiali tutti."
           }
         }
       }
@@ -8745,6 +10803,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modifica slide"
+          }
+        }
+      }
+    },
+    "Change Style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil ändern"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier le style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifica stile"
+          }
+        }
+      }
+    },
+    "Change Variant" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Variante wechseln"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changer de variante"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambia variante"
           }
         }
       }
@@ -9053,6 +11155,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scegli un file di testo con una riga per cella, o un file CSV i cui nomi di colonna sono i nomi dei livelli di testo nella griglia."
+          }
+        }
+      }
+    },
+    "Choose Another Picture…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anderes Bild wählen …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisir une autre image…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scegli un’altra immagine…"
           }
         }
       }
@@ -9449,6 +11573,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fai clic sul pannello colorato e dagli un nuovo colore nell’ispettore. Poi passa agli altri post con ⌥⌘← e ⌥⌘→: sono cambiati anche loro. Solo in questo post? Fai clic su Solo questo."
+          }
+        }
+      }
+    },
+    "Click the headline. Swing a bead at one of its ends down and round: the words bend after it, and straight below they close into a ring." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf die Überschrift. Schwing eine Perle an einem ihrer Enden nach unten und herum: Die Wörter biegen sich mit, und senkrecht darunter schliessen sie sich zum Ring."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le titre. Faites pivoter une perle à l’un de ses bouts vers le bas : les mots se courbent avec elle, et tout en bas ils se referment en anneau."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sul titolo. Ruota verso il basso una perla a una delle sue estremità: le parole si piegano con lei, e proprio sotto si chiudono in un anello."
           }
         }
       }
@@ -10113,6 +12259,50 @@
         }
       }
     },
+    "Component" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komponente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Componente"
+          }
+        }
+      }
+    },
+    "Component %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komponente %lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Composant %lld"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Componente %lld"
+          }
+        }
+      }
+    },
     "Component instances whose master is missing" : {
       "localizations" : {
         "de" : {
@@ -10729,6 +12919,28 @@
         }
       }
     },
+    "Corners %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ecken %lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coins %lld"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Angoli %lld"
+          }
+        }
+      }
+    },
     "Correct Spelling" : {
       "localizations" : {
         "de" : {
@@ -10883,6 +13095,186 @@
         }
       }
     },
+    "curve.arch" : {
+      "comment" : "A bend of text that arches up in the middle.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bogen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Arch"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arc"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arco"
+          }
+        }
+      }
+    },
+    "curve.dip" : {
+      "comment" : "A bend of text that sags down in the middle.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mulde"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Dip"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Creux"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conca"
+          }
+        }
+      }
+    },
+    "curve.half" : {
+      "comment" : "Text bent round half a circle.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halbkreis"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Half circle"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Demi-cercle"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Semicerchio"
+          }
+        }
+      }
+    },
+    "curve.on-path" : {
+      "comment" : "Inspector card: text running along a shape's outline.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf Pfad"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "On Path"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sur le tracé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sul tracciato"
+          }
+        }
+      }
+    },
+    "curve.ring" : {
+      "comment" : "Text bent all the way round into a circle.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ring"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ring"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anneau"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anello"
+          }
+        }
+      }
+    },
+    "curve.title" : {
+      "comment" : "Inspector card: text bent into an arc.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biegung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Curve"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Courbure"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Curvatura"
+          }
+        }
+      }
+    },
     "Custom" : {
       "localizations" : {
         "de" : {
@@ -11033,6 +13425,182 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ritaglia sovrapposizioni"
+          }
+        }
+      }
+    },
+    "Dark blue" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkelblau"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bleu foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blu scuro"
+          }
+        }
+      }
+    },
+    "Dark green" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkelgrün"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vert foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verde scuro"
+          }
+        }
+      }
+    },
+    "Dark grey" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkelgrau"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gris foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grigio scuro"
+          }
+        }
+      }
+    },
+    "Dark orange" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkelorange"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orange foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arancione scuro"
+          }
+        }
+      }
+    },
+    "Dark pink" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkelrosa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rose foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rosa scuro"
+          }
+        }
+      }
+    },
+    "Dark purple" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkellila"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Violet foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viola scuro"
+          }
+        }
+      }
+    },
+    "Dark red" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkelrot"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rouge foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rosso scuro"
+          }
+        }
+      }
+    },
+    "Dark teal" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkles Petrol"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sarcelle foncé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verde acqua scuro"
           }
         }
       }
@@ -11257,6 +13825,28 @@
         }
       }
     },
+    "Default" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standard"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Par défaut"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Predefinita"
+          }
+        }
+      }
+    },
     "Default Button" : {
       "localizations" : {
         "de" : {
@@ -11363,6 +13953,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Elimina tavola da disegno"
+          }
+        }
+      }
+    },
+    "Delete Component" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komponente löschen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer le composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elimina componente"
           }
         }
       }
@@ -11627,6 +14239,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Elimina testo"
+          }
+        }
+      }
+    },
+    "Delete Variant" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Variante löschen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer la variante"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elimina variante"
           }
         }
       }
@@ -12080,6 +14714,28 @@
         }
       }
     },
+    "Display" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Affichage"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display"
+          }
+        }
+      }
+    },
     "Distribute" : {
       "localizations" : {
         "de" : {
@@ -12344,6 +15000,28 @@
         }
       }
     },
+    "Double-click a label and type. The words are each copy's own, and its button grows round them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doppelklicke eine Beschriftung und tippe. Die Wörter gehören jeder Kopie selbst, und ihr Button wächst um sie herum."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Double-cliquez sur un libellé et tapez. Les mots sont propres à chaque copie, et son bouton s’agrandit autour d’eux."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai doppio clic su un’etichetta e scrivi. Le parole sono proprie di ogni copia, e il suo pulsante cresce attorno a loro."
+          }
+        }
+      }
+    },
     "double-click me" : {
       "localizations" : {
         "de" : {
@@ -12450,6 +15128,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fai doppio clic sulla ricetta e trascina su qualche parola per sceglierla. Cambia colore, carattere o dimensione nell’ispettore: cambiano solo quelle lettere."
+          }
+        }
+      }
+    },
+    "Double-click to rename" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doppelklicken zum Umbenennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Double-cliquez pour renommer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai doppio clic per rinominare"
+          }
+        }
+      }
+    },
+    "Double-click words on a curve to type: they straighten while you do." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doppelklick auf Wörter auf einer Kurve, um zu tippen: Solange du schreibst, stehen sie gerade."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Double-cliquez sur des mots courbés pour écrire : ils se redressent le temps de la saisie."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai doppio clic sulle parole curve per scrivere: mentre scrivi si raddrizzano."
           }
         }
       }
@@ -12824,6 +15546,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Trascina il pomello sulla sua faccia per orientarla, come se la guidassi per il naso. Con ⌥ la avvicini o la allontani."
+          }
+        }
+      }
+    },
+    "Drag the label onto the edge of the badge and hold it still. After a moment the words jump onto it. Keep dragging to slide them round, to either side." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zieh die Aufschrift auf den Rand des Badges und halt sie still. Nach einem Moment springen die Wörter darauf. Zieh weiter, um sie herumzuschieben, auf die eine oder andere Seite."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faites glisser l’étiquette sur le bord du badge et tenez-la immobile. Au bout d’un instant, les mots sautent dessus. Continuez à glisser pour les faire tourner, d’un côté ou de l’autre."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trascina l’etichetta sul bordo del badge e tienila ferma. Dopo un attimo le parole ci saltano sopra. Continua a trascinare per farle scorrere, da un lato o dall’altro."
           }
         }
       }
@@ -13356,6 +16100,28 @@
         }
       }
     },
+    "Edit Text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text bearbeiten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier le texte"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifica testo"
+          }
+        }
+      }
+    },
     "Editing points" : {
       "localizations" : {
         "de" : {
@@ -13418,6 +16184,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Effetti che Bezzle non conosce"
+          }
+        }
+      }
+    },
+    "Eighteen lessons, about a minute each." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Achtzehn Lektionen, je etwa eine Minute."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dix-huit leçons, environ une minute chacune."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diciotto lezioni, circa un minuto l’una."
           }
         }
       }
@@ -15804,6 +18592,28 @@
         }
       }
     },
+    "Follow Component" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Komponente folgen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suivre le composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Segui il componente"
+          }
+        }
+      }
+    },
     "Follow Design" : {
       "localizations" : {
         "de" : {
@@ -15822,6 +18632,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Segui il design"
+          }
+        }
+      }
+    },
+    "Follow the Other Copies" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Den anderen Kopien folgen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suivre les autres copies"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Segui le altre copie"
           }
         }
       }
@@ -16046,6 +18878,28 @@
         }
       }
     },
+    "Fresh from the oven" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frisch aus dem Ofen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tout juste sorti du four"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appena sfornato"
+          }
+        }
+      }
+    },
     "From %@ to %@" : {
       "localizations" : {
         "de" : {
@@ -16108,6 +18962,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nome completo"
+          }
+        }
+      }
+    },
+    "Further layout grids of the same kind, left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weitere Layoutraster derselben Art, weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grilles de mise en page supplémentaires du même type, ignorées"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Altre griglie di layout dello stesso tipo, omesse"
           }
         }
       }
@@ -16332,6 +19208,50 @@
         }
       }
     },
+    "Give this look a name, to use it on other layers and change it everywhere at once" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gib diesem Look einen Namen, um ihn auf anderen Ebenen zu verwenden und überall auf einmal zu ändern"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donnez un nom à cette apparence pour l’utiliser sur d’autres calques et la modifier partout à la fois"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dai un nome a questo aspetto per usarlo su altri livelli e cambiarlo ovunque in una volta"
+          }
+        }
+      }
+    },
+    "Give this look a name: all %lld layers that have it take it" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gib diesem Look einen Namen: Alle %lld Ebenen, die ihn haben, übernehmen ihn"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donnez un nom à cette apparence : les %lld calques qui l’ont le prennent"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dai un nome a questo aspetto: tutti i %lld livelli che lo hanno lo prendono"
+          }
+        }
+      }
+    },
     "Go on, move one!" : {
       "localizations" : {
         "de" : {
@@ -16492,6 +19412,28 @@
         }
       }
     },
+    "Gradient" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verlauf"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dégradé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sfumatura"
+          }
+        }
+      }
+    },
     "Gradients measured on the canvas, placed by the layer" : {
       "localizations" : {
         "de" : {
@@ -16576,6 +19518,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Più verde"
+          }
+        }
+      }
+    },
+    "Grey" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grau"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gris"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grigio"
           }
         }
       }
@@ -16781,6 +19745,50 @@
         }
       }
     },
+    "Guides on frames inside frames, left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hilfslinien auf Frames in Frames, weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Repères sur des cadres dans des cadres, ignorés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guide su frame dentro altri frame, omesse"
+          }
+        }
+      }
+    },
+    "Guides on the canvas, left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hilfslinien auf der Arbeitsfläche, weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Repères sur la zone de travail, ignorés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guide sull’area di lavoro, omesse"
+          }
+        }
+      }
+    },
     "Gutter" : {
       "localizations" : {
         "de" : {
@@ -16903,6 +19911,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "En-tête"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intestazione"
+          }
+        }
+      }
+    },
+    "Heading" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Überschrift"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intertitre"
           }
         },
         "it" : {
@@ -17217,6 +20247,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tienilo premuto mentre trascini per lasciare una copia."
+          }
+        }
+      }
+    },
+    "hold me on its edge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "halt mich an den Rand"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tenez-moi sur son bord"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tienimi sul bordo"
           }
         }
       }
@@ -17907,6 +20959,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "In una griglia di ripetizione"
+          }
+        }
+      }
+    },
+    "In All %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In allen %lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dans les %lld"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In tutte le %lld"
+          }
+        }
+      }
+    },
+    "In All Variants" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In allen Varianten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dans toutes les variantes"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In tutte le varianti"
           }
         }
       }
@@ -18856,6 +21952,28 @@
         }
       }
     },
+    "Keep in This Copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In dieser Kopie behalten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder dans cette copie"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantieni in questa copia"
+          }
+        }
+      }
+    },
     "Keep in This Post" : {
       "localizations" : {
         "de" : {
@@ -18878,6 +21996,50 @@
         }
       }
     },
+    "Keep in Variant" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In der Variante behalten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder dans la variante"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantieni nella variante"
+          }
+        }
+      }
+    },
+    "Keep Layers in Place" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenen an Ort und Stelle lassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder les calques en place"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lascia i livelli al loro posto"
+          }
+        }
+      }
+    },
     "Keep Only This Post" : {
       "localizations" : {
         "de" : {
@@ -18896,6 +22058,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mantieni solo questo post"
+          }
+        }
+      }
+    },
+    "Keep the look, without its name" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Den Look behalten, ohne seinen Namen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder l’apparence, sans son nom"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantieni l’aspetto, senza il nome"
           }
         }
       }
@@ -19102,6 +22286,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Le reti conosciute vengono raggiunte automaticamente. Se nessuna è disponibile, ti verrà chiesto prima di accedere a una nuova rete."
+          }
+        }
+      }
+    },
+    "Label" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufschrift"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Étiquette"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Etichetta"
           }
         }
       }
@@ -19437,28 +22643,6 @@
         }
       }
     },
-    "Layers with several borders, keeping the top one" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ebenen mit mehreren Rahmen, nur der oberste behalten"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Calques à plusieurs bordures, seule celle du dessus est conservée"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Livelli con più bordi, di cui resta quello in cima"
-          }
-        }
-      }
-    },
     "Layers with several fills, keeping the first" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -19478,28 +22662,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Livelli con più riempimenti, di cui resta il primo"
-          }
-        }
-      }
-    },
-    "Layers with several fills, keeping the top one" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ebenen mit mehreren Füllungen, nur die oberste behalten"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Calques à plusieurs remplissages, seul celui du dessus est conservé"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Livelli con più riempimenti, di cui resta quello in cima"
           }
         }
       }
@@ -19590,6 +22752,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Griglie di layout"
+          }
+        }
+      }
+    },
+    "Layout grids of more than 48 columns or rows, kept to 48" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Layoutraster mit mehr als 48 Spalten oder Zeilen, auf 48 begrenzt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grilles de mise en page de plus de 48 colonnes ou lignes, limitées à 48"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Griglie di layout con più di 48 colonne o righe, limitate a 48"
+          }
+        }
+      }
+    },
+    "Layout grids on frames inside frames, left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Layoutraster auf Frames in Frames, weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grilles de mise en page sur des cadres dans des cadres, ignorées"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Griglie di layout su frame dentro altri frame, omesse"
+          }
+        }
+      }
+    },
+    "Layout grids with uneven margins, centred" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Layoutraster mit ungleichen Rändern, mittig gesetzt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grilles de mise en page aux marges inégales, centrées"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Griglie di layout con margini diversi, centrate"
           }
         }
       }
@@ -19748,6 +22976,28 @@
         }
       }
     },
+    "Lets this copy follow its component again in everything it keeps of its own, but its words and pictures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lässt diese Kopie in allem, was sie für sich behält, wieder ihrer Komponente folgen, außer bei Texten und Bildern"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fait de nouveau suivre son composant à cette copie pour tout ce qu’elle garde en propre, sauf ses textes et ses images"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fa di nuovo seguire il componente a questa copia in tutto ciò che tiene per sé, tranne testi e immagini"
+          }
+        }
+      }
+    },
     "Letter" : {
       "localizations" : {
         "de" : {
@@ -19880,6 +23130,28 @@
         }
       }
     },
+    "Light blue" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hellblau"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bleu clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Azzurro"
+          }
+        }
+      }
+    },
     "Light brightens what shows through, or darkens it below zero. Fill is how much of the layer's own colour lies over it." : {
       "localizations" : {
         "de" : {
@@ -19902,6 +23174,182 @@
         }
       }
     },
+    "Light green" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hellgrün"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vert clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verde chiaro"
+          }
+        }
+      }
+    },
+    "Light grey" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hellgrau"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gris clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grigio chiaro"
+          }
+        }
+      }
+    },
+    "Light One Beside It" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helle daneben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version claire à côté"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versione chiara accanto"
+          }
+        }
+      }
+    },
+    "Light orange" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hellorange"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orange clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arancione chiaro"
+          }
+        }
+      }
+    },
+    "Light pink" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hellrosa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rose clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rosa chiaro"
+          }
+        }
+      }
+    },
+    "Light purple" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helllila"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Violet clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viola chiaro"
+          }
+        }
+      }
+    },
+    "Light red" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hellrot"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rouge clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rosso chiaro"
+          }
+        }
+      }
+    },
+    "Light teal" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helles Petrol"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sarcelle clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verde acqua chiaro"
+          }
+        }
+      }
+    },
     "Light tuned" : {
       "localizations" : {
         "de" : {
@@ -19920,6 +23368,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Luce regolata"
+          }
+        }
+      }
+    },
+    "Light yellow" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hellgelb"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jaune clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giallo chiaro"
           }
         }
       }
@@ -20257,6 +23727,50 @@
         }
       }
     },
+    "Link Them" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les lier"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collegali"
+          }
+        }
+      }
+    },
+    "Link to Component" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit Komponente verknüpfen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lier au composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collega al componente"
+          }
+        }
+      }
+    },
     "LinkedIn" : {
       "shouldTranslate" : false
     },
@@ -20546,6 +24060,28 @@
         }
       }
     },
+    "Look Like the Others" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wie die anderen aussehen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comme les autres"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Come le altre"
+          }
+        }
+      }
+    },
     "Lossless" : {
       "localizations" : {
         "de" : {
@@ -20803,6 +24339,50 @@
         }
       }
     },
+    "Make Component" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komponente erstellen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Créer un composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crea componente"
+          }
+        }
+      }
+    },
+    "Make Dark" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dunkel machen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rendre sombre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rendi scuro"
+          }
+        }
+      }
+    },
     "Make Deck" : {
       "localizations" : {
         "de" : {
@@ -20847,6 +24427,50 @@
         }
       }
     },
+    "Make it bend" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bieg mich"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Courbe-moi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Piegami"
+          }
+        }
+      }
+    },
+    "Make it dark by itself again, from its light look" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wieder von selbst abdunkeln, aus dem hellen Look"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’assombrir de nouveau automatiquement, d’après son apparence claire"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scuriscilo di nuovo da solo, dal suo aspetto chiaro"
+          }
+        }
+      }
+    },
     "Make it say something." : {
       "localizations" : {
         "de" : {
@@ -20865,6 +24489,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fagli dire qualcosa."
+          }
+        }
+      }
+    },
+    "Make Light" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hell machen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rendre clair"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rendi chiaro"
           }
         }
       }
@@ -21221,46 +24867,24 @@
         }
       }
     },
-    "Masks made of several layers, cutting by their box" : {
+    "Masks of text or lines, cutting by their box" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Masken aus mehreren Ebenen, schneiden nach ihrem Begrenzungsrahmen"
+            "value" : "Masken aus Text oder Linien, schneiden nach ihrem Begrenzungsrahmen"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Masques composés de plusieurs calques, découpant selon leur cadre"
+            "value" : "Masques en texte ou en lignes, découpant selon leur cadre"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Maschere fatte di più livelli, che ritagliano secondo il loro riquadro"
-          }
-        }
-      }
-    },
-    "Masks right on a page, shown as shapes" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Masken direkt auf einer Seite, als Formen gezeigt"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Masques posés directement sur une page, affichés comme des formes"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Maschere direttamente su una pagina, mostrate come forme"
+            "value" : "Maschere di testo o linee, che ritagliano secondo il loro riquadro"
           }
         }
       }
@@ -22124,6 +25748,72 @@
         }
       }
     },
+    "Name it" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Benennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nommer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dai un nome"
+          }
+        }
+      }
+    },
+    "Name Style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil benennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nommer le style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assegna nome allo stile"
+          }
+        }
+      }
+    },
+    "Name Them Too" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auch benennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les nommer aussi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assegna anche a loro"
+          }
+        }
+      }
+    },
     "Names" : {
       "localizations" : {
         "de" : {
@@ -22473,6 +26163,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nuovo progetto"
+          }
+        }
+      }
+    },
+    "New Variant" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neue Variante"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouvelle variante"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nuova variante"
           }
         }
       }
@@ -23204,6 +26916,28 @@
         }
       }
     },
+    "Olive" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oliv"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Olive"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oliva"
+          }
+        }
+      }
+    },
     "On" : {
       "localizations" : {
         "de" : {
@@ -23490,6 +27224,28 @@
         }
       }
     },
+    "Only %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seulement %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo %@"
+          }
+        }
+      }
+    },
     "Only a layer filled with a picture has a background to take away." : {
       "localizations" : {
         "de" : {
@@ -23530,6 +27286,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Solo collaboratori"
+          }
+        }
+      }
+    },
+    "Only Here" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur hier"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ici seulement"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo qui"
+          }
+        }
+      }
+    },
+    "Only in this copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur in dieser Kopie"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seulement dans cette copie"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo in questa copia"
           }
         }
       }
@@ -23575,6 +27375,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Solo in questo post: %@"
+          }
+        }
+      }
+    },
+    "Only This Copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur diese Kopie"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seulement celle-ci"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo questa copia"
           }
         }
       }
@@ -25283,6 +29105,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pillola"
+          }
+        }
+      }
+    },
+    "Pill button" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pill-Button"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bouton pilule"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pulsante a pillola"
+          }
+        }
+      }
+    },
+    "Pink" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rosa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rose"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rosa"
           }
         }
       }
@@ -27716,6 +31582,72 @@
         }
       }
     },
+    "Remove style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil entfernen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer le style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rimuovi stile"
+          }
+        }
+      }
+    },
+    "Remove Style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil entfernen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer le style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rimuovi stile"
+          }
+        }
+      }
+    },
+    "Remove Style Name" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stilnamen entfernen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retirer le nom du style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rimuovi nome dello stile"
+          }
+        }
+      }
+    },
     "Remove this file" : {
       "localizations" : {
         "de" : {
@@ -27800,6 +31732,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Rinomina"
+          }
+        }
+      }
+    },
+    "Rename Component" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komponente umbenennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Renommer le composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rinomina componente"
+          }
+        }
+      }
+    },
+    "Rename Style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil umbenennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Renommer le style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rinomina stile"
+          }
+        }
+      }
+    },
+    "Rename Variant" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Variante umbenennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Renommer la variante"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rinomina variante"
           }
         }
       }
@@ -28136,6 +32134,28 @@
         }
       }
     },
+    "Replace Picture" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bild ersetzen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remplacer l’image"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sostituisci immagine"
+          }
+        }
+      }
+    },
     "Replace the picture in %@" : {
       "localizations" : {
         "de" : {
@@ -28290,6 +32310,28 @@
         }
       }
     },
+    "Reset Copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopie zurücksetzen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réinitialiser la copie"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ripristina copia"
+          }
+        }
+      }
+    },
     "Reset Photo" : {
       "localizations" : {
         "de" : {
@@ -28374,6 +32416,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ridimensiona immagine"
+          }
+        }
+      }
+    },
+    "Resize the badge or drag its points: the words follow. Pull them well clear of it to take them off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ändere die Grösse des Badges oder zieh an seinen Punkten: Die Wörter folgen. Zieh sie weit davon weg, um sie abzunehmen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redimensionnez le badge ou déplacez ses points : les mots suivent. Éloignez-les bien pour les en détacher."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ridimensiona il badge o trascina i suoi punti: le parole lo seguono. Allontanale bene per staccarle."
           }
         }
       }
@@ -28858,6 +32922,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Uguale in ogni cella"
+          }
+        }
+      }
+    },
+    "Same in Every Copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In jeder Kopie gleich"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Identique dans chaque copie"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uguale in ogni copia"
           }
         }
       }
@@ -29506,6 +33592,28 @@
         }
       }
     },
+    "Select anything and press these keys to make it a component. Parts from the resources panel are components already: drop one twice and both change together." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle etwas aus und drücke diese Tasten, um daraus eine Komponente zu machen. Teile aus den Ressourcen sind schon Komponenten: Ziehe eines zweimal herein, und beide ändern sich gemeinsam."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sélectionnez n’importe quoi et appuyez sur ces touches pour en faire un composant. Les éléments du panneau des ressources sont déjà des composants : déposez-en un deux fois et les deux changent ensemble."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleziona qualcosa e premi questi tasti per farne un componente. Le parti del pannello delle risorse sono già componenti: trascinane una due volte e cambieranno insieme."
+          }
+        }
+      }
+    },
     "Select Grid" : {
       "localizations" : {
         "de" : {
@@ -29524,6 +33632,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Seleziona griglia"
+          }
+        }
+      }
+    },
+    "Select Layers Inside" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenen darin auswählen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sélectionner les calques qu’il contient"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleziona i livelli contenuti"
           }
         }
       }
@@ -29744,6 +33874,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Impostazioni"
+          }
+        }
+      }
+    },
+    "Seventeen lessons, about a minute each." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Siebzehn Lektionen, je etwa eine Minute."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dix-sept leçons, environ une minute chacune."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diciassette lezioni, circa un minuto l’una."
           }
         }
       }
@@ -30742,6 +34895,28 @@
         }
       }
     },
+    "Show this artboard dark" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Zeichenfläche dunkel zeigen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afficher ce plan de travail en sombre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostra questa tavola da disegno in scuro"
+          }
+        }
+      }
+    },
     "Show Toolbar" : {
       "localizations" : {
         "de" : {
@@ -30782,6 +34957,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mostra o nasconde i righelli. ⌃, fa lo stesso per le guide, ⌃G per le griglie di layout."
+          }
+        }
+      }
+    },
+    "Shows this copy as %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeigt diese Kopie als %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Affiche cette copie en %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostra questa copia come %@"
           }
         }
       }
@@ -30897,6 +35094,7 @@
       }
     },
     "Sixteen lessons, about a minute each." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -31222,6 +35420,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Leggermente arrotondati"
+          }
+        }
+      }
+    },
+    "Small" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klein"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Petit"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Piccolo"
+          }
+        }
+      }
+    },
+    "Small capitals in part of a text, set in plain letters" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kapitälchen in einem Teil eines Textes, in normalen Buchstaben gesetzt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Petites capitales dans une partie d’un texte, composées en lettres normales"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maiuscoletto in una parte di un testo, composto in lettere normali"
           }
         }
       }
@@ -31955,6 +36197,28 @@
         }
       }
     },
+    "Square grids, left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quadratische Raster, weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grilles carrées, ignorées"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Griglie quadrate, omesse"
+          }
+        }
+      }
+    },
     "Squircle" : {
       "localizations" : {
         "de" : {
@@ -32606,6 +36870,28 @@
         }
       }
     },
+    "Straighten" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Begradigen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redresser"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Raddrizza"
+          }
+        }
+      }
+    },
     "Stretched texts, set at the size they show" : {
       "localizations" : {
         "de" : {
@@ -32743,6 +37029,28 @@
     "Studio Display" : {
       "shouldTranslate" : false
     },
+    "Style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stile"
+          }
+        }
+      }
+    },
     "Style Text" : {
       "localizations" : {
         "de" : {
@@ -32783,6 +37091,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Alternative stilistiche"
+          }
+        }
+      }
+    },
+    "Subheading" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zwischentitel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sous-titre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sottotitolo"
           }
         }
       }
@@ -33113,6 +37443,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Lettere ornate"
+          }
+        }
+      }
+    },
+    "swing my end" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "schwing mein Ende"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "faites pivoter mon bout"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ruota la mia estremità"
           }
         }
       }
@@ -33470,6 +37822,28 @@
         }
       }
     },
+    "Take off path" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vom Pfad lösen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retirer du tracé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Togli dal tracciato"
+          }
+        }
+      }
+    },
     "Take Out" : {
       "localizations" : {
         "de" : {
@@ -33554,6 +37928,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Alto 3:4"
+          }
+        }
+      }
+    },
+    "Teal" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Petrol"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sarcelle"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verde acqua"
           }
         }
       }
@@ -33842,6 +38238,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Testo in %@"
+          }
+        }
+      }
+    },
+    "Text on Path %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text auf Pfad %lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Texte sur tracé %lld"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testo su tracciato %lld"
           }
         }
       }
@@ -34174,24 +38592,68 @@
         }
       }
     },
-    "Texts with several styles, shown in their main one" : {
+    "Texts with font features or axes in part of them, set as their main part" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Texte mit mehreren Stilen, im Hauptstil gezeigt"
+            "value" : "Texte mit Schriftfunktionen oder Achsen nur in einem Teil, wie ihr Hauptteil gesetzt"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Textes à plusieurs styles, affichés dans leur style principal"
+            "value" : "Textes avec des fonctions ou des axes de police dans une partie seulement, composés comme leur partie principale"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Testi con più stili, mostrati nello stile principale"
+            "value" : "Testi con funzioni o assi del font solo in una parte, composti come la loro parte principale"
+          }
+        }
+      }
+    },
+    "Texts with paragraphs aligned differently, aligned as their main part" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Texte mit unterschiedlich ausgerichteten Absätzen, wie ihr Hauptteil ausgerichtet"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Textes aux paragraphes alignés différemment, alignés comme leur partie principale"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testi con paragrafi allineati in modo diverso, allineati come la loro parte principale"
+          }
+        }
+      }
+    },
+    "Texts with several line or paragraph spacings, spaced as their main part" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Texte mit mehreren Zeilen- oder Absatzabständen, wie ihr Hauptteil gesetzt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Textes à plusieurs interlignes ou espacements de paragraphe, espacés comme leur partie principale"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testi con più interlinee o spaziature tra paragrafi, spaziati come la loro parte principale"
           }
         }
       }
@@ -34610,6 +39072,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "I dati compressi usano qualcosa che Bezzle non sa leggere: %@."
+          }
+        }
+      }
+    },
+    "The copy after" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Kopie danach"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La copie suivante"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La copia successiva"
+          }
+        }
+      }
+    },
+    "The copy before" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Kopie davor"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La copie précédente"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La copia precedente"
           }
         }
       }
@@ -35248,6 +39754,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Non c’è ancora nulla da esportare. Crea una tavola da disegno con A."
+          }
+        }
+      }
+    },
+    "These three buttons are copies of one component. Click one, then click its shape and give it another colour. The others take it as the light reaches them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese drei Buttons sind Kopien einer Komponente. Klicke einen an, dann seine Form, und gib ihr eine andere Farbe. Die anderen übernehmen sie, sobald das Licht sie erreicht."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ces trois boutons sont des copies d’un même composant. Cliquez-en un, puis sur sa forme, et donnez-lui une autre couleur. Les autres la prennent dès que la lumière les atteint."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questi tre pulsanti sono copie di un solo componente. Fai clic su uno, poi sulla sua forma, e dalle un altro colore. Gli altri lo prendono non appena la luce li raggiunge."
           }
         }
       }
@@ -35981,6 +40509,28 @@
         }
       }
     },
+    "Title" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Titel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Titre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Titolo"
+          }
+        }
+      }
+    },
     "Title Case" : {
       "localizations" : {
         "de" : {
@@ -36021,6 +40571,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Forme per titoli"
+          }
+        }
+      }
+    },
+    "To the other side" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf die andere Seite"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De l’autre côté"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dall’altro lato"
           }
         }
       }
@@ -36329,6 +40901,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "In alto"
+          }
+        }
+      }
+    },
+    "Top and bottom margins of layout grids, left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Obere und untere Ränder von Layoutrastern, weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Marges haute et basse des grilles de mise en page, ignorées"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Margini superiore e inferiore delle griglie di layout, omessi"
           }
         }
       }
@@ -36963,6 +41557,36 @@
         }
       }
     },
+    "undo.bend-text" : {
+      "comment" : "Undo name: a text's letters bent into an arc.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text biegen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bend Text"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Courber le texte"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Curva il testo"
+          }
+        }
+      }
+    },
     "undo.group" : {
       "comment" : "Undo name: layers put into a group.",
       "extractionState" : "extracted_with_value",
@@ -37053,6 +41677,66 @@
         }
       }
     },
+    "undo.slide-text" : {
+      "comment" : "Undo name: a text moved along the outline it runs on, or to its other side.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text am Pfad verschieben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Move Text along Path"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer le texte sur le tracé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta il testo sul tracciato"
+          }
+        }
+      }
+    },
+    "undo.straighten-text" : {
+      "comment" : "Undo name: a text's letters straight again after running along a curve.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text begradigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Straighten Text"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redresser le texte"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Raddrizza il testo"
+          }
+        }
+      }
+    },
     "undo.take-out-of-mask" : {
       "comment" : "Undo name: layers taken out of the shape that held them.",
       "extractionState" : "extracted_with_value",
@@ -37079,6 +41763,66 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Togli dalla maschera"
+          }
+        }
+      }
+    },
+    "undo.take-text-off-path" : {
+      "comment" : "Undo name: a text taken off the outline it ran along.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text vom Pfad lösen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Take Text off Path"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retirer le texte du tracé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Togli il testo dal tracciato"
+          }
+        }
+      }
+    },
+    "undo.text-on-path" : {
+      "comment" : "Undo name: a text laid along a shape's outline, following it.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text auf Pfad legen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Put Text on Path"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Placer le texte sur le tracé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Metti il testo sul tracciato"
           }
         }
       }
@@ -37215,6 +41959,72 @@
         }
       }
     },
+    "Unlink Copies" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopien lösen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Délier les copies"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scollega copie"
+          }
+        }
+      }
+    },
+    "Unlink Copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopie lösen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Délier la copie"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scollega copia"
+          }
+        }
+      }
+    },
+    "Unlink from component" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von der Komponente lösen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Délier du composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scollega dal componente"
+          }
+        }
+      }
+    },
     "Unlock" : {
       "localizations" : {
         "de" : {
@@ -37299,6 +42109,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Senza nome"
+          }
+        }
+      }
+    },
+    "Unnamed look" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Look ohne Namen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apparence sans nom"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aspetto senza nome"
           }
         }
       }
@@ -37523,6 +42355,28 @@
         }
       }
     },
+    "Use in All Copies" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In allen Kopien verwenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser dans toutes les copies"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usa in tutte le copie"
+          }
+        }
+      }
+    },
     "Use in All Posts" : {
       "localizations" : {
         "de" : {
@@ -37541,6 +42395,94 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Usa in tutti i post"
+          }
+        }
+      }
+    },
+    "Use in All Variants" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In allen Varianten verwenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser dans toutes les variantes"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usa in tutte le varianti"
+          }
+        }
+      }
+    },
+    "Use Style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil verwenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser le style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usa stile"
+          }
+        }
+      }
+    },
+    "Use this style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen Stil verwenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser ce style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usa questo stile"
+          }
+        }
+      }
+    },
+    "Variant %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Variante %lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Variante %lld"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Variante %lld"
           }
         }
       }
@@ -37923,6 +42865,28 @@
         }
       }
     },
+    "What the component is called" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wie die Komponente heißt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le nom du composant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il nome del componente"
+          }
+        }
+      }
+    },
     "What you change here changes in all %lld cells, but for the picture: each cell has its own." : {
       "localizations" : {
         "de" : {
@@ -38207,6 +43171,28 @@
         }
       }
     },
+    "White" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weiß"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blanc"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bianco"
+          }
+        }
+      }
+    },
     "Whites" : {
       "localizations" : {
         "de" : {
@@ -38467,6 +43453,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Testi"
+          }
+        }
+      }
+    },
+    "Words to bend" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wörter zum Biegen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mots à courber"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parole da piegare"
           }
         }
       }

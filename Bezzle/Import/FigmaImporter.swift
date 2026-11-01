@@ -124,6 +124,8 @@ private struct Converter {
     /// The masters being laid out, so a component that holds itself stops.
     private var expanding: Set<GUID> = []
     private var fonts = FontMatch()
+    /// How many masks have been made, to name each.
+    private var masks = 0
 
     private static let identity: Set<String> = ["guid", "guidPath", "parentIndex", "overrideKey", "type", "phase", "styleID"]
     /// What an instance keeps of its own when changes are made to its master as a whole.
@@ -153,9 +155,9 @@ private struct Converter {
         let root = nodes.first { $0.value["type"]?.string == "DOCUMENT" }?.key
         var pages: [[Node]] = []
         for (id, page) in held(by: root) where page["type"]?.string == "CANVAS" && page["internalOnly"]?.bool != true {
-            var laid: [Node] = []
-            for (child, n) in held(by: id) { laid += top(n, child, into: .identity) }
+            let laid = top(held(by: id), into: .identity)
             if !laid.isEmpty { pages.append(laid) }
+            if page["guides"]?.objects.isEmpty == false { report.note("Guides on the canvas, left out") }
         }
         for _ in pages.dropFirst() { report.note("Pages, laid out under the first") }
         var doc = BezzleDocument()
@@ -194,43 +196,87 @@ private struct Converter {
 
     // MARK: Layers
 
-    /// A layer right on a page. Frames there are artboards; a section gives what it holds to the
-    /// page; anything else lies on the canvas.
-    private mutating func top(_ n: Object, _ id: GUID, into m: CGAffineTransform) -> [Node] {
-        let type = n["type"]?.string
-        if type == "SECTION" {
-            report.note("Sections, left out around what they hold")
-            let inner = transform(n).concatenating(m)
-            var out: [Node] = []
-            for (child, c) in held(by: id) { out += top(c, child, into: inner) }
-            return out
+    /// The layers right on a page, bottom first. Frames there are artboards; a section gives what
+    /// it holds to the page; anything else lies on the canvas, a mask among them cutting off those
+    /// above it up to the next artboard.
+    private mutating func top(_ kids: [(GUID, Object)], into m: CGAffineTransform) -> [Node] {
+        var out: [Node] = [], loose: [(GUID, Object)] = []
+        func lay(_ out: inout [Node], _ loose: inout [(GUID, Object)]) {
+            out += layers(loose, into: m, scope: Scope())
+            loose = []
         }
-        if ["FRAME", "SYMBOL", "INSTANCE"].contains(type), !isGroup(n), let board = artboard(n, id, m) { return [board] }
-        if n["mask"]?.bool == true { report.note("Masks right on a page, shown as shapes") }
-        return convert(n, id, into: m, scope: Scope()).map { [$0] } ?? []
+        for (id, n) in kids {
+            let type = n["type"]?.string
+            if type == "SECTION" {
+                report.note("Sections, left out around what they hold")
+                lay(&out, &loose)
+                out += top(held(by: id), into: transform(n).concatenating(m))
+            } else if ["FRAME", "SYMBOL", "INSTANCE"].contains(type), !isGroup(n), let board = artboard(n, id, m) {
+                lay(&out, &loose)
+                out.append(board)
+            } else {
+                loose.append((id, n))
+            }
+        }
+        lay(&out, &loose)
+        return out
     }
 
     /// The layers a frame or group holds, bottom first. A layer that is a mask cuts off those
-    /// above it, so it and they become a group.
+    /// above it without being drawn itself, so they become a mask, Bezzle's own, its shape clear.
     private mutating func layers(_ kids: [(GUID, Object)], into m: CGAffineTransform, scope: Scope) -> [Node] {
         var out: [Node] = []
-        var masked: Node?
-        for (id, k) in kids {
-            if k["mask"]?.bool == true, k["visible"]?.bool != false, var shape = convert(k, id, into: m, scope: scope) {
-                if let g = masked, !g.children.isEmpty { out.append(g) }
-                if shape.isContainer { report.note("Masks made of several layers, cutting by their box") }
-                if k["maskType"]?.string == "LUMINANCE" { report.note("Masks by brightness, cutting by their shape") }
-                shape.hidden = false
+        var cut: (shape: Node, held: [Node])?
+        func close(_ out: inout [Node], _ cut: inout (shape: Node, held: [Node])?) {
+            defer { cut = nil }
+            guard let (shape, held) = cut, !held.isEmpty else { return }
+            if let holder = ImportMask.holder(shape, drawn: false), let mask = ImportMask.mask(holder, holding: held, name: maskName()) {
+                out.append(mask)
+            } else {
+                // Only a shape can hold others; anything else cuts by its box, as it always did.
+                report.note("Masks of text or lines, cutting by their box")
                 var g = Node(kind: .group, frame: .zero)
                 g.mask = [shape]
-                masked = g
+                g.children = held
+                out.append(g)
+            }
+        }
+        for (id, k) in kids {
+            if k["mask"]?.bool == true, k["visible"]?.bool != false, var shape = convert(k, id, into: m, scope: scope) {
+                close(&out, &cut)
+                if k["maskType"]?.string == "LUMINANCE" {
+                    report.note("Masks by brightness, cutting by their shape")
+                } else if k["maskType"]?.string != "OUTLINE", k["maskIsOutline"]?.bool != true, fades(k) {
+                    report.note("Alpha masks, cutting by their outline")
+                }
+                shape.hidden = false
+                cut = (shape, [])
                 continue
             }
             guard let n = convert(k, id, into: m, scope: scope) else { continue }
-            if masked != nil { masked?.children.append(n) } else { out.append(n) }
+            if cut != nil { cut?.held.append(n) } else { out.append(n) }
         }
-        if let g = masked, !g.children.isEmpty { out.append(g) }
+        close(&out, &cut)
         return out
+    }
+
+    /// The name of the next mask: "Mask 1", "Mask 2", as Bezzle names its own.
+    private mutating func maskName() -> String {
+        masks += 1
+        return String(localized: "Mask \(masks)")
+    }
+
+    /// Whether a mask cutting by how clear its paints are would fade what it holds, rather than
+    /// cut it off at its outline: some paint of it lets what lies under it through.
+    private func fades(_ e: Object) -> Bool {
+        shown(e["fillPaints"]?.objects ?? []).contains { p in
+            if num(p["opacity"], 1) < 0.999 { return true }
+            switch p["type"]?.string {
+            case "SOLID": return color(p["color"]).a < 0.999
+            case "IMAGE": return false
+            default: return (p["stops"]?.objects ?? []).contains { color($0["color"]).a < 0.999 }
+            }
+        }
     }
 
     /// A layer of a master with the changes meant for it, and those to pass on to what it holds:
@@ -365,20 +411,76 @@ private struct Converter {
         if let master { expanding.remove(master) }
         board.clips = e["frameMaskDisabled"]?.bool != true
         let box = CGRect(origin: .zero, size: size)
-        let (under, over) = backing(e, box, inside, alone: corners(e).contains { $0 > 0 })
+        // An artboard has one fill of its own; more, unless they come to one colour, and round
+        // corners are drawn by a layer under what it holds.
+        let one = boardFill(e["fillPaints"]?.objects ?? [])
+        let (under, over) = backing(e, box, inside, alone: one == nil || corners(e).contains { $0 > 0 })
         if let under {
             board.fill.on = false
             board.children = [under] + held
         } else {
-            board.fill = fill(e["fillPaints"]?.objects ?? []) ?? Fill(on: false, color: .white)
+            board.fill = one ?? Fill(on: false, color: .white)
             board.children = held
         }
         if let over { board.children.append(over) }
+        board.layout = layoutGrid(e, scale: CGSize(width: t.a, height: t.d), in: board.frame.size)
+        let guides = (e["guides"]?.objects ?? []).map { (vertical: $0["axis"]?.string != "Y", at: $0.num("offset")) }
+        board.guides = ImportLayout.guides(across: guides.filter(\.vertical).map { $0.at * t.a },
+                                           down: guides.filter { !$0.vertical }.map { $0.at * t.d }, in: board.frame.size)
         if e["effects"]?.objects.contains(where: { $0["visible"]?.bool != false }) == true { report.note("Shadows and blurs on artboards, left out") }
         if num(e["opacity"], 1) < 1 { report.note("See-through artboards, drawn solid") }
         if e["visible"]?.bool == false { board.hidden = true }
         if e["locked"]?.bool == true { board.locked = true }
         return board
+    }
+
+    /// The columns, rows and baselines a frame right on a page is laid out on, as far as Bezzle's
+    /// grid holds them: one of each, columns and rows stretching between equal margins. Rows that
+    /// touch are lines a step apart, a baseline grid. `scale` is how much the frame is stretched.
+    private mutating func layoutGrid(_ e: Object, scale: CGSize, in size: CGSize) -> LayoutGrid? {
+        var grid = LayoutGrid(), more = false
+        for g in e["layoutGrids"]?.objects ?? [] where g["visible"]?.bool != false {
+            if g["pattern"]?.string == "GRID" {
+                report.note("Square grids, left out")
+                continue
+            }
+            let across = g["axis"]?.string != "Y", k = across ? scale.width : scale.height
+            let length = across ? size.width : size.height
+            let gutter = max(g.num("gutterSize"), 0) * k, offset = g.num("offset") * k, section = max(g.num("sectionSize"), 0) * k
+            // Figma counts as many as fit, when told to, by the largest number it can.
+            let told = g["numSections"]?.int ?? 1, fitting = told <= 0 || told >= Int(Int32.max)
+            var track: LayoutGrid.Track?
+            if g["type"]?.string == "STRETCH" || g["type"] == nil {
+                track = ImportLayout.stretched(count: fitting ? 1 : told, gutter: gutter, start: offset, end: offset, report: &report)
+            } else {
+                let room = g["type"]?.string == "CENTER" ? length : length - max(offset, 0)
+                let count = fitting ? max(Int(((room + gutter) / max(section + gutter, 1)).rounded(.down)), 1) : told
+                let total = CGFloat(count) * section + CGFloat(count - 1) * gutter
+                let start = switch g["type"]?.string {
+                case "CENTER": (length - total) / 2
+                case "MAX": length - offset - total
+                default: offset
+                }
+                if !across, gutter == 0, LayoutGrid.Baseline.steps.contains(section) {
+                    if grid.baseline == nil {
+                        let first = start.truncatingRemainder(dividingBy: section)
+                        grid.baseline = LayoutGrid.Baseline(step: section, offset: first < 0 ? first + section : first)
+                    } else {
+                        more = true
+                    }
+                    continue
+                }
+                track = ImportLayout.track(count: count, size: section, gutter: gutter, start: start, along: length, report: &report)
+            }
+            guard let track else { continue }
+            if across {
+                if grid.columns == nil { grid.columns = track } else { more = true }
+            } else {
+                if grid.rows == nil { grid.rows = track } else { more = true }
+            }
+        }
+        if more { report.note("Further layout grids of the same kind, left out") }
+        return grid.orNil
     }
 
     /// A frame in a frame, or a group: a Bezzle group of what it holds, over a rectangle with the
@@ -395,6 +497,9 @@ private struct Converter {
             effects(&g, e)
             return g
         }
+        // Only an artboard is laid out on a grid or has guides of its own.
+        if e["layoutGrids"]?.objects.contains(where: { $0["visible"]?.bool != false }) == true { report.note("Layout grids on frames inside frames, left out") }
+        if e["guides"]?.objects.isEmpty == false { report.note("Guides on frames inside frames, left out") }
         let box = CGRect(origin: .zero, size: size(e))
         let (under, over) = backing(e, box, m, alone: true)
         if held.isEmpty, var only = under ?? over {
@@ -403,9 +508,21 @@ private struct Converter {
             effects(&only, e)
             return only
         }
-        g.children = [under].compactMap { $0 } + held + [over].compactMap { $0 }
+        if e["frameMaskDisabled"]?.bool != true, !held.isEmpty, let edge = boxShape(e, box, m)?.0, ImportMask.reaches(held, outside: edge) {
+            // A frame cutting off what reaches past it holds it as a mask does: its fill under it
+            // and its border over it, as Figma draws a frame.
+            var holder = under ?? edge
+            if under == nil {
+                ImportMask.clear(&holder)
+                holder.name = String(localized: "Edge")
+            }
+            holder.borders = over?.borders ?? []
+            g.children = [holder] + held
+            g.clipsToFirst = true
+        } else {
+            g.children = [under].compactMap { $0 } + held + [over].compactMap { $0 }
+        }
         guard !g.children.isEmpty else { return nil }
-        if e["frameMaskDisabled"]?.bool != true, !held.isEmpty, let mask = boxShape(e, box, m)?.0 { g.mask = [mask] }
         effects(&g, e)
         // What lies behind a frame is blurred through its fill.
         if let blur = g.blur, blur.background {
@@ -428,10 +545,11 @@ private struct Converter {
             r.borders = []
             under = r
         }
-        if !borders.isEmpty, var r = boxShape(e, box, m)?.0 {
+        if !borders.isEmpty, let shaped = boxShape(e, box, m) {
+            var r = shaped.0
             r.name = String(localized: "Border")
             r.fills = []
-            r.borders = borders
+            r.borders = shaped.1 ? borders.map { $0.flipped(horizontally: false) } : borders
             over = r
         }
         return (under, over)
@@ -537,7 +655,11 @@ private struct Converter {
             return n
         }
         guard let outline = geometry(e["strokeGeometry"]), var n = ImportGeometry.outline(PathData.string(outline.0), m) else { return nil }
-        n.fills = borders.map { Fill(on: true, color: $0.color) }
+        n.fills = borders.map { b in
+            var f = b.paint
+            f.on = true
+            return f
+        }
         report.note("Borders on rounded corners, drawn as shapes")
         return n
     }
@@ -689,7 +811,8 @@ private struct Converter {
     private mutating func paint(_ n: inout Node, _ e: Object, flipped: Bool) {
         let fills = self.fills(e["fillPaints"]?.objects ?? [])
         n.fills = flipped ? fills.map { $0.flipped(horizontally: false) } : fills
-        n.borders = borders(e, open: false)
+        let borders = self.borders(e, open: false)
+        n.borders = flipped ? borders.map { $0.flipped(horizontally: false) } : borders
     }
 
     /// The fills a layer's paints come to, one over another as Figma lays them, the first lowest.
@@ -703,13 +826,25 @@ private struct Converter {
         return fills
     }
 
-    /// The one fill a layer's paints come to where Bezzle takes only one, as an artboard's
-    /// background or the colour of text: the top one.
-    private mutating func fill(_ paints: [Object]) -> Fill? {
+    /// The one fill an artboard's paints come to, as an artboard has one: none, the only one, or
+    /// solid colours over one another as the colour they make. Nil when they need a layer of
+    /// their own to be drawn, as several with a gradient or a picture among them do.
+    private mutating func boardFill(_ paints: [Object]) -> Fill? {
         let shown = shown(paints)
-        guard let p = shown.last else { return nil }
-        if shown.count > 1 { report.note("Layers with several fills, keeping the top one") }
-        return fill(paint: p)
+        guard shown.count > 1 else { return shown.first.flatMap { fill(paint: $0) } ?? Fill(on: false, color: .white) }
+        guard shown.allSatisfy({ $0["type"]?.string == "SOLID" && normal($0) }),
+              let color = ImportText.composite(shown.map { solid($0) }) else { return nil }
+        return Fill(on: true, color: color)
+    }
+
+    /// Whether a paint lies over those under it as it is, blended into none of them.
+    private func normal(_ p: Object) -> Bool { p["blendMode"]?.string.map { ["NORMAL", "PASS_THROUGH"].contains($0) } ?? true }
+
+    /// A solid paint's colour, as clear as the paint is.
+    private func solid(_ p: Object) -> RGBA {
+        var c = color(p["color"])
+        c.a *= Double(num(p["opacity"], 1))
+        return c
     }
 
     /// One of Figma's paints as a fill.
@@ -811,29 +946,25 @@ private struct Converter {
         return shown.map { border(e, paint: $0, open: open) }
     }
 
-    /// The one border of a layer that takes only one: its top stroke.
-    private mutating func border(_ e: Object, open: Bool) -> Border {
-        let shown = shown(e["strokePaints"]?.objects ?? [])
-        guard let p = shown.last, e.num("strokeWeight", 1) > 0 else { return Border(on: false) }
-        if shown.count > 1 { report.note("Layers with several borders, keeping the top one") }
-        return border(e, paint: p, open: open)
-    }
-
     private mutating func border(_ e: Object, paint p: Object, open: Bool) -> Border {
-        let width = e.num("strokeWeight", 1)
-        var c: RGBA
+        let width = e.num("strokeWeight", 1), opacity = Double(num(p["opacity"], 1))
+        var b = Border(on: true, color: RGBA.line, width: width)
+        // A gradient or a picture paints the border as it paints a fill.
         switch p["type"]?.string {
         case "SOLID":
-            c = color(p["color"])
+            b.color = color(p["color"])
+            b.color.a *= opacity
         case "GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND":
-            c = (p["stops"]?.objects.first).map { color($0["color"]) } ?? RGBA.line
-            report.note("Borders drawn with a gradient, in its first colour")
+            if let painted = gradient(p, opacity: opacity) {
+                b.color = painted.color
+                b.gradient = painted.gradient
+            }
         default:
-            c = RGBA.line
-            report.note("Borders drawn with a picture, in grey")
+            if let painted = picture(p, opacity: opacity) {
+                b.color = painted.color
+                b.image = painted.image
+            }
         }
-        c.a *= Double(num(p["opacity"], 1))
-        var b = Border(on: true, color: c, width: width)
         b.position = switch e["strokeAlign"]?.string {
         case "INSIDE": open ? .center : .inside
         case "OUTSIDE": open ? .center : .outside
@@ -906,25 +1037,40 @@ private struct Converter {
         let main = counts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }?.key ?? 0
         let s = styles[main] ?? e
         let used = counts.keys.sorted()
-        if Set(used.map { Self.typeset(styles[$0] ?? e) }).count > 1 { report.note("Texts with several styles, shown in their main one") }
+        // Each run of letters has its own font, size, colour and lines; how far apart the lines
+        // lie, and the font's features, are the whole text's. Its letter case may differ by run.
+        let typesets = used.map { Self.typeset(styles[$0] ?? e) }
+        if Set(typesets.map(\.spacing)).count > 1 { report.note("Texts with several line or paragraph spacings, spaced as their main part") }
+        if Set(typesets.map(\.font)).count > 1 { report.note("Texts with font features or axes in part of them, set as their main part") }
 
         // The colour of each style's letters. A text shows none only when none of its styles has a
         // paint; otherwise letters without one are clear.
         let painted = used.contains { ink(shown(styles[$0]?["fillPaints"]?.objects ?? [])) != nil }
         n.fill.on = painted
         let unpainted = painted ? RGBA(r: 0, g: 0, b: 0, a: 0) : n.fill.color
-        var looks: [Int: Letters] = [:]
-        var severalFills = false, gradientInk = false, pictureInk = false, blendedInk = false
+        var looks: [Int: Letters] = [:], cases: [Int: LetterCase] = [:]
+        var gradientInk = false, pictureInk = false, blendedInk = false
+        // A gradient or a picture alone paints the letters of the text's own colour, those of its
+        // main style; letters of another style are in a colour of their own.
+        var own: Fill?
+        let mainShown = shown(s["fillPaints"]?.objects ?? [])
+        if mainShown.count == 1, let p = mainShown.first, let paint = ink(mainShown), paint.gradient || paint.picture {
+            let opacity = Double(num(p["opacity"], 1))
+            own = paint.gradient ? gradient(p, opacity: opacity) : picture(p, opacity: opacity)
+        }
         for id in used {
             let style = styles[id] ?? e
-            let shown = shown(style["fillPaints"]?.objects ?? [])
-            severalFills = severalFills || shown.count > 1
-            gradientInk = gradientInk || shown.last?["type"]?.string?.hasPrefix("GRADIENT") == true
-            pictureInk = pictureInk || shown.last?["type"]?.string == "IMAGE"
-            blendedInk = blendedInk || shown.last?["blendMode"]?.string.map { !["NORMAL", "PASS_THROUGH"].contains($0) } == true
-            looks[id] = letters(style, ink: ink(shown) ?? unpainted)
+            let paint = ink(shown(style["fillPaints"]?.objects ?? []))
+            // Letters painted as the main style's are painted with it.
+            let painted = own != nil && paint?.color == own?.color
+            if !painted {
+                gradientInk = gradientInk || paint?.gradient == true
+                pictureInk = pictureInk || paint?.picture == true
+            }
+            blendedInk = blendedInk || paint?.blended == true
+            looks[id] = letters(style, ink: painted ? own?.color ?? unpainted : paint?.color ?? unpainted)
+            cases[id] = Self.letterCase(style)
         }
-        if severalFills { report.note("Layers with several fills, keeping the top one") }
         if blendedInk { report.note("Fills blended into those under them, drawn over them") }
         if gradientInk { report.note("Texts filled with a gradient, in its first colour") }
         if pictureInk { report.note("Texts filled with a picture, in a plain colour") }
@@ -937,13 +1083,14 @@ private struct Converter {
             default: nil
             }
         }
-        var runs: [(text: String, letters: Letters)] = []
+        var runs: [(text: String, letters: Letters)] = [], runCases: [LetterCase?] = []
         var piece = String.UnicodeScalarView(), pieceID = 0, pieceList: TextList?, paragraph = 0
         func close() {
             guard !piece.isEmpty else { return }
             var l = looks[pieceID] ?? looks[main] ?? TextLook.plain.resolved(over: TextStyle(), color: n.fill.color)
             l.list = pieceList
             runs.append((String(piece), l))
+            runCases.append(looks[pieceID] != nil ? cases[pieceID] : cases[main])
             piece = String.UnicodeScalarView()
         }
         for (i, c) in words.unicodeScalars.enumerated() {
@@ -974,17 +1121,11 @@ private struct Converter {
         case "JUSTIFIED": .justify
         default: .left
         }
-        ts.letterCase = switch s["textCase"]?.string {
-        case "UPPER": .upper
-        case "LOWER": .lower
-        case "TITLE": .title
-        case "SMALL_CAPS", "SMALL_CAPS_FORCED": .smallCaps
-        default: nil
-        }
+        let cased = ImportText.cased(runs, runCases, report: &report)
+        ts.letterCase = cased.letterCase
         ts.features = Self.features(s)
         ts.axes = Self.axes(s)
-        n.border = border(s, open: false)
-        if n.border.on { report.note("Texts with a border, shown without it"); n.border.on = false }
+        if !shown(s["strokePaints"]?.objects ?? []).isEmpty, s.num("strokeWeight", 1) > 0 { report.note("Texts with a border, shown without it") }
 
         let size = self.size(e)
         ts.sizing = switch s["textAutoResize"]?.string {
@@ -1001,7 +1142,17 @@ private struct Converter {
             }
         }
         n.style = ts
-        n.setImportedRuns(runs)
+        n.setImportedRuns(cased.runs)
+        if let own {
+            if n.fill.color == looks[main]?.color {
+                n.fill.gradient = own.gradient
+                n.fill.image = own.image
+            } else if own.gradient != nil {
+                report.note("Texts filled with a gradient, in its first colour")
+            } else {
+                report.note("Texts filled with a picture, in a plain colour")
+            }
+        }
         n.frame = CGRect(origin: .zero, size: size)
         n.refit()
         // Where Figma put the first baseline, measured from the top of the text wherever in its box
@@ -1046,31 +1197,53 @@ private struct Converter {
                        strikethrough: decoration == "STRIKETHROUGH", tracking: tracking, list: nil)
     }
 
-    /// The colour of letters with these paints: the top one's, a gradient's first; nil when none shows.
-    private func ink(_ shown: [Object]) -> RGBA? {
-        guard let p = shown.last else { return nil }
-        var c: RGBA
-        switch p["type"]?.string {
-        case "SOLID": c = color(p["color"])
-        case "IMAGE": return .shape
-        default: c = (p["stops"]?.objects.first).map { color($0["color"]) } ?? .black
+    /// The colour letters with these paints come to: solid ones over one another as they lie,
+    /// the first lowest, a gradient in its first colour and a picture in grey; nil when none
+    /// shows. Also says whether a gradient, a picture or a blend shows in it, so that the colour
+    /// is only close to what Figma draws.
+    private func ink(_ shown: [Object]) -> (color: RGBA, gradient: Bool, picture: Bool, blended: Bool)? {
+        // What an opaque solid paint covers does not show.
+        let from = shown.lastIndex { p in p["type"]?.string == "SOLID" && normal(p) && solid(p).a >= 0.999 } ?? 0
+        let showing = shown[from...]
+        let colors = showing.map { p -> RGBA in
+            switch p["type"]?.string {
+            case "SOLID": return solid(p)
+            case "IMAGE": return .shape
+            default:
+                var c = (p["stops"]?.objects.first).map { color($0["color"]) } ?? .black
+                c.a *= Double(num(p["opacity"], 1))
+                return c
+            }
         }
-        c.a *= Double(num(p["opacity"], 1))
-        return c
+        guard let color = ImportText.composite(colors) else { return nil }
+        return (color, showing.contains { $0["type"]?.string?.hasPrefix("GRADIENT") == true },
+                showing.contains { $0["type"]?.string == "IMAGE" }, showing.contains { !normal($0) })
     }
 
-    /// What of a style Bezzle holds for a whole text only, to tell whether runs differ in it.
+    /// The letter case a style sets its letters in.
+    private static func letterCase(_ s: Object) -> LetterCase? {
+        switch s["textCase"]?.string {
+        case "UPPER": .upper
+        case "LOWER": .lower
+        case "TITLE": .title
+        case "SMALL_CAPS", "SMALL_CAPS_FORCED": .smallCaps
+        default: nil
+        }
+    }
+
+    /// What of a style Bezzle holds for a whole text only, to tell whether runs differ in it: how
+    /// far apart lines and paragraphs lie, and the font's features and axes.
     private struct Typeset: Hashable {
-        var lineHeight: String
-        var letterCase: String
-        var features: [String: Int]?
-        var axes: [String: Double]?
+        var spacing: String
+        var font: String
     }
 
     private static func typeset(_ s: Object) -> Typeset {
         let height = s["lineHeight"]?.object
-        return Typeset(lineHeight: height.map { "\($0.num("value"))|\($0["units"]?.string ?? "")" } ?? "",
-                       letterCase: s["textCase"]?.string ?? "", features: features(s), axes: axes(s))
+        let spacing = (height.map { "\($0.num("value"))|\($0["units"]?.string ?? "")" } ?? "") + "|\(s.num("paragraphSpacing"))"
+        let features = (features(s) ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        let axes = (axes(s) ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        return Typeset(spacing: spacing, font: (features + ["|"] + axes).joined(separator: ","))
     }
 
     /// The OpenType features a style turns on or off, by their tags: those Figma names itself,

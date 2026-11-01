@@ -15,15 +15,133 @@ enum FillKind: Hashable {
         }
     }
 
-    /// The kinds to choose between. A picture is only one while the layer has one.
-    static func choices(with current: FillKind) -> [(FillKind, LocalizedStringResource)] {
+    /// The kinds to choose between: a picture where one can be painted with, and always while
+    /// there is one.
+    static func choices(with current: FillKind, pictures: Bool) -> [(FillKind, LocalizedStringResource)] {
         var choices: [(FillKind, LocalizedStringResource)] = [(.solid, "Solid"), (.linear, "Linear"), (.radial, "Radial")]
-        if current == .picture { choices.append((.picture, "Picture")) }
+        if pictures || current == .picture { choices.append((.picture, "Picture")) }
         return choices
     }
 }
 
+/// Which of a layer's paints the fill menu is open on: one of its fills, the first at the bottom,
+/// which is also the colour of text's letters; or one of its borders, or a line's strokes.
+enum PaintTarget: Hashable {
+    case fill(Int)
+    case border(Int)
+
+    var path: WritableKeyPath<Node, Fill> {
+        switch self {
+        case .fill(let slot): Node.fillPath(slot)
+        case .border(let slot): Node.borderPath(slot).appending(path: \.paint)
+        }
+    }
+
+    /// Whether it can be a picture: any border, but only the first fill, which repeat grids and
+    /// decks keep their own of in each cell and post.
+    var takesPicture: Bool {
+        switch self {
+        case .fill(let slot): slot == 0
+        case .border: true
+        }
+    }
+
+    /// Whether it is what a text's letters are painted with: changing it for the whole layer
+    /// takes away the colours letters had of their own, as a new colour for all of them does.
+    func paintsLetters(of n: Node) -> Bool { self == .fill(0) && n.kind == .text }
+}
+
+extension DocumentStore {
+    /// Changes the paint `target` of every selected layer, as one step named `action`. Text
+    /// painted anew loses the colours its letters had of their own, so all of it shows the paint.
+    func updatePaint(_ target: PaintTarget, _ action: LocalizedStringResource, _ change: @escaping (inout Fill) -> Void) {
+        updatePaintOfEach(target, action) { f, _ in change(&f) }
+    }
+
+    /// The same, the change seeing each layer as it was.
+    func updatePaintOfEach(_ target: PaintTarget, _ action: LocalizedStringResource, _ change: @escaping (inout Fill, Node) -> Void) {
+        let path = target.path
+        updateSelection(action) { n in
+            // A layer without such a border is passed over, as a change to several is.
+            if case .border(let slot) = target, slot >= n.slots(.border) { return }
+            let was = n[keyPath: path]
+            var f = was
+            change(&f, n)
+            guard f != was else { return }
+            n[keyPath: path] = f
+            if target.paintsLetters(of: n) { n.clearLetterColors() }
+        }
+    }
+
+    /// Paints `target` of every selected layer with one colour or a gradient, as the fill menu's
+    /// kinds do. A gradient starts from the colour there was, or keeps its colours when it only
+    /// changes kind; one colour keeps the gradient's first. A picture is asked for instead, with
+    /// `choosePicture`.
+    func choosePaint(_ kind: FillKind, for target: PaintTarget) {
+        guard kind != .picture else { return }
+        updatePaintOfEach(target, kind == .solid ? "Fill with a Colour" : "Fill with a Gradient") { f, n in
+            f.on = true
+            switch kind {
+            case .solid:
+                if let first = f.gradient?.stops.first { f.color = first.color }
+                f.gradient = nil
+                f.image = nil
+            case .linear, .radial:
+                let was = f.gradient?.kind
+                var g = f.gradient ?? .fading(from: f.color)
+                g.kind = kind == .radial ? .radial : .linear
+                if g.kind == .radial && was != .radial {
+                    g.start = CGPoint(x: 0.5, y: 0.5)
+                    g.radius = 0.5
+                    g.across = nil
+                } else if g.kind == .linear && was != .linear {
+                    // Along a line, from one end to the other; down anything else.
+                    if n.kind == .line { g.alongLine(rising: n.rising, size: n.frame.size) } else { g.aim(180, in: n.frame.size) }
+                    g.across = nil
+                }
+                f.gradient = g
+                f.image = nil
+            case .picture:
+                break
+            }
+        }
+    }
+
+    /// Asks for a picture and paints `target` of the selected layers with it, in place of a
+    /// colour or a gradient. False when none was chosen.
+    @discardableResult
+    func choosePicture(for target: PaintTarget, _ action: LocalizedStringResource = "Add Picture") -> Bool {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        return paint(target, withPictureAt: url, action)
+    }
+
+    /// Paints `target` of the selected layers with the picture in a file, in place of a colour or
+    /// a gradient, as when it is dropped on the paint's swatch. False when it is no picture.
+    @discardableResult
+    func paint(_ target: PaintTarget, withPictureAt url: URL, _ action: LocalizedStringResource = "Add Picture") -> Bool {
+        guard target.takesPicture, let image = importPicture(url) else { return false }
+        updatePaint(target, action) { f in
+            f.on = true
+            f.image = image
+        }
+        return true
+    }
+}
+
 extension Gradient {
+    /// Runs a linear gradient from one end of a line to the other, its first colour where the
+    /// line begins: at its top left, or its bottom left when it rises.
+    mutating func alongLine(rising: Bool, size: CGSize) {
+        // A level or upright line has no height or width to measure along, so it runs across its box.
+        if size.height < 0.5 { start = CGPoint(x: 0, y: 0.5); end = CGPoint(x: 1, y: 0.5); return }
+        if size.width < 0.5 { start = CGPoint(x: 0.5, y: 0); end = CGPoint(x: 0.5, y: 1); return }
+        start = CGPoint(x: 0, y: rising ? 1 : 0)
+        end = CGPoint(x: 1, y: rising ? 0 : 1)
+    }
+
     /// A gradient made from one colour: from it to a shade of it, top to bottom.
     static func fading(from color: RGBA) -> Gradient {
         let (h, s, b) = color.hsb
@@ -176,11 +294,30 @@ struct FillField: View {
     let action: LocalizedStringResource
     var suggestions: [RGBA] = []
     var preview: ((RGBA?) -> Void)? = nil
-    /// Which of the layers' fills it is, of those one over another.
-    var slot = 0
+    /// Which of the layers' paints it is: one of their fills, or of their borders.
+    var target: PaintTarget = .fill(0)
     let apply: (RGBA) -> Void
+    /// A picture dragged in from the Finder is over it, to paint with.
+    @State private var dropping = false
 
     var body: some View {
+        field
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Theme.pencil, lineWidth: 2)
+                    .padding(-2)
+                    .opacity(dropping ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .animation(Theme.quick, value: dropping)
+            // A picture from the Finder, let go on it, paints with that picture.
+            .dropDestination(for: URL.self) { urls, _ in
+                guard target.takesPicture, let url = DocumentStore.pictureFiles(in: urls).first else { return false }
+                return store.paint(target, withPictureAt: url)
+            } isTargeted: { dropping = $0 && target.takesPicture }
+    }
+
+    @ViewBuilder private var field: some View {
         let kind = FillKind(fill)
         if kind == .solid {
             ColorField(id: FillMenu.id, color: color, suggestions: suggestions, action: action, preview: preview, picker: open, apply: apply)
@@ -209,7 +346,7 @@ struct FillField: View {
     }
 
     private func open() {
-        session.slot = slot
+        session.target = target
         menus.panel(FillMenu.id, size: FillMenu.size(for: FillKind(fill))) {
             FillMenu(action: action)
                 .environment(store)
@@ -272,14 +409,14 @@ struct FillMenu: View {
     @Environment(GradientSession.self) private var session
     let action: LocalizedStringResource
 
-    /// The fill the menu is open on, of those one over another.
-    private var path: WritableKeyPath<Node, Fill> { Node.fillPath(session.slot) }
+    /// The fill or border the menu is open on, of those one over another.
+    private var path: WritableKeyPath<Node, Fill> { session.target.path }
 
     static func size(for kind: FillKind) -> CGSize {
         switch kind {
         case .solid: CGSize(width: 248, height: 374)
         case .linear, .radial: CGSize(width: 248, height: 408)
-        case .picture: CGSize(width: 248, height: 120)
+        case .picture: CGSize(width: 248, height: 156)
         }
     }
 
@@ -289,7 +426,7 @@ struct FillMenu: View {
             let gradient = kind == .picture ? nil : first[keyPath: path].gradient.flatMap { $0.stops.isEmpty ? nil : $0 }
             let chosen = gradient.map { min(session.stop, $0.stops.count - 1) }
             VStack(alignment: .leading, spacing: 0) {
-                SegmentedWell(selection: Binding(get: { kind }, set: { choose($0) }), options: FillKind.choices(with: kind))
+                SegmentedWell(selection: Binding(get: { kind }, set: { choose($0) }), options: FillKind.choices(with: kind, pictures: session.target.takesPicture))
                     .padding([.horizontal, .top], 14)
                 if let gradient, let chosen {
                     GradientBar(stops: gradient.stops, chosen: chosen, choose: { session.stop = $0 },
@@ -304,6 +441,8 @@ struct FillMenu: View {
                         .foregroundStyle(Theme.ink3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(14)
+                    ChipButton(title: "Choose Another Picture…") { store.choosePicture(for: session.target, "Replace Picture") }
+                        .padding(.horizontal, 14)
                 } else {
                     // One colour and a gradient's first are the same when it turns into the other,
                     // so the picker stays as it is then. It starts again for another colour, or when
@@ -311,12 +450,12 @@ struct FillMenu: View {
                     ColorPanel(id: gradient == nil ? Self.id : "fill-stop", action: action,
                                start: gradient.map { $0.stops[chosen ?? 0].color } ?? first[keyPath: path].color,
                                key: "\(chosen ?? 0) of \(gradient?.stops.count ?? 2)") { c in
-                        store.updateSelection(action) { n in
-                            n[keyPath: path].on = true
-                            if let chosen, n[keyPath: path].gradient != nil {
-                                if n[keyPath: path].gradient?.stops.indices.contains(chosen) == true { n[keyPath: path].gradient?.stops[chosen].color = c }
+                        store.updatePaint(session.target, action) { f in
+                            f.on = true
+                            if let chosen, f.gradient != nil {
+                                if f.gradient?.stops.indices.contains(chosen) == true { f.gradient?.stops[chosen].color = c }
                             } else {
-                                n[keyPath: path].color = c
+                                f.color = c
                             }
                         }
                     }
@@ -331,47 +470,29 @@ struct FillMenu: View {
         }
     }
 
-    /// Fills each selected layer with one colour or a gradient. A gradient starts from the colour
-    /// there was, or keeps its colours when it only changes kind; one colour keeps the first.
+    /// Fills each selected layer with one colour, a gradient or a picture. A gradient starts from
+    /// the colour there was, or keeps its colours when it only changes kind; one colour keeps the
+    /// first. A picture is asked for, and the fill stays as it was when none is chosen.
     private func choose(_ kind: FillKind) {
-        guard kind != .picture else { return }
+        guard kind != .picture else {
+            if store.choosePicture(for: session.target) {
+                withAnimation(Theme.unfold) { menus.resize(Self.id, to: Self.size(for: .picture)) }
+            }
+            return
+        }
         session.stop = 0
         withAnimation(Theme.unfold) {
-            store.updateSelection(kind == .solid ? "Fill with a Colour" : "Fill with a Gradient") { n in
-                n[keyPath: path].on = true
-                switch kind {
-                case .solid:
-                    if let first = n[keyPath: path].gradient?.stops.first { n[keyPath: path].color = first.color }
-                    n[keyPath: path].gradient = nil
-                    n[keyPath: path].image = nil
-                case .linear, .radial:
-                    let was = n[keyPath: path].gradient?.kind
-                    var g = n[keyPath: path].gradient ?? .fading(from: n[keyPath: path].color)
-                    g.kind = kind == .radial ? .radial : .linear
-                    if g.kind == .radial && was != .radial {
-                        g.start = CGPoint(x: 0.5, y: 0.5)
-                        g.radius = 0.5
-                        g.across = nil
-                    } else if g.kind == .linear && was != .linear {
-                        g.aim(180, in: n.frame.size)
-                        g.across = nil
-                    }
-                    n[keyPath: path].gradient = g
-                    n[keyPath: path].image = nil
-                case .picture:
-                    break
-                }
-            }
+            store.choosePaint(kind, for: session.target)
             menus.resize(Self.id, to: Self.size(for: kind))
         }
     }
 
     /// Gives every selected gradient these colours.
     private func set(_ stops: [GradientStop], _ action: LocalizedStringResource) {
-        store.updateSelection(action) { n in
-            guard n[keyPath: path].gradient != nil else { return }
-            n[keyPath: path].gradient?.stops = stops
-            n[keyPath: path].on = true
+        store.updatePaint(session.target, action) { f in
+            guard f.gradient != nil else { return }
+            f.gradient?.stops = stops
+            f.on = true
         }
     }
 
@@ -498,8 +619,8 @@ struct StopPin: View {
 @Observable
 final class GradientSession {
     var stop = 0
-    /// Which of a layer's fills the menu is open on: 0 for the first, at the bottom.
-    var slot = 0
+    /// Which of a layer's fills or borders the menu is open on.
+    var target: PaintTarget = .fill(0)
     @ObservationIgnored weak var store: DocumentStore?
     @ObservationIgnored weak var menus: MenuHost? {
         didSet { menus?.spares = { [weak self] p in self?.holds(p) ?? false } }
@@ -525,9 +646,9 @@ final class GradientSession {
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 51 || event.keyCode == 117, self.menus?.open?.id == FillMenu.id,
                   !(event.window?.firstResponder is NSText), let store = self.store,
-                  let fill = store.selectedNodes.first?[keyPath: Node.fillPath(self.slot)], fill.on, fill.image == nil,
+                  let fill = store.selectedNodes.first?[keyPath: self.target.path], fill.on, fill.image == nil,
                   let gradient = fill.gradient else { return event }
-            let path = Node.fillPath(self.slot)
+            let path = self.target.path
             if gradient.stops.count > 2, gradient.stops.indices.contains(self.stop) {
                 var stops = gradient.stops
                 stops.remove(at: self.stop)

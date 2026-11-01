@@ -38,6 +38,17 @@ struct CardMarks: View {
             case .fill, .opacity, .background:
                 ctx.fill(outline, with: .color(pencil.opacity(0.18)))
                 ctx.stroke(outline, with: .color(pencil.opacity(0.6)), lineWidth: 1)
+            case .component:
+                // Every copy of the component, wherever it is used.
+                if let copy = doc.copy(holding: id), let inst = copy.instance {
+                    let linked = Color(nsColor: CanvasInk.linked)
+                    for other in doc.copies(of: inst.of) {
+                        guard let f = doc.absoluteFrame(of: other.id) else { continue }
+                        let r = Path(roundedRect: vp.toView(f).insetBy(dx: -3, dy: -3), cornerRadius: 3)
+                        ctx.fill(r, with: .color(linked.opacity(other.id == copy.id ? 0.1 : 0.06)))
+                        ctx.stroke(r, with: .color(linked.opacity(other.id == copy.id ? 1 : 0.7)), lineWidth: other.id == copy.id ? 1.5 : 1)
+                    }
+                }
             case .mask:
                 // The shape that holds, wherever what is picked lies in it.
                 let mask = node.isMask ? node : doc.parent(of: id)
@@ -89,6 +100,17 @@ struct CardMarks: View {
                     layer.stroke(lines, with: .color(pencil.opacity(0.35)), lineWidth: 1)
                 }
                 ctx.stroke(outline, with: .color(pencil), lineWidth: 1)
+            case .curve:
+                // The line the words run along, as far as it goes.
+                if let laid = CurvedText.laid(node) {
+                    let t = CurveTool.toCanvas(node, origin: o)
+                        .concatenating(CGAffineTransform(translationX: -vp.origin.x, y: -vp.origin.y))
+                        .concatenating(CGAffineTransform(scaleX: vp.zoom, y: vp.zoom))
+                    let line = Path { p in p.addLines(laid.walk.points.map { $0.applying(t) }) }
+                    ctx.stroke(line, with: .color(pencil), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                } else {
+                    ctx.stroke(around, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
             case .depth:
                 ctx.stroke(around, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             case .export:
@@ -98,7 +120,7 @@ struct CardMarks: View {
                 let cut = Path(CGRect(x: corner.x, y: corner.y, width: reach.width * vp.zoom, height: reach.height * vp.zoom))
                 ctx.fill(cut, with: .color(pencil.opacity(0.06)))
                 ctx.stroke(cut, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-            case .layout, .guides:
+            case .layout, .guides, .appearance:
                 // The grid and the guides light up on the canvas themselves; the sheet they lie on is outlined.
                 ctx.stroke(Path(vp.toView(box)), with: .color(pencil.opacity(0.5)), lineWidth: 1)
             case .frame, .arrange, .artboard, .deck, .grid:

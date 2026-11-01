@@ -147,7 +147,7 @@ extension SelectionInspector {
     /// One of what fills the layers, those over the first in a pile above it. For one colour, the
     /// drag sets how much of it shows; past nothing, the fill comes away. The first, at the bottom,
     /// holds the picture there is and how the layer mixes with what lies under it; text takes one
-    /// colour, as its letters are not drawn with a gradient, and no more.
+    /// fill for its letters, a colour, a gradient or a picture, and no more.
     func fillCard(slot: Int, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
         let blends = !nodes.contains { $0.kind == .text }
         let path = Node.fillPath(slot)
@@ -160,7 +160,8 @@ extension SelectionInspector {
         } : nil
         let more = blends ? AddBar.Item(id: "more-fill", aspect: .fill(topSlot(.fill) + 1), title: "Fill", help: "Add another fill",
                                         action: "Add Fill") { $0.add(Presets.overlay) } : nil
-        return AspectCard(aspect: .fill(slot), title: blends ? "Fill" : "Colour",
+        // Text's letters take a gradient or a picture as well as a colour, so it is a fill too.
+        return AspectCard(aspect: .fill(slot), title: "Fill",
                           summary: Self.summary(of: fill, blend: blends && slot == 0 ? common { $0.blend } : nil),
                           dial: dial,
                           // The blend mode is shown with the first fill, so it goes when the last does.
@@ -170,7 +171,8 @@ extension SelectionInspector {
                 .frame(width: 15, height: 15)
         } picks: {
             fillControls(blends: blends, action: "Change Fill", suggest: true, slot: slot)
-            if slot == 0, nodes.allSatisfy({ $0.fill.on && $0.fill.image != nil }) {
+            // A subject is cut out of a picture filling a shape; in letters it would leave little to read.
+            if slot == 0, nodes.allSatisfy({ $0.fill.on && $0.fill.image != nil && $0.kind != .text }) {
                 backgroundRow
             }
             if slot == 0, store.editingPicture != nil {
@@ -228,7 +230,8 @@ extension SelectionInspector {
     }
 
     /// What fills the selection, a layer's or an artboard's background. Its swatch opens the fill
-    /// menu, where one colour or a gradient is chosen and its colours; text takes one colour.
+    /// menu, where one colour, a gradient or a picture is chosen, and a gradient's colours. Text's
+    /// letters picked out while typing take a colour of their own.
     @ViewBuilder func fillControls(blends: Bool, action: LocalizedStringResource, suggest: Bool, slot: Int = 0) -> some View {
         let path = Node.fillPath(slot)
         let those = holding(.fill, slot)
@@ -237,14 +240,17 @@ extension SelectionInspector {
         let preview: (RGBA?) -> Void = { c in store.showPreview("fill-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) }
         let apply: (RGBA) -> Void = { c in store.updateSelection(action) { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }
         if blends {
-            FillField(fill: those[0][keyPath: path], color: color, action: action, suggestions: suggested, preview: preview, slot: slot, apply: apply)
+            FillField(fill: those[0][keyPath: path], color: color, action: action, suggestions: suggested, preview: preview, target: .fill(slot), apply: apply)
         } else if slot == 0 {
-            // Text: the colour of the letters picked out while typing, or of every letter.
+            // Text: the colour of the letters picked out while typing, or what paints every letter.
             let letters = store.lettersShown(in: nodes)
             let shown = letters.first.flatMap { c in letters.allSatisfy { $0.color == c.color } ? c.color : nil }
-            ColorField(id: "fill", color: shown, suggestions: suggest ? suggestions(besides: shown) : [], action: action,
-                       preview: store.pickedLetters == nil ? preview : { _ in }) { c in
-                store.restyleLetters(action) { $0.color = c }
+            let restyle: (RGBA) -> Void = { c in store.restyleLetters(action) { $0.color = c } }
+            if store.pickedLetters != nil {
+                ColorField(id: "fill", color: shown, suggestions: suggest ? suggestions(besides: shown) : [], action: action, preview: { _ in }, apply: restyle)
+            } else {
+                FillField(fill: those[0].fill, color: shown, action: action, suggestions: suggest ? suggestions(besides: shown) : [], preview: preview,
+                          target: .fill(0), apply: restyle)
             }
         } else {
             ColorField(id: "fill", color: color, suggestions: suggested, action: action, preview: preview, apply: apply)
@@ -271,6 +277,12 @@ extension SelectionInspector {
             }
         }
         if common(among: those, { $0[keyPath: path].dash > 0 }) == true { summary += " · \(String(localized: "Dashed"))" }
+        switch common(among: those, { FillKind($0[keyPath: path].paint) }) {
+        case .linear: summary += " · \(String(localized: "Linear gradient"))"
+        case .radial: summary += " · \(String(localized: "Radial gradient"))"
+        case .picture: summary += " · \(String(localized: "Picture"))"
+        case .solid, nil: break
+        }
         let floor: Double = lineOnly ? 0.5 : 0
         let dial = Dial(value: Double(first.width), range: floor...max(12, Double(first.width)), stops: [1, 2, 4], step: 0.5, action: "Change Border") { v in
             store.updateSelection("Change Border") { $0[keyPath: path].width = CGFloat(max((v * 2).rounded() / 2, floor)); $0[keyPath: path].on = true }
@@ -289,8 +301,10 @@ extension SelectionInspector {
             }) { item in
                 BorderGlyph(width: Presets.borders.first { $0.id == item.id }?.width ?? nil)
             }
-            ColorField(id: slot == 0 ? "border" : "border-\(slot)", color: color, suggestions: suggestions(besides: color), action: "Change Border",
-                       preview: { c in store.showPreview("border-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) }) { c in
+            // One colour, or a gradient or a picture, chosen in the fill menu as a fill's is.
+            FillField(fill: first.paint, color: color, action: "Change Border", suggestions: suggestions(besides: color),
+                      preview: { c in store.showPreview("border-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) },
+                      target: .border(slot)) { c in
                 store.updateSelection("Change Border") { $0[keyPath: path].color = c; $0[keyPath: path].on = true }
             }
         } exact: {

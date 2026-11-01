@@ -185,6 +185,30 @@ nonisolated struct SharedDesign: Codable, Equatable, Sendable {
             }
         }
 
+        // The design's named looks, kept among the layers under their ids with no place there,
+        // each property on its own as a layer's are. One taken away is marked so.
+        for (id, style) in now.styles {
+            let values = style.fields(), old = base.styles[id]?.fields()
+            var layer = layers[id] ?? SharedLayer()
+            var changed = false
+            for (name, value) in values {
+                if let old, old[name] == value, layer.fields[name] != nil { continue }
+                if layer.fields[name]?.value == value { continue }
+                layer.fields[name] = Register(value: value, stamp: stamp)
+                changed = true
+            }
+            if changed {
+                layers[id] = layer
+                wrote = true
+            }
+        }
+        for id in base.styles.keys where now.styles[id] == nil {
+            guard var layer = layers[id], layer.place == nil, layer.fields[Style.goneField]?.value != .bool(true) else { continue }
+            layer.fields[Style.goneField] = Register(value: .bool(true), stamp: stamp)
+            layers[id] = layer
+            wrote = true
+        }
+
         // Layers taken away keep where they were. Everything inside goes with them, each layer
         // marked, so that if one of them is changed elsewhere it comes back on its own.
         for id in base.entries.keys where now.entries[id] == nil {
@@ -294,6 +318,9 @@ nonisolated struct SharedDesign: Codable, Equatable, Sendable {
             if !listed.isEmpty || parent == nil { map.order[parent] = listed }
         }
         show(children[nil] ?? [], in: nil)
+        for (id, layer) in layers where layer.place == nil {
+            if let style = Style.read(id, from: layer) { map.styles[id] = style }
+        }
         return map
     }
 

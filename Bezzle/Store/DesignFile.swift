@@ -26,7 +26,10 @@ nonisolated enum DesignFile {
 
     static func read(_ url: URL) throws -> BezzleDocument {
         let data = try Data(contentsOf: isPackage(url) ? url.appendingPathComponent(documentName) : url)
-        return try JSONDecoder().decode(BezzleDocument.self, from: data)
+        var doc = try JSONDecoder().decode(BezzleDocument.self, from: data)
+        // Every layer named after a style looks as it does, however the file was last written.
+        doc.repairStyles()
+        return doc
     }
 
     /// Turns a design kept as a single file into a package, as everything since pictures is.

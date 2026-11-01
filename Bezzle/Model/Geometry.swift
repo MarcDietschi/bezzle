@@ -102,6 +102,10 @@ nonisolated enum Geometry {
             return distance(from: p, toSegment: ra, rb) <= max(tolerance, node.borderWidth / 2 + tolerance / 2)
         }
         let q = local(p, in: node.frame, rotation: node.rotation)
+        // Words along a curve are where their letters are, not all the box round them.
+        if node.isCurved, let laid = CurvedText.laid(node) {
+            return CurvedText.hits(laid, CGPoint(x: q.x + node.frame.width / 2, y: q.y + node.frame.height / 2), tolerance: tolerance)
+        }
         let hw = node.frame.width / 2 + tolerance, hh = node.frame.height / 2 + tolerance
         // A cut-out picture is only where its subject is, and its border round it: a click on
         // what was its background goes through to what lies under.

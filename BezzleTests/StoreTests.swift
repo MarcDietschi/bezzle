@@ -166,8 +166,10 @@ struct StoreTests {
         #expect(copies.last?.frame.origin == CGPoint(x: 20, y: 20))
     }
 
+    /// One told to keep its layers in place; otherwise its design is laid out again (AdaptTests).
     @Test func resizingAnArtboardLeavesItsContentWhereItWas() {
         let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 20, height: 20))])
+        bench.step { bench.store.update([bench.a.id], "Keep Layers in Place") { $0.pinsLayers = true } }
         let id = bench.node("R")!.id
         bench.click(CGPoint(x: 104, y: 92))
         // Pull the top left handle 50 up and left.
