@@ -769,7 +769,7 @@ private struct EmptySlots: View {
             ForEach(Array(slots.enumerated()), id: \.element.id) { i, slot in
                 EmptySlot(tool: slot.tool, picked: store.tool == slot.tool, faintness: Double(i) * 0.2) {
                     store.tool = slot.tool
-                    store.canvas.map { $0.window?.makeFirstResponder($0) }
+                    if let canvas = store.canvas { canvas.window?.makeFirstResponder(canvas) }
                 }
                 .padding(.leading, CGFloat(slot.depth) * 18)
                 // They rise into place one after another.

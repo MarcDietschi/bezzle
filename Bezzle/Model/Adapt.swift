@@ -71,6 +71,9 @@ enum Adapt {
         var boxes: [CGRect]
         /// The cut-out pictures among them: a person without a background, which keeps its shape.
         var cutouts: Set<Int> = []
+        /// For each, the groups it lay in that were opened, outermost first: what each held is laid
+        /// out as one block, laid out again inside.
+        var groups: [[Int]] = []
         /// For a cut-out, where most of what it shows is: a person's body, without the arm they
         /// hold out. What lies beside that, over their picture's empty part, lies beside them.
         var cores: [Int: CGRect] = [:]
@@ -78,6 +81,7 @@ enum Adapt {
         init(_ nodes: [Node]) {
             self.nodes = nodes
             boxes = nodes.map { Geometry.bounds(of: $0) }
+            groups = Array(repeating: [], count: nodes.count)
         }
     }
 
@@ -119,6 +123,8 @@ enum Adapt {
         /// Words to be read, set in a column: a text, or a group of them. On a page, its lines
         /// keep a length that reads well, whatever room the page gives them.
         var reads = false
+        /// Standing in for an opened group, while what lies round it is cut apart.
+        var stands: Int?
 
         var isHolder: Bool {
             if case .holder = shape { return true }
@@ -158,6 +164,9 @@ enum Adapt {
         var ends: (CGFloat, CGFloat) = (0, 0)
         /// Whether its blocks are alike, as cards in a row are, and so can wrap into a grid.
         var alike = false
+        /// A design that lay across the middle of the page, turned to lie down it: it stays in the
+        /// middle, the room it gains above it and below it alike, even on a screen.
+        var middle = false
     }
 
     indirect enum Piece {
@@ -187,12 +196,21 @@ enum Adapt {
         var flow: Stack?
     }
 
+    /// Where a laid-out layer goes back to: one of the artboard's own, or a group that was opened
+    /// to lay out what it holds with the rest, and that holds it again after.
+    indirect enum Slot {
+        case layer(Int)
+        case group(Node, [Slot])
+    }
+
     /// A design read, ready to be laid out at any size.
     struct Plan {
         let board: Node
         /// Which of the artboard's layers are laid out: all of them, or of a deck, the design
         /// behind its posts, which the posts follow.
         let indices: [Int]
+        /// For each of those, which of `layers` it is, or the group they go back into.
+        let slots: [Slot]
         let layers: Layers
         let root: Frame
         let mode: Mode
@@ -247,14 +265,46 @@ enum Adapt {
                      cores: [String: CGRect] = [:]) -> Plan {
         let indices = board.children.indices.filter { !board.isDeck || board.children[$0].post == nil }
         let box = CGRect(origin: .zero, size: board.frame.size)
+        // A group holding a good part of the design, words among the rest, is how its maker kept
+        // things together, not one thing: what it holds is laid out with all else, and goes back in.
+        // Not one lying partly over another, a ground it reaches past the edge of: what it holds
+        // would go part in it and part out of it.
+        var flat: [Node] = [], chains: [[Int]] = [], opened = 0, chain: [Int] = []
+        func open(_ n: Node, by offset: CGPoint, depth: Int, among others: [CGRect]) -> Slot {
+            var m = n
+            m.frame.origin = CGPoint(x: n.frame.minX + offset.x, y: n.frame.minY + offset.y)
+            let b = Geometry.bounds(of: m)
+            let clear = others.allSatisfy { o in
+                !o.insetBy(dx: 1, dy: 1).intersects(b) || o.insetBy(dx: -1, dy: -1).contains(b) || b.insetBy(dx: -1, dy: -1).contains(o)
+            }
+            if depth < 3, clear, opens(m, on: box) {
+                let inner = m.children.map { c in Geometry.bounds(of: c).offsetBy(dx: m.frame.minX, dy: m.frame.minY) }
+                chain.append(opened)
+                opened += 1
+                defer { chain.removeLast() }
+                return .group(n, n.children.enumerated().map { j, c in
+                    open(c, by: m.frame.origin, depth: depth + 1, among: inner.enumerated().filter { $0.offset != j }.map(\.element))
+                })
+            }
+            flat.append(m)
+            chains.append(chain)
+            return .layer(flat.count - 1)
+        }
+        let tops = indices.map { Geometry.bounds(of: board.children[$0]) }
+        let slots = indices.enumerated().map { j, i in
+            // Nor one under a layer that covers the page, a scrim: it is part of the ground.
+            let under = tops[(j + 1)...].contains { $0.intersection(box).area >= box.area * 0.85 }
+            if under { flat.append(board.children[i]); chains.append([]); return Slot.layer(flat.count - 1) }
+            return open(board.children[i], by: .zero, depth: 0, among: tops.enumerated().filter { $0.offset != j }.map(\.element))
+        }
         // A large photo that the artboard crops, most of it past its edges, is read as what shows
         // of it: a panel of the page, laid out with the rest.
-        var layers = Layers(indices.map { i in
-            let n = board.children[i]
+        var layers = Layers(flat.map { n in
             let shown = n.frame.intersection(box)
             guard !shown.isNull, shown.area >= box.area * 0.15, shown.area < n.frame.area * 0.7, let c = clipped(n, to: box) else { return n }
             return c
         })
+        layers.groups = chains
         // A cut-out, a person without a background, is as big as the person: what lies beside
         // them, over the empty part of their picture, lies beside them.
         for (i, n) in layers.nodes.enumerated() {
@@ -296,8 +346,53 @@ enum Adapt {
             }
             visit(flow, [])
         }
-        return Plan(board: board, indices: indices, layers: layers, root: root,
+        return Plan(board: board, indices: indices, slots: slots, layers: layers, root: root,
                     mode: mode, focus: focus, wrapPath: wrapPath, turnPaths: turnPaths)
+    }
+
+    /// Whether a group is how its maker kept a part of the design together rather than one thing:
+    /// big, holding words among other layers, on no ground of its own. A logo, a card or a drawing
+    /// with a label stays one.
+    private static func opens(_ n: Node, on page: CGRect) -> Bool {
+        guard n.kind == .group, n.children.count > 1, n.rotation.truncatingRemainder(dividingBy: 360) == 0, n.transform3D == nil,
+              n.cutBy == nil, !n.isCopy, !n.isRepeatGrid, n.clipsToFirst != true,
+              n.mask == nil, BezzleDocument.turn(of: n) == 0 else { return false }
+        let b = Geometry.bounds(of: n).intersection(page)
+        guard !b.isNull, b.width >= page.width * 0.5 || b.area >= page.area * 0.2 else { return false }
+        func words(_ n: Node) -> Bool { n.kind == .text || n.kind == .group && !n.isCopy && n.children.contains(where: words) }
+        guard n.children.contains(where: words), !n.children.allSatisfy({ $0.kind == .text }) else { return false }
+        let inside = Layers(n.children)
+        let f = frame(Array(inside.nodes.indices), in: CGRect(origin: .zero, size: n.frame.size), layers: inside, depth: 1)
+        guard f.backdrops.isEmpty, let flow = f.flow, flow.children.count >= 2 else { return false }
+        // A good part of the page; or a section of a long one, as wide as half of it, in rows. Not
+        // a bar across it, a row of parts, which keeps them together: see `shape(of:)`.
+        return b.area >= page.area * 0.2 || flow.axis == .y
+    }
+
+    /// The artboard's layers from those laid out, each opened group holding its own again, with
+    /// the room it had around them.
+    static func regrouped(_ plan: Plan, _ laid: [Node]) -> [Node] {
+        func build(_ s: Slot) -> Node {
+            switch s {
+            case .layer(let i): return laid[i]
+            case .group(let g, let slots):
+                let held = slots.map(build)
+                let was = g.children.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+                let now = held.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+                guard !was.isNull, !now.isNull else { return g }
+                var out = g
+                let origin = CGPoint(x: now.minX - was.minX, y: now.minY - was.minY)
+                out.frame = CGRect(x: origin.x, y: origin.y, width: max(0, g.frame.width + now.width - was.width),
+                                   height: max(0, g.frame.height + now.height - was.height))
+                out.children = held.map { n in
+                    var c = n
+                    c.frame.origin = CGPoint(x: n.frame.minX - origin.x, y: n.frame.minY - origin.y)
+                    return c
+                }
+                return out
+            }
+        }
+        return plan.slots.map(build)
     }
 
     /// Screens and pages are interfaces; posts, print and slides are compositions. Told by the
@@ -365,7 +460,7 @@ enum Adapt {
         guard !flow.isEmpty else { return f }
         let units = clusters(flow, in: box, layers: layers, depth: depth)
         var root: Stack
-        switch cut(units, in: box) {
+        switch grouped(units, in: box, layers: layers, level: 0) {
         case .stack(let s): root = s
         case .unit(let u):
             root = Stack(axis: .y, children: [.unit(u)], gaps: [], loose: [], places: [], box: u.box)
@@ -377,7 +472,9 @@ enum Adapt {
         root.ends = (lo(root.box, main) - lo(box, main), hi(box, main) - hi(root.box, main))
         root.loose = looseness(root.gaps, length: length(box, main))
         let edge = max(tol, 2)
-        for i in root.children.indices {
+        // Panels take a share of the artboard; in a shape that holds others, of which the share
+        // would be of what is not yet known, a panel is as tall as it grows.
+        for i in root.children.indices where depth == 0 {
             guard case .unit(var u) = root.children[i], root.places[i].before <= edge, root.places[i].after <= edge,
                   stretches(.unit(u), cross) else { continue }
             u.share = length(u.box, main) / max(length(box, main), 1)
@@ -482,10 +579,52 @@ enum Adapt {
                 c.kind == .text || [.line, .path, .rectangle].contains(c.kind) && min(c.frame.width, c.frame.height) <= 2
             } && n.children.contains { $0.kind == .text }
             let gives = !grounds.isEmpty || words && (f.flow.map { stretches(.stack($0), .x) || stretches(.stack($0), .y) } ?? false)
-            return gives ? .group(inside, f) : .rigid
+            // So is a bar of parts with room between them, a logo and links far apart: its room
+            // gives before its words grow smaller.
+            func hasWords(_ n: Node) -> Bool { n.kind == .text || n.isGroup && !n.isCopy && n.children.contains(where: hasWords) }
+            let bar = n.frame.width >= n.frame.height * 6 && (f.flow.map { $0.axis == .x && $0.children.count >= 2 && $0.loose.contains(true) } ?? false)
+            return gives || bar && n.children.contains(where: hasWords) ? .group(inside, f) : .rigid
         default:
             return .rigid
         }
+    }
+
+    /// Blocks cut apart, those of a group that was opened as one block while what lies round it is,
+    /// then apart inside it: the group stays together wherever it goes, and what it holds is
+    /// arranged as the page is.
+    private static func grouped(_ units: [Unit], in box: CGRect, layers: Layers, level: Int) -> Piece {
+        func tag(_ u: Unit) -> Int? {
+            let tags = u.members.map { layers.groups.indices.contains($0) && layers.groups[$0].count > level ? layers.groups[$0][level] : -1 }
+            guard let t = tags.first, t >= 0, tags.allSatisfy({ $0 == t }) else { return nil }
+            return t
+        }
+        var held: [Int: [Unit]] = [:], rest: [Unit] = []
+        for u in units {
+            if let t = tag(u) { held[t, default: []].append(u) } else { rest.append(u) }
+        }
+        var inside: [Int: Piece] = [:]
+        for (t, us) in held {
+            guard us.count > 1 else { rest.append(us[0]); continue }
+            inside[t] = grouped(us, in: box, layers: layers, level: level + 1)
+            var stand = merged(us)
+            stand.stands = t
+            rest.append(stand)
+        }
+        guard !inside.isEmpty else { return cut(units, in: box) }
+        func put(_ p: Piece) -> Piece {
+            switch p {
+            case .unit(let u): return u.stands.flatMap { inside[$0] } ?? p
+            case .stack(var s):
+                let was = s.children.map { if case .unit(let u) = $0 { return u.stands } else { return nil } }
+                s.children = s.children.map(put)
+                if was.contains(where: { $0 != nil }) {
+                    s.places = s.children.map { place($0.box, in: s.box, along: s.axis.other, stretches: stretches($0, s.axis.other)) }
+                    s.alike = isAlike(s.children)
+                }
+                return .stack(s)
+            }
+        }
+        return put(cut(rest, in: box))
     }
 
     /// Blocks cut apart along the widest empty space between them, again and again: rows of
@@ -500,10 +639,33 @@ enum Adapt {
         case (true, true):
             // The way with more room between its parts, as a reader sees it first; down, when alike.
             let wy = (byY.gaps.max() ?? 0) / max(box.height, 1), wx = (byX.gaps.max() ?? 0) / max(box.width, 1)
-            choice = wx > wy * 1.25 ? (.x, byX.groups, byX.gaps) : (.y, byY.groups, byY.gaps)
+            let (axis, way, other) = wx > wy * 1.25 ? (Axis.x, byX, byY) : (Axis.y, byY, byX)
+            // A seam far narrower than the widest the other way is not one between parts, only where
+            // parts either side of that happen to end level, such as a title beside a grid of
+            // pictures: what it would part stays together. Panels that meet, a sidebar and what it
+            // lies beside, are parts.
+            let widest = other.gaps.max() ?? 0
+            var groups = [way.groups[0]], gaps: [CGFloat] = []
+            for (g, gap) in zip(way.groups.dropFirst(), way.gaps) {
+                if gap > 2, gap < widest * 0.15 { groups[groups.count - 1] += g } else { groups.append(g); gaps.append(gap) }
+            }
+            choice = groups.count > 1 ? (axis, groups, gaps) : (axis.other, other.groups, other.gaps)
         default: choice = nil
         }
-        guard let (axis, groups, gaps) = choice else { return .unit(merged(units)) }
+        guard var (axis, groups, gaps) = choice else { return .unit(merged(units)) }
+        // Pictures close together, beside what lies far from them, are one collage.
+        if groups.count > 2, let widest = gaps.max() {
+            var i = 1
+            while i < groups.count {
+                if gaps[i - 1] >= 0, gaps[i - 1] < widest * 0.3, pictures(groups[i - 1]), pictures(groups[i]), groups.count > 2 {
+                    let g = groups.remove(at: i)
+                    groups[i - 1] += g
+                    gaps.remove(at: i - 1)
+                } else {
+                    i += 1
+                }
+            }
+        }
         let children = groups.map { cut($0, in: box) }
         let union = children.map(\.box).reduce(CGRect.null) { $0.union($1) }
         var s = Stack(axis: axis, children: children, gaps: gaps, loose: looseness(gaps, length: length(union, axis)),
@@ -605,7 +767,11 @@ enum Adapt {
                 if u.box.width <= 0.5 { return axis == .y }
                 return true
             case .text: return axis == .x
-            case .holder, .group: return true
+            case .holder: return true
+            case .group(_, let f):
+                // Without a ground of its own, a group gives only as what it holds does: a bar along its length.
+                guard f.backdrops.isEmpty, let flow = f.flow else { return true }
+                return stretches(.stack(flow), axis)
             }
         case .stack(let s):
             if s.axis == axis { return s.loose.contains(true) || s.children.contains { stretches($0, axis) } }
@@ -641,7 +807,7 @@ enum Adapt {
             laid = laidOut(plan, flow: best.1, k: k, size: size)
         }
         var children = plan.board.children
-        for (i, n) in zip(plan.indices, laid.nodes) { children[i] = n }
+        for (i, n) in zip(plan.indices, regrouped(plan, laid.nodes)) { children[i] = n }
         board.children = children
         return Result(board: board, arrangement: best.0, skeleton: laid.skeleton, scale: k)
     }
@@ -879,6 +1045,14 @@ enum Adapt {
             let restEnd: CGFloat = isRoot ? margin : 0
             out = Stack(axis: .y, children: kids, gaps: gaps, loose: loose, places: places, box: s.box,
                         ends: leadFirst ? (leadEnd, restEnd) : (restEnd, leadEnd))
+            let middling = s.places.filter { p in
+                switch p.anchor {
+                case .center: true
+                case .share(let f): f > 0.3 && f < 0.7
+                default: false
+                }
+            }
+            out.middle = isRoot && !standing && middling.count * 2 > s.places.count
         }
         // The box it would have, laid out as it now is at the size the design was made at.
         let along = out.children.map { length($0.box, out.axis) }.reduce(0, +) + out.gaps.reduce(0, +)
@@ -891,8 +1065,23 @@ enum Adapt {
 
     /// Whether a block is what the eye goes to: a picture, a shape holding others, a panel.
     private static func visual(_ p: Piece) -> Bool {
-        guard case .unit(let u) = p else { return false }
-        return (u.picture || u.drawing) && u.prominent || u.isHolder || u.share != nil
+        switch p {
+        case .unit(let u): return (u.picture || u.drawing) && u.prominent || u.isHolder || u.share != nil
+        // A collage, a gallery.
+        case .stack(let s): return s.children.count >= 2 && pictures(leaves(p))
+        }
+    }
+
+    /// Whether blocks are all pictures, without words.
+    private static func pictures(_ units: [Unit]) -> Bool {
+        !units.isEmpty && units.allSatisfy { $0.picture && !$0.isHolder && !$0.signature.contains(.text) && !$0.signature.contains(.group) }
+    }
+
+    private static func leaves(_ p: Piece) -> [Unit] {
+        switch p {
+        case .unit(let u): [u]
+        case .stack(let s): s.children.flatMap(leaves)
+        }
     }
 
     /// The stack at `path` arranged anew by `change`.
@@ -935,18 +1124,7 @@ enum Adapt {
             }
         case .stack(let s):
             if s.axis == axis {
-                var pref: CGFloat = 0, least: CGFloat = 0
-                for c in s.children {
-                    let m = length(of: c, axis, k: k, frame: frame, parentMain: axis)
-                    pref += m.pref
-                    least += m.min
-                }
-                for (g, loose) in zip(s.gaps, s.loose) {
-                    pref += g * k
-                    least += loose ? g * k * 0.35 : g * k
-                }
-                pref += (s.ends.0 + s.ends.1) * k
-                least += (s.ends.0 + s.ends.1) * k * 0.6
+                let (pref, least) = along(s, k: k, frame: frame)
                 return (pref, least)
             }
             var pref: CGFloat = 0, least: CGFloat = 0
@@ -958,6 +1136,23 @@ enum Adapt {
             }
             return (pref, least)
         }
+    }
+
+    /// How long a stack would like to be along its own way, and how short it can be.
+    private static func along(_ s: Stack, k: CGFloat, frame: CGSize) -> (CGFloat, CGFloat) {
+        var pref: CGFloat = 0, least: CGFloat = 0
+        for c in s.children {
+            let m = length(of: c, s.axis, k: k, frame: frame, parentMain: s.axis)
+            pref += m.pref
+            least += m.min
+        }
+        for (g, loose) in zip(s.gaps, s.loose) {
+            pref += g * k
+            least += loose ? g * k * 0.35 : g * k
+        }
+        pref += (s.ends.0 + s.ends.1) * k
+        least += (s.ends.0 + s.ends.1) * k * 0.6
+        return (pref, least)
     }
 
     /// What of the room on either side of a block across its stack is a margin to keep, rather
@@ -1080,6 +1275,11 @@ enum Adapt {
             } else if case .group = ctx.layers.nodes[i].kind, ctx.layers.nodes[i].rotation == 0, ctx.layers.nodes[i].transform3D == nil,
                       case .group(let inner, let frame) = shape(of: ctx.layers.nodes[i], depth: 0) {
                 ctx.placements[i] = .group(cover, children: composed(frame, layers: inner, into: cover.size, k: k, ctx: ctx), k: k)
+            } else if ctx.layers.nodes[i].isGroup, !ctx.layers.nodes[i].isCopy, ctx.layers.nodes[i].mask == nil, !wordlessNode(ctx.layers.nodes[i]),
+                      ctx.layers.nodes[i].rotation == 0, ctx.layers.nodes[i].transform3D == nil, b.width > 0, b.height > 0 {
+                // A ground with words over all of it, a phone's bars at its top and foot: each kept where it was.
+                let n = ctx.layers.nodes[i]
+                ctx.placements[i] = .group(cover, children: pinned(n.children, from: n.frame.size, to: cover.size, k: k, focus: ctx.focus), k: k)
             } else {
                 // What cannot stretch grows until it covers as it did, about its middle.
                 let kc = max(cover.width / max(b.width, 1), cover.height / max(b.height, 1))
@@ -1213,7 +1413,10 @@ enum Adapt {
         if !growing.contains(where: { $0 > 0 }) { growing = s.children.map { grower($0, pictures: true) } }
         let rowGrows = growing.contains { $0 > 0 }
         // An interface gains room above what keeps to its foot, as a tab bar does, or else below it all.
-        if interface {
+        if s.middle {
+            grows0 = 1
+            grows1 = 1
+        } else if interface {
             if rootOfFrame, s.children.count > 1, footing(s, s.children.count - 1) { out.spacer = s.children.count - 2 } else { grows1 = 1 }
         } else if !anyLoose && !rowGrows {
             // The room before and after, as margins: a block standing on its own keeps to the side
@@ -1462,7 +1665,11 @@ enum Adapt {
                 n = rounded(n)
             case .band(let rect, let k):
                 n = node.isCopy ? node : looks(node, by: k)
-                if node.isGroup, node.frame.width > 0, node.frame.height > 0 {
+                func wordless(_ n: Node) -> Bool { n.kind != .text && n.children.allSatisfy(wordless) }
+                if node.isGroup, !node.isCopy, node.mask == nil, !wordless(node), node.frame.width > 0, node.frame.height > 0 {
+                    // A bar with words in it is laid out as a bar, not stretched as a picture of one.
+                    n.children = pinned(node.children, from: node.frame.size, to: rect.size, k: k, focus: focus)
+                } else if node.isGroup, node.frame.width > 0, node.frame.height > 0 {
                     n.children = BezzleDocument.scaled(node.children, from: node.frame.size, to: rect.size)
                     n.mask = node.mask.map { BezzleDocument.scaled($0, from: node.frame.size, to: rect.size) }
                 }
@@ -1476,6 +1683,74 @@ enum Adapt {
             return n
         }
     }
+
+    /// What a bar or a ground with words holds as it takes a new size: each part grown by `k` and
+    /// kept to the side it lay near, or about its middle, each way; what ran along all of it, a
+    /// ground or a rule, along all of it again. Where parts would then run into each other, they
+    /// are smaller.
+    private static func pinned(_ children: [Node], from old: CGSize, to new: CGSize, k: CGFloat, focus: [String: CGPoint]) -> [Node] {
+        // Along one way: where something `len` long that lay at `lo` goes, `size` long.
+        func at(_ lo: CGFloat, _ len: CGFloat, _ size: CGFloat, _ l0: CGFloat, _ l1: CGFloat) -> CGFloat {
+            let mid = lo + len / 2
+            return mid < l0 / 3 ? lo * k : mid > l0 * 2 / 3 ? l1 - (l0 - lo - len) * k - size : l1 / 2 + (mid - l0 / 2) * k - size / 2
+        }
+        func lay(_ kk: CGFloat) -> (nodes: [Node], parts: [(CGRect, CGRect)]) {
+            var parts: [(CGRect, CGRect)] = []
+            let nodes = children.map { c -> Node in
+                let b = c.frame
+                let alongX = b.width >= old.width * 0.9, alongY = b.height >= old.height * 0.9
+                // What runs along: a ground, a rule, a picture, words set to a width, a bar of its
+                // own. A drawing, a mark or an icon keeps its shape.
+                let runs: Bool = switch c.kind {
+                case .rectangle, .line: true
+                case .text: c.style?.sizing != .autoWidth
+                case .group: c.isCopy || c.mask == nil && c.clipsToFirst != true && !wordlessNode(c)
+                default: c.fill.image != nil || min(b.width, b.height) <= 2
+                }
+                if alongX || alongY, runs {
+                    let w = alongX ? max(1, new.width - (old.width - b.width) * k) : b.width * k
+                    let h = alongY ? max(1, new.height - (old.height - b.height) * k) : b.height * k
+                    let r = CGRect(x: alongX ? b.minX * k : at(b.minX, b.width, w, old.width, new.width),
+                                   y: alongY ? b.minY * k : at(b.minY, b.height, h, old.height, new.height), width: w, height: h)
+                    guard c.isGroup else { return stretched(c, to: r, k: k, focus: focus) }
+                    // A bar in it, such as a phone's status bar in a header, is laid out as one.
+                    var g = c.isCopy ? c : looks(c, by: k)
+                    if !c.isCopy, c.mask == nil, !wordlessNode(c), c.frame.width > 0, c.frame.height > 0 {
+                        g.children = pinned(c.children, from: c.frame.size, to: r.size, k: k, focus: focus)
+                    } else {
+                        g.children = BezzleDocument.scaled(c.children, from: c.frame.size, to: r.size)
+                        g.mask = c.mask.map { BezzleDocument.scaled($0, from: c.frame.size, to: r.size) }
+                    }
+                    g.frame = r
+                    return g
+                }
+                var n = scaled(c, by: kk)
+                n.frame.origin = CGPoint(x: at(b.minX, b.width, n.frame.width, old.width, new.width),
+                                         y: at(b.minY, b.height, n.frame.height, old.height, new.height))
+                parts.append((b, n.frame))
+                return n
+            }
+            return (nodes, parts)
+        }
+        func clashes(_ parts: [(CGRect, CGRect)]) -> Bool {
+            for i in parts.indices {
+                for j in parts.indices where j > i {
+                    let (a0, a1) = parts[i], (b0, b1) = parts[j]
+                    if !a0.insetBy(dx: -0.5, dy: -0.5).intersects(b0), a1.insetBy(dx: 0.5, dy: 0.5).intersects(b1.insetBy(dx: 0.5, dy: 0.5)) { return true }
+                }
+            }
+            return false
+        }
+        var kk = k
+        var out = lay(kk)
+        while clashes(out.parts), kk > k * 0.3 {
+            kk *= 0.9
+            out = lay(kk)
+        }
+        return out.nodes
+    }
+
+    private static func wordlessNode(_ n: Node) -> Bool { n.kind != .text && n.children.allSatisfy(wordlessNode) }
 
     /// A layer taking a new box: a shape stretched to it, its picture cropped again; text wrapped
     /// to its width.

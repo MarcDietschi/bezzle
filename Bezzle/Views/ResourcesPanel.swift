@@ -441,7 +441,7 @@ private struct OwnComponentTile: View {
                            picture: { Thumbnails.picture(image, width: min(width * 0.9, 180)) },
                            hovering: $hovering, pressed: $pressed) {
                     store.place(.design(master.id))
-                    store.canvas.map { $0.window?.makeFirstResponder($0) }
+                    if let canvas = store.canvas { canvas.window?.makeFirstResponder(canvas) }
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -513,7 +513,7 @@ private struct PartTile: View {
                            picture: { Thumbnails.picture(image, width: min(width * 0.9, 180)) },
                            hovering: $hovering, pressed: $pressed) {
                     store.place(.component(component.id))
-                    store.canvas.map { $0.window?.makeFirstResponder($0) }
+                    if let canvas = store.canvas { canvas.window?.makeFirstResponder(canvas) }
                 }
             }
             HStack(spacing: 4) {
@@ -698,7 +698,7 @@ private struct IconCell: View {
                            picture: { Thumbnails.iconPicture(icon, set: set, style: style) },
                            hovering: $hovering, pressed: $pressed) {
                     store.place(.icon(set.id, icon.name, style), on: store.selection.count == 1 && store.node(store.selection[0]).map(Icons.isIcon) == true ? store.selection[0] : nil)
-                    store.canvas.map { $0.window?.makeFirstResponder($0) }
+                    if let canvas = store.canvas { canvas.window?.makeFirstResponder(canvas) }
                 }
             }
             .animation(Theme.quick, value: hovering)

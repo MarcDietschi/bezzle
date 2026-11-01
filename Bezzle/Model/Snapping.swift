@@ -105,7 +105,7 @@ struct SnapTargets {
                 let box = r.offsetBy(dx: o.x, dy: o.y)
                 ys += [Line(value: box.minY, box: box), Line(value: box.maxY, box: box)]
             }
-            if let text {
+            if text != nil {
                 let across = CGRect(x: o.x + area.minX, y: o.y, width: area.width, height: 0)
                 baselines += grid.baselines(in: area).map { Line(value: o.y + $0, box: across.offsetBy(dx: 0, dy: $0)) }
             }

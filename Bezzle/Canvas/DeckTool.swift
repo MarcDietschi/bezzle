@@ -1019,7 +1019,7 @@ final class DeckTool {
         let assets = store.assets, token = s.token
         let shown = s.posts.filter { s.pictures[$0] == nil }.map { ($0, board.showing($0)) }
         struct Made: @unchecked Sendable { let post: Int, image: CGImage? }
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             for (post, node) in shown {
                 let made = Made(post: post, image: Renderer.image(of: node, scale: scale, assets: assets))
                 DispatchQueue.main.async { [weak self] in

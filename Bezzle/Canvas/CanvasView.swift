@@ -195,6 +195,23 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return tool
     }()
 
+    /// The prototype: threads from layers to the screens they go to, pulled out of them by hand.
+    private(set) lazy var flowTool: FlowTool = {
+        let tool = FlowTool(store: store)
+        tool.redraw = { [weak self] in
+            self?.needsDisplay = true
+            if self?.flowTool.isAnimating == true { self?.keepEasing() }
+        }
+        tool.pick = { [weak self] p in self?.pick(p) }
+        tool.pickInside = { [weak self] p, group in self?.hit(p, in: group) }
+        tool.titleHit = { [weak self] v in self?.titleHit(v) }
+        tool.menu = { [weak self] v, entries in
+            guard let self else { return }
+            self.onContextMenu?(self.windowPoint(v), entries)
+        }
+        return tool
+    }()
+
     private(set) lazy var dropTool: DropTool = {
         let tool = DropTool(store: store)
         tool.redraw = { [weak self] in self?.needsDisplay = true }
@@ -329,7 +346,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     @objc private func easeStep(_ link: CADisplayLink) {
         needsDisplay = true
-        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating && !adaptTool.isAnimating && !componentTool.isAnimating && !curveTool.animating {
+        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating && !adaptTool.isAnimating && !componentTool.isAnimating && !curveTool.animating && !flowTool.isAnimating && !(store.sharing?.live?.marks.isAnimating ?? false) {
             link.invalidate()
             easing = nil
         }
@@ -338,9 +355,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private func render() {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let vp = store.viewport
-        ctx.setFillColor(CanvasInk.table.cgColor)
+        // Seen as a prototype, the table is a stage, and the screens are lit on it.
+        _ = store.prototyping
+        ctx.setFillColor(flowTool.table(CanvasInk.table))
         ctx.fill(bounds)
+        flowTool.drawStage(ctx, in: bounds, scale: deviceScale)
         deckTool.drawStacks(ctx, in: bounds)
+        // Where the others in a live room look, as light on the table.
+        let live = store.sharing?.live
+        if let live { live.marks.drawLight(ctx, room: live, store: store, in: bounds) }
 
         ctx.saveGState()
         ctx.scaleBy(x: vp.zoom, y: vp.zoom)
@@ -370,8 +393,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             let alpha: CGFloat = curveTool.flying.contains(id) ? 0 : 1
             if host.alphaValue != alpha { host.alphaValue = alpha }
         }
-        let shown = adaptTool.frame(of: previewMotion.frame(of: store.shownDoc, preview: store.preview, at: CACurrentMediaTime()), at: CACurrentMediaTime())
-        options.settling = previewMotion.isMoving || adaptTool.isMoving
+        var shown = adaptTool.frame(of: previewMotion.frame(of: store.shownDoc, preview: store.preview, at: CACurrentMediaTime()), at: CACurrentMediaTime())
+        // What others are dragging, moving as they drag it.
+        if let live { shown = live.marks.overlaid(shown, room: live, store: store) }
+        options.settling = previewMotion.isMoving || adaptTool.isMoving || (live?.marks.isMoving ?? false)
         drawDesign(shown, in: ctx, options: options)
         ctx.restoreGState()
         if previewMotion.isMoving || deckTool.isAnimating || adaptTool.isAnimating { keepEasing() }
@@ -383,6 +408,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if curveTool.animating { keepEasing() }
 
         drawSlideCuts(ctx)
+        // Seen as a prototype, nothing of drawing: its screens, their names and the flows.
+        if store.prototyping {
+            drawArtboardTitles(ctx)
+            flowTool.draw(ctx, scale: deviceScale, in: bounds)
+            if flowTool.isAnimating { keepEasing() }
+            deckTool.draw(ctx, scale: deviceScale, in: bounds)
+            if deckTool.isAnimating { keepEasing() }
+            drawLive(ctx, live)
+            return
+        }
         // Layout grids and guides over the work, under the marks drawn over what is selected.
         let helpers = Helpers.shared
         _ = (helpers.rulers, helpers.guides, helpers.grids, helpers.guidesLocked)
@@ -414,9 +449,22 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if componentTool.isAnimating { keepEasing() }
         deckTool.draw(ctx, scale: deviceScale, in: bounds)
         if deckTool.isAnimating { keepEasing() }
+        drawLive(ctx, live)
         if !deckTool.spreading { rulers.draw(ctx, in: bounds, scale: deviceScale, tabs: guideTool.tabs()) }
         if helpersAnimating { keepEasing() }
+        // The threads drawing back into their layers, coming out of the prototype.
+        if flowTool.active {
+            flowTool.draw(ctx, scale: deviceScale, in: bounds)
+            if flowTool.isAnimating { keepEasing() }
+        }
         _ = store.tool
+    }
+
+    /// The others in a live room: their hands, what they hold, what they changed, and their winks.
+    private func drawLive(_ ctx: CGContext, _ live: LiveRoom?) {
+        guard let live else { return }
+        live.marks.draw(ctx, room: live, store: store, in: bounds, scale: deviceScale)
+        if live.marks.isAnimating { keepEasing() }
     }
 
     /// Whether the rulers, a guide or a layout grid are on their way somewhere.
@@ -537,7 +585,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             // Too small on screen for its name to be read.
             guard board.frame.width * store.viewport.zoom >= 30 else { continue }
             let rect = titleRect(of: board)
-            let color = selected.contains(board.id) || store.hovered == board.id ? CanvasInk.labelSelected : CanvasInk.label
+            let on = selected.contains(board.id) || store.hovered == board.id
+            let color = flowTool.labelColor(selected: on, design: on ? CanvasInk.labelSelected : CanvasInk.label)
             if board.isCarousel { drawSlideNumbers(board, color: color) }
             guard rect.intersects(bounds) else { continue }
             let paragraph = NSMutableParagraphStyle()
@@ -1003,6 +1052,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let v = convert(event.locationInWindow, from: nil)
         holdWindow()
         lastViewPoint = v
+        if store.prototyping {
+            if store.hovered != nil { store.hovered = nil }
+            flowTool.hover(v)
+            (spaceHeld ? NSCursor.openHand : flowTool.cursor(at: v) ?? .arrow).set()
+            return
+        }
         rulers.hover(v)
         guideTool.hover(v)
         layoutTool.hover(v)
@@ -1063,6 +1118,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func mouseExited(with event: NSEvent) {
         store.hovered = nil
+        flowTool.hover(nil)
         developTool.hover(at: nil)
         rulers.hover(nil)
         guideTool.hover(nil)
@@ -1120,6 +1176,21 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // Seen as a prototype, a press pulls a thread, moves a screen or the view, or picks.
+        if store.prototyping {
+            window?.makeFirstResponder(self)
+            let v = convert(event.locationInWindow, from: nil)
+            lastViewPoint = v
+            mouseDownView = v
+            if spaceHeld {
+                interaction = .pan(startOrigin: store.viewport.origin, startView: v)
+                NSCursor.closedHand.set()
+                return
+            }
+            if deckTool.spreading, deckTool.down(at: v, event: event) { return }
+            _ = flowTool.down(at: v, event: event)
+            return
+        }
         // A word offered after a change is taken before anything else.
         if deckTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
         if maskTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
@@ -1337,6 +1408,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
+        if flowTool.dragging {
+            flowTool.drag(to: v)
+            if let cursor = flowTool.cursor(at: v) { cursor.set() }
+            return
+        }
         if guideTool.pressed { guideTool.drag(to: v, flags: flags); updateCursor(v, flags: flags); return }
         if layoutTool.dragging { layoutTool.drag(to: v, flags: flags); return }
         if pathTool.dragging { pathTool.drag(to: v, flags: flags); return }
@@ -1696,6 +1772,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func mouseUp(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
+        if flowTool.dragging {
+            flowTool.up(at: v)
+            flowTool.hover(v)
+            (flowTool.cursor(at: v) ?? .arrow).set()
+            return
+        }
+        if case .pan = interaction, store.prototyping {
+            interaction = .none
+            NSCursor.openHand.set()
+            return
+        }
         if guideTool.pressed {
             guideTool.up(at: v, flags: event.modifierFlags)
             updateCursor(v, flags: event.modifierFlags)
@@ -1835,6 +1922,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         window?.makeFirstResponder(self)
         if store.editingText != nil { endEditing() }
         let v = convert(event.locationInWindow, from: nil)
+        if store.prototyping {
+            if let entries = flowTool.menuEntries(at: v) { onContextMenu?(windowPoint(v), entries) }
+            return
+        }
         // On the rulers, what they show; on a guide, the guide's own.
         if rulers.part(at: v) != nil {
             onContextMenu?(windowPoint(v), Helpers.shared.entries(for: store))
@@ -1930,6 +2021,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if event.keyCode == 53, developTool.cancel() { return }
         if event.keyCode == 53, deckTool.cancel() { return }
         if pathTool.key(event) { return }
+        if store.prototyping, prototypeKey(event) { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let step: CGFloat = flags.contains(.shift) ? 10 : 1
         switch event.keyCode {
@@ -2072,7 +2164,34 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     @objc func cut(_ sender: Any?) { store.cutSelection() }
     @objc func paste(_ sender: Any?) { store.paste() }
     @objc func delete(_ sender: Any?) {
+        // Seen as a prototype, what is taken away is where the picked layers go, never the layers.
+        if store.prototyping { store.unlinkFlow(store.linkSources); return }
         if store.editingPath != nil { store.deleteSelectedPoints() } else { store.deleteSelection() }
+    }
+
+    /// A key while the design is seen as a prototype: Delete cuts the picked layers' threads,
+    /// Return plays from the picked screen, Escape lets go; the space bar still moves the view, and
+    /// the drawing tools' keys do nothing here.
+    private func prototypeKey(_ event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 49: return false
+        case 51, 117:
+            store.unlinkFlow(store.linkSources)
+        case 53:
+            if !flowTool.cancel() {
+                if store.writingNote != nil { store.writingNote = nil } else { store.selection = [] }
+            }
+        case 36, 76:
+            store.play()
+        case 123, 124, 125, 126:
+            break
+        default:
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .capsLock, .numericPad, .function])
+            // The drawing tools' letters do nothing here; anything else goes on as it would.
+            if flags.isEmpty, let chars = event.charactersIgnoringModifiers, Tool.forKey(chars) != nil { return true }
+            return false
+        }
+        return true
     }
     @objc override func selectAll(_ sender: Any?) {
         if store.editingPath != nil { store.selectAllPoints() } else { store.selectAll() }

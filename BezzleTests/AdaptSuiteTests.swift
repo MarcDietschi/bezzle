@@ -53,7 +53,7 @@ struct AdaptSuiteTests {
             if !n.cornerRadius.isFinite || n.cornerRadius < 0 { say("\(path)\(n.name) has corners of \(n.cornerRadius)") }
             for c in n.children { sound(c, in: path + n.name + " › ") }
         }
-        func same(_ x: Node, _ y: Node, in path: String, band: Bool = false) {
+        func same(_ x: Node, _ y: Node, in path: String, band: Bool = false, at offset: CGPoint = .zero) {
             if x.id != y.id || x.kind != y.kind || x.name != y.name { say("\(path)\(x.name) became \(y.name)") ; return }
             if x.text != y.text || x.spans?.map(\.text) != y.spans?.map(\.text) { say("\(path)\(x.name): its words changed") }
             if x.hidden != y.hidden || x.locked != y.locked || x.post != y.post || x.own != y.own || x.rotation != y.rotation
@@ -84,11 +84,15 @@ struct AdaptSuiteTests {
                 if !r.insetBy(dx: -0.75, dy: -0.75).contains(CGRect(origin: .zero, size: y.frame.size)) { say("\(path)\(x.name)'s picture no longer covers it: \(r) in \(y.frame.size)") }
             }
             guard x.children.count == y.children.count else { say("\(path)\(x.name) holds \(y.children.count) layers, not \(x.children.count)"); return }
-            for (cx, cy) in zip(x.children, y.children) { same(cx, cy, in: path + x.name + " › ", band: band) }
+            // What a group holds lies on the page from where the group does: a band among it too.
+            let inner = x.isGroup && !x.isCopy ? CGPoint(x: offset.x + x.frame.minX, y: offset.y + x.frame.minY) : offset
+            for (cx, cy) in zip(x.children, y.children) {
+                same(cx, cy, in: path + x.name + " › ", band: band || x.isGroup && isBand(cx, at: inner), at: inner)
+            }
         }
         // A band running along an edge, from side to side, stretches with the page.
-        func isBand(_ n: Node) -> Bool {
-            let b = Geometry.bounds(of: n)
+        func isBand(_ n: Node, at offset: CGPoint = .zero) -> Bool {
+            let b = Geometry.bounds(of: n).offsetBy(dx: offset.x, dy: offset.y)
             return n.kind != .text && b.minX <= 2.5 && b.maxX >= page0.maxX - 2.5 && (b.minY <= 2.5) != (b.maxY >= page0.maxY - 2.5) && b.height < page0.height * 0.6
         }
         for (x, y) in zip(a, b) {
@@ -119,6 +123,12 @@ struct AdaptSuiteTests {
         for i in flowing where !inside(shown(b[i]), page1.insetBy(dx: -1.5, dy: -1.5)) {
             say("\(b[i].name) left the artboard: \(shown(b[i]))")
         }
+        // A group draws nothing of its own, unless its first layer is a ground under all of it.
+        func seen(_ n: Node) -> Bool {
+            guard n.isGroup, !n.isCopy else { return true }
+            guard let first = n.children.first, n.frame.width > 0, n.frame.height > 0 else { return false }
+            return Geometry.bounds(of: first).intersection(CGRect(origin: .zero, size: n.frame.size)).area >= n.frame.width * n.frame.height * 0.85
+        }
         // Layers that lay over one another, however far it reaches, are one block.
         var block = Array(a.indices)
         func root(_ i: Int) -> Int { var r = i; while block[r] != r { r = block[r] }; return r }
@@ -134,7 +144,7 @@ struct AdaptSuiteTests {
                 if !x0.insetBy(dx: -1, dy: -1).intersects(y0), x1.insetBy(dx: 1, dy: 1).intersects(y1.insetBy(dx: 1, dy: 1)) {
                     say("\(b[i].name) \(x1.integral) now lies over \(b[j].name) \(y1.integral)")
                 }
-                if x0.insetBy(dx: -1, dy: -1).contains(y0), y1.width > 1, y1.height > 1, y1.intersection(x1).area < y1.area * 0.9 {
+                if x0.insetBy(dx: -1, dy: -1).contains(y0), seen(a[i]), y1.width > 1, y1.height > 1, y1.intersection(x1).area < y1.area * 0.9 {
                     say("\(b[j].name) came out of \(b[i].name)")
                 }
             }
@@ -1158,7 +1168,9 @@ struct AdaptSuiteTests {
             // Brought in as the app does, pictures and all, once.
             let imports = out.appendingPathComponent("imports", isDirectory: true)
             try FileManager.default.createDirectory(at: imports, withIntermediateDirectories: true)
-            let made = imports.appendingPathComponent(url.deletingPathExtension().lastPathComponent + ".bezzle")
+            // Named with its folder too: files from different places can share a name.
+            let named = url.deletingLastPathComponent().lastPathComponent + "-" + url.deletingPathExtension().lastPathComponent
+            let made = imports.appendingPathComponent(named + ".bezzle")
             if !FileManager.default.fileExists(atPath: made.path) {
                 guard let (at, _) = try? Importer.importFile(url, into: imports) else { lines.append("\(url.lastPathComponent): could not be read"); continue }
                 if at != made { try? FileManager.default.moveItem(at: at, to: made) }
@@ -1167,7 +1179,8 @@ struct AdaptSuiteTests {
             let assets = Assets(design: made)
             let all = document.nodes.filter { $0.isArtboard && !$0.isCarousel && !$0.children.isEmpty }
             // An even spread of its artboards, as many as are worth looking at.
-            let step = max(1, all.count / 40)
+            let most = Int(ProcessInfo.processInfo.environment["BEZZLE_ADAPT_PER_FILE"] ?? "") ?? 40
+            let step = max(1, all.count / most)
             let picked = stride(from: 0, to: all.count, by: step).map { all[$0] }
             lines.append("\(url.lastPathComponent): \(all.count) artboards, \(picked.count) tried, read in \(Int(CACurrentMediaTime() - started)) s")
             var sheet: [Node] = []
@@ -1205,7 +1218,7 @@ struct AdaptSuiteTests {
                 lines += problems.prefix(6).map { "  \(url.lastPathComponent) · " + $0 }
             }
             if !sheet.isEmpty {
-                try AdaptTests.sheet(Array(sheet.prefix(12)), assets: assets, to: out.appendingPathComponent("file-\(url.deletingPathExtension().lastPathComponent).png"))
+                try AdaptTests.sheet(Array(sheet.prefix(12)), assets: assets, to: out.appendingPathComponent("file-\(named).png"))
             }
         }
         lines.insert("\(boards) artboards at \(laid) sizes; \(troubled) with any problem. Slowest: \(Int(slowest.0 * 1000)) ms, \(slowest.1)", at: 0)
@@ -1498,6 +1511,148 @@ struct AdaptSuiteTests {
         #expect(Adapt.mode(of: custom, to: CGSize(width: 402, height: 874)) == .interface)
         #expect(Adapt.mode(of: A.photoPost(), to: CGSize(width: 402, height: 874)) == .composition)
         #expect(Adapt.mode(of: Self.empty()) == .composition)
+    }
+
+    // MARK: - Groups that only keep things together
+
+    /// A web page's hero whose maker grouped all of it, words and pictures alike, as designers
+    /// often do: on a ground of a blurred photo, a title, a line and a button beside a collage of
+    /// four pictures; a small logo, a mark beside a name, in its own group above.
+    static func groupedHero() -> Node {
+        var ground = A.photo(CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        ground.name = "Ground"
+        var held: [Node] = [
+            A.text("Welcome to Crate", 96, face: "Bold", at: CGPoint(x: 0, y: 120), width: 720, color: .white),
+            A.text("Your monthly supply of trendy clothes and accessories, picked for you.", 28, at: CGPoint(x: 0, y: 380), width: 640, color: .white),
+            A.rect(CGRect(x: 0, y: 500, width: 220, height: 64), A.accent, radius: 32, name: "Button"),
+            A.text("SHOP NOW", 20, face: "Semibold", at: CGPoint(x: 60, y: 520), color: .white),
+        ]
+        for (i, at) in [CGPoint(x: 900, y: 0), CGPoint(x: 1240, y: 0), CGPoint(x: 900, y: 360), CGPoint(x: 1240, y: 360)].enumerated() {
+            var p = A.photo(CGRect(origin: at, size: CGSize(width: 320, height: 340)), radius: 12)
+            p.name = "Look \(i)"
+            held.append(p)
+        }
+        var hero = Node(kind: .group, name: "Hero", frame: CGRect(x: 160, y: 200, width: 1560, height: 700))
+        hero.children = held
+        var mark = Node(kind: .ellipse, name: "Mark", frame: CGRect(x: 0, y: 0, width: 40, height: 40))
+        mark.fill.color = A.accent
+        var name = A.text("crate", 30, face: "Bold", at: CGPoint(x: 52, y: 2), color: .white)
+        name.name = "Name"
+        var logo = Node(kind: .group, name: "Logo", frame: CGRect(x: 160, y: 60, width: 52 + name.frame.width, height: 40))
+        logo.children = [mark, name]
+        var b = A.board(CGSize(width: 1920, height: 1080), [ground, logo, hero])
+        b.name = "Grouped hero"
+        return b
+    }
+
+    @Test func aGroupThatOnlyKeepsAPageTogetherIsLaidOutInside() throws {
+        let design = Self.groupedHero()
+        let plan = Adapt.plan(design)
+        #expect(Adapt.compose(plan, to: design.frame.size).board == design)
+        let hero0 = design.children[2], logo0 = design.children[1]
+        for size in [CGSize(width: 1080, height: 1920), CGSize(width: 402, height: 874), CGSize(width: 2880, height: 1080), CGSize(width: 1152, height: 1080)] {
+            let r = Adapt.compose(plan, to: size)
+            #expect(Self.problems(design, r.board, size: size).isEmpty, "\(Self.problems(design, r.board, size: size))")
+            let hero = r.board.children[2], logo = r.board.children[1]
+            // The groups hold what they held, in its order, and are as big as it.
+            #expect(hero.children.map(\.id) == hero0.children.map(\.id))
+            let held = hero.children.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+            #expect(abs(held.minX) < 0.01 && abs(held.minY) < 0.01)
+            #expect(abs(held.width - hero.frame.width) < 0.01 && abs(held.height - hero.frame.height) < 0.01)
+            // A logo stays one: its name beside its mark as it was, only bigger or smaller.
+            let k = logo.frame.width / logo0.frame.width
+            #expect(abs(logo.children[1].frame.minX - logo0.children[1].frame.minX * k) < 0.5)
+            #expect(abs(logo.frame.height - logo0.frame.height * k) < 0.5)
+            guard size.height > size.width else { continue }
+            // On a tall page, the words go above the pictures, and the title reads as it did.
+            let title = hero.children[0].frame.offsetBy(dx: hero.frame.minX, dy: hero.frame.minY)
+            let looks = hero.children[4...].map { $0.frame.offsetBy(dx: hero.frame.minX, dy: hero.frame.minY) }
+            #expect(looks.allSatisfy { $0.minY >= title.maxY }, "\(title) \(looks) \(Adapt.options(plan, to: size).map { ($0.0.turned, $0.0.columns, $0.2, $0.3) }) \(plan.turnPaths) \(plan.root.flow.map { Adapt.describe(.stack($0)) } ?? "")")
+            let type = hero.children[0].style?.size ?? 0
+            #expect(type >= 96 * (size.width < 600 ? 0.45 : 0.85), "the title is \(type)")
+        }
+    }
+
+    /// A hero across the middle of a screen, turned to lie down it, lies down the middle of it.
+    @Test func aCentredHeroStaysCentredWhenItTurns() {
+        var design = Self.groupedHero()
+        design.children.remove(at: 1)
+        let plan = Adapt.plan(design)
+        for size in [CGSize(width: 1080, height: 1920), CGSize(width: 402, height: 874)] {
+            let r = Adapt.compose(plan, to: size)
+            let hero = r.board.children[1]
+            #expect(r.arrangement.turned != nil)
+            #expect(abs(hero.frame.minY - (size.height - hero.frame.maxY)) < size.height * 0.08, "\(hero.frame) on \(size)")
+        }
+    }
+
+    /// A sheet of colour swatches, each a card with a panel of its colour across its top and its
+    /// names over it, its code below: a panel in a card takes a share of the card, not of the page.
+    static func swatches() -> Node {
+        var layers: [Node] = []
+        for row in 0..<5 {
+            for column in 0..<4 {
+                let x = 39 + CGFloat(column) * 145, y = 52 + CGFloat(row) * 159
+                layers.append(A.rect(CGRect(x: x, y: y, width: 117, height: 129), .white, radius: 6, name: "Card"))
+                layers.append(A.rect(CGRect(x: x, y: y, width: 117, height: 87), A.accent, radius: 6, name: "Colour"))
+                layers.append(A.text("$primary", 16, at: CGPoint(x: x + 18, y: y + 33), color: .white))
+                layers.append(A.text("#00D8B3", 16, at: CGPoint(x: x + 16, y: y + 97)))
+            }
+        }
+        var b = A.board(CGSize(width: 630, height: 869), layers, color: RGBA(r: 0.95, g: 0.95, b: 0.96))
+        b.name = "Swatches"
+        return b
+    }
+
+    @Test func aPanelInACardTakesAShareOfTheCard() {
+        let design = Self.swatches()
+        let plan = Adapt.plan(design)
+        for size in [CGSize(width: 378, height: 869), CGSize(width: 869, height: 630), CGSize(width: 945, height: 869)] {
+            let r = Adapt.compose(plan, to: size)
+            #expect(r.scale > 0.4, "\(r.scale) at \(size)")
+            #expect(Self.problems(design, r.board, size: size).isEmpty, "\(Self.problems(design, r.board, size: size))")
+            // Each panel is still the top two thirds of its card.
+            let card = r.board.children[0], colour = r.board.children[1]
+            #expect(abs(colour.frame.height / card.frame.height - 87.0 / 129) < 0.1, "\(colour.frame) in \(card.frame)")
+        }
+    }
+
+    /// A phone screen's header, a group running across its top under a search field that lies over
+    /// its foot: a ground, a status bar with the time at its left and signs at its right, a title.
+    static func barScreen() -> Node {
+        var bar = Node(kind: .group, name: "Status bar", frame: CGRect(x: 0, y: 0, width: 375, height: 44))
+        bar.children = [A.text("9:41", 15, face: "Semibold", at: CGPoint(x: 21, y: 13)),
+                        A.rect(CGRect(x: 293, y: 17, width: 67, height: 12), A.ink, name: "Signs")]
+        var header = Node(kind: .group, name: "Header", frame: CGRect(x: 0, y: 0, width: 375, height: 140))
+        header.children = [A.rect(CGRect(x: 0, y: 0, width: 375, height: 140), A.accent, name: "Ground"), bar,
+                           A.text("Order Details", 28, face: "Bold", at: CGPoint(x: 20, y: 64), color: .white)]
+        var b = A.board(CGSize(width: 375, height: 812), [
+            header,
+            A.rect(CGRect(x: 20, y: 120, width: 335, height: 40), .white, radius: 20, name: "Search"),
+            A.text("Your order is on its way. It left the kitchen a few minutes ago and will be with you soon.", 17,
+                   at: CGPoint(x: 20, y: 200), width: 335),
+        ])
+        b.name = "Bar screen"
+        return b
+    }
+
+    /// Wider or narrower, a bar runs across as it did; its words keep their size and their ends.
+    @Test func aBarWithWordsIsLaidOutNotStretched() {
+        let design = Self.barScreen()
+        let plan = Adapt.plan(design)
+        #expect(plan.root.bands.contains { $0.0 == 0 })
+        for size in [CGSize(width: 563, height: 812), CGSize(width: 1080, height: 1080), CGSize(width: 225, height: 812)] {
+            let r = Adapt.compose(plan, to: size)
+            #expect(Self.problems(design, r.board, size: size).isEmpty, "\(Self.problems(design, r.board, size: size))")
+            let header = r.board.children[0], bar = header.children[1]
+            let time = bar.children[0], signs = bar.children[1]
+            let k = (header.children[2].style?.size ?? 0) / 28
+            #expect(abs((time.style?.size ?? 0) - 15 * k) < 0.2, "the time is \(time.style?.size ?? 0) at \(size), the title grew by \(k)")
+            #expect(header.frame.minX == 0 && abs(header.frame.width - size.width) < 0.5)
+            #expect(abs(bar.frame.width - size.width) < 0.5)
+            #expect(abs(time.frame.minX - 21 * k) < 1)
+            #expect(abs(bar.frame.width - signs.frame.maxX - 15 * k) < 1)
+        }
     }
 
     // MARK: - Speed

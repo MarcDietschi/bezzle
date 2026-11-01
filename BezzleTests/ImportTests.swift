@@ -259,6 +259,40 @@ struct XDImportTests {
         #expect(older.runs[1].look.face == "Bold" && older.runs[1].look.color?.hex == "FF0000" && older.runs[1].look.underline == true)
     }
 
+    /// A text painted with a gradient, most of its letters black and one in the gradient's first colour.
+    static func paintedLettersFile() throws -> URL {
+        let manifest = #"{"children":[{"name":"artwork","path":"artwork","children":[{"name":"Board","path":"artboard-1","uxdesign#bounds":{"x":0,"y":0,"width":375,"height":812}}]},{"name":"resources","path":"resources","components":[]}]}"#
+        let helvetica = #""fontFamily":"Helvetica","fontStyle":"Regular","postscriptName":"Helvetica","fontSize":20"#
+        let yellow = #"{"mode":"RGB","value":{"r":255,"g":255,"b":0}}"#, green = #"{"mode":"RGB","value":{"r":0,"g":255,"b":0}}"#
+        let board = """
+        {"children":[{"type":"artboard","artboard":{"children":[
+          {"type":"text","name":"Mostly","transform":{"a":1,"b":0,"c":0,"d":1,"tx":20,"ty":100},
+           "style":{"fill":{"type":"gradient","gradient":{"meta":{"ux":{"gradientResources":{"type":"linear","stops":[{"offset":0,"color":\(yellow)},{"offset":1,"color":\(green)}]}}},"x1":0,"y1":0,"x2":1,"y2":0,"units":"objectBoundingBox"}},
+             "font":{"family":"Helvetica","style":"Regular","postscriptName":"Helvetica","size":20}},
+           "meta":{"ux":{"rangedStyles":[{"length":4,\(helvetica)},{"length":11,\(helvetica),"fill":{"value":4278190080}},{"length":0,\(helvetica),"fill":{"value":4294967040}}]}},
+           "text":{"rawText":"Hot plain words!","frame":{"type":"positioned"},"paragraphs":[{"lines":[[{"x":0,"y":0,"from":0,"to":16}]]}]}}
+        ]}}]}
+        """
+        let zip = TestZip.make([("mimetype", Data("application/vnd.adobe.sparkler.project+dcxucf".utf8)), ("manifest", Data(manifest.utf8)),
+                                ("artwork/artboard-1/graphics/graphicContent.agc", Data(board.utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).xd")
+        try zip.write(to: url)
+        return url
+    }
+
+    @Test func paintsLettersWithAGradientAmongOthers() throws {
+        let url = try Self.paintedLettersFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try XDImporter.read(url)
+        #expect(imported.report.notes.isEmpty)
+        // Most letters are black, yet the gradient stays the layer's; the letter in its first
+        // colour is told from those it paints.
+        let mostly = try #require(imported.document.allNodes.first { $0.name == "Mostly" })
+        #expect(mostly.fill.gradient?.stops.map(\.color.hex) == ["FFFF00", "00FF00"] && mostly.fill.color.hex == "FFFF01")
+        #expect(mostly.runs.map(\.text) == ["Hot ", "plain words", "!"])
+        #expect(mostly.runs[0].look.isPlain && mostly.runs[1].look.color?.hex == "000000" && mostly.runs[2].look.color?.hex == "FFFF00")
+    }
+
     /// An XD artboard laid out on columns with uneven margins and a top margin, with guides, and a
     /// text with a word in capitals.
     static func helpersFile() throws -> URL {

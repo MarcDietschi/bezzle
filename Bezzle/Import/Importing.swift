@@ -64,8 +64,14 @@ enum Importer {
 
     /// Makes a new design out of the file, in `folder`, and says where it is.
     static func importFile(_ url: URL, into folder: URL) throws -> (URL, ImportReport) {
-        var imported = try read(url)
-        let target = Library.shared.freeURL(named: url.deletingPathExtension().lastPathComponent, in: folder)
+        try write(read(url), named: url.deletingPathExtension().lastPathComponent, into: folder)
+    }
+
+    /// Writes a design brought in from elsewhere as a new design called `name` in `folder`, its
+    /// pictures with it, and says where it is.
+    static func write(_ imported: Imported, named name: String, into folder: URL) throws -> (URL, ImportReport) {
+        var imported = imported
+        let target = Library.shared.freeURL(named: name, in: folder)
         let images = target.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
@@ -204,7 +210,11 @@ nonisolated extension Node {
     /// apps designs come from keep them: the layer's own style and colour become those most of
     /// its letters have, and each run keeps only how it differs from them. The style's other
     /// parts, such as its alignment and line height, stay as they were set.
-    mutating func setImportedRuns(_ runs: [(text: String, letters: Letters)]) {
+    ///
+    /// With `painting`, a gradient or a picture, the letters in its colour are painted with it:
+    /// the layer is filled with it, whatever colour most letters are in, and every other letter
+    /// has a colour of its own (see `ImportText.apart`).
+    mutating func setImportedRuns(_ runs: [(text: String, letters: Letters)], painting: Fill? = nil) {
         var style = self.style ?? TextStyle()
         func unlisted(_ l: Letters) -> Letters {
             var l = l
@@ -223,6 +233,11 @@ nonisolated extension Node {
             style.underline = main.underline
             style.strikethrough = main.strikethrough ? true : nil
             fill.color = main.color
+        }
+        if let painting {
+            fill.color = painting.color
+            fill.gradient = painting.gradient
+            fill.image = painting.image
         }
         self.style = style
         setRuns(runs.map { TextSpan(text: $0.text, look: TextLook($0.letters, over: style, color: fill.color)) })
@@ -276,6 +291,51 @@ enum ImportText {
             out = RGBA(r: mix(top.r, out.r), g: mix(top.g, out.g), b: mix(top.b, out.b), a: a)
         }
         return out
+    }
+
+    /// The one fill a text's letters are painted with, from fills lying one over another, the
+    /// first lowest, as a text has one: what an opaque colour or gradient covers does not show,
+    /// nor what lies under a picture; solid colours come to the colour they make, and over or
+    /// under a gradient, to that gradient with each of its colours as they make it there. Nil
+    /// when more than one gradient or picture shows, or anything over a picture.
+    static func painting(_ fills: [Fill], report: inout ImportReport) -> Fill? {
+        func covers(_ f: Fill) -> Bool {
+            guard f.image == nil else { return false }
+            if let stops = f.gradient?.stops, !stops.isEmpty { return stops.allSatisfy { $0.color.a >= 0.999 } }
+            return f.color.a >= 0.999
+        }
+        guard !fills.isEmpty else { return nil }
+        let showing = Array(fills[(fills.lastIndex(where: covers) ?? 0)...])
+        if let top = showing.lastIndex(where: { $0.image != nil }) {
+            guard top == showing.count - 1 else { return nil }
+            if top > 0 { report.note("Fills under a picture, left out") }
+            return showing[top]
+        }
+        let painters = showing.indices.filter { showing[$0].paints }
+        guard painters.count <= 1 else { return nil }
+        guard let at = painters.first else { return composite(showing.map(\.color)).map { Fill(on: true, color: $0) } }
+        var paint = showing[at]
+        guard showing.count > 1, var gradient = paint.gradient else { return paint }
+        let under = showing[..<at].map(\.color), over = showing[(at + 1)...].map(\.color)
+        for i in gradient.stops.indices {
+            gradient.stops[i].color = composite(under + [gradient.stops[i].color] + over) ?? gradient.stops[i].color
+        }
+        paint.gradient = gradient
+        paint.color = gradient.stops[0].color
+        return paint
+    }
+
+    /// The colour letters a gradient or a picture paints are in: `color`, or one a shade of blue
+    /// off it that no one sees, so that they are told from letters of a colour of their own,
+    /// `others`. A text's letters in its own colour are painted, and that colour does not show.
+    static func apart(_ color: RGBA, from others: [RGBA]) -> RGBA {
+        var c = color, k = 0
+        while others.contains(c) {
+            k += 1
+            let b = color.b + Double((k + 1) / 2) / 255 * (k.isMultiple(of: 2) ? -1 : 1)
+            c = RGBA(r: color.r, g: color.g, b: min(max(b, 0), 1), a: color.a)
+        }
+        return c
     }
 }
 

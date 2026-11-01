@@ -719,7 +719,7 @@ private nonisolated struct Corner: Shape {
 }
 
 /// Draws a size's thing round its screen, as small and plain as still tells what it is.
-private struct FormDrawing: View {
+struct FormDrawing: View {
     let form: SizeForm
     let m: FormMetrics
 

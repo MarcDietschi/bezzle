@@ -44,6 +44,12 @@ struct Workspace: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .overlay {
+                        // The others in a live room who are out of sight, on the rim toward them.
+                        if let live = store.sharing?.live {
+                            LiveCompass(store: store, room: live)
+                        }
+                    }
+                    .overlay {
                         GradientHandles(store: store)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
@@ -58,11 +64,34 @@ struct Workspace: View {
                     .overlay(alignment: .bottom) {
                         if let report = store.importReport { ImportReportCard(store: store, report: report).transition(.opacity) }
                     }
+                    .overlay {
+                        if let note = store.writingNote {
+                            FlowNoteField(store: store, source: note.source, at: note.at)
+                        }
+                    }
                     .padding(.bottom, 9)
                     .padding(.trailing, 2)
-                Inspector(store: store)
-                    .frame(width: Inspector.width)
-                    .readOnly(store.isReadOnly)
+                ZStack {
+                    if store.prototyping {
+                        PrototypeInspector(store: store)
+                            .transition(.asymmetric(insertion: .offset(x: 18).combined(with: .opacity).animation(Theme.spring.delay(0.06)),
+                                                    removal: .opacity.animation(.easeOut(duration: 0.08))))
+                    } else {
+                        Inspector(store: store)
+                            .transition(.asymmetric(insertion: .offset(x: -18).combined(with: .opacity).animation(Theme.spring.delay(0.06)),
+                                                    removal: .opacity.animation(.easeOut(duration: 0.08))))
+                    }
+                }
+                .frame(width: Inspector.width)
+                .readOnly(store.isReadOnly)
+                .animation(Theme.spring, value: store.prototyping)
+            }
+            // The prototype played: over the panels and the canvas, under the bar.
+            .overlay {
+                if let player = store.player {
+                    PlayerOverlay(store: store, player: player)
+                        .id(ObjectIdentifier(player))
+                }
             }
         }
         .background(Theme.paper)
@@ -123,16 +152,20 @@ struct DesignBarControls: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if let mark = store.sharing?.mark {
+            if let live = store.sharing?.live, !live.people.isEmpty {
+                LivePeople(room: live)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            } else if let mark = store.sharing?.mark {
                 SharingTag(mark: mark)
             }
             MenuButton(id: "zoom", title: .verbatim("\(Int((store.viewport.zoom * 100).rounded()))%"), width: 220) { zoomMenu }
                 .help("Zoom")
             if CloudSync.isAvailable || store.isReadOnly { ShareButton(store: store) }
-            CardButton(title: "Export…", height: 28) { store.exporting = true }
-                .help("Export  ⌘E")
+            ModeSwitch(store: store)
+            ModeAction(store: store)
         }
         .animation(Theme.pop, value: store.sharing?.mark)
+        .animation(Theme.pop, value: store.sharing?.live?.people.isEmpty)
     }
 
     private var zoomMenu: [MenuEntry] {
@@ -160,13 +193,24 @@ struct ToolRail: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            ForEach(Tool.allCases, id: \.self) { tool in
+            // Nothing is drawn in the prototype: the tools step aside, one after another, sliding
+            // and fading together, and come back the same way. They keep their places meanwhile,
+            // so nothing else in the rail moves.
+            let away = store.prototyping
+            ForEach(Array(Tool.allCases.enumerated()), id: \.element) { index, tool in
                 RailButton(selected: store.tool == tool, help: .verbatim("\(tool.title)  \(tool.key)")) {
                     ToolGlyph(tool: tool)
                 } action: {
                     store.tool = tool
-                    store.canvas.map { $0.window?.makeFirstResponder($0) }
+                    if let canvas = store.canvas { canvas.window?.makeFirstResponder(canvas) }
                 }
+                .opacity(away ? 0 : 1)
+                .offset(x: away ? -14 : 0)
+                .scaleEffect(away ? 0.86 : 1)
+                .animation(away ? .spring(response: 0.3, dampingFraction: 1).delay(Double(index) * 0.022)
+                                : .spring(response: 0.38, dampingFraction: 0.78).delay(Double(index) * 0.03), value: away)
+                .allowsHitTesting(!away)
+                .accessibilityHidden(away)
             }
             Spacer()
             RailButton(selected: store.showsResources, help: "Resources  ⇧⌘Y") {

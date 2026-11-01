@@ -663,11 +663,14 @@ struct ColorPanel: View {
                     .foregroundStyle(Theme.ink2)
                     .frame(width: 40, alignment: .trailing)
                 IconButton(symbol: "eyedropper", help: "Pick a colour from the screen") {
+                    // The sampler calls back on the main thread.
                     NSColorSampler().show { picked in
                         guard let picked else { return }
-                        let c = RGBA(picked).with(alpha: alpha)
-                        set(c)
-                        apply(c)
+                        MainActor.assumeIsolated {
+                            let c = RGBA(picked).with(alpha: alpha)
+                            set(c)
+                            apply(c)
+                        }
                     }
                 }
             }

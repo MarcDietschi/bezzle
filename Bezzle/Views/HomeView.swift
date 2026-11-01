@@ -53,6 +53,11 @@ struct HomeView: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
+            // A link dropped from a browser is a page to bring in.
+            if let page = urls.first(where: { ["http", "https"].contains($0.scheme?.lowercased() ?? "") }) {
+                WebImporting.shared.present(page.absoluteString)
+                return true
+            }
             let designs = urls.filter { BezzleDocument.fileExtensions.contains($0.pathExtension.lowercased()) || Importer.imports($0) }
             designs.forEach(open)
             return !designs.isEmpty

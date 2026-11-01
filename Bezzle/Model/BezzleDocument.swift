@@ -56,7 +56,7 @@ private nonisolated final class PathIndex: @unchecked Sendable {
 }
 
 /// A whole design: artboards and loose layers on the canvas, bottom first.
-nonisolated struct BezzleDocument: Codable, Equatable {
+nonisolated struct BezzleDocument: Codable, Equatable, Sendable {
     static let fileExtension = "bezzle"
     /// Designs saved while the app was called Vellum; they open and save as they are.
     static let oldFileExtension = "vellum"

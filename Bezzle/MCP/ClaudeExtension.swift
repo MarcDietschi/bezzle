@@ -55,7 +55,7 @@ enum ClaudeExtension {
         }
         try files.copyItem(at: bridge, to: folder.appending(path: "server/index.js"))
         let tools = MCPTools()
-        let snapshot: JSONValue = ["initialize": MCPServer.shared.initialize([:]), "tools": .array(tools.list)]
+        let snapshot: JSONValue = ["initialize": MCPServer.shared.initialize([:]), "tools": .array(tools.list), "prompts": .array(tools.promptList)]
         try snapshot.data.write(to: folder.appending(path: "server/snapshot.json"))
         try manifest(tools).data.write(to: folder.appending(path: "manifest.json"))
         try icon().write(to: folder.appending(path: "icon.png"))

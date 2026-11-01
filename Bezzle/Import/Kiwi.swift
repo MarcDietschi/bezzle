@@ -15,7 +15,7 @@ nonisolated enum Kiwi {
     }
 
     /// A value as the schema types it. Every kind of whole number is an `int`.
-    indirect enum Value {
+    indirect enum Value: Equatable {
         case bool(Bool)
         case int(Int)
         case float(Double)
@@ -75,9 +75,15 @@ nonisolated enum Kiwi {
     }
 
     /// A message or a struct: the fields it has, each by its number in its type.
-    struct Object {
+    struct Object: Equatable {
         let type: Definition
         var fields: [(id: Int, value: Value)]
+
+        /// Of the one type, with the same fields in the same order.
+        static func == (a: Object, b: Object) -> Bool {
+            a.type === b.type && a.fields.count == b.fields.count
+                && zip(a.fields, b.fields).allSatisfy { $0.id == $1.id && $0.value == $1.value }
+        }
 
         subscript(name: String) -> Value? {
             guard let id = type.ids[name] else { return nil }

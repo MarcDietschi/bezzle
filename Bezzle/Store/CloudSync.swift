@@ -86,6 +86,10 @@ final class CloudSync {
     /// This Mac's name among those sharing a design. It is made once, and again on another Mac
     /// even when the settings come across with Migration Assistant, so two Macs never share one.
     static let replica: String = {
+        #if DEBUG
+        // Two test copies on one Mac share their settings; each says who it is.
+        if let id = ProcessInfo.processInfo.environment["BEZZLE_REPLICA"] { return id }
+        #endif
         let defaults = Library.settings
         let host = hostID()
         if let id = defaults.string(forKey: "sharingReplica"), defaults.string(forKey: "sharingHost") == host { return id }
@@ -216,12 +220,29 @@ final class CloudSync {
         let open = sessions.values.contains { $0.value != nil }
         if open, poll == nil, !engines.isEmpty {
             poll = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in
-                Task { @MainActor in if NSApp.isActive { CloudSync.shared.fetchNow() } }
+                Task { @MainActor in CloudSync.shared.pollNow() }
             }
         } else if !open {
             poll?.invalidate()
             poll = nil
         }
+    }
+
+    @ObservationIgnored private var polls = 0
+
+    /// While everyone who has an open design is in its live room too, their changes come that
+    /// way at once, and iCloud is asked a quarter as often: what it brings then is already here.
+    private func pollNow() {
+        polls += 1
+        guard NSApp.isActive else { return }
+        if allLive, polls % 4 != 0 { return }
+        fetchNow()
+    }
+
+    /// Whether each shared design open here has others in its live room.
+    private var allLive: Bool {
+        let open = sessions.values.compactMap(\.value)
+        return !open.isEmpty && open.allSatisfy { $0.live?.hasOthers == true }
     }
 
     // MARK: Engine state
@@ -263,8 +284,10 @@ final class CloudSync {
     /// along, and an engine asked to sync from inside its own call stops the app.
     private func sendSoon(_ scope: CKDatabase.Scope) {
         guard sendTasks[scope] == nil, let engine = engines[scope] else { return }
+        // The others in the room have it already: a longer run of changes goes up as one record.
+        let wait = allLive ? 3.0 : 1.5
         sendTasks[scope] = Task.detached {
-            try? await Task.sleep(for: .seconds(1.5))
+            try? await Task.sleep(for: .seconds(wait))
             await MainActor.run { CloudSync.shared.sendTasks[scope] = nil }
             try? await engine.sendChanges()
         }
@@ -530,7 +553,10 @@ final class CloudSync {
         }
         if !arrived.isEmpty {
             updateLink(zone) { $0.sentPictures.formUnion(arrived) }
-            for name in arrived { session(zone)?.store?.pictureArrived(name) }
+            for name in arrived {
+                session(zone)?.store?.pictureArrived(name)
+                session(zone)?.live?.arrived(name)
+            }
         }
         if let session = session(zone) {
             session.receive(changes)

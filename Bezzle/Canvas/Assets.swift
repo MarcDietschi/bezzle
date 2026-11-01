@@ -17,6 +17,9 @@ nonisolated final class Assets: @unchecked Sendable {
         var previews: [String: CGImage] = [:]
         /// Pictures being read, by size and name.
         var reading: Set<String> = []
+        /// What stands in for pictures someone sharing the design has but this Mac has not yet:
+        /// a soft, blurred glimpse of each, from their Mac (see `LiveGlimpse`).
+        var standIns: [String: CGImage] = [:]
     }
     private var kept = Kept()
     /// Guards `kept`, and is waited on for a picture another thread is reading.
@@ -48,13 +51,13 @@ nonisolated final class Assets: @unchecked Sendable {
         // A photo across many tiles is wanted by each of the threads drawing them at once.
         while kept.reading.contains(key) { lock.wait() }
         if let preview = kept.previews[name] { lock.unlock(); return preview }
-        guard let folder, !kept.missing.contains(name) else { lock.unlock(); return nil }
+        guard let folder, !kept.missing.contains(name) else { let standIn = kept.standIns[name]; lock.unlock(); return standIn }
         if let image = kept.cache[name]?[step] { lock.unlock(); return image }
         kept.reading.insert(key)
         lock.unlock()
         let image = Self.read(folder.appendingPathComponent(name), step: step)
         finish(name, step: step, image)
-        return image
+        return image ?? locked { $0.standIns[name] }
     }
 
     /// A picture read: kept, or noted as missing, and whoever waits for it told.
@@ -154,6 +157,16 @@ nonisolated final class Assets: @unchecked Sendable {
     func arrived(_ name: String) {
         locked { _ = $0.missing.remove(name) }
     }
+
+    /// Shows `image` in place of a picture not here yet, until it comes.
+    func standIn(_ name: String, _ image: CGImage) {
+        locked { $0.standIns[name] = image }
+    }
+
+    func standIn(of name: String) -> CGImage? { locked { $0.standIns[name] } }
+
+    /// The pictures looked for and not found, as far as drawing has asked for them.
+    var missing: Set<String> { locked { $0.missing } }
 }
 
 nonisolated extension Node {

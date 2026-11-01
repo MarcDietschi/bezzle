@@ -85,7 +85,10 @@ final class MCPTools {
         from the top left of the artboard or group it lies in. Layers are listed bottom first. \
         Refer to designs by name and layers by id (or exact name). Start with get_design to see \
         what is open. add_layers builds a whole screen in one call, nested; update_layers changes \
-        many layers at once. Look at what you made with render and fix what looks wrong. Every \
+        many layers at once. Look at what you made with render and fix what looks wrong. A design \
+        is also a prototype: prototype links layers to screens, get_prototype hands over screens, \
+        flows, component states and design tokens in one go to build it in code, and the same tools \
+        write changes made in the code back. Every \
         change is one step the person can undo with Command-Z, and designs save themselves: there \
         is no save.
         """
@@ -232,6 +235,39 @@ final class MCPTools {
         let store = try await open(url)
         store.zoomToFit()
         return [.text(summary(of: store, warnings: warnings).text)]
+    }
+
+    func importWebsite(_ args: Arguments) async throws -> [Content] {
+        guard let address = try args.string("url"), let url = WebCapture.address(address) else {
+            throw MCPError("Give the page's address, such as https://example.com.")
+        }
+        var sizes: [WebCapture.Size] = []
+        if let widths = args["widths"] as? [Any] {
+            for w in widths {
+                guard let n = (w as? NSNumber)?.doubleValue ?? Double("\(w)"), n >= 240 else { throw MCPError("widths should be numbers of pixels, from 240 up.") }
+                let size: WebCapture.Size = switch Int(n.rounded()) {
+                case Int(WebCapture.Size.desktop.width): .desktop
+                case Int(WebCapture.Size.tablet.width): .tablet
+                case Int(WebCapture.Size.mobile.width): .mobile
+                default: .custom(CGFloat(n))
+                }
+                if !sizes.contains(where: { $0.width == size.width }) { sizes.append(size) }
+            }
+        }
+        let design: URL, report: ImportReport
+        do {
+            (design, report) = try await WebImport.run(url, sizes: sizes, hideBanners: try args.bool("hide_banners") ?? true, into: Library.shared.folder)
+        } catch {
+            throw MCPError("\(address) could not be brought in: \(error.localizedDescription)")
+        }
+        Library.shared.refresh()
+        let store = try await open(design)
+        store.importReport = report
+        store.zoomToFit()
+        var text = summary(of: store).text
+        let lines = report.lines
+        if !lines.isEmpty { text += "\n\nOnly approximated:\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
+        return [.text(text)]
     }
 
     func openDesign(_ args: Arguments) async throws -> [Content] {

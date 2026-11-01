@@ -167,6 +167,18 @@ final class MCPServer {
             guard let name = params["name"] as? String else { return Self.rpcError(id: id, code: -32602, "tools/call needs a tool name.") }
             guard tools.has(name) else { return Self.rpcError(id: id, code: -32602, "There is no tool called \(name).") }
             result = await tools.call(name, params["arguments"] as? [String: Any] ?? [:])
+        case "prompts/list":
+            result = ["prompts": .array(tools.promptList)]
+        case "prompts/get":
+            guard let name = params["name"] as? String else { return Self.rpcError(id: id, code: -32602, "prompts/get needs a prompt name.") }
+            guard MCPTools.prompts.contains(where: { $0.name == name }) else { return Self.rpcError(id: id, code: -32602, "There is no prompt called \(name).") }
+            do {
+                result = try await tools.prompt(name, params["arguments"] as? [String: Any] ?? [:])
+            } catch let error as MCPError {
+                return Self.rpcError(id: id, code: -32603, error.message)
+            } catch {
+                return Self.rpcError(id: id, code: -32603, error.localizedDescription)
+            }
         default:
             return Self.rpcError(id: id, code: -32601, "Bezzle does not know \(method).")
         }
@@ -181,7 +193,7 @@ final class MCPServer {
         let info = Bundle.main.infoDictionary
         return [
             "protocolVersion": .string(version),
-            "capabilities": ["tools": ["listChanged": false]],
+            "capabilities": ["tools": ["listChanged": false], "prompts": ["listChanged": false]],
             "serverInfo": ["name": "bezzle", "title": "Bezzle", "version": .string(info?["CFBundleShortVersionString"] as? String ?? "0")],
             "instructions": .string(MCPTools.instructions),
         ]

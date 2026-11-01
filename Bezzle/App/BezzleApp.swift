@@ -110,6 +110,8 @@ struct BezzleCommands: Commands {
                 .keyboardShortcut("o")
             Button("Import from XD, Figma or Sketch…") { WindowRouter.openPanel(only: DesignFile.importableTypes) }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+            Button("Import from a Website…") { WebImporting.shared.present() }
+                .keyboardShortcut("i", modifiers: [.command, .shift, .option])
         }
         CommandGroup(replacing: .saveItem) {
             Button(store != nil ? "Close Tab" : "Close") { WindowRouter.shared.closeFront() }
@@ -328,6 +330,13 @@ struct BezzleCommands: Commands {
             Toggle("Layout Grids", isOn: Binding(get: { Helpers.shared.grids }, set: { Helpers.shared.grids = $0 }))
                 .keyboardShortcut("g", modifiers: .control)
             Toggle("Lock Guides", isOn: Binding(get: { Helpers.shared.guidesLocked }, set: { Helpers.shared.guidesLocked = $0 }))
+            Divider()
+            Toggle(LocalizedStringResource("mode.prototype", defaultValue: "Prototype"), isOn: Binding(get: { store?.prototyping == true }, set: { store?.prototyping = $0 }))
+                .keyboardShortcut("p", modifiers: .control)
+                .disabled(store == nil)
+            Button("Play Prototype") { store?.play() }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(store == nil || store?.doc.artboards.isEmpty == true || store?.player != nil)
             Divider()
         }
     }

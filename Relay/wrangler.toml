@@ -1,0 +1,15 @@
+# Bezzle's live relay. Deploy with `npx wrangler deploy` from this folder, after `npx wrangler login`.
+# The app finds it at wss://bezzle-live.<your workers.dev subdomain>.workers.dev; put that address
+# into BezzleLiveRelay in Info.plist (see LiveRelay.address in the app).
+name = "bezzle-live"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# SQLite-backed, so it also runs on the Workers free plan. Nothing is ever stored in it.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

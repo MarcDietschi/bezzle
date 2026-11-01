@@ -233,6 +233,50 @@ struct SketchImportTests {
         #expect(abs(mixed.frame.minY + TextLayout.firstBaseline(mixed) - (650 + 50 + descent)) < 0.6)
     }
 
+    /// A gradient fill of Sketch's, down its layer from one colour to another.
+    static func gradient(_ from: String, _ to: String) -> String {
+        #"{"_class":"fill","isEnabled":true,"fillType":1,"color":\#(from),"gradient":{"_class":"gradient","gradientType":0,"from":"{0.5, 0}","to":"{0.5, 1}","stops":[{"_class":"gradientStop","position":0,"color":\#(from)},{"_class":"gradientStop","position":1,"color":\#(to)}]}}"#
+    }
+
+    /// Texts with fills over one another: a gradient over a colour it covers; a gradient half
+    /// seen through over red; and one half seen through over another.
+    static func paintedLettersFile() throws -> URL {
+        func painted(_ name: String, _ y: Double, _ fills: [String]) -> String {
+            text(name, name, frame(20, y, 100, 24), font: "Helvetica", size: 16, behaviour: 0)
+                .replacingOccurrences(of: #""style":{"textStyle""#, with: #""style":{"fills":[\#(fills.joined(separator: ","))],"textStyle""#)
+        }
+        let yellow = color(1, 1, 0), green = color(0, 1, 0)
+        let layers = [painted("Covered", 20, [fill(blue), gradient(red, blue)]),
+                      painted("Tinted", 60, [fill(red), gradient(color(1, 1, 0, 0.5), color(0, 1, 0, 0.5))]),
+                      painted("Two", 100, [gradient(yellow, green), gradient(color(1, 0, 0, 0.5), color(0, 0, 1, 0.5))])]
+        let page = #"{"_class":"page","name":"Page 1","layers":[\#(layers.joined(separator: ","))]}"#
+        let document = #"{"_class":"document","colorSpace":1,"pages":[{"_ref":"pages/P1"}]}"#
+        let zip = TestZip.make([("document.json", Data(document.utf8)), ("meta.json", Data(#"{"appVersion":"70","version":136}"#.utf8)),
+                                ("pages/P1.json", Data(page.utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).sketch")
+        try zip.write(to: url)
+        return url
+    }
+
+    @Test func paintsLettersWithTheGradientTheirFillsComeTo() throws {
+        let url = try Self.paintedLettersFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try SketchImporter.read(url)
+        func named(_ name: String) throws -> Node { try #require(imported.document.allNodes.first { $0.name == name }) }
+        // Only the two gradients are in a colour.
+        #expect(imported.report.notes == ["Texts filled with a gradient, in its first colour": 1])
+
+        // What an opaque gradient covers does not show.
+        let covered = try named("Covered")
+        #expect(covered.fill.gradient?.stops.map(\.color.hex) == ["FF0000", "0000FF"] && covered.fill.color.hex == "FF0000" && covered.spans == nil)
+        // Red under a gradient half seen through is a gradient of the colours they make.
+        let tinted = try named("Tinted")
+        #expect(tinted.fill.gradient?.stops.map(\.color.hex) == ["FF8000", "808000"] && tinted.spans == nil)
+        // Two gradients showing are in the colour their first colours make.
+        let two = try named("Two")
+        #expect(two.fill.gradient == nil && two.fill.color.hex == "FF8000")
+    }
+
     /// An artboard laid out on Sketch's columns and square grid, with guides out of both rulers, an
     /// alpha mask, a text with a word in capitals, and an artboard inside a group whose layer
     /// reaches past its edge.

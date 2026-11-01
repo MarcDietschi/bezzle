@@ -150,6 +150,13 @@ final class Collaboration {
     @ObservationIgnored private var unshown = false
     @ObservationIgnored private var stateChanged = false
     @ObservationIgnored private var linkChanged = false
+    /// Who made what others changed, by layer, until it is shown.
+    @ObservationIgnored private var unshownAuthors: [UUID: String] = [:]
+    /// The design's live room, while others have it open too and there is a relay to meet on.
+    private(set) var live: LiveRoom?
+    /// This Mac's name among those sharing the design, which its changes carry. Tests give each
+    /// Mac they stand for a name of its own.
+    @ObservationIgnored var replica = CloudSync.replica
 
     var zone: String { link.zone }
     var isOwner: Bool { link.isOwner }
@@ -187,11 +194,22 @@ final class Collaboration {
         self.store = store
         CloudSync.shared.opened(self)
         takeIn(store.sharedDoc)
+        live = LiveRoom.open(for: self, store: store)
     }
 
     func close() {
+        live?.leave()
+        live = nil
         CloudSync.shared.closed(self)
     }
+
+    #if DEBUG
+    /// Meets the others through `room` rather than the relay, for tests.
+    func meet(in room: LiveRoom) {
+        live?.leave()
+        live = room
+    }
+    #endif
 
     func moved(to url: URL) {
         self.url = url
@@ -222,14 +240,17 @@ final class Collaboration {
         }
         baseDoc = doc
         basePictures = shown
-        CloudSync.shared.sendPictures(shown.values.reduce(into: Set<String>()) { $0.formUnion($1) }, of: self)
+        let pictures = shown.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+        CloudSync.shared.sendPictures(pictures, of: self)
+        live?.offer(pictures)
     }
 
     private func absorb(_ now: FlatDesign, since was: FlatDesign) {
-        if state.absorb(now, since: was, by: CloudSync.replica, at: Self.now) {
+        if state.absorb(now, since: was, by: replica, at: Self.now) {
             link.changedUpTo = state.clock.time
             stateChanged = true
             CloudSync.shared.haveChanges(in: self)
+            live?.relay()
         }
     }
 
@@ -239,7 +260,11 @@ final class Collaboration {
         if let store { takeIn(store.sharedDoc) }
         var changed = false
         for c in changes where !c.isEmpty {
-            if !state.merge(c).isEmpty { changed = true }
+            let layers = state.merge(c)
+            guard !layers.isEmpty else { continue }
+            changed = true
+            let authors = c.authors
+            for id in layers { if let by = authors[id] { unshownAuthors[id] = by } }
         }
         guard changed else { return }
         stateChanged = true
@@ -256,6 +281,8 @@ final class Collaboration {
         base = map
         baseDoc = nil
         store.showChangesFromOthers(map.document())
+        live?.glow(unshownAuthors)
+        unshownAuthors = [:]
     }
 
     /// Writes what changed to the package, on the queue the design itself is saved on and ahead

@@ -73,6 +73,9 @@ async function offline(message, body) {
             return answer(id, {});
         case "tools/list":
             return answer(id, { tools: snapshot.tools });
+        case "prompts/list":
+            return answer(id, { prompts: snapshot.prompts ?? [] });
+        case "prompts/get":
         case "tools/call":
             if (!(await launch())) {
                 return toolError(id, "Bezzle didn't answer. Open Bezzle and check that Bezzle ▸ Allow AI Control is on, then try again.");

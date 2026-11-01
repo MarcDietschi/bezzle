@@ -431,7 +431,7 @@ nonisolated enum LetterCase: String, Codable, CaseIterable {
     }
 }
 
-nonisolated struct Node: Identifiable, Codable, Equatable {
+nonisolated struct Node: Identifiable, Codable, Equatable, Sendable {
     enum Kind: String, Codable {
         case artboard, rectangle, ellipse, line, text, group, path
 
@@ -576,6 +576,11 @@ nonisolated struct Node: Identifiable, Codable, Equatable {
     /// `curve`, so that one person reshaping the shape while another slides the text along it
     /// both keep what they did.
     var curvePath: String?
+    /// Where tapping it goes in the prototype; on an artboard, where it goes on to by itself. Its
+    /// own, as its words are, in a copy, a grid's cell or a deck's post. See `FlowLink`.
+    var flow: FlowLink?
+    /// Artboards only: the prototype starts here; nil is not marked.
+    var starts: Bool?
 
     init(kind: Kind, name: String? = nil, frame: CGRect) {
         self.kind = kind

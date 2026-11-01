@@ -1045,30 +1045,53 @@ private struct Converter {
 
         // The colour of each style's letters. A text shows none only when none of its styles has a
         // paint; otherwise letters without one are clear.
-        let painted = used.contains { ink(shown(styles[$0]?["fillPaints"]?.objects ?? [])) != nil }
+        var paints: [Int: [Object]] = [:]
+        for id in used { paints[id] = shown((styles[id] ?? e)["fillPaints"]?.objects ?? []) }
+        let painted = used.contains { ink(paints[$0] ?? []) != nil }
         n.fill.on = painted
         let unpainted = painted ? RGBA(r: 0, g: 0, b: 0, a: 0) : n.fill.color
         var looks: [Int: Letters] = [:], cases: [Int: LetterCase] = [:]
         var gradientInk = false, pictureInk = false, blendedInk = false
-        // A gradient or a picture alone paints the letters of the text's own colour, those of its
-        // main style; letters of another style are in a colour of their own.
-        var own: Fill?
-        let mainShown = shown(s["fillPaints"]?.objects ?? [])
-        if mainShown.count == 1, let p = mainShown.first, let paint = ink(mainShown), paint.gradient || paint.picture {
-            let opacity = Double(num(p["opacity"], 1))
-            own = paint.gradient ? gradient(p, opacity: opacity) : picture(p, opacity: opacity)
+        // A gradient or a picture paints the letters of the text's own colour: those of the main
+        // style when it is painted with one, else those of the style most letters painted with
+        // one are in, each with those of any style painted alike. Letters of every other style
+        // are in a colour of their own.
+        var painters: [(paints: [Object], letters: Int)] = []
+        for id in used {
+            guard let p = paints[id], let k = ink(p), k.gradient || k.picture else { continue }
+            if let i = painters.firstIndex(where: { $0.paints == p }) {
+                painters[i].letters += counts[id] ?? 0
+            } else {
+                painters.append((p, counts[id] ?? 0))
+            }
         }
+        let mainPaints = paints[main] ?? []
+        let order = painters.indices.sorted { a, b in
+            let x = painters[a], y = painters[b]
+            if (x.paints == mainPaints) != (y.paints == mainPaints) { return x.paints == mainPaints }
+            return x.letters != y.letters ? x.letters > y.letters : a < b
+        }
+        var own: Fill?, ownPaints: [Object] = []
+        for i in order {
+            guard let f = letterPaint(painters[i].paints) else { continue }
+            own = f
+            ownPaints = painters[i].paints
+            break
+        }
+        var inks: [Int: RGBA] = [:]
+        for id in used {
+            let p = paints[id] ?? [], paint = ink(p)
+            blendedInk = blendedInk || paint?.blended == true
+            if own != nil && p == ownPaints { continue }
+            gradientInk = gradientInk || paint?.gradient == true
+            pictureInk = pictureInk || paint?.picture == true
+            inks[id] = paint?.color ?? unpainted
+        }
+        // Letters in a colour of their own are told from those painted.
+        if let c = own?.color { own?.color = ImportText.apart(c, from: Array(inks.values)) }
         for id in used {
             let style = styles[id] ?? e
-            let paint = ink(shown(style["fillPaints"]?.objects ?? []))
-            // Letters painted as the main style's are painted with it.
-            let painted = own != nil && paint?.color == own?.color
-            if !painted {
-                gradientInk = gradientInk || paint?.gradient == true
-                pictureInk = pictureInk || paint?.picture == true
-            }
-            blendedInk = blendedInk || paint?.blended == true
-            looks[id] = letters(style, ink: painted ? own?.color ?? unpainted : paint?.color ?? unpainted)
+            looks[id] = letters(style, ink: inks[id] ?? own?.color ?? unpainted)
             cases[id] = Self.letterCase(style)
         }
         if blendedInk { report.note("Fills blended into those under them, drawn over them") }
@@ -1142,17 +1165,7 @@ private struct Converter {
             }
         }
         n.style = ts
-        n.setImportedRuns(cased.runs)
-        if let own {
-            if n.fill.color == looks[main]?.color {
-                n.fill.gradient = own.gradient
-                n.fill.image = own.image
-            } else if own.gradient != nil {
-                report.note("Texts filled with a gradient, in its first colour")
-            } else {
-                report.note("Texts filled with a picture, in a plain colour")
-            }
-        }
+        n.setImportedRuns(cased.runs, painting: own)
         n.frame = CGRect(origin: .zero, size: size)
         n.refit()
         // Where Figma put the first baseline, measured from the top of the text wherever in its box
@@ -1202,8 +1215,7 @@ private struct Converter {
     /// shows. Also says whether a gradient, a picture or a blend shows in it, so that the colour
     /// is only close to what Figma draws.
     private func ink(_ shown: [Object]) -> (color: RGBA, gradient: Bool, picture: Bool, blended: Bool)? {
-        // What an opaque solid paint covers does not show.
-        let from = shown.lastIndex { p in p["type"]?.string == "SOLID" && normal(p) && solid(p).a >= 0.999 } ?? 0
+        let from = shown.lastIndex(where: covers) ?? 0
         let showing = shown[from...]
         let colors = showing.map { p -> RGBA in
             switch p["type"]?.string {
@@ -1218,6 +1230,47 @@ private struct Converter {
         guard let color = ImportText.composite(colors) else { return nil }
         return (color, showing.contains { $0["type"]?.string?.hasPrefix("GRADIENT") == true },
                 showing.contains { $0["type"]?.string == "IMAGE" }, showing.contains { !normal($0) })
+    }
+
+    /// Whether a paint hides what lies under it: a colour or a gradient with nothing clear in
+    /// it, blended into nothing.
+    private func covers(_ p: Object) -> Bool {
+        guard normal(p) else { return false }
+        switch p["type"]?.string {
+        case "SOLID": return solid(p).a >= 0.999
+        case "GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND":
+            let stops = p["stops"]?.objects ?? []
+            return !stops.isEmpty && stops.allSatisfy { color($0["color"]).a * Double(num(p["opacity"], 1)) >= 0.999 }
+        default: return false
+        }
+    }
+
+    /// The gradient or picture letters with these paints are painted with, when Bezzle can paint
+    /// them with one (see `ImportText.painting`); what lies under a paint that covers it, or
+    /// under a picture, is not read.
+    private mutating func letterPaint(_ shown: [Object]) -> Fill? {
+        var from = shown.lastIndex(where: covers) ?? 0
+        if let top = shown.lastIndex(where: { $0["type"]?.string == "IMAGE" }), top >= from {
+            guard top == shown.count - 1 else { return nil }
+            if top > from { report.note("Fills under a picture, left out") }
+            from = top
+        }
+        var fills: [Fill] = []
+        for p in shown[from...] {
+            let opacity = Double(num(p["opacity"], 1))
+            switch p["type"]?.string {
+            case "SOLID": fills.append(Fill(on: true, color: solid(p)))
+            case "GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND":
+                guard let f = gradient(p, opacity: opacity) else { return nil }
+                fills.append(f)
+            case "IMAGE":
+                guard let f = picture(p, opacity: opacity) else { return nil }
+                fills.append(f)
+            default: return nil
+            }
+        }
+        guard let paint = ImportText.painting(fills, report: &report), paint.paints else { return nil }
+        return paint
     }
 
     /// The letter case a style sets its letters in.

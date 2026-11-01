@@ -238,7 +238,7 @@ nonisolated enum Parts {
     /// nothing, which the kits' test looks out for.
     static func icon(_ name: String, _ set: IconSetID = .lucide, _ r: CGRect, _ color: RGBA, style: Int? = nil, weight: CGFloat? = nil) -> Node {
         guard let icon = Icons.icon(name, in: set) else {
-            missing.with { $0.insert("\(set.rawValue)/\(name)") }
+            missing.with { _ = $0.insert("\(set.rawValue)/\(name)") }
             var n = rect(name, r, color)
             n.fill.on = false
             return n

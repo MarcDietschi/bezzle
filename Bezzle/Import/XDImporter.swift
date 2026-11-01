@@ -500,6 +500,12 @@ private struct Converter {
             if at < whole.length { ranges.append((NSRange(location: at, length: whole.length - at), [:])) }
         }
         if ranges.isEmpty { ranges = [(NSRange(location: 0, length: whole.length), ranged.first ?? [:])] }
+        // Letters in a colour of their own are told from those painted.
+        if var p = paint {
+            p.color = ImportText.apart(p.color, from: ranges.compactMap { ink(of: $0.style) })
+            n.fill.color = p.color
+            paint = p
+        }
         var runs: [(text: String, letters: Letters)] = []
         for r in ranges { runs.append((whole.substring(with: r.range), letters(r.style, style, ink: n.fill.color))) }
         // Each range may be in a letter case of its own.
@@ -524,13 +530,7 @@ private struct Converter {
         }
         ts.letterCase = cased.letterCase
         n.style = ts
-        n.setImportedRuns(cased.runs)
-        if let paint, n.fill.color != paint.color {
-            // Most of its letters have colours of their own, so the paint is theirs alone.
-            n.fill.gradient = nil
-            n.fill.image = nil
-            report.note(paint.gradient != nil ? "Texts filled with a gradient, in its first colour" : "Texts filled with a picture, in a plain colour")
-        }
+        n.setImportedRuns(cased.runs, painting: paint)
         ts = n.style ?? ts
 
         // Where each line starts and where its baseline is, measured from the text's origin.
@@ -578,10 +578,15 @@ private struct Converter {
         let size = num(r["fontSize"] ?? font["size"], 12)
         // XD spaces letters in thousandths of their size, as Bezzle does.
         return Letters(family: family, face: face, size: size > 0 ? size : 12,
-                       color: dict(r["fill"])["value"].map { color(["value": $0]) } ?? ink,
+                       color: self.ink(of: r) ?? ink,
                        underline: r["underline"] as? Bool ?? decoration.contains("underline"),
                        strikethrough: r["strikethrough"] as? Bool ?? decoration.contains("line-through"),
                        tracking: num(r["charSpacing"] ?? attributes["letterSpacing"]), list: nil)
+    }
+
+    /// The colour of its own a range's letters are in, if they have one.
+    private func ink(of r: JSON) -> RGBA? {
+        dict(r["fill"])["value"].map { color(["value": $0]) }
     }
 
     /// The style of a piece of a line, as a ranged style would say it.

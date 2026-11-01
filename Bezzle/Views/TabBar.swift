@@ -5,6 +5,7 @@ import AppKit
 /// under it home or the design in front.
 struct MainWindow: View {
     @State private var tabs = Tabs.shared
+    @State private var webImport = WebImporting.shared
     /// Menus opened from the bar while home is in front; a design's tab has menus of its own.
     @State private var homeMenus = MenuHost()
     @Environment(\.openWindow) private var openWindow
@@ -37,6 +38,13 @@ struct MainWindow: View {
             }
         }
         .animation(selected?.store?.exporting == true ? Theme.open : Theme.close, value: selected?.store?.exporting)
+        .overlay {
+            if webImport.showing {
+                WebImportSheet(model: webImport)
+                    .transition(.opacity)
+            }
+        }
+        .animation(webImport.showing ? Theme.open : Theme.close, value: webImport.showing)
         .overlayPreferenceValue(MenuAnchorKey.self) { MenuLayer(anchors: $0) }
         .environment(selected?.menus ?? homeMenus)
         .background(TabsWindowReader())
@@ -99,6 +107,8 @@ struct TabBar: View {
                             .frame(width: 200)
                             .transition(.opacity)
                     }
+                    CardButton(title: "From a Website…", symbol: "globe", height: 28) { WebImporting.shared.present() }
+                        .help("Bring a web page in as a design  ⌥⇧⌘I")
                     CardButton(title: "Open…", height: 28) { WindowRouter.openPanel() }
                         .help("Open a design, or an XD, Figma or Sketch file  ⌘O")
                 }

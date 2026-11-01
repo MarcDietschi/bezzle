@@ -128,6 +128,9 @@ struct CardMarks: View {
             case .photo:
                 // Nothing over the picture, which has to be seen as it is: only a hairline round it.
                 ctx.stroke(outline, with: .color(pencil.opacity(0.5)), lineWidth: 1)
+            case .flow, .screen, .states:
+                // The prototype's own marks are on the canvas already.
+                break
             }
         }
     }

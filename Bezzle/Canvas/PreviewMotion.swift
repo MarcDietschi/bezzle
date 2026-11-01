@@ -59,7 +59,7 @@ extension RGBA {
     }
 }
 
-private extension Node {
+extension Node {
     /// Part of the way from this layer to `other`. What can be measured is mixed; what cannot,
     /// such as a font, a gradient or a dash, is `other`'s at once. Something coming on fades
     /// in, and a shadow coming on rises as it does.

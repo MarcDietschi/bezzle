@@ -10,6 +10,9 @@ import SwiftUI
 ///   BEZZLE_OPEN=path               open this design
 ///   BEZZLE_SELECT=name,name…       select the layers with these names
 ///   BEZZLE_TOOL=rectangle          pick a tool
+///   BEZZLE_PROTOTYPE=seconds       see the design as a prototype
+///   BEZZLE_PLAY=seconds[:screen]   play the prototype, from this screen
+///   BEZZLE_TAPS=t@x,y;t@back;…     tap the playing screen at its own points at these times, or go back
 ///   BEZZLE_RESOURCES=seconds[:page[:words]]  bring out the resources panel, on a kit's or icon set's page
 ///   BEZZLE_RESOURCE_DRAG=seconds:resource:x,y;…  carry a part or icon over the canvas and hold it there
 ///   BEZZLE_CARD=seconds:layout     open this card of the inspector (layout, guides)
@@ -77,6 +80,14 @@ enum DebugHooks {
         } else if let path = env["BEZZLE_OPEN"] {
             WindowRouter.shared.open(URL(fileURLWithPath: path))
         }
+        // BEZZLE_WEB_IMPORT=address opens the sheet that brings a web page in; "!address" brings it straight in.
+        if let spec = env["BEZZLE_WEB_IMPORT"] {
+            let start = spec.hasPrefix("!")
+            after(0.5) {
+                WebImporting.shared.present(start ? String(spec.dropFirst()) : spec)
+                if start { WebImporting.shared.start() }
+            }
+        }
         sizeWindow()
         scheduleSnapshots()
     }
@@ -91,6 +102,33 @@ enum DebugHooks {
             after(0.6) { store.selection = store.doc.allNodes.filter { wanted.contains($0.name) }.map(\.id) }
         }
         if let tool = env["BEZZLE_TOOL"].flatMap(Tool.init(rawValue:)) { after(0.6) { store.tool = tool } }
+        // BEZZLE_PROTOTYPE=seconds sees the design as a prototype; BEZZLE_PLAY=seconds[:screen] plays it.
+        if let s = env["BEZZLE_PROTOTYPE"].flatMap(Double.init) { after(s) { store.prototyping = true } }
+        if let spec = env["BEZZLE_PLAY"] {
+            let parts = spec.split(separator: ":").map(String.init)
+            after(Double(parts[0]) ?? 1) {
+                let board = parts.count > 1 ? store.doc.artboards.first { $0.name == parts[1] }?.id : nil
+                store.play(from: board)
+            }
+        }
+        // BEZZLE_TAPS=t@x,y;t@back;… taps the playing prototype's screen at these points (its own
+        // points) at these times, or goes back.
+        if let spec = env["BEZZLE_TAPS"] {
+            for step in spec.split(separator: ";") {
+                let parts = step.split(separator: "@").map(String.init)
+                guard parts.count == 2, let t = Double(parts[0]) else { continue }
+                after(t) {
+                    guard let player = store.player else { return }
+                    if parts[1] == "back" { player.back(); return }
+                    let v = parts[1].split(separator: ",").compactMap { Double($0) }
+                    guard v.count == 2 else { return }
+                    let p = CGPoint(x: v[0], y: v[1])
+                    _ = player.hover(at: p)
+                    player.down(at: p)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { player.up(at: p) }
+                }
+            }
+        }
         // BEZZLE_RESOURCES=seconds[:page[:words]] brings out the resources panel, on a kit's or an
         // icon set's page ("ios", "lucide"…), with words in its search.
         if let spec = env["BEZZLE_RESOURCES"] {

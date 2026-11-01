@@ -40,6 +40,14 @@ extension MCPTools {
                        description: "Opens a design in a tab of its own, or brings its tab to the front. Opening an Adobe XD, Figma (.fig) or Sketch file brings it in as a new design.",
                        properties: .object([("design", Self.text("Its name, as list_designs gives it, or the path of a .bezzle, .vellum, .xd, .fig or .sketch file."))]),
                        required: ["design"], run: { [unowned self] in try await self.openDesign($0) }),
+            Definition(name: "import_website", title: "Import a website",
+                       description: "Brings a web page in as a new design, as File › Import from a Website does. Bezzle loads the page out of sight, scrolls through it so everything loads, hides cookie banners, and takes it apart into layers: boxes with their fills, gradients, borders, corners and shadows; text in its fonts, set in lines as the browser set it; pictures; and SVGs as editable paths, grouped as the page's elements hold one another. What cannot be taken apart, such as icon fonts, videos, embedded pages and canvas drawings, comes in as pictures. Each width is an artboard of its own, side by side. A long page takes a while. The new design opens in a tab of its own, and what was only approximated is listed.",
+                       properties: .object([
+                           ("url", Self.text("The page's address, such as https://example.com.")),
+                           ("widths", ["type": "array", "items": ["type": "number"],
+                                       "description": "The widths to read the page at, an artboard each: 1440 for a desktop, 768 for a tablet, 390 for a phone (read as a phone, with its user agent). 1440 alone otherwise."]),
+                           ("hide_banners", Self.boolean("Whether cookie banners and the veils they lay over the page are taken away first. True otherwise.")),
+                       ]), required: ["url"], run: { [unowned self] in try await self.importWebsite($0) }),
             Definition(name: "close_design", title: "Close a design",
                        description: "Closes a design's tab. It is saved; designs always are.",
                        properties: .object([design]), run: { [unowned self] in try await self.closeDesign($0) }),
@@ -341,6 +349,7 @@ extension MCPTools {
                            ("within", Self.text("Only inside this artboard, group or text layer.")),
                        ]), readOnly: true, run: { [unowned self] in try await self.checkSpelling($0) }),
         ] + resourceDefinitions(design: design) + componentDefinitions(design: design) + curveDefinitions(design: design)
+          + prototypeDefinitions(design: design)
     }
 
     /// What a layer can be given, when it is added or changed.

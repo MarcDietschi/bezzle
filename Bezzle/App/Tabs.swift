@@ -44,7 +44,7 @@ final class Tabs {
     /// Opens a design in a new tab after the others and brings it to the front. One open already
     /// comes to the front instead. A file from Adobe XD, Figma or Sketch is brought in again each
     /// time, as a new design.
-    func open(_ url: URL) {
+    func open(_ url: URL, report: ImportReport? = nil) {
         let url = url.standardizedFileURL
         if !Importer.imports(url), let tab = designs.first(where: { $0.shows(url) }) {
             select(tab)
@@ -52,7 +52,7 @@ final class Tabs {
         }
         if designs.isEmpty { makeRoom() }
         let tab = DesignTab(url: url)
-        tab.load()
+        tab.load(report: report)
         designs.append(tab)
         show(tab.id)
     }
@@ -211,10 +211,12 @@ final class DesignTab: Identifiable {
 
     /// Opens the file. One from Adobe XD, Figma or Sketch is brought in as a new design in the
     /// library, which the tab then shows; the file itself is left as it is.
-    fileprivate func load() {
+    /// A design just brought in from elsewhere, such as a web page, comes with what was said
+    /// about bringing it in.
+    fileprivate func load(report given: ImportReport? = nil) {
         do {
             var design = url
-            var report: ImportReport?
+            var report: ImportReport? = given
             if Importer.imports(url) {
                 (design, report) = try Importer.importFile(url, into: Library.shared.folder)
                 url = design
@@ -262,9 +264,9 @@ final class WindowRouter {
     private var waiting: [URL] = []
 
     /// Opens a design in its own tab and brings it to the front.
-    func open(_ url: URL) {
+    func open(_ url: URL, report: ImportReport? = nil) {
         guard openWindow != nil else { waiting.append(url); return }
-        Tabs.shared.open(url)
+        Tabs.shared.open(url, report: report)
         bringForward()
     }
 
@@ -293,7 +295,7 @@ final class WindowRouter {
     func flush() {
         let urls = waiting
         waiting = []
-        urls.forEach(open)
+        urls.forEach { open($0) }
     }
 
     private func bringForward() {

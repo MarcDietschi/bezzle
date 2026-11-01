@@ -97,6 +97,19 @@ final class DocumentStore {
     var offer: DeckOffer?
     /// What is offered for a moment after a change to a copy of a component. See `ComponentOffer`.
     var componentOffer: ComponentOffer?
+    /// The design seen as a prototype, its screens and the flows between them, rather than as the
+    /// layers to draw: the header's switch. Here alone, as the zoom is. See `Flow`.
+    var prototyping = false {
+        didSet { if prototyping != oldValue { prototypingChanged() } }
+    }
+    /// The prototype being played, over the design. See `Player`.
+    var player: Player?
+    /// The flow whose note is being written on its thread, and where on the canvas the thread's
+    /// middle is, in the canvas view's points.
+    var writingNote: (source: UUID, at: CGPoint)?
+    /// A screen the pointer is on in the inspector's list of screens, for the canvas to show the
+    /// thread the selected layers would take to it.
+    var flowPreview: UUID?
     /// What the last change did to copies of components, and when, for the canvas to show the
     /// other copies following. See `ComponentTool`.
     @ObservationIgnored var componentEcho: (echo: ComponentEcho, at: CFTimeInterval, was: BezzleDocument?)?
@@ -546,7 +559,7 @@ final class DocumentStore {
         }
         copy.viewport = viewport
         let url = url
-        Self.saving.async {
+        Self.saving.async { [copy] in
             do {
                 try DesignFile.write(copy, to: url)
             } catch {

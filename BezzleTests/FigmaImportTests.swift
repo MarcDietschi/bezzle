@@ -422,6 +422,74 @@ struct FigmaImportTests {
         #expect(tuned.style?.features == ["ss01": 1, "tnum": 1] && tuned.style?.axes == ["wght": 600])
     }
 
+    /// A gradient of Figma's across a layer, from one colour to another, as see-through as `opacity`.
+    static func gradient(_ from: (Double, Double, Double), _ to: (Double, Double, Double), opacity: Double = 1) -> [String: Any] {
+        ["type": "GRADIENT_LINEAR", "opacity": opacity, "visible": true, "transform": at(0, 0),
+         "stops": [["color": ["r": from.0, "g": from.1, "b": from.2, "a": 1.0], "position": 0.0],
+                   ["color": ["r": to.0, "g": to.1, "b": to.2, "a": 1.0], "position": 1.0]]]
+    }
+
+    /// Texts painted with a gradient among letters of a colour of their own: one black with a word
+    /// in a gradient; one in a gradient with most of its letters black, in two styles, and a
+    /// letter in the gradient's first colour; one in a colour under a see-through gradient; and one
+    /// with a word in a second gradient.
+    static func paintedLettersMessage() -> [String: Any] {
+        let board = (1, 1), page = (0, 1)
+        let glow = gradient((1, 1, 0), (0, 1, 0)), black = solid(0, 0, 0)
+        func text(_ id: Int, _ name: String, _ y: Double, _ paints: [[String: Any]], _ words: String, _ ids: [Int], _ styles: [[String: Any]]) -> [String: Any] {
+            node((1, id), "TEXT", name, in: board, String(UnicodeScalar(UInt8(32 + id))), [
+                "size": size(200, 24), "transform": at(20, y), "fillPaints": paints, "fontName": helvetica, "fontSize": 16.0,
+                "textAutoResize": "WIDTH_AND_HEIGHT",
+                "textData": ["characters": words, "characterStyleIDs": ids, "styleOverrideTable": styles],
+            ])
+        }
+        let nodes: [[String: Any]] = [
+            ["guid": guid(0, 0), "type": "DOCUMENT", "name": "Document"],
+            node(page, "CANVAS", "Page 1", in: (0, 0), "!"),
+            node(board, "FRAME", "Board", in: page, "!", ["size": size(375, 812), "transform": at(0, 0), "fillPaints": [solid(1, 1, 1)]]),
+            text(2, "Word", 20, [black], "Hi bright day", [0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0], [["styleID": 1, "fillPaints": [glow]]]),
+            text(3, "Mostly", 60, [glow], "Glow abcdefghy", Array(repeating: 0, count: 5) + Array(repeating: 1, count: 4) + Array(repeating: 2, count: 4) + [3],
+                 [["styleID": 1, "fillPaints": [black]], ["styleID": 2, "fillPaints": [black]], ["styleID": 3, "fillPaints": [solid(1, 1, 0)]]]),
+            text(4, "Tinted", 100, [solid(1, 0, 0), gradient((1, 1, 0), (0, 1, 0), opacity: 0.5)], "Tinted", [], []),
+            text(5, "Two", 140, [glow], "Glowing red", Array(repeating: 0, count: 8) + [1, 1, 1],
+                 [["styleID": 1, "fillPaints": [gradient((1, 0, 0), (0, 0, 1))]]]),
+        ]
+        return ["nodeChanges": nodes, "blobs": [] as [Any]]
+    }
+
+    @Test func paintsLettersWithAGradientAmongOthers() throws {
+        let zip = TestZip.make([("canvas.fig", TestKiwi.canvas(Self.paintedLettersMessage())), ("meta.json", Data("{}".utf8))], deflate: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).fig")
+        try zip.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let imported = try FigmaImporter.read(url)
+        func named(_ name: String) throws -> Node { try #require(imported.document.allNodes.first { $0.name == name }) }
+        // Only the word in a second gradient is in its first colour.
+        #expect(imported.report.notes == ["Texts filled with a gradient, in its first colour": 1])
+
+        // A word in a gradient is painted with it; the rest keep their black.
+        let word = try named("Word")
+        #expect(word.fill.gradient?.stops.map(\.color.hex) == ["FFFF00", "00FF00"] && word.fill.color.hex == "FFFF00")
+        #expect(word.runs.map(\.text) == ["Hi ", "bright", " day"])
+        #expect(word.runs[0].look.color?.hex == "000000" && word.runs[1].look.isPlain && word.runs[2].look.color?.hex == "000000")
+
+        // Most letters are black, yet the gradient stays the layer's; a letter in its first colour
+        // is told from those it paints.
+        let mostly = try named("Mostly")
+        #expect(mostly.fill.gradient?.stops.count == 2 && mostly.fill.color.hex == "FFFF01")
+        #expect(mostly.runs.map(\.text) == ["Glow ", "abcdefgh", "y"])
+        #expect(mostly.runs[0].look.isPlain && mostly.runs[1].look.color?.hex == "000000" && mostly.runs[2].look.color?.hex == "FFFF00")
+
+        // Red under a gradient half seen through is a gradient of the colours they make.
+        let tinted = try named("Tinted")
+        #expect(tinted.fill.gradient?.stops.map(\.color.hex) == ["FF8000", "808000"] && tinted.spans == nil)
+
+        // A second gradient in the text is in its first colour.
+        let two = try named("Two")
+        #expect(two.fill.gradient?.stops.map(\.color.hex) == ["FFFF00", "00FF00"] && two.runs.map(\.text) == ["Glowing ", "red"])
+        #expect(two.runs[1].look.color?.hex == "FF0000")
+    }
+
     /// A grid of Figma's: its kind, axis, number of bands and their sizes.
     static func grid(_ type: String, _ axis: String, count: Int, offset: Double = 0, section: Double = 0, gutter: Double = 0,
                      pattern: String = "STRIPES", visible: Bool = true) -> [String: Any] {

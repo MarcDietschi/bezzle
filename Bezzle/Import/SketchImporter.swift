@@ -1006,17 +1006,16 @@ private struct Converter {
         // they lie, in the colour they come to; what an opaque one covers does not show.
         var paint: RGBA?
         let fills = list(style["fills"]).filter(enabled).compactMap { fill($0, size: frame(of: e).size, image: nil, map: { $0 }) }
-        // One gradient or picture showing paints them all with it.
+        // The one gradient or picture they come to paints them all with it.
         var painting: Fill?
-        if !fills.isEmpty {
+        if let one = ImportText.painting(fills, report: &report) {
+            paint = one.color
+            if one.paints { painting = one }
+        } else if !fills.isEmpty {
             let showing = fills[(fills.lastIndex { $0.gradient == nil && $0.image == nil && $0.color.a >= 0.999 } ?? 0)...]
             paint = ImportText.composite(showing.map(\.color))
-            if showing.count == 1, let only = showing.first, only.paints {
-                painting = only
-            } else {
-                if showing.contains(where: { $0.gradient != nil }) { report.note("Texts filled with a gradient, in its first colour") }
-                if showing.contains(where: { $0.image != nil }) { report.note("Texts filled with a picture, in a plain colour") }
-            }
+            if showing.contains(where: { $0.gradient != nil }) { report.note("Texts filled with a gradient, in its first colour") }
+            if showing.contains(where: { $0.image != nil }) { report.note("Texts filled with a picture, in a plain colour") }
         }
         if list(style["borders"]).contains(where: enabled) { report.note("Texts with a border, drawn without it") }
         var letterRuns: [(text: String, letters: Letters)] = []
@@ -1039,11 +1038,7 @@ private struct Converter {
         let font = dict(dict(main["MSAttributedStringFontAttribute"])["attributes"])
         ts.axes = Self.axes(font["variation"])
         n.style = ts
-        n.setImportedRuns(cased.runs)
-        if let painting {
-            n.fill.gradient = painting.gradient
-            n.fill.image = painting.image
-        }
+        n.setImportedRuns(cased.runs, painting: painting)
         ts = n.style ?? ts
         ts.features = Self.features(list(font["featureSettings"]), of: Fonts.font(ts))
 

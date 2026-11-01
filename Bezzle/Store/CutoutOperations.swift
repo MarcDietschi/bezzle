@@ -104,7 +104,7 @@ extension DocumentStore {
             let source = folder.appendingPathComponent(asset), target = folder.appendingPathComponent(name)
             // Each step told to the layers it fills, as it is taken.
             let showing = layers[asset] ?? []
-            let told: @Sendable (CutoutMaker.Progress) -> Void = { progress in
+            let told: @Sendable (CutoutMaker.Progress) -> Void = { [weak self] progress in
                 Task { @MainActor [weak self] in
                     for id in showing {
                         self?.cuttingOut[id]?.done = progress.done
