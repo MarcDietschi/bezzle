@@ -96,6 +96,8 @@ nonisolated struct LiveHello: Codable, Equatable, Sendable {
     var name: String
     /// Where they are in the world, to say what time it is for them.
     var timeZone: String?
+    /// Set when saying who one is to someone heard from but not known: they say who they are back.
+    var ask: Bool?
 }
 
 /// Where someone is and what they are doing, sent whenever it changes, a few dozen times a second
@@ -134,6 +136,9 @@ nonisolated enum LiveMessage: Codable, Equatable, Sendable {
     case glimpses([LiveGlimpse])
     /// Pictures this Mac shows but does not have: whoever has them sends glimpses.
     case want([String])
+    /// A version someone named, with the design as it was then, packed, when small enough to
+    /// come this way; otherwise it comes through iCloud.
+    case version(DesignVersion, Data?)
 }
 
 // MARK: - Glimpses

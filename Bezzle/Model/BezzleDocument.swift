@@ -75,12 +75,15 @@ nonisolated struct BezzleDocument: Codable, Equatable, Sendable {
     /// The design's components, each a group that every copy of it on the canvas is made from,
     /// never drawn itself; nil while there are none. See `Instance`.
     var components: [Node]?
+    /// Notes written in its margins, and their answers; nil while there are none. See `MarginNote`.
+    var notes: [MarginNote]?
     private var index = PathIndex()
 
-    enum CodingKeys: String, CodingKey { case version, nodes, viewport, styles, components }
+    enum CodingKeys: String, CodingKey { case version, nodes, viewport, styles, components, notes }
 
     static func == (a: BezzleDocument, b: BezzleDocument) -> Bool {
         a.version == b.version && a.viewport == b.viewport && a.styles == b.styles && a.nodes == b.nodes && a.components == b.components
+            && a.notes == b.notes
     }
 
     // MARK: Finding layers

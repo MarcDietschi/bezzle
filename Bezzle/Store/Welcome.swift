@@ -35,7 +35,10 @@ enum Welcome {
     static func make() -> URL? {
         let url = Library.shared.freeURL(named: String(localized: "Welcome to Bezzle"))
         do {
-            try DesignFile.write(design(), to: url)
+            let doc = design()
+            try DesignFile.write(doc, to: url)
+            // How the poster in the lesson on versions came to be, to look back through.
+            try keepHistory(of: doc, at: url)
             // The photo some lessons are tried on, into the design's own images.
             if let photo = WelcomePhoto.jpeg() {
                 try photo.write(to: url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true).appendingPathComponent(photoAsset))
@@ -83,12 +86,12 @@ enum Welcome {
             }
         }
         place(cover())
-        lessons([moving, corners, layering, typing, styling, painting, curving, drawing, cutting, repeating, linking, naming, darkening])
+        lessons([moving, corners, layering, typing, styling, painting, curving, drawing, cutting, repeating, linking, naming, darkening, borrowing])
         number += 1
         let (stack, own) = stackSheet(number: number)
         // Room under the stack for the posts behind it, which show below its foot.
         place(stack, after: 60)
-        lessons([lining, adapting, tipping, lifting, developing, framing, marking, sharing])
+        lessons([lining, adapting, tipping, lifting, developing, framing, marking, inspecting, noting, remembering, sharing])
 
         // The stack is made as the app makes one, from the sheet and the words for each post.
         let store = DocumentStore(url: FileManager.default.temporaryDirectory, document: doc)
@@ -101,6 +104,7 @@ enum Welcome {
             for id in buttonIDs.dropFirst() { DocumentStore.link(id, to: master, in: &doc) }
         }
         doc.fitGroups()
+        doc.notes = [ticketNote(in: doc)].compactMap { $0 }
         return doc
     }
 
@@ -142,9 +146,10 @@ enum Welcome {
             y = max(y + 24, line.frame.maxY) + 10
         }
         y += 26
-        let count = words(String(localized: "Twenty-two lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
+        let count = words(String(localized: "Twenty-six lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
         let start = note(String(localized: "Scroll down to start"), at: CGPoint(x: left, y: count.frame.maxY + 10), tilt: -3)
-        layers += [count, start]
+        // The note goes with its arrow, not with the words to read, so it is there once.
+        layers.append(count)
         let height = max(640, (start.frame.maxY + 76).rounded())
         let down = arrow(from: CGPoint(x: start.frame.maxX + 10, y: start.frame.midY), to: CGPoint(x: start.frame.maxX + 40, y: height - 18), bend: 18)
 
@@ -1100,6 +1105,278 @@ enum Welcome {
         var mark = note(String(localized: "mark me too"), at: CGPoint(x: 0, y: c.y - 140), tilt: -5)
         mark.frame.origin.x = (min(c.x - mark.frame.width / 2, m.maxX - 24 - mark.frame.width)).rounded()
         return [icon, sticker, marked, mark]
+    }
+
+    // MARK: Libraries, inspecting, versions
+
+    private static let borrowing = Lesson(
+        name: { String(localized: "\($0). Libraries") },
+        title: String(localized: "Take it from another design."),
+        steps: [
+            String(localized: "Press ⌘N for a design of your own, then ⇧⌘Y for Resources. Every one of your designs is a library there, this tour too."),
+            String(localized: "Open Welcome to Bezzle there and click its Pill button or one of its colours: it comes into your design and remembers where it came from."),
+            String(localized: "Change the Pill button here in the tour. Back in your design, a note at the top offers the change: click Update and it follows."),
+        ],
+        tip: String(localized: "Nothing you take ever changes the design it came from."),
+        scene: twoDesigns)
+
+    /// Two designs side by side, a button and its colours going from the one to the other.
+    private static func twoDesigns(_ m: CGRect) -> [Node] {
+        let w: CGFloat = 168, h: CGFloat = 214
+        let y = (m.midY - h / 2 - 16).rounded()
+        func file(_ x: CGFloat, _ title: String) -> [Node] {
+            var paper = shape(.rectangle, CGRect(x: x, y: y, width: w, height: h), .white)
+            paper.cornerRadius = 14
+            paper.border = Border(on: true, color: RGBA(hex: "E3DED5")!, width: 1, position: .inside)
+            paper.shadow = Shadow(on: true, color: RGBA(r: 0.23, g: 0.2, b: 0.15, a: 0.14), x: 0, y: 10, blur: 24)
+            let label = words(title, TextStyle(face: "Semibold", size: 10, tracking: 100, letterCase: .upper), Ink.ink3, at: CGPoint(x: x + 16, y: y + 16))
+            return [paper, label]
+        }
+        let lx = m.minX + 28, rx = m.maxX - 28 - w
+        var source = file(lx, String(localized: "Design system"))
+        var label = words(String(localized: "Book now"), TextStyle(face: "Semibold", size: 13), .white, at: .zero)
+        var pill = shape(.rectangle, CGRect(x: lx + 16, y: y + 58, width: max(112, (label.frame.width + 36).rounded()), height: 34), Ink.navy)
+        pill.cornerRadius = 17
+        label.frame.origin = CGPoint(x: (pill.frame.midX - label.frame.width / 2).rounded(), y: (pill.frame.midY - label.frame.height / 2).rounded())
+        source += [pill, label]
+        for (i, colour) in [Ink.coral, Ink.sun, Ink.sage].enumerated() {
+            source.append(shape(.ellipse, CGRect(x: lx + 16 + CGFloat(i) * 32, y: y + 124, width: 24, height: 24), colour))
+        }
+        // What else each design holds, as lines of a sketch.
+        func lines(_ x: CGFloat, from top: CGFloat, _ shares: [CGFloat]) -> [Node] {
+            shares.enumerated().map { i, share in
+                var l = shape(.rectangle, CGRect(x: x + 16, y: top + CGFloat(i) * 14, width: ((w - 32) * share).rounded(), height: 6), Ink.ink.with(alpha: 0.08))
+                l.cornerRadius = 3
+                return l
+            }
+        }
+        source += lines(lx, from: y + 170, [0.82, 0.58])
+        var into = file(rx, String(localized: "New design"))
+        var spot = shape(.rectangle, CGRect(x: rx + 16, y: y + 58, width: pill.frame.width, height: 34), .white)
+        spot.fill.on = false
+        spot.cornerRadius = 17
+        spot.border = Border(on: true, color: Ink.pencil.with(alpha: 0.55), width: 1.5, position: .inside, dash: 5, gap: 4)
+        into.append(spot)
+        into += lines(rx, from: y + 124, [0.9, 0.7, 0.84, 0.46])
+        let take = arrow(from: CGPoint(x: pill.frame.maxX + 8, y: pill.frame.midY - 4), to: CGPoint(x: spot.frame.minX - 8, y: spot.frame.midY - 4), bend: 26)
+        var hint = note(String(localized: "take it along"), at: CGPoint(x: 0, y: y - 36), tilt: -4)
+        hint.frame.origin.x = (m.midX - hint.frame.width / 2).rounded()
+        let unlocked = { (layers: [Node]) in layers.map { var n = $0; n.locked = false; return n } }
+        return [group(String(localized: "Design system"), unlocked(source)), group(String(localized: "New design"), unlocked(into)), pointing(hint, take)]
+    }
+
+    private static let inspecting = Lesson(
+        name: { String(localized: "\($0). Inspect") },
+        title: String(localized: "Measure it, copy the code."),
+        steps: [
+            String(localized: "Switch to Inspect at the top, or press ⌃I. Nothing can be moved by mistake there: it is for looking."),
+            String(localized: "Click the word Follow, then once more: Bezzle climbs to the whole button and draws its size in blue. Point at the portrait to see how far apart they are."),
+            String(localized: "The inspector shows the button’s CSS and SwiftUI, ready to copy. Drag its picture from the inspector into any app."),
+        ],
+        tip: String(localized: "Esc climbs one level up. ⌃I again goes back to designing."),
+        scene: profile)
+
+    /// A profile card to measure: a portrait, a name, a line about them, a button to follow them.
+    private static func profile(_ m: CGRect) -> [Node] {
+        let w: CGFloat = 300
+        let o = CGPoint(x: (m.midX - w / 2).rounded(), y: (m.midY - 130).rounded())
+        var portrait = shape(.ellipse, CGRect(x: o.x + 24, y: o.y + 24, width: 64, height: 64), Ink.coral)
+        portrait.name = String(localized: "Portrait")
+        portrait.fill.gradient = linear(Ink.coral, Ink.sun, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 1, y: 1))
+        let person = words("Mia Kovač", TextStyle(family: "Charter", face: "Bold", size: 20, lineSpacing: 24), Ink.ink, at: CGPoint(x: o.x + 104, y: o.y + 30))
+        let role = words(String(localized: "Product designer in Zurich"), TextStyle(size: 13, lineSpacing: 18), Ink.ink2,
+                         at: CGPoint(x: o.x + 104, y: person.frame.maxY + 4), width: w - 128)
+        let stats = words(String(localized: "128 designs  ·  2.4k followers"), TextStyle(size: 12, lineSpacing: 16), Ink.ink3,
+                          at: CGPoint(x: o.x + 24, y: max(portrait.frame.maxY, role.frame.maxY) + 22))
+        var label = words(String(localized: "Follow"), TextStyle(face: "Semibold", size: 14), .white, at: .zero)
+        let bw = max(112, (label.frame.width + 44).rounded())
+        var button = shape(.rectangle, CGRect(x: o.x + w - 24 - bw, y: stats.frame.maxY + 18, width: bw, height: 38), Ink.navy)
+        button.cornerRadius = 19
+        label.frame.origin = CGPoint(x: (button.frame.midX - label.frame.width / 2).rounded(), y: (button.frame.midY - label.frame.height / 2).rounded())
+        let follow = group(String(localized: "Follow button"), [button, label].map { var n = $0; n.locked = false; return n })
+        var card = shape(.rectangle, CGRect(x: o.x, y: o.y, width: w, height: (button.frame.maxY + 24 - o.y).rounded()), .white)
+        card.name = String(localized: "Profile card")
+        card.cornerRadius = 20
+        card.cornerSmoothing = 0.6
+        card.shadow = Shadow(on: true, color: RGBA(r: 0.12, g: 0.16, b: 0.3, a: 0.14), x: 0, y: 12, blur: 30)
+        let parts = [card, portrait, person, role, stats].map { var n = $0; n.locked = false; return n } + [follow]
+        let profile = group(String(localized: "Profile card"), parts)
+        var hint = note(String(localized: "click me twice"), at: CGPoint(x: 0, y: card.frame.maxY + 30), tilt: -4)
+        hint.frame.origin.x = (button.frame.minX - hint.frame.width - 4).rounded()
+        let pointer = arrow(from: CGPoint(x: hint.frame.maxX + 4, y: hint.frame.midY - 6),
+                            to: CGPoint(x: button.frame.midX, y: button.frame.maxY + 8), bend: 12)
+        return [profile, pointing(hint, pointer)]
+    }
+
+    private static let remembering = Lesson(
+        name: { String(localized: "\($0). Versions") },
+        title: String(localized: "Look back in time."),
+        steps: [
+            String(localized: "Press ⌥⌘T. Every version kept of this tour stands on the ruler, each stroke in the colour of the sky it was made under."),
+            String(localized: "Drag along the ruler, or swipe across it with two fingers: the poster goes back to how it was. Pencil marks show what has changed since."),
+            String(localized: "Click a layer that changed and choose Bring Back for just that one, or go back to the whole version. What is there now is kept first."),
+        ],
+        tip: String(localized: "The flag above the ruler names a moment. Named versions are kept for good, and everyone sharing the design has them."),
+        scene: nightMarket)
+
+    /// The layers of the poster whose making the tour's versions remember.
+    enum Poster {
+        static let sky = UUID(uuidString: "5E1A7A11-0000-4000-8000-0000000005C1")!
+        static let moon = UUID(uuidString: "5E1A7A11-0000-4000-8000-0000000005C2")!
+        static let title = UUID(uuidString: "5E1A7A11-0000-4000-8000-0000000005C3")!
+        static let date = UUID(uuidString: "5E1A7A11-0000-4000-8000-0000000005C4")!
+        static let lanterns = ["5C5", "5C6", "5C7"].map { UUID(uuidString: "5E1A7A11-0000-4000-8000-000000000\($0)")! }
+    }
+
+    /// A poster for a night market: lanterns under a moon in a deep blue sky.
+    private static func nightMarket(_ m: CGRect) -> [Node] {
+        let w: CGFloat = 250, h: CGFloat = 330
+        let o = CGPoint(x: (m.midX - w / 2).rounded(), y: (m.midY - h / 2 - 22).rounded())
+        var sky = shape(.rectangle, CGRect(x: o.x, y: o.y, width: w, height: h), Ink.navy)
+        sky.id = Poster.sky
+        sky.name = String(localized: "Night sky")
+        sky.cornerRadius = 10
+        sky.fill.gradient = linear(RGBA(hex: "24467A")!, RGBA(hex: "121F38")!)
+        sky.shadow = Shadow(on: true, color: RGBA(r: 0.1, g: 0.12, b: 0.25, a: 0.3), x: 0, y: 14, blur: 30)
+        var moon = shape(.ellipse, CGRect(x: o.x + 150, y: o.y + 36, width: 64, height: 64), Ink.sun)
+        moon.id = Poster.moon
+        moon.name = String(localized: "Moon")
+        moon.shadow = Shadow(on: true, color: Ink.sun.with(alpha: 0.45), x: 0, y: 0, blur: 24)
+        let colours = [Ink.coral, Ink.sun, Ink.sage], drop: [CGFloat] = [0, 16, 4]
+        let lanterns = (0..<3).map { i -> Node in
+            var l = shape(.ellipse, CGRect(x: o.x + 34 + CGFloat(i) * 62, y: o.y + 132 + drop[i], width: 26, height: 34), colours[i])
+            l.id = Poster.lanterns[i]
+            l.name = String(localized: "Lantern")
+            l.shadow = Shadow(on: true, color: colours[i].with(alpha: 0.5), x: 0, y: 0, blur: 16)
+            return l
+        }
+        var title = words(String(localized: "Night Market"), TextStyle(family: "Charter", face: "Bold", size: 32, lineSpacing: 36), .white,
+                          at: CGPoint(x: o.x + 24, y: o.y + 212), width: w - 48)
+        title.id = Poster.title
+        var date = words(String(localized: "Fridays from 6 pm"), TextStyle(face: "Semibold", size: 11, tracking: 120, letterCase: .upper), Ink.coral,
+                         at: CGPoint(x: o.x + 24, y: title.frame.maxY + 10))
+        date.id = Poster.date
+        let parts = ([sky, moon] + lanterns + [title, date]).map { var n = $0; n.locked = false; return n }
+        var hint = note(String(localized: "it looked different yesterday"), at: CGPoint(x: 0, y: o.y + h + 30), tilt: -3)
+        hint.frame.origin.x = (m.midX - hint.frame.width / 2).rounded()
+        return [group(String(localized: "Poster"), parts), hint]
+    }
+
+    /// How the poster came to be, as versions of the tour: newest first, each a step back from
+    /// the one after it, the last two days of work.
+    static func history(of doc: BezzleDocument, now: Date = Date()) -> [(version: DesignVersion, doc: BezzleDocument)] {
+        func without(_ ids: Set<UUID>, in nodes: [Node]) -> [Node] {
+            nodes.filter { !ids.contains($0.id) }.map { var n = $0; n.children = without(ids, in: n.children); return n }
+        }
+        let steps: [(hours: Double, name: String?, change: (inout BezzleDocument) -> Void)] = [
+            (3, String(localized: "First draft"), { d in
+                d.update(Poster.date) { $0.fill.color = Ink.sun }
+                d.update(Poster.moon) { $0.frame = CGRect(x: $0.frame.minX - 18, y: $0.frame.minY + 8, width: 56, height: 56) }
+            }),
+            (21, nil, { d in
+                d.nodes = without([Poster.lanterns[2]], in: d.nodes)
+                d.update(Poster.title) { $0.frame.origin.y -= 40 }
+                d.update(Poster.date) { $0.frame.origin.y -= 40 }
+            }),
+            (27, nil, { d in
+                d.nodes = without([Poster.lanterns[0], Poster.lanterns[1]], in: d.nodes)
+                d.update(Poster.moon) { $0.frame = CGRect(x: $0.frame.minX - 96, y: $0.frame.minY, width: 40, height: 40) }
+                d.update(Poster.sky) { $0.fill.gradient = nil; $0.fill.color = RGBA(hex: "3C4A5E")! }
+            }),
+            (50, nil, { d in
+                d.nodes = without([Poster.moon, Poster.date], in: d.nodes)
+                d.update(Poster.title) { $0.frame.origin.y -= 132; $0.fill.color = Ink.navy }
+                d.update(Poster.sky) { $0.fill.color = RGBA(hex: "C9D3DF")!; $0.shadow.on = false }
+            }),
+        ]
+        var past = doc
+        past.viewport = nil
+        var out: [(version: DesignVersion, doc: BezzleDocument)] = []
+        for step in steps {
+            step.change(&past)
+            let version = DesignVersion(date: now.addingTimeInterval(-step.hours * 3600), name: step.name, by: noteWriter, replica: noteReplica,
+                                        layers: past.layerCount)
+            out.append((version, past))
+        }
+        return out
+    }
+
+    /// Keeps the poster's past with a new copy of the tour, for the lesson on versions to look
+    /// back through.
+    private static func keepHistory(of doc: BezzleDocument, at url: URL) throws {
+        let past = history(of: doc)
+        for (version, doc) in past {
+            guard let data = VersionFiles.pack(doc) else { continue }
+            try VersionFiles.write(data, as: version.id, to: url)
+        }
+        try VersionFiles.writeIndex(past.map(\.version).sorted { $0.date < $1.date }, to: url)
+    }
+
+    private static let noting = Lesson(
+        name: { String(localized: "\($0). Notes") },
+        title: String(localized: "Write in the margin."),
+        steps: [
+            String(localized: "Bezzle left you a note: its thread runs from the ticket out to the margin. Click it, write an answer and press ↩."),
+            String(localized: "Press N and draw a loop round the price. Write what you think of it and press ↩."),
+            String(localized: "Drag a note’s pin to the button: its thread comes along. Talked it through? Tick it off with the round mark at its head."),
+        ],
+        tip: String(localized: "‹ and › in an open note go from one note to the next. A shared design carries everyone’s notes."),
+        scene: ticket)
+
+    /// The title on the ticket of the lesson on notes, which Bezzle's note is about.
+    static let ticketTitleID = UUID(uuidString: "6B1D2C9E-5A41-4C7E-9B0E-3F2A1D8C7E10")!
+    /// Who the note waiting on the ticket is from, and their Mac, for their pencil.
+    static let noteWriter = "Bezzle", noteReplica = "welcome"
+
+    /// A concert ticket to talk about: a title someone has a question about, a price to circle,
+    /// a button to pin a note to.
+    private static func ticket(_ m: CGRect) -> [Node] {
+        let w: CGFloat = 300, inner = w - 56
+        let o = CGPoint(x: (m.midX - w / 2).rounded(), y: (m.midY - 150).rounded())
+        let day = words(String(localized: "Saturday 12 April, 7 pm"), TextStyle(face: "Semibold", size: 11, tracking: 120, letterCase: .upper),
+                        Ink.coral, at: CGPoint(x: o.x + 28, y: o.y + 30))
+        var title = words(String(localized: "Spring Concert"), TextStyle(family: "Charter", face: "Bold", size: 28, lineSpacing: 32), Ink.navy,
+                          at: CGPoint(x: o.x + 28, y: day.frame.maxY + 10))
+        title.id = ticketTitleID
+        let hall = words(String(localized: "Old Town Hall"), TextStyle(size: 14, lineSpacing: 20), Ink.ink2,
+                         at: CGPoint(x: o.x + 28, y: title.frame.maxY + 6), width: inner)
+        let rule = shape(.rectangle, CGRect(x: o.x + 28, y: hall.frame.maxY + 22, width: inner, height: 1.5), Ink.key)
+        var price = words(String(localized: "€24"), TextStyle(family: "Charter", face: "Bold", size: 28), Ink.ink,
+                          at: CGPoint(x: o.x + 28, y: rule.frame.maxY + 16))
+        price.name = String(localized: "Price")
+        var label = words(String(localized: "Get tickets"), TextStyle(face: "Semibold", size: 14), RGBA.white, at: .zero)
+        let bw = max(120, (label.frame.width + 40).rounded())
+        var button = shape(.rectangle, CGRect(x: o.x + w - 28 - bw, y: (price.frame.midY - 20).rounded(), width: bw, height: 40), Ink.coral)
+        button.name = String(localized: "Ticket button")
+        button.cornerRadius = 20
+        label.frame.origin = CGPoint(x: (button.frame.midX - label.frame.width / 2).rounded(), y: (button.frame.midY - label.frame.height / 2).rounded())
+        var card = shape(.rectangle, CGRect(x: o.x, y: o.y, width: w, height: (max(price.frame.maxY, button.frame.maxY) + 28 - o.y).rounded()),
+                         RGBA(hex: "FFFEFA")!)
+        card.name = String(localized: "Ticket")
+        card.cornerRadius = 18
+        card.cornerSmoothing = 0.6
+        card.shadow = Shadow(on: true, color: RGBA(r: 0.12, g: 0.16, b: 0.3, a: 0.14), x: 0, y: 12, blur: 30)
+        let parts = [card, day, title, hall, rule, price, button, label].map { var n = $0; n.locked = false; return n }
+        let ticket = group(String(localized: "Concert ticket"), parts)
+        // Under the ticket, pointing up at the price, its left end kept on the mat.
+        var hint = note(String(localized: "circle my price"), at: CGPoint(x: 0, y: card.frame.maxY + 34), tilt: -4)
+        hint.frame.origin.x = max(price.frame.minX + 24, m.minX + 18).rounded()
+        let pointer = arrow(from: CGPoint(x: hint.frame.minX - 6, y: hint.frame.midY - 4),
+                            to: CGPoint(x: price.frame.midX - 6, y: price.frame.maxY + 8), bend: 14)
+        return [ticket, pointing(hint, pointer)]
+    }
+
+    /// The note Bezzle leaves on the ticket, round its title, for the lesson to answer: from
+    /// another Mac, so it waits there unread.
+    private static func ticketNote(in doc: BezzleDocument) -> MarginNote? {
+        guard doc.node(ticketTitleID) != nil else { return nil }
+        var note = MarginNote(text: String(localized: "Is the title big enough to read from across the room?"), by: noteWriter,
+                              replica: noteReplica, time: Date().timeIntervalSince1970)
+        note.on = ticketTitleID
+        note.area = CGRect(x: -0.03, y: -0.06, width: 1.06, height: 1.12)
+        note.at = CGPoint(x: 0.5, y: 0.5)
+        note.place = doc.area(of: note)
+        return note
     }
 
     private static let sharing = Lesson(

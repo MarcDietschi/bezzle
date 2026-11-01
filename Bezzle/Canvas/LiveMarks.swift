@@ -42,8 +42,12 @@ final class LiveMarks {
 
     /// How long a picture takes to come into focus once it is here.
     static let focusing: CFTimeInterval = 1.1
-    /// How long a picture still on its way keeps visibly developing; then it rests as it is.
-    private static let settling: CFTimeInterval = 7
+    /// How long a picture on its way clears quickly at first, drawn every frame; after that it
+    /// only breathes and its grain moves, a dozen times a second, until it comes.
+    private static let clearing: CFTimeInterval = 2.5
+    /// Where pictures on their way were drawn in sight last frame, on the canvas: only that is
+    /// drawn again as their grain moves.
+    private(set) var developingArea: CGRect?
 
     // MARK: Moving
 
@@ -114,7 +118,7 @@ final class LiveMarks {
         }
 
         room.developed(before: now)
-        for d in room.developing.values where now - d.since < Self.settling || d.arrived != nil { moving = true }
+        for d in room.developing.values where now - d.since < Self.clearing || d.arrived != nil { moving = true }
 
         if let peer = room.following, let person = room.person(peer) { cropPerson = person }
         crop = ease(crop, room.following == nil ? 0 : 1, k(room.following == nil ? 0.08 : 0.12), &moving)
@@ -331,6 +335,7 @@ final class LiveMarks {
     /// is drawn into focus, the glimpse fading off it as the grain goes.
     private func drawDeveloping(_ ctx: CGContext, _ room: LiveRoom, _ store: DocumentStore, _ doc: BezzleDocument,
                                 _ vp: Viewport, _ now: CFTimeInterval, _ bounds: CGRect) {
+        developingArea = nil
         for (id, name) in layersDeveloping(room, store, doc) {
             guard let d = room.developing[name], let node = doc.node(id), let image = node.fill.image else { continue }
             let o = doc.parentOrigin(of: id)
@@ -344,6 +349,7 @@ final class LiveMarks {
             guard let outline = Renderer.outline(of: node).copy(using: &t), outline.boundingBoxOfPath.intersects(bounds) else { continue }
             let box = outline.boundingBoxOfPath
             let waited = now - d.since
+            if d.arrived == nil { developingArea = developingArea?.union(box) ?? box }
             // How far it has come into focus, once it is here.
             let focus = d.arrived.map { CGFloat(min(max((now - $0) / Self.focusing, 0), 1)) } ?? 0
             // Gently out of the blur, then surely into focus.
@@ -374,8 +380,10 @@ final class LiveMarks {
                     ctx.draw(Developer.developed(standIn, image.develop), in: CGRect(x: -rect.width / 2, y: -rect.height / 2, width: rect.width, height: rect.height))
                     ctx.restoreGState()
                 }
-                // Milky at first, clearing as it develops, never quite clear until it is here.
-                let milk = (0.1 + 0.5 * exp(-waited / 1.5)) * leaving * opacity
+                // Milky at first, clearing as it develops, never quite clear until it is here, and
+                // breathing slowly while it waits, as a print does in a tray rocked gently.
+                let breath = 0.035 * (1 - cos(2 * .pi * waited / 3.4)) / 2
+                let milk = (0.1 + 0.5 * exp(-waited / 1.5) + breath) * leaving * opacity
                 ctx.setFillColor(Self.paper.copy(alpha: milk) ?? Self.paper)
                 ctx.fill(box)
             } else {
@@ -390,7 +398,7 @@ final class LiveMarks {
                 ctx.fill(box)
                 ctx.setBlendMode(.normal)
             }
-            drawGrain(ctx, in: box, alpha: 0.2 * leaving * opacity, moving: waited < Self.settling || d.arrived != nil, now: now)
+            drawGrain(ctx, in: box, alpha: 0.2 * leaving * opacity, now: now)
             ctx.restoreGState()
         }
     }
@@ -398,10 +406,10 @@ final class LiveMarks {
     /// Photographic paper, a warm white.
     private static let paper = CGColor(srgbRed: 0.955, green: 0.94, blue: 0.91, alpha: 1)
 
-    /// Film grain, a dozen times a second while the picture develops, then still.
-    private func drawGrain(_ ctx: CGContext, in box: CGRect, alpha: CGFloat, moving: Bool, now: CFTimeInterval) {
+    /// Film grain, moving a dozen times a second for as long as the picture is on its way.
+    private func drawGrain(_ ctx: CGContext, in box: CGRect, alpha: CGFloat, now: CFTimeInterval) {
         guard alpha > 0.005, let grain = Self.grain else { return }
-        let frame = moving ? Int(now * 12) : 0
+        let frame = Int(now * 12)
         var r = UInt64(truncatingIfNeeded: frame) &* 0x9E37_79B9_7F4A_7C15
         r ^= r >> 29
         let dx = CGFloat(r % 97), dy = CGFloat((r >> 8) % 89)

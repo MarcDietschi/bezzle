@@ -44,6 +44,8 @@ final class LiveRoom {
     /// The others in the room, in the order they came. It changes only as people come and go or
     /// start and stop doing something, so what shows them is not drawn again at every move.
     private(set) var people: [Person] = []
+    /// Whether anyone else is here, apart from who: for what only changes as the room fills or empties.
+    private(set) var hasPeople = false
     private(set) var link: LiveLink = .connecting
     /// The person whose view this canvas goes along with.
     private(set) var following: UInt32?
@@ -73,6 +75,7 @@ final class LiveRoom {
     /// Pictures this Mac has asked the room for.
     @ObservationIgnored private var wanted: Set<String> = []
     @ObservationIgnored private var lookedForPictures: CFTimeInterval = 0
+    @ObservationIgnored private var grainFrame: CFTimeInterval = 0
 
     struct Motion {
         var nodes: [UUID: Node]
@@ -86,6 +89,13 @@ final class LiveRoom {
     @ObservationIgnored private let key: LiveKey
     @ObservationIgnored private let transport: LiveTransport
     @ObservationIgnored private var me: UInt32?
+    /// Who else the relay says is in the room, whether or not they have said who they are yet.
+    @ObservationIgnored private var roomPeers: Set<UInt32> = []
+    /// When each person not known yet was last asked who they are.
+    @ObservationIgnored private var asked: [UInt32: CFTimeInterval] = [:]
+    /// Held while others are in the room, so that macOS does not slow Bezzle down in the background
+    /// and leave them thinking it has gone.
+    @ObservationIgnored private var awake: NSObjectProtocol?
     @ObservationIgnored private var hellos: [UInt32: LiveHello] = [:]
     @ObservationIgnored private var heard: [UInt32: Date] = [:]
     @ObservationIgnored private var timer: Timer?
@@ -137,6 +147,7 @@ final class LiveRoom {
     }
 
     func leave() {
+        keepAwake(false)
         timer?.invalidate()
         timer = nil
         if let monitor { NSEvent.removeMonitor(monitor) }
@@ -148,6 +159,19 @@ final class LiveRoom {
 
     /// Whether anyone else is here, so that their changes come this way rather than through iCloud.
     var hasOthers: Bool { link == .live && !people.isEmpty }
+
+    /// Whether the relay says anyone else is in the room: then this Mac keeps saying where it is,
+    /// and sends what it changes, even to someone who has not said who they are yet.
+    private var inCompany: Bool { link == .live && !roomPeers.isEmpty }
+
+    private func keepAwake(_ on: Bool) {
+        if on, awake == nil {
+            awake = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Working on a shared design live with others")
+        } else if !on, let awake {
+            ProcessInfo.processInfo.endActivity(awake)
+            self.awake = nil
+        }
+    }
 
     // MARK: Who this Mac is
 
@@ -187,7 +211,7 @@ final class LiveRoom {
         guard let collaboration else { return }
         let upTo = collaboration.link.changedUpTo
         guard upTo > relayedUpTo else { return }
-        if hasOthers {
+        if inCompany {
             let changes = collaboration.state.changes(by: collaboration.replica, after: relayedUpTo)
             if !changes.isEmpty { send(.changes(changes)) }
         }
@@ -210,7 +234,12 @@ final class LiveRoom {
             lookedForPictures = now
             lookForPictures(store, now)
         }
-        guard hasOthers else {
+        // A picture on its way in sight keeps developing, its grain moving at a film's pace, until it comes.
+        if let area = marks.developingArea, now - grainFrame >= 1.0 / 12, let canvas = store.canvas {
+            grainFrame = now
+            canvas.setNeedsDisplay(area.insetBy(dx: -2, dy: -2).intersection(canvas.bounds))
+        }
+        guard inCompany else {
             takenVersion = store.version
             wasInGesture = store.inGesture
             return
@@ -303,16 +332,19 @@ final class LiveRoom {
     // MARK: Receiving
 
     private func handle(_ frame: LiveFrame) {
+        defer { keepAwake(inCompany) }
         switch frame {
         case .welcome(let you, let others):
             me = you
             link = .live
+            roomPeers = Set(others)
             for peer in others { heard[peer] = Date() }
             guard !others.isEmpty else { return }
             send(.hello(hello))
             sentPresence = nil
             catchUp(nil)
         case .joined(let peer):
+            roomPeers.insert(peer)
             heard[peer] = Date()
             send(.hello(hello), to: peer)
             if let store { send(.presence(currentPresence(store)), to: peer) }
@@ -325,6 +357,11 @@ final class LiveRoom {
                 return
             }
             heard[from] = Date()
+            roomPeers.insert(from)
+            // Heard from, but not known, as after either of us was away a while: asked who they are.
+            if hellos[from] == nil {
+                if case .hello = message {} else { askWho(from) }
+            }
             take(message, from: from)
         }
     }
@@ -332,11 +369,14 @@ final class LiveRoom {
     private func take(_ message: LiveMessage, from peer: UInt32) {
         let now = CACurrentMediaTime()
         switch message {
-        case .hello(let hello):
+        case .hello(var hello):
             // The same Mac come back on a new connection: its old place goes.
             for (other, h) in hellos where other != peer && h.replica == hello.replica { remove(other) }
             let first = hellos[peer] == nil
+            if hello.ask == true { send(.hello(self.hello), to: peer) }
+            hello.ask = nil
             hellos[peer] = hello
+            asked[peer] = nil
             // Someone new may have what nobody here had: asked again.
             if first { wanted = [] }
             handOutPencils()
@@ -369,7 +409,18 @@ final class LiveRoom {
             take(glimpses, from: peer)
         case .want(let names):
             if let folder = store?.assets.folder { sendGlimpses(of: names, from: folder, to: peer) }
+        case .version(let version, let data):
+            if let data { store?.versions.arrived(version, data: data) }
         }
+    }
+
+    private func askWho(_ peer: UInt32) {
+        let now = CACurrentMediaTime()
+        guard now - (asked[peer] ?? -.infinity) > 3 else { return }
+        asked[peer] = now
+        var mine = hello
+        mine.ask = true
+        send(.hello(mine), to: peer)
     }
 
     /// A motion settles once the design shows what it ended with, or after a while in any case.
@@ -415,7 +466,7 @@ final class LiveRoom {
         let new = names.subtracting(offered)
         guard !new.isEmpty else { return }
         offered.formUnion(new)
-        guard hasOthers, let folder = store?.assets.folder else { return }
+        guard inCompany, let folder = store?.assets.folder else { return }
         sendGlimpses(of: Array(new), from: folder, to: nil)
     }
 
@@ -442,7 +493,7 @@ final class LiveRoom {
             beat += 1
         }
         let ask = missing.subtracting(wanted)
-        guard hasOthers, !ask.isEmpty else { return }
+        guard inCompany, !ask.isEmpty else { return }
         wanted.formUnion(ask)
         send(.want(Array(ask.prefix(400))))
     }
@@ -485,6 +536,14 @@ final class LiveRoom {
         for (name, d) in developing where d.arrived.map({ now - $0 > LiveMarks.focusing }) ?? false { developing[name] = nil }
     }
 
+    // MARK: Versions
+
+    /// A version named here goes to everyone in the room at once.
+    func announce(_ version: DesignVersion, data: Data) {
+        guard inCompany else { return }
+        send(.version(version, data.count < 700_000 ? data : nil))
+    }
+
     // MARK: People
 
     @ObservationIgnored private var pencils: [String: Pencil] = [:]
@@ -509,6 +568,7 @@ final class LiveRoom {
             if let p = presence[next[i].id] { next[i].doing = p.doing; next[i].away = p.away }
         }
         if next != people { people = next }
+        if hasPeople != !next.isEmpty { hasPeople = !next.isEmpty }
     }
 
     private func updatePerson(_ peer: UInt32, _ change: (inout Person) -> Void) {
@@ -519,6 +579,8 @@ final class LiveRoom {
     }
 
     private func remove(_ peer: UInt32) {
+        roomPeers.remove(peer)
+        asked[peer] = nil
         heard[peer] = nil
         presence[peer] = nil
         motion[peer] = nil
@@ -528,13 +590,25 @@ final class LiveRoom {
         beat += 1
     }
 
-    /// Someone not heard from for a while has gone, even if the relay did not say so.
+    /// Someone not heard from for a while shows as away, and comes back as soon as they are heard
+    /// again; only after long enough is taken to have gone, should the relay not have said so.
     private func dropSilent() {
         let now = Date()
-        for (peer, at) in heard where now.timeIntervalSince(at) > 25 { remove(peer) }
+        for (peer, at) in heard {
+            let quiet = now.timeIntervalSince(at)
+            if quiet > 300 {
+                remove(peer)
+            } else if quiet > 25, presence[peer]?.away == false {
+                presence[peer]?.away = true
+                updatePerson(peer) { $0.away = true }
+                beat += 1
+            }
+        }
     }
 
     private func everyoneLeft() {
+        roomPeers = []
+        asked = [:]
         guard !hellos.isEmpty || !presence.isEmpty || !motion.isEmpty else { return }
         hellos = [:]
         heard = [:]
@@ -588,15 +662,11 @@ final class LiveRoom {
         winks.last { $0.by == peer && now - $0.time < PencilLoop.lasts }
     }
 
-    /// What it is for someone where they are, if not what it is here.
-    func localTime(of person: Person, at date: Date = Date()) -> String? {
+    /// Where someone is in the world, if it is not where this Mac is by the clock.
+    func zone(of person: Person, at date: Date = Date()) -> TimeZone? {
         guard let id = person.timeZone, let zone = TimeZone(identifier: id),
               zone.secondsFromGMT(for: date) != TimeZone.current.secondsFromGMT(for: date) else { return nil }
-        let f = DateFormatter()
-        f.timeZone = zone
-        f.dateStyle = .none
-        f.timeStyle = .short
-        return f.string(from: date)
+        return zone
     }
 
     // MARK: Tests
@@ -616,6 +686,17 @@ final class LiveRoom {
     /// Takes a frame as though it came from the relay.
     func receiveForTesting(_ frame: LiveFrame) { handle(frame) }
     func tickForTesting() { tick() }
+    /// Forgets who someone is while the relay still has them, as when this Mac stalled a while.
+    func forgetForTesting(_ name: String) {
+        if let peer = people.first(where: { $0.name == name })?.id {
+            hellos[peer] = nil
+            handOutPencils()
+        }
+    }
+    /// Makes it as though someone was last heard from `seconds` ago.
+    func quietForTesting(_ name: String, _ seconds: TimeInterval) {
+        if let peer = people.first(where: { $0.name == name })?.id { heard[peer] = Date().addingTimeInterval(-seconds) }
+    }
     #endif
 }
 

@@ -87,7 +87,8 @@ final class MCPTools {
         what is open. add_layers builds a whole screen in one call, nested; update_layers changes \
         many layers at once. Look at what you made with render and fix what looks wrong. A design \
         is also a prototype: prototype links layers to screens, get_prototype hands over screens, \
-        flows, component states and design tokens in one go to build it in code, and the same tools \
+        flows, component states and design tokens in one go to build it in code, inspect gives one \
+        layer's sizes, distances, looks and code as a developer reads them, and the same tools \
         write changes made in the code back. Every \
         change is one step the person can undo with Command-Z, and designs save themselves: there \
         is no save.

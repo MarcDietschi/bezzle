@@ -99,7 +99,7 @@ final class LiveSocket: LiveTransport {
         task.resume()
         listen(task, generation)
         pinger?.invalidate()
-        pinger = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+        pinger = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.ping(generation) }
         }
     }
@@ -137,7 +137,9 @@ final class LiveSocket: LiveTransport {
 
     private func ping(_ generation: Int) {
         guard generation == self.generation, let task else { return }
-        if Date().timeIntervalSince(lastHeard) > 40 {
+        // The relay answers every ping: nothing for a while means the connection is gone, even
+        // when the network has not said so, as after a change of Wi-Fi.
+        if Date().timeIntervalSince(lastHeard) > 25 {
             reconnect(now: true)
             return
         }

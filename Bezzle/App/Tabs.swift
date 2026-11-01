@@ -297,7 +297,10 @@ final class DesignTab: Identifiable {
         menus.dismiss()
         guard let store else { return }
         store.canvas?.endEditing()
+        store.versions.leave()
         store.save()
+        // Each time a design is worked on leaves a version, if it changed.
+        store.versions.saved(store.sharedDoc, closing: true)
         DocumentStore.finishSaving()
         store.sharing?.close()
         MCPTools.closed(store)

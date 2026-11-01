@@ -11,6 +11,7 @@ import SwiftUI
 ///   BEZZLE_SELECT=name,name…       select the layers with these names
 ///   BEZZLE_TOOL=rectangle          pick a tool
 ///   BEZZLE_PROTOTYPE=seconds       see the design as a prototype
+///   BEZZLE_INSPECT=seconds         inspect the design, as someone building it does
 ///   BEZZLE_PLAY=seconds[:screen]   play the prototype, from this screen
 ///   BEZZLE_TAPS=t@x,y;t@back;…     tap the playing screen at its own points at these times, or go back
 ///   BEZZLE_RESOURCES=seconds[:page[:words]]  bring out the resources panel, on a kit's or icon set's page
@@ -104,6 +105,7 @@ enum DebugHooks {
         if let tool = env["BEZZLE_TOOL"].flatMap(Tool.init(rawValue:)) { after(0.6) { store.tool = tool } }
         // BEZZLE_PROTOTYPE=seconds sees the design as a prototype; BEZZLE_PLAY=seconds[:screen] plays it.
         if let s = env["BEZZLE_PROTOTYPE"].flatMap(Double.init) { after(s) { store.prototyping = true } }
+        if let s = env["BEZZLE_INSPECT"].flatMap(Double.init) { after(s) { store.inspecting = true } }
         if let spec = env["BEZZLE_PLAY"] {
             let parts = spec.split(separator: ":").map(String.init)
             after(Double(parts[0]) ?? 1) {
@@ -130,10 +132,13 @@ enum DebugHooks {
             }
         }
         // BEZZLE_RESOURCES=seconds[:page[:words]] brings out the resources panel, on a kit's or an
-        // icon set's page ("ios", "lucide"…), with words in its search.
+        // icon set's page ("ios", "lucide"…), or another design's ("design=Name"), with words in its search.
         if let spec = env["BEZZLE_RESOURCES"] {
             let parts = spec.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-            let page: ResourcePage? = parts.count > 1 && !parts[1].isEmpty ? (IconSetID(rawValue: parts[1]).map { .icons($0) } ?? .kit(parts[1])) : nil
+            var page: ResourcePage? = parts.count > 1 && !parts[1].isEmpty ? (IconSetID(rawValue: parts[1]).map { .icons($0) } ?? .kit(parts[1])) : nil
+            if parts.count > 1, parts[1].hasPrefix("design=") {
+                page = .library(Library.shared.folder.appendingPathComponent(String(parts[1].dropFirst(7))).appendingPathExtension(BezzleDocument.fileExtension).standardizedFileURL)
+            }
             ResourcesPanel.opening = (page, parts.count > 2 ? parts[2] : "")
             after(Double(parts[0]) ?? 0.6) { store.showsResources = true }
         }

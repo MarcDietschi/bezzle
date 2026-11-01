@@ -30,6 +30,14 @@ struct ComponentCard: View {
                         store.renameComponent(master.id, to: typed)
                         return typed
                     }
+                    // Taken from another design: which, quietly. Changes there are offered on the canvas.
+                    if let from = master.master?.library?.design {
+                        Text("From “\(from)”")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.ink3)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     VariantTiles(store: store, copy: copy, master: master)
                     if store.hasOwnLooks(copy) {
                         TextButton(title: "Look Like the Others") { store.resetCopy(copy.id) }

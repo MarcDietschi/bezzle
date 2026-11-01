@@ -20,6 +20,9 @@ nonisolated struct Style: Codable, Hashable, Identifiable {
     /// How it looks on an artboard shown dark (`Node.dark`), as made there; nil follows `look`,
     /// made dark by itself (`StyleLook.darkened`).
     var dark: StyleLook?
+    /// The design it was taken from, when it came from another one; nil for one named here. See
+    /// `LibraryLink`.
+    var library: LibraryLink?
 
     var kind: StyleKind { look.kind }
 
@@ -676,7 +679,7 @@ nonisolated extension Style {
     /// Its properties as a shared design keeps them, each changed on its own (see `SharedDesign`):
     /// two people, one renaming a style and the other changing its colour, both keep their change.
     static let nameField = "style.name", lookField = "style.look", rankField = "style.rank", goneField = "style.gone"
-    static let darkField = "style.dark"
+    static let darkField = "style.dark", libraryField = "style.library"
 
     func fields() -> [String: FieldValue] {
         var out: [String: FieldValue] = [
@@ -686,6 +689,7 @@ nonisolated extension Style {
         ]
         if let look = try? FieldValue(encoding: look) { out[Self.lookField] = look }
         out[Self.darkField] = dark.flatMap { try? FieldValue(encoding: $0) } ?? .null
+        out[Self.libraryField] = library.flatMap { try? FieldValue(encoding: $0) } ?? .null
         return out
     }
 
@@ -702,6 +706,7 @@ nonisolated extension Style {
         if case .string(let name)? = layer.fields[nameField]?.value { style.name = name }
         if case .number(let rank)? = layer.fields[rankField]?.value { style.rank = rank }
         if let d = layer.fields[darkField]?.value, d != .null { style.dark = try? d.decoded(as: StyleLook.self) }
+        if let l = layer.fields[libraryField]?.value, l != .null { style.library = try? l.decoded(as: LibraryLink.self) }
         return style
     }
 }

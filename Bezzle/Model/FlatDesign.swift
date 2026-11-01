@@ -163,6 +163,8 @@ nonisolated struct FlatDesign: Equatable {
     var order: [UUID?: [UUID]] = [:]
     /// The design's named looks, by their ids. See `Style`.
     var styles: [UUID: Style] = [:]
+    /// The notes in its margins, by their ids. See `MarginNote`.
+    var notes: [UUID: MarginNote] = [:]
 
     init() {}
 
@@ -170,6 +172,7 @@ nonisolated struct FlatDesign: Equatable {
         // Components lie on the canvas here, after everything on it, each marked as one (`Node.master`).
         add(doc.nodes + doc.masters, in: nil, at: nil)
         styles = doc.stylesByID
+        notes = doc.notesByID
     }
 
     private mutating func add(_ nodes: [Node], in parent: UUID?, at origin: CGPoint?) {
@@ -207,9 +210,11 @@ nonisolated struct FlatDesign: Equatable {
         new.add(changed, in: nil, at: nil)
         old.order[nil] = aTop.map(\.id)
         new.order[nil] = bTop.map(\.id)
-        // The styles are few, and go whole.
+        // The styles and notes are few, and go whole.
         old.styles = a.stylesByID
         new.styles = b.stylesByID
+        old.notes = a.notesByID
+        new.notes = b.notesByID
         return (old, new)
     }
 
@@ -220,6 +225,7 @@ nonisolated struct FlatDesign: Equatable {
         for (id, entry) in new.entries { entries[id] = entry }
         for (parent, list) in new.order { order[parent] = list }
         styles = new.styles
+        notes = new.notes
     }
 
     /// The design these layers make, its groups fitted around what they hold.
@@ -231,6 +237,9 @@ nonisolated struct FlatDesign: Equatable {
         doc.masters = top.filter { $0.master != nil }
         let named = styles.values.sorted { ($0.rank, $0.id.uuidString) < ($1.rank, $1.id.uuidString) }
         doc.styles = named.isEmpty ? nil : named
+        let written = notes.values.sorted { ($0.time, $0.id.uuidString) < ($1.time, $1.id.uuidString) }
+        doc.notes = written.isEmpty ? nil : written
+        doc.repairNotes()
         doc.repairGrids()
         doc.repairDecks()
         doc.repairMasks()
@@ -373,12 +382,28 @@ extension FlatDesign {
                 if sx.look != sy.look, sc.look == sx.look { sc.look = sy.look }
                 if sx.rank != sy.rank, sc.rank == sx.rank { sc.rank = sy.rank }
                 if sx.dark != sy.dark, sc.dark == sx.dark { sc.dark = sy.dark }
+                if sx.library != sy.library, sc.library == sx.library { sc.library = sy.library }
                 out.styles[id] = sc
             } else if out.styles[id] == nil {
                 out.styles[id] = sy
             }
         }
         for id in x.styles.keys where y.styles[id] == nil { out.styles[id] = nil }
+        // Notes the same way: what someone else changed of one since stays as they made it.
+        for (id, ny) in y.notes {
+            if let nx = x.notes[id] {
+                guard var nc = out.notes[id], nx != ny else { continue }
+                if nx.text != ny.text, nc.text == nx.text { nc.text = ny.text }
+                if nx.done != ny.done, nc.done == nx.done { nc.done = ny.done }
+                if nx.on != ny.on || nx.at != ny.at || nx.area != ny.area, nc.on == nx.on, nc.at == nx.at, nc.area == nx.area {
+                    nc.on = ny.on; nc.at = ny.at; nc.area = ny.area; nc.place = ny.place
+                }
+                out.notes[id] = nc
+            } else if out.notes[id] == nil {
+                out.notes[id] = ny
+            }
+        }
+        for id in x.notes.keys where y.notes[id] == nil { out.notes[id] = nil }
         return out
     }
 }

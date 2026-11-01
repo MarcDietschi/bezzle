@@ -16,7 +16,7 @@ struct Workspace: View {
                 .frame(height: Theme.barHeight)
             HStack(spacing: 0) {
                 ToolRail(store: store)
-                    .readOnly(store.isReadOnly)
+                    .readOnly(store.isReadOnly || store.versions.travel != nil)
                 if store.showsLayers || store.showsResources {
                     // One place beside the tools, for the layers or the resources, which trade
                     // places sliding past each other.
@@ -43,6 +43,24 @@ struct Workspace: View {
                         StyleMarks(store: store)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
+                    .overlay(alignment: .bottom) {
+                        // The ruler of time, along the foot of the canvas.
+                        if store.versions.browsing {
+                            TimeRuler(store: store)
+                                .padding(.horizontal, 28)
+                                .padding(.bottom, 16)
+                                .transition(.offset(y: 14).combined(with: .opacity))
+                        }
+                    }
+                    .animation(Theme.spring, value: store.versions.browsing)
+                    .overlay {
+                        // Notes in the margins, beside the artboards they are about; of now, so
+                        // away while looking back.
+                        if !store.prototyping && store.versions.travel == nil {
+                            NotesLayer(store: store)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
                     .overlay {
                         // The others in a live room who are out of sight, on the rim toward them.
                         if let live = store.sharing?.live {
@@ -61,6 +79,8 @@ struct Workspace: View {
                         }
                     }
                     .animation(Theme.spring, value: store.finder != nil)
+                    // What changed in other designs this one took components or styles from.
+                    .overlay(alignment: .top) { LibraryNewsChip(store: store) }
                     .overlay(alignment: .bottom) {
                         if let report = store.importReport { ImportReportCard(store: store, report: report).transition(.opacity) }
                     }
@@ -72,7 +92,11 @@ struct Workspace: View {
                     .padding(.bottom, 9)
                     .padding(.trailing, 2)
                 ZStack {
-                    if store.prototyping {
+                    if store.inspecting {
+                        InspectInspector(store: store)
+                            .transition(.asymmetric(insertion: .offset(x: 18).combined(with: .opacity).animation(Theme.spring.delay(0.06)),
+                                                    removal: .opacity.animation(.easeOut(duration: 0.08))))
+                    } else if store.prototyping {
                         PrototypeInspector(store: store)
                             .transition(.asymmetric(insertion: .offset(x: 18).combined(with: .opacity).animation(Theme.spring.delay(0.06)),
                                                     removal: .opacity.animation(.easeOut(duration: 0.08))))
@@ -83,8 +107,10 @@ struct Workspace: View {
                     }
                 }
                 .frame(width: Inspector.width)
-                .readOnly(store.isReadOnly)
+                // Inspecting only reads the design, so a design shared to read can be inspected.
+                .readOnly((store.isReadOnly && !store.inspecting) || store.versions.travel != nil)
                 .animation(Theme.spring, value: store.prototyping)
+                .animation(Theme.spring, value: store.inspecting)
             }
             // The prototype played: over the panels and the canvas, under the bar.
             .overlay {
@@ -152,7 +178,7 @@ struct DesignBarControls: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if let live = store.sharing?.live, !live.people.isEmpty {
+            if let live = store.sharing?.live, live.hasPeople {
                 LivePeople(room: live)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             } else if let mark = store.sharing?.mark {
@@ -160,12 +186,13 @@ struct DesignBarControls: View {
             }
             MenuButton(id: "zoom", title: .verbatim("\(Int((store.viewport.zoom * 100).rounded()))%"), width: 220) { zoomMenu }
                 .help("Zoom")
+            VersionsButton(store: store)
             if CloudSync.isAvailable || store.isReadOnly { ShareButton(store: store) }
             ModeSwitch(store: store)
             ModeAction(store: store)
         }
         .animation(Theme.pop, value: store.sharing?.mark)
-        .animation(Theme.pop, value: store.sharing?.live?.people.isEmpty)
+        .animation(Theme.pop, value: store.sharing?.live?.hasPeople)
     }
 
     private var zoomMenu: [MenuEntry] {
@@ -347,6 +374,14 @@ struct ToolGlyph: View {
                 p.addLine(to: CGPoint(x: w * 0.5, y: h * 0.82))
                 p.move(to: CGPoint(x: w * 0.38, y: h * 0.82))
                 p.addLine(to: CGPoint(x: w * 0.62, y: h * 0.82))
+            case .note:
+                // A note in the margin, with its line to the spot it is about.
+                p.addRoundedRect(in: CGRect(x: w * 0.4, y: h * 0.16, width: w * 0.44, height: h * 0.36), cornerSize: CGSize(width: w * 0.06, height: w * 0.06))
+                p.move(to: CGPoint(x: w * 0.5, y: h * 0.28)); p.addLine(to: CGPoint(x: w * 0.74, y: h * 0.28))
+                p.move(to: CGPoint(x: w * 0.5, y: h * 0.4)); p.addLine(to: CGPoint(x: w * 0.66, y: h * 0.4))
+                p.move(to: CGPoint(x: w * 0.4, y: h * 0.46))
+                p.addQuadCurve(to: CGPoint(x: w * 0.24, y: h * 0.74), control: CGPoint(x: w * 0.26, y: h * 0.5))
+                ctx.fill(Path(ellipseIn: CGRect(x: w * 0.24 - 1.6, y: h * 0.74 - 1.6, width: 3.2, height: 3.2)), with: .foreground)
             }
             ctx.stroke(p, with: .foreground, style: stroke)
         }

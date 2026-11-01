@@ -2,7 +2,7 @@ import AppKit
 import Observation
 
 enum Tool: String, CaseIterable {
-    case select, artboard, rectangle, ellipse, line, pen, knife, text
+    case select, artboard, rectangle, ellipse, line, pen, knife, text, note
 
     var title: String {
         switch self {
@@ -14,6 +14,7 @@ enum Tool: String, CaseIterable {
         case .pen: String(localized: "Pen")
         case .knife: String(localized: "Knife")
         case .text: String(localized: "Text")
+        case .note: String(localized: "Note")
         }
     }
 
@@ -27,6 +28,7 @@ enum Tool: String, CaseIterable {
         case .pen: "P"
         case .knife: "K"
         case .text: "T"
+        case .note: "N"
         }
     }
 
@@ -57,6 +59,7 @@ final class DocumentStore {
         didSet {
             version += 1
             if !doc.hasSameLayers(as: oldValue) { layersVersion += 1 }
+            versions.presentChanged()
         }
     }
     /// Counts the changes that added, took away or moved layers among the others.
@@ -101,6 +104,12 @@ final class DocumentStore {
     /// layers to draw: the header's switch. Here alone, as the zoom is. See `Flow`.
     var prototyping = false {
         didSet { if prototyping != oldValue { prototypingChanged() } }
+    }
+    /// The design inspected, as someone building it reads it: measured on the canvas, its specs
+    /// and code in the inspector, nothing in it changed. On the prototype's table, so seen as a
+    /// prototype too: the header's switch. Here alone. See `InspectTool`.
+    var inspecting = false {
+        didSet { if inspecting != oldValue { inspectingChanged() } }
     }
     /// The prototype being played, over the design. See `Player`.
     var player: Player?
@@ -218,6 +227,20 @@ final class DocumentStore {
     var importReport: ImportReport?
     /// Set while the design is shared through iCloud.
     var sharing: Collaboration?
+    /// A note being written in the margin, not yet posted. See `MarginNote`.
+    var draftNote: MarginNote?
+    /// The thread open in the margin, to read and answer.
+    var openThread: UUID?
+    /// The loop being drawn round part of the design with the note tool, on the canvas.
+    var noteCircle: CGRect?
+    /// Where the typing should go in the note open, asked for from a note's menu.
+    var noteFocus: NoteFocus?
+    /// When each thread was last read on this Mac, to tell what is new in it.
+    @ObservationIgnored lazy var notesSeen = NotesSeen(key: url.standardizedFileURL.path)
+    /// The view flying to a note.
+    @ObservationIgnored lazy var glide = CanvasGlide()
+    /// The design's versions, and looking back through them. See `VersionShelf`.
+    let versions = VersionShelf()
     /// What the canvas shows of the design's named looks. See `Style`.
     let styleShow = StyleShow()
 
@@ -233,6 +256,7 @@ final class DocumentStore {
         self.doc = document
         assets = Assets(design: url)
         if let v = document.viewport { viewport = v }
+        versions.attach(self)
     }
 
     convenience init(opening url: URL) throws {
@@ -262,6 +286,8 @@ final class DocumentStore {
     /// gesture the change is folded into the gesture's one step.
     func edit(_ action: LocalizedStringResource, _ change: (inout BezzleDocument) -> Void) {
         guard !isReadOnly else { return }
+        // Looking back, a change made here brings the design as it is now back into view.
+        versions.cameBack()
         let before = Snapshot(doc: doc, selection: selection, fronts: fronts)
         var next = doc
         change(&next)
@@ -270,6 +296,7 @@ final class DocumentStore {
         let echo = next.syncComponents(since: doc, start: gestureStart?.doc)
         next.syncStyles(since: doc)
         next.keepMasks(since: doc)
+        next.keepNotes(since: doc)
         next.fitGroups(since: doc)
         next.fitCarousels()
         guard next != doc else { return }
@@ -330,6 +357,7 @@ final class DocumentStore {
         let before = Snapshot(doc: withShapeBack(before.doc), selection: before.selection, fronts: before.fronts)
         let after = withShapeBack(doc)
         undoManager.registerUndo(withTarget: self) { store in
+            store.versions.cameBack()
             let now = Snapshot(doc: store.withShapeBack(store.doc), selection: store.selection, fronts: store.fronts)
             // Others sharing the design may have changed it since: only what this step did is
             // taken back, and their changes stay.
@@ -569,6 +597,7 @@ final class DocumentStore {
             }
         }
         Library.shared.touched(url)
+        versions.saved(copy)
     }
 
     /// Why the last save of each design that could not be written failed. Only ever touched on

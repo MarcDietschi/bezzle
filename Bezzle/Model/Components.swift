@@ -50,6 +50,9 @@ nonisolated struct Master: Codable, Hashable {
     /// The part of a kit it was made of, with how it was made ("ios.button", "ios.button/dark"):
     /// the same part dropped into the design again is another copy of it.
     var part: String?
+    /// The design it was taken from, when it came from another one; nil for one made here. See
+    /// `LibraryLink`.
+    var library: LibraryLink?
 }
 
 nonisolated extension Node {

@@ -128,6 +128,26 @@ struct LayoutTests {
         #expect(bench.store.node(id)?.guides == nil)
     }
 
+    @Test func aGuideIsTakenOverABackdropWhileACardItCentresKeepsThePress() throws {
+        try showing {
+            // A colour laid under the whole page, as on a cover, and a card in its middle.
+            let bench = Bench(extra: [CanvasTests.rect("Backdrop", CGRect(x: 0, y: 0, width: 400, height: 300)),
+                                      CanvasTests.rect("Card", CGRect(x: 150, y: 100, width: 100, height: 100))])
+            let id = bench.a.id
+            var key: String?
+            bench.step { key = bench.store.addGuide(at: 200, vertical: true, to: id) }
+            let k = try #require(key)
+            // On the card, the press is the card's.
+            bench.drag(CGPoint(x: 300, y: 250), CGPoint(x: 320, y: 250))
+            #expect(bench.node("Card")?.frame.minX != 150)
+            #expect(bench.store.node(id)?.guides?[k]?.position(in: bench.a.frame.size) == 200)
+            // On the backdrop alone, the guide's.
+            bench.drag(CGPoint(x: 300, y: 130), CGPoint(x: 440, y: 130))
+            #expect(abs((bench.store.node(id)?.guides?[k]?.position(in: bench.a.frame.size) ?? 0) - 340) < 0.5)
+            #expect(bench.node("Backdrop")?.frame.minX == 0)
+        }
+    }
+
     // MARK: Catching on them
 
     @Test func whatMovesCatchesOnGuidesAndColumns() {

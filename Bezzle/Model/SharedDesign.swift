@@ -209,6 +209,30 @@ nonisolated struct SharedDesign: Codable, Equatable, Sendable {
             wrote = true
         }
 
+        // Notes in the margin, kept as the looks are: each property on its own, so an answer, a
+        // change to the words and the thread being closed, made at once by different people, all stay.
+        for (id, note) in now.notes {
+            let values = note.fields(), old = base.notes[id]?.fields()
+            var layer = layers[id] ?? SharedLayer()
+            var changed = false
+            for (name, value) in values {
+                if let old, old[name] == value, layer.fields[name] != nil { continue }
+                if layer.fields[name]?.value == value { continue }
+                layer.fields[name] = Register(value: value, stamp: stamp)
+                changed = true
+            }
+            if changed {
+                layers[id] = layer
+                wrote = true
+            }
+        }
+        for id in base.notes.keys where now.notes[id] == nil {
+            guard var layer = layers[id], layer.place == nil, layer.fields[MarginNote.goneField]?.value != .bool(true) else { continue }
+            layer.fields[MarginNote.goneField] = Register(value: .bool(true), stamp: stamp)
+            layers[id] = layer
+            wrote = true
+        }
+
         // Layers taken away keep where they were. Everything inside goes with them, each layer
         // marked, so that if one of them is changed elsewhere it comes back on its own.
         for id in base.entries.keys where now.entries[id] == nil {
@@ -319,7 +343,17 @@ nonisolated struct SharedDesign: Codable, Equatable, Sendable {
         }
         show(children[nil] ?? [], in: nil)
         for (id, layer) in layers where layer.place == nil {
-            if let style = Style.read(id, from: layer) { map.styles[id] = style }
+            if let style = Style.read(id, from: layer) { map.styles[id] = style } else if let note = MarginNote.read(id, from: layer) { map.notes[id] = note }
+        }
+        // A thread taken away while someone answered it, who had not seen it go, comes back with
+        // the answers taken with it, so that the answer is not lost.
+        for answer in map.notes.values {
+            guard let start = answer.thread, map.notes[start] == nil, let layer = layers[start],
+                  let gone = MarginNote.gone(layer), let note = MarginNote.read(start, from: layer, evenGone: true) else { continue }
+            map.notes[start] = note
+            for (id, other) in layers where other.place == nil && map.notes[id] == nil && MarginNote.gone(other) == gone {
+                if let reply = MarginNote.read(id, from: other, evenGone: true), reply.thread == start { map.notes[id] = reply }
+            }
         }
         return map
     }

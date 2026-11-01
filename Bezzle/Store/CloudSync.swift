@@ -24,6 +24,7 @@ final class CloudSync {
         static let change = "Change"
         static let snapshot = "Snapshot"
         static let picture = "Picture"
+        static let version = "Version"
     }
 
     /// Whether iCloud can be used now: signed in, and not turned off for Bezzle.
@@ -293,6 +294,13 @@ final class CloudSync {
         }
     }
 
+    /// A version was named in a shared design: it goes up, for everyone it is shared with.
+    func sendVersion(_ id: UUID, of session: Collaboration) {
+        guard session.link.environment == Self.environment, !session.link.ended, let engine = engine(for: session.link) else { return }
+        engine.state.add(pendingRecordZoneChanges: [.saveRecord(CKRecord.ID(recordName: "version-\(id.uuidString)", zoneID: zoneID(session.link)))])
+        sendSoon(session.link.isOwner ? .private : .shared)
+    }
+
     /// The design shows these pictures: any not in iCloud yet go up.
     func sendPictures(_ names: Set<String>, of session: Collaboration) {
         let zone = session.zone
@@ -326,6 +334,20 @@ final class CloudSync {
         }
         if name.hasPrefix("picture-") {
             return pictureRecord(String(name.dropFirst("picture-".count)), of: url, in: id.zoneID)
+        }
+        if name.hasPrefix("version-") {
+            guard let vid = UUID(uuidString: String(name.dropFirst("version-".count))),
+                  let version = VersionFiles.index(of: url).first(where: { $0.id == vid }) else { return nil }
+            let file = VersionFiles.file(vid, of: url)
+            guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+            let record = CKRecord(recordType: Kind.version, recordID: id)
+            record["name"] = version.name
+            record["at"] = Int64(version.date.timeIntervalSince1970 * 1000)
+            record["by"] = version.by
+            record["replica"] = version.replica
+            record["layers"] = Int64(version.layers)
+            record["file"] = CKAsset(fileURL: file)
+            return record
         }
         if name == "snapshot" {
             DocumentStore.finishSaving()
@@ -504,6 +526,8 @@ final class CloudSync {
                 snapshots[zoneID] = Self.systemFields(of: record)
             case Kind.picture:
                 pictures[zoneID, default: []].append(record)
+            case Kind.version:
+                takeVersion(record)
             case CKRecord.SystemType.share:
                 guard let share = record as? CKShare else { continue }
                 if let title = share[CKShare.SystemFieldKey.title] as? String { titles[zoneID.zoneName] = title }
@@ -531,6 +555,30 @@ final class CloudSync {
         Library.shared.refresh()
         // What was fetched is on disk before the engine notes that it was.
         DocumentStore.finishSaving()
+    }
+
+    /// A version someone named: kept with the design, open or not.
+    private func takeVersion(_ record: CKRecord) {
+        let zone = record.recordID.zoneID.zoneName
+        guard let url = url(of: zone), let vid = UUID(uuidString: String(record.recordID.recordName.dropFirst("version-".count))),
+              let file = (record["file"] as? CKAsset)?.fileURL, let data = try? Data(contentsOf: file) else { return }
+        var version = DesignVersion(id: vid, date: Date(timeIntervalSince1970: Double(record["at"] as? Int64 ?? 0) / 1000))
+        version.name = record["name"] as? String
+        version.by = record["by"] as? String
+        version.replica = record["replica"] as? String
+        version.layers = Int(record["layers"] as? Int64 ?? 0)
+        version.shared = true
+        if let store = session(zone)?.store {
+            store.versions.arrived(version, data: data)
+            return
+        }
+        // Not open: kept with it all the same.
+        DocumentStore.saving.async {
+            var list = VersionFiles.index(of: url)
+            if let i = list.firstIndex(where: { $0.id == vid }) { list[i].name = version.name } else { list.append(version) }
+            if !FileManager.default.fileExists(atPath: VersionFiles.file(vid, of: url).path) { try? VersionFiles.write(data, as: vid, to: url) }
+            try? VersionFiles.writeIndex(list.sorted { $0.date < $1.date }, to: url)
+        }
     }
 
     /// Takes changes from others into the design they belong to, open or not. A shared design
@@ -985,6 +1033,8 @@ extension CloudSync {
             record(Kind.change, ["by": "schema" as NSString, "upTo": NSNumber(value: Int64(0)), "data": Data([0]) as NSData]),
             record(Kind.snapshot, ["upTo": NSNumber(value: Int64(0)), "data": Data([0]) as NSData]),
             record(Kind.picture, ["name": "schema.png" as NSString]),
+            record(Kind.version, ["name": "schema" as NSString, "at": NSNumber(value: Int64(0)), "by": "schema" as NSString,
+                                  "replica": "schema" as NSString, "layers": NSNumber(value: Int64(0))]),
             CKShare(recordZoneID: zone.zoneID),
         ]
         var lines: [String] = []

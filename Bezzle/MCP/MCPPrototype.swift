@@ -52,7 +52,7 @@ extension MCPTools {
                            ("format", .object([("type", "string"), ("enum", ["css", "swiftui", "json", "all"]),
                                                ("description", "Which: css, swiftui, json, or all (the default).")])),
                        ]), readOnly: true, run: { [unowned self] in try await self.designTokens($0) }),
-        ]
+        ] + inspectDefinitions(design: design)
     }
 
     // MARK: Changing flows

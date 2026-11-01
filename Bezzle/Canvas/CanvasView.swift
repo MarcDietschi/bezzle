@@ -35,6 +35,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private var interaction: Interaction = .none
+    /// A note begun with the note tool: where it was pressed, and the loop drawn round part of the
+    /// design since, if the pointer went on.
+    private var noteCircling: (points: [CGPoint], target: UUID?, start: CGPoint, view: CGPoint)?
     private var spaceHeld = false
     /// Whether the pointer is on the selected rectangle, so the dots that round its corners show.
     private var showsCornerDots = false
@@ -48,6 +51,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var laidOut = false
     /// A preview eases in and out, drawn again each frame while it does.
     private let previewMotion = PreviewMotion()
+    /// The table while looking back through the design's versions: the light, the wave, the marks.
+    private(set) lazy var timeTable = TimeTable(store: store)
     /// Layers moving to where a design laid out again puts them, and what was understood of it.
     let adaptTool = AdaptTool()
     /// The artboards being resized by an edge, each one's design laid out again as it goes.
@@ -142,9 +147,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let tool = GuideTool(store: store, rulers: rulers)
         tool.redraw = { [weak self] in self?.needsDisplay = true }
         tool.click = { [weak self] v, flags in self?.clickThrough(at: v, flags: flags) }
-        tool.covered = { [weak self] v in
-            guard let self else { return false }
-            return self.pick(self.store.viewport.toCanvas(v)) != nil
+        tool.under = { [weak self] v in
+            let p = self?.store.viewport.toCanvas(v) ?? .zero
+            guard let self, let id = self.pick(p) else { return nil }
+            return self.store.doc.absoluteFrame(of: id) ?? CGRect(origin: p, size: .zero)
         }
         tool.menu = { [weak self] v, entries in
             guard let self else { return }
@@ -209,6 +215,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             guard let self else { return }
             self.onContextMenu?(self.windowPoint(v), entries)
         }
+        return tool
+    }()
+
+    /// The design inspected: measured where the pointer is, read and never changed.
+    private(set) lazy var inspectTool: InspectTool = {
+        let tool = InspectTool(store: store)
+        tool.redraw = { [weak self] in
+            self?.needsDisplay = true
+            if self?.inspectTool.isAnimating == true { self?.keepEasing() }
+        }
+        tool.titleHit = { [weak self] v in self?.titleHit(v) }
         return tool
     }()
 
@@ -346,7 +363,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     @objc private func easeStep(_ link: CADisplayLink) {
         needsDisplay = true
-        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating && !adaptTool.isAnimating && !componentTool.isAnimating && !curveTool.animating && !flowTool.isAnimating && !(store.sharing?.live?.marks.isAnimating ?? false) {
+        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating && !adaptTool.isAnimating && !componentTool.isAnimating && !curveTool.animating && !flowTool.isAnimating && !(store.sharing?.live?.marks.isAnimating ?? false) && !timeTable.isAnimating {
             link.invalidate()
             easing = nil
         }
@@ -394,12 +411,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             if host.alphaValue != alpha { host.alphaValue = alpha }
         }
         var shown = adaptTool.frame(of: previewMotion.frame(of: store.shownDoc, preview: store.preview, at: CACurrentMediaTime()), at: CACurrentMediaTime())
+        // Looking back, the design gliding from one version to the next.
+        shown = timeTable.frame(of: shown, in: bounds, at: CACurrentMediaTime())
         // What others are dragging, moving as they drag it.
         if let live { shown = live.marks.overlaid(shown, room: live, store: store) }
-        options.settling = previewMotion.isMoving || adaptTool.isMoving || (live?.marks.isMoving ?? false)
+        options.settling = previewMotion.isMoving || adaptTool.isMoving || (live?.marks.isMoving ?? false) || timeTable.isMoving
         drawDesign(shown, in: ctx, options: options)
         ctx.restoreGState()
-        if previewMotion.isMoving || deckTool.isAnimating || adaptTool.isAnimating { keepEasing() }
+        if previewMotion.isMoving || deckTool.isAnimating || adaptTool.isAnimating || timeTable.isAnimating { keepEasing() }
         cutoutTool.draw(ctx, scale: deviceScale)
         if cutoutTool.animating { redrawSoon() }
         maskTool.draw(ctx, scale: deviceScale, in: bounds)
@@ -411,8 +430,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // Seen as a prototype, nothing of drawing: its screens, their names and the flows.
         if store.prototyping {
             drawArtboardTitles(ctx)
-            flowTool.draw(ctx, scale: deviceScale, in: bounds)
-            if flowTool.isAnimating { keepEasing() }
+            drawThreads(ctx)
+            inspectTool.draw(ctx, scale: deviceScale, in: bounds)
+            if inspectTool.isAnimating { keepEasing() }
             deckTool.draw(ctx, scale: deviceScale, in: bounds)
             if deckTool.isAnimating { keepEasing() }
             drawLive(ctx, live)
@@ -450,14 +470,33 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         deckTool.draw(ctx, scale: deviceScale, in: bounds)
         if deckTool.isAnimating { keepEasing() }
         drawLive(ctx, live)
+        timeTable.drawMarks(ctx, in: bounds, scale: deviceScale, at: CACurrentMediaTime())
         if !deckTool.spreading { rulers.draw(ctx, in: bounds, scale: deviceScale, tabs: guideTool.tabs()) }
         if helpersAnimating { keepEasing() }
         // The threads drawing back into their layers, coming out of the prototype.
-        if flowTool.active {
-            flowTool.draw(ctx, scale: deviceScale, in: bounds)
-            if flowTool.isAnimating { keepEasing() }
-        }
+        if flowTool.active { drawThreads(ctx) }
+        inspectTool.draw(ctx, scale: deviceScale, in: bounds)
+        if inspectTool.isAnimating { keepEasing() }
         _ = store.tool
+    }
+
+    /// The prototype's threads, fading as the design is inspected and back.
+    private func drawThreads(_ ctx: CGContext) {
+        let alpha = inspectTool.threadsAlpha
+        if alpha > 0.001 {
+            let fading = alpha < 0.999
+            if fading {
+                ctx.saveGState()
+                ctx.setAlpha(alpha)
+                ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            }
+            flowTool.draw(ctx, scale: deviceScale, in: bounds)
+            if fading {
+                ctx.endTransparencyLayer()
+                ctx.restoreGState()
+            }
+        }
+        if flowTool.isAnimating { keepEasing() }
     }
 
     /// The others in a live room: their hands, what they hold, what they changed, and their winks.
@@ -982,6 +1021,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     /// What a click picks: something in the group the selection is in, or else what is under it as
     /// usual. Anything lying over that group is picked as usual, as it is what the click meets.
+    /// What a click at a canvas point would pick, for what is placed over the canvas.
+    func layer(at p: CGPoint) -> UUID? { pick(p) }
+
     private func pick(_ p: CGPoint) -> UUID? {
         if let id = pickedGhost(at: p) { return id }
         if let group = enteredGroup, uncovered(group, at: p), let id = hit(p, in: group) { return id }
@@ -1054,8 +1096,19 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         lastViewPoint = v
         if store.prototyping {
             if store.hovered != nil { store.hovered = nil }
+            if store.inspecting {
+                inspectTool.hover(v)
+                (spaceHeld ? NSCursor.openHand : inspectTool.cursor(at: v)).set()
+                return
+            }
             flowTool.hover(v)
             (spaceHeld ? NSCursor.openHand : flowTool.cursor(at: v) ?? .arrow).set()
+            return
+        }
+        // Looking back, what differs from now under the pointer, to pick.
+        if store.versions.travel != nil {
+            timeTable.hover(store.viewport.toCanvas(v))
+            (spaceHeld ? NSCursor.openHand : timeTable.hovered != nil ? .pointingHand : .arrow).set()
             return
         }
         rulers.hover(v)
@@ -1118,7 +1171,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func mouseExited(with event: NSEvent) {
         store.hovered = nil
+        timeTable.hover(nil)
         flowTool.hover(nil)
+        inspectTool.hover(nil)
         developTool.hover(at: nil)
         rulers.hover(nil)
         guideTool.hover(nil)
@@ -1176,6 +1231,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // Looking back, a press picks a layer that differs from now, to bring back; the view moves as ever.
+        if store.versions.travel != nil, !spaceHeld {
+            window?.makeFirstResponder(self)
+            store.versions.pick(at: store.viewport.toCanvas(convert(event.locationInWindow, from: nil)))
+            return
+        }
         // Seen as a prototype, a press pulls a thread, moves a screen or the view, or picks.
         if store.prototyping {
             window?.makeFirstResponder(self)
@@ -1188,6 +1249,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 return
             }
             if deckTool.spreading, deckTool.down(at: v, event: event) { return }
+            if store.inspecting {
+                _ = inspectTool.down(at: v, event: event)
+                return
+            }
             _ = flowTool.down(at: v, event: event)
             return
         }
@@ -1197,6 +1262,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if !deckTool.spreading, componentTool.down(at: convert(event.locationInWindow, from: nil)) { return }
         window?.makeFirstResponder(self)
         if store.editingText != nil { endEditing() }
+        // A click beside the note open puts it away.
+        if store.openThread != nil { store.openThread = nil }
         let v = convert(event.locationInWindow, from: nil)
         let p = store.viewport.toCanvas(v)
         lastViewPoint = v
@@ -1240,6 +1307,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             pathTool.penDown(at: v, event: event)
         case .knife:
             knifeTool.down(at: v, event: event)
+        case .note:
+            // A click is a note on whatever is under the pointer, or on the canvas itself, at that
+            // spot; a loop drawn round part of the design is a note about that part.
+            noteCircling = (points: [p], target: titleHit(v) ?? pick(p), start: p, view: v)
         case .text:
             if let id = hit(p), store.node(id)?.kind == .text {
                 store.selection = [id]
@@ -1408,6 +1479,19 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
+        if var c = noteCircling {
+            c.points.append(store.viewport.toCanvas(v))
+            noteCircling = c
+            if hypot(v.x - c.view.x, v.y - c.view.y) > 6 {
+                let xs = c.points.map(\.x), ys = c.points.map(\.y)
+                store.noteCircle = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+            }
+            return
+        }
+        if inspectTool.dragging {
+            inspectTool.drag(to: v)
+            return
+        }
         if flowTool.dragging {
             flowTool.drag(to: v)
             if let cursor = flowTool.cursor(at: v) { cursor.set() }
@@ -1772,6 +1856,21 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func mouseUp(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
+        if let c = noteCircling {
+            noteCircling = nil
+            if let r = store.noteCircle, max(r.width, r.height) * store.viewport.zoom >= 10 {
+                store.beginNote(around: r)
+            } else {
+                store.noteCircle = nil
+                store.beginNote(at: c.start, on: c.target)
+            }
+            return
+        }
+        if inspectTool.dragging {
+            inspectTool.up(at: v)
+            inspectTool.cursor(at: v).set()
+            return
+        }
         if flowTool.dragging {
             flowTool.up(at: v)
             flowTool.hover(v)
@@ -1923,7 +2022,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if store.editingText != nil { endEditing() }
         let v = convert(event.locationInWindow, from: nil)
         if store.prototyping {
-            if let entries = flowTool.menuEntries(at: v) { onContextMenu?(windowPoint(v), entries) }
+            let entries = store.inspecting ? inspectTool.menuEntries(at: v) : flowTool.menuEntries(at: v)
+            if let entries { onContextMenu?(windowPoint(v), entries) }
             return
         }
         // On the rulers, what they show; on a guide, the guide's own.
@@ -2002,6 +2102,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {
+        // With the time ruler out: Escape puts it away, and the arrows step through the versions,
+        // unless at now they have something selected to move.
+        if store.versions.browsing {
+            let stepping = store.versions.travel != nil || store.selection.isEmpty
+            switch event.keyCode {
+            case 53: store.versions.leave(); return
+            case 123 where stepping: store.versions.step(-1); return
+            case 124 where stepping: store.versions.step(1); return
+            default: if store.versions.travel != nil { return }
+            }
+        }
         // A picture first: Return on one places it, where on a path it would open the points.
         if pictureTool.key(event) { return }
         // Return on a mask picks what it holds.
@@ -2021,6 +2132,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if event.keyCode == 53, developTool.cancel() { return }
         if event.keyCode == 53, deckTool.cancel() { return }
         if pathTool.key(event) { return }
+        if store.inspecting, inspectTool.key(event) { return }
         if store.prototyping, prototypeKey(event) { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let step: CGFloat = flags.contains(.shift) ? 10 : 1
@@ -2030,6 +2142,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         case 51, 117: // delete
             store.deleteSelection()
         case 53: // escape
+            if noteCircling != nil {
+                noteCircling = nil
+                store.noteCircle = nil
+                return
+            }
+            // A note open in the margin, or being written, is put away first.
+            if store.openThread != nil || store.draftNote != nil {
+                store.openThread = nil
+                store.draftNote = nil
+                return
+            }
             if case .none = interaction {
                 if store.tool != .select { store.tool = .select }
                 else if let first = store.selection.first, store.selection.count == 1, let parent = store.doc.parent(of: first) {
@@ -2161,10 +2284,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     // MARK: - Edit menu
 
     @objc func copy(_ sender: Any?) { store.copySelection() }
-    @objc func cut(_ sender: Any?) { store.cutSelection() }
-    @objc func paste(_ sender: Any?) { store.paste() }
+    @objc func cut(_ sender: Any?) { if !store.inspecting { store.cutSelection() } }
+    @objc func paste(_ sender: Any?) { if !store.inspecting { store.paste() } }
     @objc func delete(_ sender: Any?) {
         // Seen as a prototype, what is taken away is where the picked layers go, never the layers.
+        if store.inspecting { return }
         if store.prototyping { store.unlinkFlow(store.linkSources); return }
         if store.editingPath != nil { store.deleteSelectedPoints() } else { store.deleteSelection() }
     }
@@ -2199,8 +2323,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(copy(_:)), #selector(cut(_:)), #selector(delete(_:)): return !store.selection.isEmpty
-        case #selector(paste(_:)): return store.canPaste
+        case #selector(cut(_:)), #selector(delete(_:)): return !store.selection.isEmpty && !store.inspecting
+        case #selector(copy(_:)): return !store.selection.isEmpty
+        case #selector(paste(_:)): return store.canPaste && !store.inspecting
         case #selector(selectAll(_:)): return !store.doc.nodes.isEmpty
         default: return true
         }

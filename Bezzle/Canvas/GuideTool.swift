@@ -16,9 +16,11 @@ final class GuideTool {
     var click: (CGPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
     /// Opens a menu at a point on screen.
     var menu: (CGPoint, [MenuEntry]) -> Void = { _, _ in }
-    /// Whether a layer lies under a point on screen. Where one does, a guide's line leaves the
-    /// pointer to it, and the guide is taken by its tab on the ruler, which lights up to say so.
-    var covered: (CGPoint) -> Bool = { _ in false }
+    /// Where the layer a press at a point on screen would take lies on the canvas, if one does.
+    /// Where one does, a guide's line leaves the pointer to it, and the guide is taken by its tab
+    /// on the ruler, which lights up to say so; unless the guide runs nearly all the way across
+    /// it, as across a backdrop, which it lies on as on the sheet itself.
+    var under: (CGPoint) -> CGRect? = { _ in nil }
 
     struct Ref: Hashable {
         let board: UUID
@@ -131,12 +133,27 @@ final class GuideTool {
                 guard within, off <= 4, best.map({ off < $0.1 }) ?? true else { continue }
                 best = (key, off)
             }
-            if let best {
-                return (Ref(board: board.id, key: best.0), store.viewport.toView(board.frame).contains(v) && covered(v))
+            if let best, let g = board.guides?[best.0] {
+                return (Ref(board: board.id, key: best.0), store.viewport.toView(board.frame).contains(v) && covered(v, by: g, on: board))
             }
         }
         return nil
     }
+
+    /// Whether a layer under a point keeps a guide's line from the pointer there: one the guide
+    /// crosses, as a card it centres. One it runs along nearly from edge to edge of the artboard,
+    /// as a picture or colour laid under the whole page, is the ground it is drawn on, and a
+    /// guide there could otherwise only ever be taken by its tab.
+    private func covered(_ v: CGPoint, by g: Guideline, on board: Node) -> Bool {
+        guard let f = under(v) else { return false }
+        let b = board.frame
+        let (run, from, to) = g.vertical ? (b.height, max(f.minY, b.minY), min(f.maxY, b.maxY))
+                                         : (b.width, max(f.minX, b.minX), min(f.maxX, b.maxX))
+        return to - from < run * Self.ground
+    }
+
+    /// How much of a guide's length a layer has to lie along to be ground for it.
+    static let ground: CGFloat = 0.85
 
     /// The guide under a point on screen that a press there takes: within a few points of it,
     /// where no layer lies under the pointer.

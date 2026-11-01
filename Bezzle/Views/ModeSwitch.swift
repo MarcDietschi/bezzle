@@ -1,46 +1,63 @@
 import SwiftUI
 import AppKit
 
-/// The switch at the top right between the design and its prototype: two words in a well, the
-/// one in front resting on a card that slides across to the other. Each has a small drawing that
-/// does what it says as it comes to the front: the nib writes a stroke, the flow lights up.
+/// The switch at the top right between the design, its prototype and the design inspected: three
+/// words in a well, the one in front resting on a card that slides across to the others. Each has
+/// a small drawing that does what it says as it comes to the front: the nib writes a stroke, the
+/// flow lights up, the measure is drawn out between its ticks.
 struct ModeSwitch: View {
     let store: DocumentStore
     @Namespace private var space
 
     var body: some View {
         HStack(spacing: 2) {
-            side(prototype: false)
-            side(prototype: true)
+            ForEach(CanvasMode.allCases, id: \.self) { side($0) }
         }
         .padding(2)
         .well(radius: 9)
-        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: store.prototyping)
+        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: store.canvasMode)
         .accessibilityElement(children: .contain)
     }
 
-    private func side(prototype: Bool) -> some View {
-        let on = store.prototyping == prototype
-        return ModeSide(on: on, prototype: prototype, space: space) {
-            guard store.prototyping != prototype else { return }
-            store.prototyping = prototype
+    private func side(_ mode: CanvasMode) -> some View {
+        ModeSide(on: store.canvasMode == mode, mode: mode, space: space) {
+            guard store.canvasMode != mode else { return }
+            store.show(mode)
             if let canvas = store.canvas { canvas.window?.makeFirstResponder(canvas) }
+        }
+    }
+}
+
+extension CanvasMode {
+    var title: LocalizedStringResource {
+        switch self {
+        case .design: LocalizedStringResource("mode.design", defaultValue: "Design")
+        case .prototype: LocalizedStringResource("mode.prototype", defaultValue: "Prototype")
+        case .inspect: LocalizedStringResource("mode.inspect", defaultValue: "Inspect")
+        }
+    }
+
+    var tip: Text {
+        switch self {
+        case .design: Text("Draw the design  ⌃P")
+        case .prototype: Text("See the design as a prototype: its screens and the ways between them  ⌃P")
+        case .inspect: Text("Inspect the design as it is built: sizes, distances, looks and code  ⌃I")
         }
     }
 }
 
 private struct ModeSide: View {
     let on: Bool
-    let prototype: Bool
+    let mode: CanvasMode
     let space: Namespace.ID
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 6) {
-            ModeGlyph(prototype: prototype, on: on)
+            ModeGlyph(mode: mode, on: on)
                 .frame(width: 14, height: 14)
-            Text(prototype ? LocalizedStringResource("mode.prototype", defaultValue: "Prototype") : LocalizedStringResource("mode.design", defaultValue: "Design"))
+            Text(mode.title)
                 .font(.system(size: 12.5, weight: on ? .semibold : .regular))
                 .foregroundStyle(on || hovering ? Theme.ink : Theme.ink2)
                 .fixedSize()
@@ -57,18 +74,18 @@ private struct ModeSide: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: action)
-        .help(prototype ? Text("See the design as a prototype: its screens and the ways between them  ⌃P") : Text("Draw the design  ⌃P"))
+        .help(mode.tip)
         .animation(Theme.quick, value: hovering)
-        .accessibilityLabel(prototype ? Text(LocalizedStringResource("mode.prototype", defaultValue: "Prototype")) : Text(LocalizedStringResource("mode.design", defaultValue: "Design")))
+        .accessibilityLabel(Text(mode.title))
         .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(.default, action)
     }
 }
 
-/// The nib for drawing, two screens and a flow between them for the prototype; each draws itself
-/// in as it comes to the front.
+/// The nib for drawing, two screens and a flow between them for the prototype, a box measured
+/// between two ticks for inspecting; each draws itself in as it comes to the front.
 private struct ModeGlyph: View {
-    let prototype: Bool
+    let mode: CanvasMode
     let on: Bool
     @State private var drawn: CGFloat = 1
 
@@ -77,7 +94,23 @@ private struct ModeGlyph: View {
             let w = s.width, h = s.height
             let style = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
             let ink = GraphicsContext.Shading.color(on ? Theme.ink : Theme.ink2)
-            if prototype {
+            if mode == .inspect {
+                // A box, and under it its width drawn out from the middle to a tick at each end.
+                let box = CGRect(x: w * 0.14, y: h * 0.08, width: w * 0.72, height: h * 0.46)
+                ctx.stroke(Path(roundedRect: box, cornerRadius: 1.5), with: ink, style: style)
+                let measure = GraphicsContext.Shading.color(on ? Color(nsColor: CanvasInk.gap) : Theme.ink2)
+                let y = h * 0.84, half = box.width / 2 * drawn
+                var line = Path()
+                line.move(to: CGPoint(x: box.midX - half, y: y))
+                line.addLine(to: CGPoint(x: box.midX + half, y: y))
+                var ticks = Path()
+                for x in [box.minX, box.maxX] {
+                    ticks.move(to: CGPoint(x: x, y: y - h * 0.13))
+                    ticks.addLine(to: CGPoint(x: x, y: y + h * 0.13))
+                }
+                ctx.stroke(line, with: measure, style: StrokeStyle(lineWidth: 1.3, lineCap: .round))
+                ctx.stroke(ticks, with: measure, style: StrokeStyle(lineWidth: 1.3, lineCap: .round))
+            } else if mode == .prototype {
                 let a = CGRect(x: w * 0.02, y: h * 0.12, width: w * 0.34, height: h * 0.5)
                 let b = CGRect(x: w * 0.64, y: h * 0.38, width: w * 0.34, height: h * 0.5)
                 ctx.stroke(Path(roundedRect: a, cornerRadius: 1.5), with: ink, style: style)

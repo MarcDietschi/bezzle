@@ -48,6 +48,9 @@ struct ResourcesPanel: View {
             }
         }
         .onChange(of: store.selection) { lookAgain() }
+        // Other designs, as libraries, as they were last saved.
+        .onAppear { LibraryShelf.shared.refresh(except: store.url) }
+        .onChange(of: Library.shared.entries) { LibraryShelf.shared.refresh(except: store.url) }
         .task {
             guard !iconsReady else { return }
             await IconsLoading.load()
@@ -88,6 +91,8 @@ struct ResourcesPanel: View {
             if let kit = Kits.kit(id) { KitPage(store: store, kit: kit, query: words, dark: dark) }
         case .icons(let id):
             if iconsReady { IconPage(store: store, set: Icons.set(id), query: words) } else { Color.clear }
+        case .library(let url):
+            LibraryPage(store: store, url: url, query: words)
         }
     }
 
@@ -106,9 +111,12 @@ struct ResourcesPanel: View {
 enum ResourcePage: Hashable {
     case kit(String)
     case icons(IconSetID)
+    /// Another design, as a library of its components and styles.
+    case library(URL)
 
     var title: String {
         switch self {
+        case .library(let url): url.deletingPathExtension().lastPathComponent
         case .kit(let id): Kits.kit(id).map { String(localized: $0.title) } ?? id
         case .icons(let id): IconsLoading.done ? Icons.set(id).name : id.rawValue
         }
@@ -200,6 +208,20 @@ private struct Shelf: View {
                     .transition(.opacity.combined(with: .offset(y: -6)))
                     Hairline()
                 }
+                // The other designs with components or styles of their own, to take from.
+                let libraries = LibraryShelf.shared.libraries(except: store.url)
+                if !libraries.isEmpty {
+                    let news = Set(LibraryShelf.shared.news(for: store.doc, at: store.url).map(\.url))
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(libraries, id: \.url) { library in
+                            LibraryCard(title: library.name, count: library.ownMasters.count + library.ownStyles.count, news: news.contains(library.url)) {
+                                DesignLibraryCover(library: library)
+                            } action: { open(.library(library.url)) }
+                        }
+                    }
+                    .transition(.opacity.combined(with: .offset(y: -6)))
+                    Hairline()
+                }
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(Kits.all) { kit in
                         LibraryCard(title: String(localized: kit.title), count: kit.components.count) {
@@ -225,10 +247,12 @@ private struct Shelf: View {
 }
 
 /// A library on the shelf: a picture of what is in it, its name and how much it holds.
-private struct LibraryCard<Cover: View>: View {
+struct LibraryCard<Cover: View>: View {
     let title: String
     let count: Int?
     var coverHeight: CGFloat = 76
+    /// Whether it has news for the design: what was taken from it changed there since.
+    var news = false
     @ViewBuilder let cover: Cover
     let action: () -> Void
     @State private var hovering = false
@@ -244,6 +268,15 @@ private struct LibraryCard<Cover: View>: View {
                         .strokeBorder(Theme.hairline, lineWidth: 1)
                 }
                 .shadow(color: Theme.shadow.opacity(hovering ? 0.16 : 0.06), radius: hovering ? 8 : 3, y: hovering ? 4 : 1)
+                .overlay(alignment: .topTrailing) {
+                    if news {
+                        Circle().fill(Theme.linked)
+                            .overlay { Circle().strokeBorder(Theme.paper, lineWidth: 1.5) }
+                            .frame(width: 10, height: 10)
+                            .offset(x: 3, y: -3)
+                            .transition(.scale(scale: 0.3).combined(with: .opacity))
+                    }
+                }
                 .scaleEffect(hovering ? 1.03 : 1)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(verbatim: title)
@@ -767,6 +800,14 @@ private struct Found: View {
         let icons: [(IconSet, [Icon])] = iconsReady ? Icons.sets.map { ($0, Icons.search(query, in: $0.id)) }.filter { !$0.1.isEmpty } : []
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                // The components of other designs called so, first: the user's own.
+                let theirs = LibraryShelf.shared.libraries(except: store.url).map { lib in
+                    (lib, lib.ownMasters.filter { $0.name.localizedCaseInsensitiveContains(query) })
+                }.filter { !$0.1.isEmpty }
+                ForEach(theirs, id: \.0.url) { library, found in
+                    LibraryComponents(store: store, library: library, masters: found, showsDesign: true)
+                        .padding(.bottom, 14)
+                }
                 if !parts.isEmpty {
                     PartRows(store: store, parts: parts, dark: dark, kits: true)
                         .padding(.bottom, 14)
@@ -785,7 +826,7 @@ private struct Found: View {
                     IconGrid(store: store, set: set, icons: Array(found.prefix(Self.iconsShown)), style: IconPage.style(for: set, in: saved))
                         .padding(.bottom, 14)
                 }
-                if parts.isEmpty && icons.isEmpty { NothingFound() }
+                if parts.isEmpty && icons.isEmpty && theirs.isEmpty { NothingFound() }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 16)
@@ -816,7 +857,7 @@ private struct MoreLink: View {
 }
 
 /// Nothing fits what was typed: the search glass, faint, with a question in it.
-private struct NothingFound: View {
+struct NothingFound: View {
     var body: some View {
         HStack {
             Spacer()
@@ -938,7 +979,7 @@ final class Thumbnails {
 /// Lies over a part or an icon in the panel and starts carrying it when it is dragged, with
 /// its picture under the pointer; a click without a drag picks it. AppKit's own drag, so the
 /// canvas can take the picture away and show the real thing where it will land.
-private struct DragSource: NSViewRepresentable {
+struct DragSource: NSViewRepresentable {
     let resource: Resource
     let tip: String
     let picture: () -> NSImage?

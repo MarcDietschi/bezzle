@@ -10,7 +10,7 @@ struct WelcomeTests {
         let doc = Welcome.design()
         // Listed from the first down: the welcome sheet lies on top.
         let all = Array(doc.nodes.reversed())
-        #expect(all.count == 25)
+        #expect(all.count == 29)
         #expect(all.allSatisfy { $0.isArtboard })
         #expect(all.first?.id == Welcome.coverID)
         // Two lessons are tried on an artboard of their own, listed after their sheet and lying
@@ -25,7 +25,7 @@ struct WelcomeTests {
         }
         let sheets = all.filter { !beside.contains($0) }
         #expect(sheets.dropFirst().enumerated().allSatisfy { i, sheet in sheet.name.hasPrefix("\(i + 1). ") })
-        #expect(sheets.count == 23)
+        #expect(sheets.count == 27)
         for (above, below) in zip(sheets, sheets.dropFirst()) {
             #expect(below.frame.minY > above.frame.maxY + 100)
             #expect(below.frame.minX == above.frame.minX)
@@ -53,6 +53,41 @@ struct WelcomeTests {
         for other in beside {
             #expect(!other.locked && other.children.allSatisfy { !$0.locked }, "\(other.name)")
         }
+    }
+
+    /// The lesson on notes: a ticket to talk about, and Bezzle's note round its title waiting
+    /// unread, its card in the free margin beside the sheet, never over one.
+    @Test func aNoteWaitsBesideTheTicket() throws {
+        let doc = Welcome.design()
+        let threads = doc.threads
+        #expect(threads.count == 1)
+        let note = try #require(threads.first?.start)
+        #expect(note.by == Welcome.noteWriter)
+        #expect(note.on == Welcome.ticketTitleID)
+        #expect(!note.isDone)
+        #expect(doc.unread(note.id, seen: nil, replica: CloudSync.replica))
+        let title = try #require(doc.node(Welcome.ticketTitleID))
+        #expect(title.kind == .text)
+        let area = try #require(doc.area(of: note))
+        let frame = try #require(doc.absoluteFrame(of: Welcome.ticketTitleID))
+        #expect(area.contains(CGPoint(x: frame.midX, y: frame.midY)) && area.width > frame.width)
+        let sheet = try #require(doc.sheet(of: note))
+        #expect(sheet.name.hasSuffix(". Notes"))
+        // The price to circle and the button to pin to are there, free.
+        for name in ["Price", "Ticket button"] {
+            let found = try #require(doc.allNodes.first { $0.name == name }, "no \(name)")
+            #expect(!found.locked && !doc.ancestors(of: found.id).contains { $0.locked })
+        }
+        // At actual size, its card goes in the margin to the right of its sheet, clear of every sheet.
+        let spot = try #require(doc.spot(of: note))
+        let want = NotePlacement.Want(id: note.id, spot: spot, home: sheet.frame, sheet: sheet.id,
+                                      height: NoteCardSize.shut(note, answered: false))
+        let place = try #require(NotePlacement.place([want], around: doc.nodes.map(\.frame)).first)
+        #expect(place.kind == .card)
+        #expect(place.side == .right)
+        #expect(doc.nodes.allSatisfy { !$0.frame.insetBy(dx: 1, dy: 1).intersects(place.frame) })
+        // The cover counts it.
+        #expect(doc.allNodes.contains { $0.text == String(localized: "Twenty-six lessons, about a minute each.") })
     }
 
     @Test func stackHasThreePostsEachWithItsOwnWords() throws {
@@ -122,6 +157,59 @@ struct WelcomeTests {
         // The flyer lays its design out again for a new size, as every artboard does at first.
         let flyer = try #require(doc.nodes.first { $0.name == "Flyer" })
         #expect(flyer.pinsLayers == nil)
+    }
+
+    /// The lesson on versions comes with the poster's past: four versions over two days, one of
+    /// them named, each a step further back, the first without moon or lanterns.
+    @Test func thePosterComesWithItsPast() throws {
+        let doc = Welcome.design()
+        let now = Date()
+        let past = Welcome.history(of: doc, now: now)
+        #expect(past.count == 4)
+        #expect(past.map(\.version.date) == past.map(\.version.date).sorted(by: >))
+        #expect(past.compactMap(\.version.name) == [String(localized: "First draft")])
+        #expect(past.allSatisfy { $0.version.date < now.addingTimeInterval(-3600) })
+        let poster: [UUID] = [Welcome.Poster.sky, Welcome.Poster.moon, Welcome.Poster.title, Welcome.Poster.date] + Welcome.Poster.lanterns
+        #expect(poster.allSatisfy { doc.node($0) != nil })
+        var after = doc
+        after.viewport = nil
+        for (version, then) in past {
+            #expect(then != after)
+            let changed = VersionShelf.differences(then, after).changed
+            #expect(changed.isSubset(of: Set(poster)), "\(changed.subtracting(poster).compactMap { then.node($0)?.name })")
+            #expect(version.layers == then.layerCount)
+            after = then
+        }
+        let first = try #require(past.last?.doc)
+        #expect(first.node(Welcome.Poster.moon) == nil)
+        #expect(Welcome.Poster.lanterns.allSatisfy { first.node($0) == nil })
+        // Packed as versions are, each comes back whole.
+        for (_, then) in past { #expect(VersionFiles.unpack(VersionFiles.pack(then)!) == then) }
+    }
+
+    /// The lessons on inspecting and on libraries have their things to try: a profile card with a
+    /// button to measure, and two designs a button goes from one to the other between.
+    @Test func inspectingAndLibrariesHaveTheirThingsToTry() throws {
+        let doc = Welcome.design()
+        let card = try #require(doc.allNodes.first { $0.kind == .group && $0.name == String(localized: "Profile card") })
+        let follow = try #require(card.children.first { $0.name == String(localized: "Follow button") })
+        #expect(follow.children.count == 2 && follow.children.allSatisfy { !$0.locked })
+        let designs = doc.allNodes.filter { $0.kind == .group && [String(localized: "Design system"), String(localized: "New design")].contains($0.name) }
+        #expect(designs.count == 2)
+        #expect(designs.allSatisfy { $0.children.allSatisfy { !$0.locked } })
+        // In the order they are taught: libraries after the styles, inspecting after export, versions after notes.
+        let names = doc.nodes.reversed().map(\.name)
+        func at(_ lesson: String) -> Int? { names.firstIndex { $0.hasSuffix(". " + lesson) } }
+        let order = ["Light and dark", "Libraries", "Export sizes", "Inspect", "Notes", "Versions", "Share and export"].map(at)
+        #expect(order.allSatisfy { $0 != nil })
+        #expect(order.compactMap { $0 } == order.compactMap { $0 }.sorted())
+    }
+
+    /// Every layer is there once: a layer twice under one id is found in one place and changed
+    /// in another.
+    @Test func everyLayerIsThereOnce() {
+        let ids = Welcome.design().allNodes.map(\.id)
+        #expect(Set(ids).count == ids.count)
     }
 
     @Test func photoIsPaintedTheSameEachTime() throws {

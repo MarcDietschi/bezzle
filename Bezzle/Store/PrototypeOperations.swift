@@ -17,6 +17,7 @@ extension DocumentStore {
         } else {
             player?.stop()
             player = nil
+            inspecting = false
         }
         canvas?.flowTool.modeChanged(prototyping)
     }

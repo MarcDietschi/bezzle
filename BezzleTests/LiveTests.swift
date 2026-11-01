@@ -432,6 +432,79 @@ struct LiveTests {
         #expect(ben.store.assets.standIn(of: name) != nil)
     }
 
+    @Test func aVersionNamedOnOneMacReachesTheOtherAtOnceAndSoDoesItsNewName() async throws {
+        let relay = TestRelay(), zone = "design-test-\(UUID().uuidString)"
+        let anna = Seat("anna", zone: zone, relay: relay)
+        let ben = Seat("ben", zone: zone, relay: relay, from: anna.session.state)
+        defer { anna.close(); ben.close() }
+        try Self.package(anna, pictures: [:])
+        try Self.package(ben, pictures: [:])
+        relay.pump()
+        let r = anna.bench.node("R")!.id
+        anna.bench.step { anna.store.update([r], "Move") { $0.frame.origin.x = 77 } }
+        let named = try #require(anna.store.versions.nameNow("For the client"))
+        #expect(named.shared == true)
+        try await Self.pump(relay) {
+            DocumentStore.finishSaving()
+            return ben.store.versions.list.contains { $0.id == named.id }
+        }
+        let theirs = try #require(ben.store.versions.list.first { $0.id == named.id })
+        #expect(theirs.name == "For the client")
+        #expect(theirs.by == "anna")
+        ben.store.versions.show(named.id)
+        #expect(ben.store.shownDoc.node(r)?.frame.minX == 77)
+
+        anna.store.versions.rename(named.id, "Final")
+        try await Self.pump(relay) {
+            DocumentStore.finishSaving()
+            return ben.store.versions.list.first { $0.id == named.id }?.name == "Final"
+        }
+        #expect(ben.store.versions.list.first { $0.id == named.id }?.name == "Final")
+    }
+
+    @Test func twoMacsThatLostTrackOfEachOtherFindEachOtherAgain() {
+        let relay = TestRelay(), zone = "design-test-\(UUID().uuidString)"
+        let anna = Seat("anna", zone: zone, relay: relay)
+        let ben = Seat("ben", zone: zone, relay: relay, from: anna.session.state)
+        defer { anna.close(); ben.close() }
+        relay.pump()
+        // Both stalled long enough to give the other up, while the relay kept them both.
+        anna.room.forgetForTesting("ben")
+        ben.room.forgetForTesting("anna")
+        #expect(anna.room.people.isEmpty && ben.room.people.isEmpty)
+        // Each still says where it is, hears the other, and asks who that is.
+        anna.room.tickForTesting()
+        ben.room.tickForTesting()
+        relay.pump()
+        #expect(anna.room.people.map(\.name) == ["ben"])
+        #expect(ben.room.people.map(\.name) == ["anna"])
+        // And changes come across again.
+        let r = anna.bench.node("R")!.id
+        anna.bench.step { anna.store.update([r], "Colour") { $0.fill.color = .black } }
+        anna.room.tickForTesting()
+        relay.pump()
+        #expect(ben.bench.node("R")?.fill.color == .black)
+    }
+
+    @Test func someoneQuietForAWhileShowsAwayAndOnlyGoesMuchLater() {
+        let relay = TestRelay(), zone = "design-test-\(UUID().uuidString)"
+        let anna = Seat("anna", zone: zone, relay: relay)
+        let ben = Seat("ben", zone: zone, relay: relay, from: anna.session.state)
+        defer { anna.close(); ben.close() }
+        relay.pump()
+        ben.room.tickForTesting()
+        relay.pump()
+        // A minute without a word, as with a Mac that stalled or slept: still here, dimmed.
+        anna.room.quietForTesting("ben", 60)
+        anna.room.tickForTesting()
+        #expect(anna.room.people.map(\.name) == ["ben"])
+        #expect(anna.room.people.first?.away == true)
+        // Long enough, and the relay not having said, they are taken to have gone.
+        anna.room.quietForTesting("ben", 400)
+        anna.room.tickForTesting()
+        #expect(anna.room.people.isEmpty)
+    }
+
     @Test func aMessageFromOutsideTheRoomIsIgnored() throws {
         let relay = TestRelay(), zone = "design-test-\(UUID().uuidString)"
         let anna = Seat("anna", zone: zone, relay: relay)

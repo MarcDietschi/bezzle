@@ -6,6 +6,9 @@ nonisolated enum Resource: Hashable, Sendable {
     case icon(IconSetID, String, IconStyle)
     /// One of the design's own components, by its id: another copy of it.
     case design(UUID)
+    /// A component of another design, the design's file and the component's id: taken in, a copy
+    /// of it. See `LibraryLink`.
+    case library(URL, UUID)
 
     /// As it travels on the pasteboard and to the AI: "ios.tab-bar", "icon/lucide/heart".
     var key: String {
@@ -13,6 +16,7 @@ nonisolated enum Resource: Hashable, Sendable {
         case .component(let id): id
         case .icon(let set, let name, _): "icon/\(set.rawValue)/\(name)"
         case .design(let id): "component/\(id.uuidString)"
+        case .library(let url, let id): "library/\(url.deletingPathExtension().lastPathComponent)/\(id.uuidString)"
         }
     }
 
@@ -41,6 +45,8 @@ struct ResourcePlacing {
     /// A kit's part, as it was made, light or dark: dropped again, it is another copy of the
     /// component the first one became. See `Master.part`.
     var part: String?
+    /// The components and styles a part from another design brings along. See `LibraryLink`.
+    var brings: LibraryTake?
 }
 
 extension DocumentStore {
@@ -105,6 +111,15 @@ extension DocumentStore {
             let origin = CGPoint(x: (center.x - size.width / 2).rounded(), y: (center.y - size.height / 2).rounded())
             return ResourcePlacing(node: Components.newCopy(of: master, at: origin), board: usable?.id)
 
+        case .library(let url, let id):
+            // Taken before, it is another copy of it as this design has it now.
+            if doc.master(id) != nil { return placing(.design(id), at: point, on: target, into: boardID, dark: dark, width: width) }
+            guard let library = LibraryShelf.shared.content(url), let master = library.master(id) else { return nil }
+            let size = Components.box(of: master, variant: nil).size
+            let origin = CGPoint(x: (center.x - size.width / 2).rounded(), y: (center.y - size.height / 2).rounded())
+            return ResourcePlacing(node: Components.newCopy(of: master, at: origin, masters: library.mastersByID), board: usable?.id,
+                                   brings: library.taking(id))
+
         case .icon(_, _, let style):
             guard let icon = resource.icon else { return nil }
             if let target, let old = doc.node(target), Icons.isIcon(old), !old.locked,
@@ -159,9 +174,11 @@ extension DocumentStore {
             selection = [swap]
             return swap
         }
-        let node = plan.node
+        var node = plan.node
         var made = node.id
+        if let take = plan.brings { bringPictures(take) }
         edit(resource.icon == nil ? "Add Component" : "Add Icon") { doc in
+            if let take = plan.brings { node = node.renamingStyles(doc.bring(take)) }
             made = Self.add(node, part: plan.part, to: plan.board, in: &doc)
         }
         selection = [made]

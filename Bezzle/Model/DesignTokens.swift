@@ -254,7 +254,7 @@ nonisolated enum DesignTokens {
         }
         section("Colors", colours)
         section("Gradients", gradients)
-        section("Type", type)
+        section("Typography", type)
         section("Shadows", shadows)
         section("Corners", corners)
         if out.hasSuffix("\n\n") { out.removeLast() }

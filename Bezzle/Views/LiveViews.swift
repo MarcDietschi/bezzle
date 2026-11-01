@@ -13,7 +13,7 @@ struct LiveCompass: View {
             ZStack(alignment: .topLeading) {
                 ForEach(room.people) { person in
                     if let spot = spot(of: person, in: geo.size) {
-                        CompassToken(person: person, time: room.localTime(of: person), angle: spot.angle, wink: room.wink(of: person.id, at: CACurrentMediaTime())) {
+                        CompassToken(person: person, zone: room.zone(of: person), angle: spot.angle, wink: room.wink(of: person.id, at: CACurrentMediaTime())) {
                             if let wink = room.wink(of: person.id, at: CACurrentMediaTime()) { room.go(toWink: wink) } else { room.go(to: person.id) }
                         }
                         .position(spot.point)
@@ -46,7 +46,7 @@ struct LiveCompass: View {
 
 private struct CompassToken: View {
     let person: LiveRoom.Person
-    let time: String?
+    let zone: TimeZone?
     let angle: Angle
     let wink: LiveRoom.Wink?
     let action: () -> Void
@@ -80,18 +80,17 @@ private struct CompassToken: View {
         .buttonStyle(.plain)
         .opacity(person.away ? 0.55 : 1)
         .saturation(person.away ? 0.35 : 1)
+        // Always there, only shown: it moves nothing, and is ready the first time.
         .overlay(alignment: labelAlignment) {
-            if hovering {
-                NamePill(person: person, time: time)
-                    .fixedSize()
-                    .offset(labelOffset)
-                    .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: labelAnchor)))
-                    .allowsHitTesting(false)
-            }
+            NamePill(person: person, zone: zone)
+                .fixedSize()
+                .scaleEffect(hovering ? 1 : 0.88, anchor: labelAnchor)
+                .opacity(hovering ? 1 : 0)
+                .offset(labelOffset)
+                .allowsHitTesting(false)
         }
         .onHover { hovering = $0 }
-        .animation(Theme.quick, value: hovering)
-        .help(Text(LiveText.goTo(person.name)))
+        .animation(hovering ? Theme.open : Theme.close, value: hovering)
     }
 
     /// The name goes toward the inside of the canvas, away from the rim.
@@ -167,16 +166,19 @@ private nonisolated struct Triangle: Shape {
 /// Someone's name in their pencil, with the time where they are if it is not the time here.
 private struct NamePill: View {
     let person: LiveRoom.Person
-    let time: String?
+    let zone: TimeZone?
 
     var body: some View {
         HStack(spacing: 5) {
             Text(verbatim: person.name)
                 .font(.system(size: 11.5, weight: .semibold))
-            if let time {
-                Text(verbatim: time)
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .opacity(0.75)
+            if let zone {
+                TimelineView(.everyMinute) { context in
+                    Text(context.date, format: .dateTime.hour().minute())
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .opacity(0.75)
+                        .environment(\.timeZone, zone)
+                }
             }
         }
         .foregroundStyle(.white)
@@ -197,7 +199,7 @@ struct LivePeople: View {
     var body: some View {
         HStack(spacing: -4) {
             ForEach(room.people) { person in
-                PersonToken(person: person, time: room.localTime(of: person), following: room.following == person.id) { room.go(to: person.id) }
+                PersonToken(person: person, zone: room.zone(of: person), following: room.following == person.id) { room.go(to: person.id) }
                     .transition(.asymmetric(insertion: .scale(scale: 0.2).combined(with: .opacity),
                                             removal: .scale(scale: 0.5).combined(with: .opacity).combined(with: .offset(y: 8))))
             }
@@ -206,64 +208,89 @@ struct LivePeople: View {
     }
 }
 
+/// Someone in the bar: a token in their pencil, ringed while they are at work, dimmed while they
+/// are elsewhere. Pointed at, their name hangs below it, over what lies under the bar, so that
+/// nothing in the bar has to make room for it.
 private struct PersonToken: View {
     let person: LiveRoom.Person
-    let time: String?
+    let zone: TimeZone?
     let following: Bool
     let action: () -> Void
-    @State private var hovering = false
+    @State private var hovering = PersonToken.tagsShown
+
+    /// BEZZLE_LIVE_TAGS: names shown from the start, for looking at them.
+    #if DEBUG
+    private static let tagsShown = ProcessInfo.processInfo.environment["BEZZLE_LIVE_TAGS"] != nil
+    #else
+    private static let tagsShown = false
+    #endif
 
     var body: some View {
         Button(action: action) {
-            ZStack(alignment: .leading) {
-                if hovering {
-                    NamePill(person: person, time: time)
-                        .transition(.opacity.combined(with: .scale(scale: 0.6, anchor: .leading)))
-                } else {
-                    Text(person.initial)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(person.pencil.color))
-                        .transition(.opacity.combined(with: .scale(scale: 0.6)))
+            Text(person.initial)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(person.pencil.color))
+                .padding(2)
+                .background(Circle().fill(following ? person.pencil.color.opacity(0.35) : Theme.paper))
+                .overlay {
+                    if person.doing != .looking && !person.away {
+                        Circle().strokeBorder(person.pencil.color.opacity(0.55), lineWidth: 1.5)
+                            .padding(-1)
+                            .phaseAnimator([false, true]) { view, on in view.opacity(on ? 1 : 0.25) } animation: { _ in .easeInOut(duration: 0.9) }
+                    }
                 }
-            }
-            .padding(2)
-            .background(Capsule().fill(following ? person.pencil.color.opacity(0.35) : Theme.paper))
-            .overlay {
-                if person.doing != .looking && !person.away {
-                    Capsule().strokeBorder(person.pencil.color.opacity(0.55), lineWidth: 1.5)
-                        .padding(-1)
-                        .phaseAnimator([false, true]) { view, on in view.opacity(on ? 1 : 0.25) } animation: { _ in .easeInOut(duration: 0.9) }
-                }
-            }
-            .opacity(person.away ? 0.5 : 1)
-            .saturation(person.away ? 0.4 : 1)
-            .offset(y: hovering ? -1 : 0)
+                .opacity(person.away ? 0.5 : 1)
+                .saturation(person.away ? 0.4 : 1)
+                .scaleEffect(hovering ? 1.08 : 1)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .fixedSize()
+        .overlay(alignment: .top) {
+            NameTag(person: person, zone: zone, shown: hovering)
+                .fixedSize()
+                .offset(y: 32)
+                .allowsHitTesting(false)
+        }
         .onHover { hovering = $0 }
-        .animation(Theme.pop, value: hovering)
+        .animation(hovering ? Theme.open : Theme.close, value: hovering)
         .animation(Theme.spring, value: following)
-        .help(help)
         .zIndex(hovering ? 1 : 0)
     }
+}
 
-    private var help: Text {
-        if following { return Text("Stop going along with \(person.name)") }
-        if person.away { return Text("\(person.name) is in another app") }
-        return Text(LiveText.goTo(person.name))
+/// A person's name hanging from their token on a little point, coming down as it shows.
+private struct NameTag: View {
+    let person: LiveRoom.Person
+    let zone: TimeZone?
+    let shown: Bool
+
+    var body: some View {
+        VStack(spacing: -1) {
+            TagPoint()
+                .fill(person.pencil.color)
+                .frame(width: 9, height: 5)
+            NamePill(person: person, zone: zone)
+        }
+        .scaleEffect(shown ? 1 : 0.9, anchor: .top)
+        .offset(y: shown ? 0 : -4)
+        .opacity(shown ? 1 : 0)
+    }
+}
+
+private nonisolated struct TagPoint: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: rect.midX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            p.closeSubpath()
+        }
     }
 }
 
 extension Pencil {
     nonisolated var color: Color { Color(.sRGB, red: rgb.r, green: rgb.g, blue: rgb.b, opacity: 1) }
-}
-
-enum LiveText {
-    /// Going to where a person is, which reads differently from going to a place in some languages.
-    static func goTo(_ name: String) -> LocalizedStringResource {
-        LocalizedStringResource("live.go-to-person", defaultValue: "Go to \(name)")
-    }
 }

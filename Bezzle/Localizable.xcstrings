@@ -4,6 +4,50 @@
     "" : {
       "shouldTranslate" : false
     },
+    "‹ and › in an open note go from one note to the next. A shared design carries everyone’s notes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "‹ und › in einer offenen Notiz führen von einer Notiz zur nächsten. Ein geteiltes Design trägt die Notizen aller."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "‹ et › dans une note ouverte passent d’une note à la suivante. Un design partagé porte les notes de chacun."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "‹ e › in una nota aperta passano da una nota all’altra. Un design condiviso porta le note di tutti."
+          }
+        }
+      }
+    },
+    "“%@” could not be saved." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ konnte nicht gespeichert werden."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "« %@ » n’a pas pu être enregistré."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossibile salvare “%@”."
+          }
+        }
+      }
+    },
     "“%@” could not be shared" : {
       "localizations" : {
         "de" : {
@@ -290,28 +334,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Contrazione di %@"
-          }
-        }
-      }
-    },
-    "%@ is in another app" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ ist in einer anderen App"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ est dans une autre app"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ è in un’altra app"
           }
         }
       }
@@ -666,6 +688,28 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld designs could not be saved." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Designs konnten nicht gespeichert werden."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld designs n’ont pas pu être enregistrés."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Non è stato possibile salvare %lld design."
           }
         }
       }
@@ -2327,6 +2371,28 @@
         }
       }
     },
+    "%lld. Inspect" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Untersuchen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Inspecter"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Ispeziona"
+          }
+        }
+      }
+    },
     "%lld. Knife and pieces" : {
       "localizations" : {
         "de" : {
@@ -2345,6 +2411,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld. Taglierino e pezzi"
+          }
+        }
+      }
+    },
+    "%lld. Libraries" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Bibliotheken"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Bibliothèques"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Librerie"
           }
         }
       }
@@ -2411,6 +2499,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld. Sposta e ruota"
+          }
+        }
+      }
+    },
+    "%lld. Notes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Notizen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Notes"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Note"
           }
         }
       }
@@ -2635,6 +2745,28 @@
         }
       }
     },
+    "%lld. Versions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Versionen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Versions"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Versioni"
+          }
+        }
+      }
+    },
     "%lld%% across, %lld%% down" : {
       "localizations" : {
         "de" : {
@@ -2675,6 +2807,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "⇧⌘P ne aggiunge un quarto"
+          }
+        }
+      }
+    },
+    "€24" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "24 €"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "24 €"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "24 €"
           }
         }
       }
@@ -3163,6 +3317,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "30 giorni"
+          }
+        }
+      }
+    },
+    "128 designs  ·  2.4k followers" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "128 Designs  ·  2,4k Follower"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "128 designs  ·  2,4 k abonnés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "128 design  ·  2,4k follower"
           }
         }
       }
@@ -5508,6 +5684,28 @@
         }
       }
     },
+    "Add Style" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil hinzufügen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter un style"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aggiungi stile"
+          }
+        }
+      }
+    },
     "Add tag" : {
       "localizations" : {
         "de" : {
@@ -6834,6 +7032,50 @@
         }
       }
     },
+    "Answer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antworten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Répondre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rispondi"
+          }
+        }
+      }
+    },
+    "Answer Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz beantworten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Répondre à la note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rispondi alla nota"
+          }
+        }
+      }
+    },
     "Anyone with the link" : {
       "localizations" : {
         "de" : {
@@ -7939,6 +8181,50 @@
         }
       }
     },
+    "Before going back to %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vor dem Zurückgehen zu %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avant de revenir à %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prima di tornare a %@"
+          }
+        }
+      }
+    },
+    "Behind" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dahinter"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Derrière"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dietro"
+          }
+        }
+      }
+    },
     "Beige" : {
       "localizations" : {
         "de" : {
@@ -8111,6 +8397,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bezzle non è riuscito a creare il file dell’estensione."
+          }
+        }
+      }
+    },
+    "Bezzle left you a note: its thread runs from the ticket out to the margin. Click it, write an answer and press ↩." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle hat dir eine Notiz hinterlassen: Ihr Faden läuft vom Ticket hinaus an den Rand. Klick sie an, schreib eine Antwort und drück ↩."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle vous a laissé une note : son fil part du billet jusqu’à la marge. Cliquez dessus, écrivez une réponse et appuyez sur ↩."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle ti ha lasciato una nota: il suo filo va dal biglietto fino al margine. Cliccala, scrivi una risposta e premi ↩."
           }
         }
       }
@@ -8549,6 +8857,28 @@
         }
       }
     },
+    "Book now" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jetzt buchen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réserver"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prenota ora"
+          }
+        }
+      }
+    },
     "border" : {
       "localizations" : {
         "de" : {
@@ -8940,6 +9270,72 @@
         }
       }
     },
+    "Bring Back" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zurückholen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ramener"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riporta"
+          }
+        }
+      }
+    },
+    "Bring Back Layer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebene zurückholen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ramener le calque"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riporta il livello"
+          }
+        }
+      }
+    },
+    "Bring Back Layers" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenen zurückholen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ramener les calques"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riporta i livelli"
+          }
+        }
+      }
+    },
     "Bring Forward" : {
       "localizations" : {
         "de" : {
@@ -9024,6 +9420,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Recupero delle immagini (%lld di %lld)…"
+          }
+        }
+      }
+    },
+    "Brings the layers picked back as they were, into the design as it is now" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Holt die gewählten Ebenen so zurück, wie sie waren, ins Design, wie es jetzt ist"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ramène les calques choisis tels qu’ils étaient dans le design tel qu’il est maintenant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riporta i livelli scelti com’erano nel design com’è adesso"
           }
         }
       }
@@ -9718,6 +10136,28 @@
         }
       }
     },
+    "Case" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schreibweise"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Casse"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maiuscole"
+          }
+        }
+      }
+    },
     "Case-Sensitive Forms" : {
       "localizations" : {
         "de" : {
@@ -10406,6 +10846,28 @@
         }
       }
     },
+    "Change Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz ändern"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier la note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifica nota"
+          }
+        }
+      }
+    },
     "change one" : {
       "localizations" : {
         "de" : {
@@ -10666,6 +11128,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modifica stile"
+          }
+        }
+      }
+    },
+    "Change the Pill button here in the tour. Back in your design, a note at the top offers the change: click Update and it follows." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ändere den Pill-Button hier in der Tour. Zurück in deinem Design bietet dir oben ein Hinweis die Änderung an: Klick auf Aktualisieren, und er zieht nach."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifiez le Bouton pilule ici, dans la visite. De retour dans votre design, une note en haut vous propose le changement : cliquez sur Mettre à jour et il suit."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambia il Pulsante a pillola qui nel tour. Tornato nel tuo design, un avviso in alto ti propone la modifica: fai clic su Aggiorna e si adegua."
           }
         }
       }
@@ -11110,6 +11594,28 @@
         }
       }
     },
+    "circle my price" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "kreis meinen Preis ein"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "entourez mon prix"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "cerchia il mio prezzo"
+          }
+        }
+      }
+    },
     "Circular Progress Indicator" : {
       "localizations" : {
         "de" : {
@@ -11198,6 +11704,28 @@
         }
       }
     },
+    "Click a layer that changed and choose Bring Back for just that one, or go back to the whole version. What is there now is kept first." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf eine geänderte Ebene und wähl Zurückholen für nur diese, oder geh zur ganzen Version zurück. Was jetzt da ist, wird vorher aufbewahrt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur un calque modifié et choisissez Ramener pour lui seul, ou revenez à la version entière. Ce qui est là maintenant est gardé d’abord."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic su un livello cambiato e scegli Riporta solo per quello, o torna all’intera versione. Ciò che c’è ora viene conservato prima."
+          }
+        }
+      }
+    },
     "Click a piece to make it a shape of its own, or drag across pieces to join them. Hold ⌥ to wipe pieces away. Press ↩ when you’re done." : {
       "localizations" : {
         "de" : {
@@ -11282,6 +11810,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fai clic sul punto 1, poi 2, 3 e così via intorno alla stella. Fai di nuovo clic sul punto 1 per chiudere la forma."
+          }
+        }
+      }
+    },
+    "click me twice" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "klick mich zweimal"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "cliquez-moi deux fois"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "cliccami due volte"
           }
         }
       }
@@ -11660,6 +12210,28 @@
         }
       }
     },
+    "Click the word Follow, then once more: Bezzle climbs to the whole button and draws its size in blue. Point at the portrait to see how far apart they are." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf das Wort Folgen, dann noch einmal: Bezzle steigt zum ganzen Button auf und zeichnet seine Größe in Blau. Zeig auf das Porträt, um den Abstand zu sehen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le mot Suivre, puis encore une fois : Bezzle remonte au bouton entier et trace sa taille en bleu. Pointez le portrait pour voir l’écart entre eux."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sulla parola Segui, poi ancora una volta: Bezzle sale al pulsante intero e ne disegna le misure in blu. Punta il ritratto per vedere quanto distano."
+          }
+        }
+      }
+    },
     "Click to add a colour here" : {
       "localizations" : {
         "de" : {
@@ -11836,6 +12408,28 @@
         }
       }
     },
+    "Close Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz abschließen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clore la note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chiudi la nota"
+          }
+        }
+      }
+    },
     "Close Other Tabs" : {
       "localizations" : {
         "de" : {
@@ -11920,6 +12514,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chiudi pannello  ⌘W"
+          }
+        }
+      }
+    },
+    "Close this note" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Notiz abschließen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clore cette note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chiudi questa nota"
           }
         }
       }
@@ -12474,6 +13091,28 @@
         }
       }
     },
+    "Concert ticket" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konzertticket"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Billet de concert"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biglietto del concerto"
+          }
+        }
+      }
+    },
     "Conic and other gradients, left out" : {
       "localizations" : {
         "de" : {
@@ -12870,6 +13509,50 @@
         }
       }
     },
+    "Copy as PNG" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als PNG kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier en PNG"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia come PNG"
+          }
+        }
+      }
+    },
+    "Copy as SVG" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als SVG kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier en SVG"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia come SVG"
+          }
+        }
+      }
+    },
     "Copy Claude Code Command" : {
       "localizations" : {
         "de" : {
@@ -12914,6 +13597,28 @@
         }
       }
     },
+    "Copy CSS" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CSS kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le CSS"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia CSS"
+          }
+        }
+      }
+    },
     "Copy link" : {
       "localizations" : {
         "de" : {
@@ -12936,6 +13641,28 @@
         }
       }
     },
+    "Copy Name" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Namen kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le nom"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia nome"
+          }
+        }
+      }
+    },
     "Copy Server Address" : {
       "localizations" : {
         "de" : {
@@ -12954,6 +13681,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copia indirizzo del server"
+          }
+        }
+      }
+    },
+    "Copy SwiftUI" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SwiftUI kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le SwiftUI"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia SwiftUI"
+          }
+        }
+      }
+    },
+    "Copy Text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le texte"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia testo"
           }
         }
       }
@@ -14348,6 +15119,28 @@
         }
       }
     },
+    "Delete Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz löschen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer la note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elimina nota"
+          }
+        }
+      }
+    },
     "Delete Path" : {
       "localizations" : {
         "de" : {
@@ -14520,6 +15313,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Design"
+          }
+        }
+      }
+    },
+    "Design system" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Designsystem"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Système de design"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Design system"
           }
         }
       }
@@ -15545,6 +16360,28 @@
         }
       }
     },
+    "Drag a note’s pin to the button: its thread comes along. Talked it through? Tick it off with the round mark at its head." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zieh den Pin einer Notiz auf den Knopf: Ihr Faden kommt mit. Alles besprochen? Hak sie mit dem runden Zeichen oben in der Notiz ab."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faites glisser l’épingle d’une note sur le bouton : son fil suit. Tout est dit ? Cochez-la avec le rond en haut de la note."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trascina lo spillo di una nota sul pulsante: il suo filo lo segue. Tutto chiarito? Spuntala con il cerchio in alto nella nota."
+          }
+        }
+      }
+    },
     "Drag a photo of a person, a pet or a thing from the Finder or Photos onto the frame." : {
       "localizations" : {
         "de" : {
@@ -15629,6 +16466,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Trascina sui pezzi per unirli in una forma, o fai clic su uno per renderlo a sé. Tieni premuto ⌥ per cancellare i pezzi."
+          }
+        }
+      }
+    },
+    "Drag along the ruler, or swipe across it with two fingers: the poster goes back to how it was. Pencil marks show what has changed since." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zieh über das Lineal oder wisch mit zwei Fingern darüber: Das Poster wird wieder, wie es war. Bleistiftmarken zeigen, was sich seither geändert hat."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faites glisser le long de la règle, ou balayez-la à deux doigts : l’affiche redevient ce qu’elle était. Des marques au crayon montrent ce qui a changé depuis."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trascina lungo il righello, o scorri sopra con due dita: il poster torna com’era. I segni a matita mostrano cosa è cambiato da allora."
           }
         }
       }
@@ -16909,6 +17768,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cancella pezzi"
+          }
+        }
+      }
+    },
+    "Esc climbs one level up. ⌃I again goes back to designing." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esc steigt eine Ebene höher. Mit ⌃I geht es zurück zum Gestalten."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Échap remonte d’un niveau. ⌃I à nouveau revient à la conception."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esc sale di un livello. Di nuovo ⌃I torna al design."
           }
         }
       }
@@ -18786,6 +19667,28 @@
         }
       }
     },
+    "First draft" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erster Entwurf"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Premier jet"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prima bozza"
+          }
+        }
+      }
+    },
     "First names" : {
       "localizations" : {
         "de" : {
@@ -19141,6 +20044,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Segui"
+          }
+        }
+      }
+    },
+    "Follow button" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folgen-Button"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bouton Suivre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pulsante Segui"
           }
         }
       }
@@ -19541,6 +20466,50 @@
         }
       }
     },
+    "Fridays from 6 pm" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Freitags ab 18 Uhr"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le vendredi dès 18 h"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il venerdì dalle 18"
+          }
+        }
+      }
+    },
+    "From “%@”" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus „%@“"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De « %@ »"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Da “%@”"
+          }
+        }
+      }
+    },
     "From %@ to %@" : {
       "localizations" : {
         "de" : {
@@ -19871,6 +20840,28 @@
         }
       }
     },
+    "Get tickets" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tickets holen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réserver"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prenota"
+          }
+        }
+      }
+    },
     "Ghost Button" : {
       "localizations" : {
         "de" : {
@@ -19933,6 +20924,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dai un nome a colori, testo, ombre o angoli nel design, e qui escono come token."
+          }
+        }
+      }
+    },
+    "Give it a name" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gib ihr einen Namen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donnez-lui un nom"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dalle un nome"
           }
         }
       }
@@ -20022,6 +21035,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Torna indietro"
+          }
+        }
+      }
+    },
+    "Go Back to This Version" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu dieser Version zurück"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revenir à cette version"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Torna a questa versione"
+          }
+        }
+      }
+    },
+    "Go Back to Version" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu Version zurückgehen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revenir à une version"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Torna a una versione"
           }
         }
       }
@@ -22199,6 +23256,28 @@
         }
       }
     },
+    "Inspect the design as it is built: sizes, distances, looks and code  ⌃I" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Design untersuchen, wie es gebaut wird: Größen, Abstände, Looks und Code  ⌃I"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inspecter le design tel qu’il sera construit : tailles, distances, apparences et code  ⌃I"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ispeziona il design come verrà costruito: misure, distanze, aspetto e codice  ⌃I"
+          }
+        }
+      }
+    },
     "Instagram" : {
       "shouldTranslate" : false
     },
@@ -22615,6 +23694,28 @@
         }
       }
     },
+    "Is the title big enough to read from across the room?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ist der Titel groß genug, um ihn quer durch den Raum zu lesen?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le titre est-il assez grand pour être lu depuis l’autre bout de la salle ?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il titolo è abbastanza grande da leggersi dall’altra parte della sala?"
+          }
+        }
+      }
+    },
     "it ends too soon" : {
       "localizations" : {
         "de" : {
@@ -22677,6 +23778,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "annidamento troppo profondo"
+          }
+        }
+      }
+    },
+    "it looked different yesterday" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "gestern sah ich anders aus"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "hier, j’étais différente"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ieri ero diverso"
           }
         }
       }
@@ -22942,6 +24065,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Giustifica"
+          }
+        }
+      }
+    },
+    "Keep Bezzle Open" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle offen lassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder Bezzle ouvert"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lascia Bezzle aperto"
           }
         }
       }
@@ -23457,6 +24602,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Casetta sul lago"
+          }
+        }
+      }
+    },
+    "Lantern" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laterne"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lanterne"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lanterna"
           }
         }
       }
@@ -24147,6 +25314,28 @@
         }
       }
     },
+    "Letter Spacing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeichenabstand"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Approche"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spaziatura lettere"
+          }
+        }
+      }
+    },
     "Letters given a colour of their own while typing keep it over the paint." : {
       "localizations" : {
         "de" : {
@@ -24627,6 +25816,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Linea"
+          }
+        }
+      }
+    },
+    "Line Height" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeilenhöhe"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interligne"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interlinea"
           }
         }
       }
@@ -25143,34 +26354,6 @@
         }
       }
     },
-    "live.go-to-person" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zu %@"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Go to %@"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rejoindre %@"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Raggiungi %@"
-          }
-        }
-      }
-    },
     "Loading the page…" : {
       "localizations" : {
         "de" : {
@@ -25299,6 +26482,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "bloccato"
+          }
+        }
+      }
+    },
+    "Look back in time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zurück in der Zeit."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remontez le temps."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Torna indietro nel tempo."
           }
         }
       }
@@ -25912,6 +27117,28 @@
         }
       }
     },
+    "Mark as Done" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als erledigt markieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Marquer comme terminé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Segna come fatto"
+          }
+        }
+      }
+    },
     "Mark for export" : {
       "localizations" : {
         "de" : {
@@ -26216,6 +27443,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Maiuscole e minuscole"
+          }
+        }
+      }
+    },
+    "Measure it, copy the code." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausmessen, Code kopieren."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mesurez, copiez le code."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Misura, copia il codice."
           }
         }
       }
@@ -26536,6 +27785,35 @@
         }
       }
     },
+    "mode.inspect" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Untersuchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Inspect"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inspecter"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ispeziona"
+          }
+        }
+      }
+    },
     "mode.prototype" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -26605,6 +27883,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mese"
+          }
+        }
+      }
+    },
+    "Moon" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mond"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lune"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Luna"
           }
         }
       }
@@ -26941,6 +28241,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sposta estremità linea"
+          }
+        }
+      }
+    },
+    "Move Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz verschieben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer la note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta nota"
           }
         }
       }
@@ -27341,6 +28663,50 @@
         }
       }
     },
+    "Name this moment" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen Moment benennen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nommer cet instant"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dai un nome a questo momento"
+          }
+        }
+      }
+    },
+    "Named version" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Benannte Version"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version nommée"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versione con nome"
+          }
+        }
+      }
+    },
     "Names" : {
       "localizations" : {
         "de" : {
@@ -27562,7 +28928,6 @@
       }
     },
     "New design" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -27646,6 +29011,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nuovo evento"
+          }
+        }
+      }
+    },
+    "New in “%@”: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neu in „%1$@“: %2$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouveau dans « %1$@ » : %2$@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Novità in “%1$@”: %2$@"
           }
         }
       }
@@ -27870,6 +29257,28 @@
         }
       }
     },
+    "Next Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nächste Notiz"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Note suivante"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nota successiva"
+          }
+        }
+      }
+    },
     "Next Post" : {
       "localizations" : {
         "de" : {
@@ -27888,6 +29297,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Post successivo"
+          }
+        }
+      }
+    },
+    "Night Market" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nachtmarkt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Marché de nuit"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mercato notturno"
+          }
+        }
+      }
+    },
+    "Night sky" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nachthimmel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ciel nocturne"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cielo notturno"
           }
         }
       }
@@ -28178,6 +29631,28 @@
         }
       }
     },
+    "Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nota"
+          }
+        }
+      }
+    },
     "Notes.txt" : {
       "localizations" : {
         "de" : {
@@ -28285,6 +29760,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nel punto scelto non c’è nulla che si stacchi dallo sfondo."
+          }
+        }
+      }
+    },
+    "Nothing you take ever changes the design it came from." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Was du übernimmst, verändert nie das Design, aus dem es kommt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce que vous prenez ne change jamais le design d’où il vient."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ciò che prendi non cambia mai il design da cui viene."
           }
         }
       }
@@ -28549,6 +30046,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scostamento"
+          }
+        }
+      }
+    },
+    "Old Town Hall" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Altes Rathaus"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ancien hôtel de ville"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vecchio municipio"
           }
         }
       }
@@ -29236,6 +30755,28 @@
         }
       }
     },
+    "Open Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wieder öffnen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rouvrir"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riapri"
+          }
+        }
+      }
+    },
     "Open at login" : {
       "localizations" : {
         "de" : {
@@ -29298,6 +30839,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apri la sua scheda Scuro e fai clic su Versione chiara accanto. Il sole e la luna sulla scheda passano la schermata dall’una all’altra."
+          }
+        }
+      }
+    },
+    "Open Note Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz wieder öffnen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rouvrir la note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riapri la nota"
           }
         }
       }
@@ -29430,6 +30993,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apri il file, o trascinalo in Impostazioni ▸ Estensioni di Claude Desktop, per installarlo."
+          }
+        }
+      }
+    },
+    "Open Welcome to Bezzle there and click its Pill button or one of its colours: it comes into your design and remembers where it came from." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffne dort Willkommen bei Bezzle und klick auf seinen Pill-Button oder eine seiner Farben: Was du anklickst, kommt in dein Design und merkt sich, woher es stammt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrez-y Bienvenue dans Bezzle et cliquez sur son Bouton pilule ou sur une de ses couleurs : ce que vous choisissez entre dans votre design et se souvient d’où il vient."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apri lì Primi passi con Bezzle e fai clic sul suo Pulsante a pillola o su uno dei suoi colori: entra nel tuo design e ricorda da dove viene."
           }
         }
       }
@@ -31387,6 +32972,28 @@
         }
       }
     },
+    "Play its story" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entstehung abspielen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rejouer son histoire"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riproduci la sua storia"
+          }
+        }
+      }
+    },
     "Play Prototype" : {
       "localizations" : {
         "de" : {
@@ -31563,6 +33170,28 @@
         }
       }
     },
+    "Portrait" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Porträt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Portrait"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ritratto"
+          }
+        }
+      }
+    },
     "Portrait 4:5" : {
       "localizations" : {
         "de" : {
@@ -31717,6 +33346,28 @@
         }
       }
     },
+    "Press ⌘N for a design of your own, then ⇧⌘Y for Resources. Every one of your designs is a library there, this tour too." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drück ⌘N für ein eigenes Design, dann ⇧⌘Y für die Ressourcen. Jedes deiner Designs ist dort eine Bibliothek, auch diese Tour."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appuyez sur ⌘N pour un design à vous, puis sur ⇧⌘Y pour les Ressources. Chacun de vos designs y est une bibliothèque, cette visite aussi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Premi ⌘N per un design tutto tuo, poi ⇧⌘Y per le Risorse. Lì ognuno dei tuoi design è una libreria, anche questo tour."
+          }
+        }
+      }
+    },
     "Press ⌘Z to go back: the design is just as it was. Turn off Adapt layout in the same card to resize an artboard without moving anything." : {
       "localizations" : {
         "de" : {
@@ -31739,6 +33390,28 @@
         }
       }
     },
+    "Press ⌥⌘T. Every version kept of this tour stands on the ruler, each stroke in the colour of the sky it was made under." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drück ⌥⌘T. Jede Version, die von dieser Tour aufbewahrt wurde, steht auf dem Lineal, jeder Strich in der Farbe des Himmels, unter dem sie entstand."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appuyez sur ⌥⌘T. Chaque version gardée de cette visite figure sur la règle, chaque trait de la couleur du ciel sous lequel elle est née."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Premi ⌥⌘T. Ogni versione conservata di questo tour sta sul righello, ogni tratto del colore del cielo sotto cui è nata."
+          }
+        }
+      }
+    },
     "Press K and drag the knife straight across the lemon. Press V, then pull the halves apart." : {
       "localizations" : {
         "de" : {
@@ -31757,6 +33430,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Premi K e trascina il taglierino attraverso il limone. Premi V, poi separa le due metà."
+          }
+        }
+      }
+    },
+    "Press N and draw a loop round the price. Write what you think of it and press ↩." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drück N und zieh eine Schlaufe um den Preis. Schreib, was du davon hältst, und drück ↩."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appuyez sur N et tracez une boucle autour du prix. Écrivez ce que vous en pensez et appuyez sur ↩."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Premi N e traccia un cerchio intorno al prezzo. Scrivi cosa ne pensi e premi ↩."
           }
         }
       }
@@ -31915,6 +33610,28 @@
         }
       }
     },
+    "Previous Note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorherige Notiz"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Note précédente"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nota precedente"
+          }
+        }
+      }
+    },
     "Previous Post" : {
       "localizations" : {
         "de" : {
@@ -31933,6 +33650,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Post precedente"
+          }
+        }
+      }
+    },
+    "Price" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preis"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prix"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prezzo"
           }
         }
       }
@@ -32179,6 +33918,28 @@
         }
       }
     },
+    "Product designer in Zurich" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Produktdesignerin in Zürich"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Designer produit à Zurich"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Product designer a Zurigo"
+          }
+        }
+      }
+    },
     "Profile" : {
       "localizations" : {
         "de" : {
@@ -32197,6 +33958,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Profilo"
+          }
+        }
+      }
+    },
+    "Profile card" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Profilkarte"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carte de profil"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scheda profilo"
           }
         }
       }
@@ -32531,6 +34314,28 @@
         }
       }
     },
+    "Put the ruler away  ⎋" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lineal wegräumen  ⎋"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ranger la règle  ⎋"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Metti via il righello  ⎋"
+          }
+        }
+      }
+    },
     "Puts the pen down." : {
       "localizations" : {
         "de" : {
@@ -32571,6 +34376,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Qualità"
+          }
+        }
+      }
+    },
+    "Quit Anyway" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trotzdem beenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quitter quand même"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esci comunque"
           }
         }
       }
@@ -35361,6 +37188,28 @@
         }
       }
     },
+    "Saturday 12 April, 7 pm" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Samstag, 12. April, 19 Uhr"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Samedi 12 avril, 19 h"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sabato 12 aprile, ore 19"
+          }
+        }
+      }
+    },
     "Saturday, 6 pm" : {
       "localizations" : {
         "de" : {
@@ -36178,6 +38027,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Selezione"
+          }
+        }
+      }
+    },
+    "Send" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Senden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoyer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invia"
           }
         }
       }
@@ -38831,6 +40702,28 @@
         }
       }
     },
+    "Spring Concert" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frühlingskonzert"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Concert de printemps"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Concerto di primavera"
+          }
+        }
+      }
+    },
     "Square" : {
       "localizations" : {
         "de" : {
@@ -39764,6 +41657,28 @@
         }
       }
     },
+    "Stop" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anhalten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrêter"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ferma"
+          }
+        }
+      }
+    },
     "Stop editing points  ↩" : {
       "localizations" : {
         "de" : {
@@ -39782,28 +41697,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Termina modifica punti  ↩"
-          }
-        }
-      }
-    },
-    "Stop going along with %@" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nicht mehr mit %@ mitgehen"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ne plus suivre %@"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Smetti di seguire %@"
           }
         }
       }
@@ -40694,6 +42587,28 @@
         }
       }
     },
+    "Switch to Inspect at the top, or press ⌃I. Nothing can be moved by mistake there: it is for looking." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wechsle oben zu Untersuchen oder drück ⌃I. Dort lässt sich nichts aus Versehen verschieben: Es ist zum Anschauen da."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passez en mode Inspecter en haut, ou appuyez sur ⌃I. Rien ne peut y être déplacé par erreur : c’est fait pour regarder."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passa a Ispeziona in alto, o premi ⌃I. Lì niente si sposta per sbaglio: serve a guardare."
+          }
+        }
+      }
+    },
     "Symbol instances whose master is missing" : {
       "localizations" : {
         "de" : {
@@ -40778,6 +42693,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Simboli che contengono se stessi, omessi"
+          }
+        }
+      }
+    },
+    "System" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Système"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sistema"
           }
         }
       }
@@ -40998,6 +42935,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tag"
+          }
+        }
+      }
+    },
+    "take it along" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nimm mich mit"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "emportez-moi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "portami con te"
+          }
+        }
+      }
+    },
+    "Take it from another design." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus einem anderen Design holen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prenez-le dans un autre design."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prendilo da un altro design."
           }
         }
       }
@@ -42432,6 +44413,28 @@
         }
       }
     },
+    "The design becomes what it was then. What it is now is kept as a version first." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Design wird wieder, wie es damals war. Der jetzige Stand wird vorher als Version aufbewahrt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le design redevient ce qu’il était alors. Son état actuel est d’abord conservé comme version."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il design torna com’era allora. Quello attuale viene prima conservato come versione."
+          }
+        }
+      }
+    },
     "The design could not be packed up to send." : {
       "localizations" : {
         "de" : {
@@ -42520,6 +44523,28 @@
         }
       }
     },
+    "The flag above the ruler names a moment. Named versions are kept for good, and everyone sharing the design has them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit dem Fähnchen über dem Lineal benennst du einen Moment. Benannte Versionen bleiben für immer, und alle, mit denen du das Design teilst, haben sie auch."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le drapeau au-dessus de la règle nomme un moment. Les versions nommées sont gardées pour de bon, et tous ceux qui partagent le design les ont."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La bandierina sopra il righello dà un nome a un momento. Le versioni con un nome restano per sempre, e le ha chiunque condivida il design."
+          }
+        }
+      }
+    },
     "the frame is not the size it says" : {
       "localizations" : {
         "de" : {
@@ -42538,6 +44563,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "il frame non ha la dimensione dichiarata"
+          }
+        }
+      }
+    },
+    "The inspector shows the button’s CSS and SwiftUI, ready to copy. Drag its picture from the inspector into any app." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Inspektor zeigt das CSS und SwiftUI des Buttons, bereit zum Kopieren. Zieh sein Bild aus dem Inspektor in eine beliebige App."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’inspecteur montre le CSS et le SwiftUI du bouton, prêts à copier. Faites glisser son image depuis l’inspecteur dans n’importe quelle app."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’ispettore mostra il CSS e lo SwiftUI del pulsante, pronti da copiare. Trascina la sua immagine dall’ispettore in qualsiasi app."
           }
         }
       }
@@ -43682,6 +45729,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Elemento di elenco a tre righe"
+          }
+        }
+      }
+    },
+    "Ticket" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ticket"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Billet"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biglietto"
+          }
+        }
+      }
+    },
+    "Ticket button" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ticket-Knopf"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bouton du billet"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pulsante del biglietto"
           }
         }
       }
@@ -44847,7 +46938,53 @@
         }
       }
     },
+    "Twenty-six lessons, about a minute each." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sechsundzwanzig Lektionen, je etwa eine Minute."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vingt-six leçons, environ une minute chacune."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ventisei lezioni, circa un minuto l’una."
+          }
+        }
+      }
+    },
+    "Twenty-three lessons, about a minute each." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dreiundzwanzig Lektionen, je etwa eine Minute."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vingt-trois leçons, environ une minute chacune."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ventitré lezioni, circa un minuto l’una."
+          }
+        }
+      }
+    },
     "Twenty-two lessons, about a minute each." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -45711,6 +47848,50 @@
         }
       }
     },
+    "Update" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktualisieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mettre à jour"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aggiorna"
+          }
+        }
+      }
+    },
+    "Update from Library" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus Bibliothek aktualisieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mettre à jour depuis la bibliothèque"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aggiorna dalla libreria"
+          }
+        }
+      }
+    },
     "Upgrade plan" : {
       "localizations" : {
         "de" : {
@@ -46081,6 +48262,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cronologia versioni"
+          }
+        }
+      }
+    },
+    "Versions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versionen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versions"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versioni"
+          }
+        }
+      }
+    },
+    "Versions  ⌥⌘T" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versionen  ⌥⌘T"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versions  ⌥⌘T"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versioni  ⌥⌘T"
           }
         }
       }
@@ -47343,6 +49568,28 @@
         }
       }
     },
+    "Write a note" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notiz schreiben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Écrire une note"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scrivi una nota"
+          }
+        }
+      }
+    },
     "Write a Note" : {
       "localizations" : {
         "de" : {
@@ -47361,6 +49608,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scrivi una nota"
+          }
+        }
+      }
+    },
+    "Write in the margin." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schreib an den Rand."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Écrivez dans la marge."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scrivi a margine."
           }
         }
       }
@@ -47904,94 +50173,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Adatta alla selezione"
-          }
-        }
-      }
-    },
-    "“%@” could not be saved." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "„%@“ konnte nicht gespeichert werden."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "« %@ » n’a pas pu être enregistré."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Impossibile salvare “%@”."
-          }
-        }
-      }
-    },
-    "%lld designs could not be saved." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld Designs konnten nicht gespeichert werden."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld designs n’ont pas pu être enregistrés."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Non è stato possibile salvare %lld design."
-          }
-        }
-      }
-    },
-    "Keep Bezzle Open" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle offen lassen"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Garder Bezzle ouvert"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lascia Bezzle aperto"
-          }
-        }
-      }
-    },
-    "Quit Anyway" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Trotzdem beenden"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Quitter quand même"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Esci comunque"
           }
         }
       }

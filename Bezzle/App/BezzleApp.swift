@@ -151,6 +151,12 @@ struct BezzleCommands: Commands {
             Button("Export…") { store?.exporting = true }
                 .keyboardShortcut("e")
                 .disabled(store == nil)
+            Button("Versions") {
+                guard let versions = store?.versions else { return }
+                if versions.browsing { versions.leave() } else { versions.browse() }
+            }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+                .disabled(store == nil)
             Divider()
             Button("Show in Finder") { if let url = store?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
                 .disabled(store == nil)
@@ -358,6 +364,9 @@ struct BezzleCommands: Commands {
             Divider()
             Toggle(LocalizedStringResource("mode.prototype", defaultValue: "Prototype"), isOn: Binding(get: { store?.prototyping == true }, set: { store?.prototyping = $0 }))
                 .keyboardShortcut("p", modifiers: .control)
+                .disabled(store == nil)
+            Toggle(LocalizedStringResource("mode.inspect", defaultValue: "Inspect"), isOn: Binding(get: { store?.inspecting == true }, set: { on in store?.show(on ? .inspect : .prototype) }))
+                .keyboardShortcut("i", modifiers: .control)
                 .disabled(store == nil)
             Button("Play Prototype") { store?.play() }
                 .keyboardShortcut(.return, modifiers: .command)

@@ -228,6 +228,31 @@ extension MCPTools {
                                     "description": "Guides to add, each {direction: \"vertical\" or \"horizontal\", at: distance, from: \"start\", \"middle\" or \"end\"}. start is the left or top edge."]),
                            ("remove", Self.list("Ids of guides to take away, or [\"all\"].")),
                        ]), run: { [unowned self] in try await self.guides($0) }),
+            Definition(name: "notes", title: "Read, write and answer notes",
+                       description: "Notes are what people write in a design's margins about a layer or an artboard, at a spot on it or round a part of it circled in pencil, and their answers, as threads. Shared designs carry everyone's. With nothing but design, lists the threads, closed (ticked off) ones marked, each with its answers. write starts a thread about layer (at x, y from 0 to 1 across and down it; the middle otherwise), or at x, y on the canvas; with area instead, about the part circled. answer with thread adds an answer. close or reopen take thread ids; a closed thread leaves the margin. move puts a thread's spot elsewhere. remove takes note ids, a thread's id taking its answers too. show opens a thread on screen, the view flying to it. Your notes are signed Claude.",
+                       properties: .object([
+                           design,
+                           ("write", Self.text("Starts a thread with these words.")),
+                           ("layer", Self.text("With write: the layer or artboard it is about, by id or name.")),
+                           ("x", Self.number("With write: across the layer, 0 to 1; or on the canvas, without layer.")),
+                           ("y", Self.number("With write: down the layer, 0 to 1; or on the canvas, without layer.")),
+                           ("area", ["type": "object", "description": "With write or move: the part circled, {x, y, width, height}, on the canvas; it goes with the layer it is round as that moves."]),
+                           ("answer", Self.text("Answers thread with these words.")),
+                           ("thread", Self.text("With answer or move: the id of the note that starts the thread.")),
+                           ("move", ["type": "object", "description": "With thread: where its spot goes now, {x, y} on the canvas; it is about whatever is there. With area, the loop moves round that instead."]),
+                           ("show", Self.text("The id of a thread to open on screen.")),
+                           ("close", Self.list("Ids of threads talked out.")),
+                           ("reopen", Self.list("Ids of closed threads to open again.")),
+                           ("remove", Self.list("Ids of notes to take away.")),
+                       ]), run: { [unowned self] in try await self.notes($0) }),
+            Definition(name: "versions", title: "List, name or go back to versions",
+                       description: "A design keeps versions of itself as it is worked on, and named ones for good. With nothing but design, lists them, newest first. name keeps the design as it is now as a version with that name. go_back_to with a version's id makes the design what it was then: a change like any other, which undo takes back, with the design as it was just before kept as a named version first, and its notes left as they are.",
+                       properties: .object([
+                           design,
+                           ("name", Self.text("Keeps the design as it is now as a version called this.")),
+                           ("go_back_to", Self.text("The id of a version to go back to.")),
+                           ("show", Self.text("Shows a version on the canvas for the person to see, with the ruler of time out: its id, \"now\", or \"none\" to put the ruler away. It changes nothing.")),
+                       ]), run: { [unowned self] in try await self.versions($0) }),
             Definition(name: "styles", title: "List, name, use or change styles",
                        description: "Styles are looks with names: colours (a fill's, a text's, a border's), text styles (font, size, spacing), shadows and corners. A layer using a style looks as it does, and the style is the same on every layer: change it here, or change that look on any layer that uses it with update_layers, and every layer using it changes. With nothing but design, lists the styles (with their dark looks), how many layers use each, and the looks several layers share without a name. appearance shows an artboard dark or light. name with layer (and place, all_alike) names a layer's look. style with layers gives them the style; with rename, color, type, shadow or corners, changes it; with remove, takes it away, leaving its layers as they look. unname with layers lets them go of their names.",
                        properties: .object([
@@ -348,7 +373,8 @@ extension MCPTools {
                            design,
                            ("within", Self.text("Only inside this artboard, group or text layer.")),
                        ]), readOnly: true, run: { [unowned self] in try await self.checkSpelling($0) }),
-        ] + resourceDefinitions(design: design) + componentDefinitions(design: design) + curveDefinitions(design: design)
+        ] + resourceDefinitions(design: design) + componentDefinitions(design: design) + libraryDefinitions(design: design)
+          + curveDefinitions(design: design)
           + prototypeDefinitions(design: design)
     }
 

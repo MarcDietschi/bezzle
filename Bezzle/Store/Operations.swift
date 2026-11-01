@@ -379,6 +379,9 @@ extension DocumentStore {
         var components: [Node]?
         /// The styles any of them are named after, likewise. See `Style`.
         var styles: [Style]?
+        /// The design they were copied from, which the components and styles new to another design
+        /// remember (`LibraryLink`).
+        var from: String?
     }
 
     func copySelection() {
@@ -393,7 +396,7 @@ extension DocumentStore {
         let named = (nodes + masters).reduce(into: Set<UUID>()) { $0.formUnion($1.stylesUsed) }
         let styles = (doc.styles ?? []).filter { named.contains($0.id) }
         guard !nodes.isEmpty, let data = try? JSONEncoder().encode(Clip(nodes: nodes, components: masters.isEmpty ? nil : masters,
-                                                                         styles: styles.isEmpty ? nil : styles)) else { return }
+                                                                         styles: styles.isEmpty ? nil : styles, from: name)) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setData(data, forType: Self.pasteboardType)
@@ -427,19 +430,12 @@ extension DocumentStore {
             }
             for i in nodes.indices { nodes[i].frame = nodes[i].frame.offsetBy(dx: shift.x, dy: shift.y) }
             let target = focusedArtboard?.id
-            var masters = clip.components ?? []
-            let brought = clip.styles ?? []
+            // From another design, what is new here remembers where it came from.
+            let take = LibraryTake(name: clip.from == name ? nil : clip.from, masters: clip.components ?? [], styles: clip.styles ?? [])
             edit("Paste") { doc in
-                // Styles new to this design come with the layers named after them.
-                let renamed = doc.takeIn(brought)
-                if !renamed.isEmpty {
-                    nodes = nodes.map { $0.renamingStyles(renamed) }
-                    masters = masters.map { $0.renamingStyles(renamed) }
-                }
-                // Components new to this design come with their copies.
-                let have = Set(doc.masters.map(\.id))
-                let new = masters.filter { !have.contains($0.id) }
-                if !new.isEmpty { doc.masters += new }
+                // Styles and components new to this design come with the layers that use them.
+                let renamed = doc.bring(take)
+                if !renamed.isEmpty { nodes = nodes.map { $0.renamingStyles(renamed) } }
                 for n in nodes {
                     let onto = n.isArtboard ? nil : (doc.artboard(at: n.frame.center)?.id ?? target.flatMap { id in doc.node(id)?.frame.intersects(n.frame) == true ? id : nil })
                     doc.attach(n, to: onto)

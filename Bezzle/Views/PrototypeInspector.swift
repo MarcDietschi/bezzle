@@ -404,7 +404,7 @@ private struct PullDemo: View {
 
 /// The design as code: its named looks as tokens, copied in a click, and the whole prototype handed
 /// to Claude through Bezzle's AI server, which can write a change made in the code back here.
-private struct HandOffCard: View {
+struct HandOffCard: View {
     let store: DocumentStore
     @State private var copied: String?
 
@@ -453,6 +453,15 @@ private struct HandOffCard: View {
             }
             .buttonStyle(Pressable())
             .help("Copies what to tell Claude. With Bezzle connected, Claude gets every screen, flow, state and token in one go, and can write what changes in the code back into the design.")
+            // Building it by hand: the design inspected, measured and written as code a layer at a time.
+            if !store.inspecting {
+                CardButton(title: LocalizedStringResource("mode.inspect", defaultValue: "Inspect"), symbol: "ruler", height: 30) {
+                    store.show(.inspect)
+                    if let canvas = store.canvas { canvas.window?.makeFirstResponder(canvas) }
+                }
+                .frame(maxWidth: .infinity)
+                .help(CanvasMode.inspect.tip)
+            }
         }
         .padding(12)
         .card(radius: 12)
@@ -520,7 +529,7 @@ private struct TokenChip: View {
     }
 }
 
-private struct CodeGlyph: View {
+struct CodeGlyph: View {
     var body: some View {
         Canvas { ctx, s in
             var p = Path()
