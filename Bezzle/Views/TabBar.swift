@@ -29,7 +29,10 @@ struct MainWindow: View {
         }
         .background(Theme.paper)
         .ignoresSafeArea()
-        .frame(minWidth: 1000, minHeight: 640)
+        // Home alone has one size; with designs open the window takes any.
+        .frame(width: tabs.homeAlone?.width, height: tabs.homeAlone?.height)
+        .frame(minWidth: tabs.homeAlone == nil ? 1000 : nil, maxWidth: tabs.homeAlone == nil ? .infinity : nil,
+               minHeight: tabs.homeAlone == nil ? 640 : nil, maxHeight: tabs.homeAlone == nil ? .infinity : nil)
         .overlay {
             if let store = selected?.store, store.exporting {
                 ExportSheet(store: store)
@@ -52,11 +55,6 @@ struct MainWindow: View {
         .onAppear {
             WindowRouter.shared.openWindow = openWindow
             WindowRouter.shared.flush()
-        }
-        .onDisappear {
-            // Closing the window closes the designs in it, each saved.
-            tabs.closeAll()
-            tabs.window = nil
         }
     }
 }

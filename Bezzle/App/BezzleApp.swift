@@ -22,10 +22,11 @@ struct BezzleApp: App {
         .defaultLaunchBehavior(BezzleApp.isTesting ? .suppressed : .presented)
         .windowStyle(.hiddenTitleBar)
         .defaultWindowPlacement { _, context in
-            WindowPlacement(.center, size: Tabs.designSize(in: context.defaultDisplay.visibleRect.size))
+            WindowPlacement(.center, size: Tabs.homeSize(in: context.defaultDisplay.visibleRect.size))
         }
         .restorationBehavior(.disabled)
-        .windowResizability(.contentMinSize)
+        // Home alone keeps the window at one size; designs let it take any (see `Tabs.homeAlone`).
+        .windowResizability(.contentSize)
         .commands {
             BezzleCommands()
             MCPCommands()
@@ -86,10 +87,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Bezzle only goes once every open design is on disk. One that could not be written keeps it
+    /// open, unless told to go all the same.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppDelegate.terminating = true
         Tabs.shared.saveAll()
-        DocumentStore.finishSaving()
+        let unsaved = DocumentStore.unsaved(among: Tabs.shared.designs.compactMap { $0.store?.url })
+        if !unsaved.isEmpty, !BezzleApp.isTesting {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            if unsaved.count == 1, let design = unsaved.first {
+                alert.messageText = String(localized: "“\(design.url.deletingPathExtension().lastPathComponent)” could not be saved.")
+                alert.informativeText = design.reason
+            } else {
+                alert.messageText = String(localized: "\(unsaved.count) designs could not be saved.")
+                alert.informativeText = unsaved.map { "\($0.url.deletingPathExtension().lastPathComponent): \($0.reason)" }.joined(separator: "\n")
+            }
+            alert.addButton(withTitle: String(localized: "Keep Bezzle Open"))
+            alert.addButton(withTitle: String(localized: "Quit Anyway"))
+            alert.buttons[1].hasDestructiveAction = true
+            NSApp.activate()
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        }
+        AppDelegate.terminating = true
         return .terminateNow
     }
 }
@@ -116,7 +135,13 @@ struct BezzleCommands: Commands {
         CommandGroup(replacing: .saveItem) {
             Button(store != nil ? "Close Tab" : "Close") { WindowRouter.shared.closeFront() }
                 .keyboardShortcut("w")
-            Button("Close Window") { (Tabs.shared.window ?? NSApp.keyWindow)?.performClose(nil) }
+            Button("Close Window") {
+                if let window = Tabs.shared.window, NSApp.keyWindow === window || NSApp.keyWindow == nil {
+                    Tabs.shared.closeWindow()
+                } else {
+                    NSApp.keyWindow?.performClose(nil)
+                }
+            }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
         }
         CommandGroup(after: .saveItem) {
@@ -377,6 +402,8 @@ struct TitleBarDoubleClick: NSViewRepresentable {
             switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
             case "Minimize": window.performMiniaturize(nil)
             case "None": break
+            // Home alone keeps its one size.
+            case _ where !window.styleMask.contains(.resizable): break
             // Zoom, and Fill, which AppKit offers no way to ask for, and the system's own choice
             // while none is made: the window takes the screen, and a second double click gives
             // it back its size.

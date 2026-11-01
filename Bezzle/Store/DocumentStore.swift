@@ -562,11 +562,23 @@ final class DocumentStore {
         Self.saving.async { [copy] in
             do {
                 try DesignFile.write(copy, to: url)
+                Self.unwritten[url] = nil
             } catch {
+                Self.unwritten[url] = error.localizedDescription
                 NSLog("Bezzle could not save %@: %@", url.path, error.localizedDescription)
             }
         }
         Library.shared.touched(url)
+    }
+
+    /// Why the last save of each design that could not be written failed. Only ever touched on
+    /// the saving queue.
+    nonisolated(unsafe) private static var unwritten: [URL: String] = [:]
+
+    /// Of the designs at `urls`, those whose last save did not reach the disk, and why, once every
+    /// save asked for so far is done.
+    static func unsaved(among urls: [URL]) -> [(url: URL, reason: String)] {
+        saving.sync { urls.compactMap { url in unwritten[url].map { (url, $0) } } }
     }
 
     /// What the last save gave sharing to take in: the design as it was then, and which sharing.

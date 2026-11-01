@@ -3,8 +3,9 @@ import AppKit
 import UniformTypeIdentifiers
 
 /// The designs open in Bezzle's one window, a tab each, after the home tab that is always first.
-/// Opening or making a design gives it a tab and brings it to the front; closing its tab saves it
-/// and lets it go.
+/// Opening or making a design gives it a tab and brings it to the front; closing its tab saves it,
+/// lets it go and brings home back. The window stays as long as Bezzle runs: closing it closes the
+/// designs in it, and only closing home as well quits Bezzle.
 @MainActor @Observable
 final class Tabs {
     static let shared = Tabs()
@@ -22,9 +23,26 @@ final class Tabs {
             focusWatch = window?.observe(\.firstResponder) { window, _ in
                 MainActor.assumeIsolated { Tabs.shared.keepFocus(in: window) }
             }
+            guard window !== oldValue else { return }
+            windowWatch.forEach(NotificationCenter.default.removeObserver)
+            windowWatch = []
+            guard let window else { return }
+            closeButton.hook(window)
+            let center = NotificationCenter.default
+            windowWatch = [
+                // Back from full screen, home alone takes its own size again.
+                center.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { _ in
+                    MainActor.assumeIsolated { Tabs.shared.fitWindow() }
+                },
+            ]
+            // Designs opened from the Finder as Bezzle starts may already be in their tabs.
+            fitWindow(animate: false)
         }
     }
     @ObservationIgnored private var focusWatch: NSKeyValueObservation?
+    @ObservationIgnored private var windowWatch: [NSObjectProtocol] = []
+    /// Answers the window's close button, which closes the designs rather than the window.
+    @ObservationIgnored private let closeButton = CloseButton()
     /// Gives Edit › Undo and every text field the history of the design in front.
     @ObservationIgnored private let undoResponder = TabsUndoResponder()
     /// The design tabs as they were last in front, the latest first.
@@ -50,7 +68,7 @@ final class Tabs {
             select(tab)
             return
         }
-        if designs.isEmpty { makeRoom() }
+        if designs.isEmpty { fitWindow(forDesigns: true) }
         let tab = DesignTab(url: url)
         tab.load(report: report)
         designs.append(tab)
@@ -63,17 +81,47 @@ final class Tabs {
         CGSize(width: min(visible.width - 48, 2560), height: visible.height - 48)
     }
 
-    /// The first design opened makes room for itself: a smaller window grows to the size for
-    /// designing, in the middle of its screen, before the canvas is first laid out.
-    private func makeRoom() {
-        guard let window, window.isVisible, !window.styleMask.contains(.fullScreen),
+    /// How big the window is with home alone in it: home's page at its full width, with the sizes
+    /// on their table and a row of designs under them, the same every time, and no more than the
+    /// screen has.
+    static func homeSize(in visible: CGSize) -> CGSize {
+        CGSize(width: min(HomeView.maxWidth + HomeView.margin * 2, visible.width - 48), height: min(880, visible.height - 48))
+    }
+
+    /// The one size the window has while home is alone in it, which can't be changed: more room
+    /// would show nothing more. Nil while designs are open, or in full screen, when the window
+    /// takes any size. It is the size under the title bar, which SwiftUI adds to it.
+    private(set) var homeAlone: CGSize? = Tabs.homeSize(in: NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900))
+
+    /// Home alone keeps the window at its one size. The first design opened makes room for
+    /// itself: the window grows to the size for designing, in the middle of its screen, before
+    /// the canvas is first laid out, and from then on takes any size. With the last design
+    /// closed, it goes back to home's size. In full screen that waits until the window is back on
+    /// the desktop.
+    fileprivate func fitWindow(forDesigns: Bool? = nil, animate: Bool = true) {
+        guard let window, !window.styleMask.contains(.fullScreen),
               let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
-        let room = Self.designSize(in: visible.size)
-        var frame = window.frame
-        guard frame.width < room.width - 1 || frame.height < room.height - 1 else { return }
-        frame.size = CGSize(width: min(max(frame.width, room.width), visible.width), height: min(max(frame.height, room.height), visible.height))
-        frame.origin = CGPoint(x: (visible.midX - frame.width / 2).rounded(), y: (visible.midY - frame.height / 2).rounded())
-        window.setFrame(frame, display: true, animate: true)
+        let animate = animate && window.isVisible
+        if forDesigns ?? !designs.isEmpty {
+            homeAlone = nil
+            let room = Self.designSize(in: visible.size)
+            var frame = window.frame
+            guard frame.width < room.width - 1 || frame.height < room.height - 1 else { return }
+            frame.size = CGSize(width: min(max(frame.width, room.width), visible.width), height: min(max(frame.height, room.height), visible.height))
+            frame.origin = CGPoint(x: (visible.midX - frame.width / 2).rounded(), y: (visible.midY - frame.height / 2).rounded())
+            // Home's one size holds the window until SwiftUI next lays it out.
+            window.contentMaxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+            window.setFrame(frame, display: true, animate: animate)
+        } else {
+            // Shrinks about its middle, kept on the screen.
+            let size = Self.homeSize(in: visible.size)
+            let x = min(max(window.frame.midX - size.width / 2, visible.minX), visible.maxX - size.width)
+            let y = min(max(window.frame.midY - size.height / 2, visible.minY), visible.maxY - size.height)
+            let frame = CGRect(x: x.rounded(), y: y.rounded(), width: size.width, height: size.height)
+            if frame != window.frame { window.setFrame(frame, display: true, animate: animate) }
+            let titleBar = window.frame.height - window.contentLayoutRect.height
+            homeAlone = CGSize(width: size.width, height: size.height - titleBar)
+        }
     }
 
     /// Brings a tab to the front; nil is home.
@@ -90,18 +138,16 @@ final class Tabs {
         show(next)
     }
 
-    /// Closes a design's tab, saving it. The tab after it comes to the front, or the one before
-    /// when it was the last, and home after the last design.
+    /// Closes a design's tab, saving it. Closing the one in front brings home to the front; with
+    /// the last design closed, the window goes back to home's size.
     func close(_ tab: DesignTab) {
         guard let index = designs.firstIndex(where: { $0 === tab }) else { return }
+        if selectedID == tab.id { show(nil) }
         tab.close()
-        if selectedID == tab.id {
-            let next = designs.indices.contains(index + 1) ? designs[index + 1] : index > 0 ? designs[index - 1] : nil
-            show(next?.id)
-        }
         designs.remove(at: index)
         recency.removeAll { $0 == tab.id }
         hold(tab.id, false)
+        if designs.isEmpty { fitWindow() }
     }
 
     func closeOthers(than tab: DesignTab) {
@@ -109,13 +155,19 @@ final class Tabs {
         select(tab)
     }
 
-    /// The window is closing: every design in it is saved and closed.
-    func closeAll() {
-        for tab in designs { tab.close() }
-        designs = []
-        selectedID = nil
-        recency = []
-        holds = []
+    /// The window's close button, and Close Window: with a design in front, every design closes,
+    /// each saved, and home stays. Closing home quits Bezzle, once everything is saved.
+    func closeWindow() {
+        if selectedID == nil {
+            closeHome()
+        } else {
+            for tab in designs { close(tab) }
+        }
+    }
+
+    /// Home is closed: Bezzle quits, saving every design still open first.
+    func closeHome() {
+        NSApp.terminate(nil)
     }
 
     /// Bezzle is quitting: what is being typed is kept, and every design saved.
@@ -282,11 +334,12 @@ final class WindowRouter {
         bringForward()
     }
 
-    /// Closes the tab in front in Bezzle's window, or else the window in front.
+    /// Closes the tab in front in Bezzle's window, home included, which quits Bezzle; or else
+    /// the window in front.
     func closeFront() {
         let tabs = Tabs.shared
-        if let window = tabs.window, NSApp.keyWindow === window || NSApp.keyWindow == nil, let tab = tabs.selected {
-            tabs.close(tab)
+        if let window = tabs.window, NSApp.keyWindow === window || NSApp.keyWindow == nil {
+            if let tab = tabs.selected { tabs.close(tab) } else { tabs.closeHome() }
         } else {
             NSApp.keyWindow?.performClose(nil)
         }
@@ -373,6 +426,20 @@ extension TabsUndoResponder: NSMenuItemValidation {
         default:
             return false
         }
+    }
+}
+
+/// The window's close button closes the designs in it, as Close Window does, and only quits
+/// Bezzle from home; the window itself would otherwise close and leave Bezzle running without it.
+final class CloseButton: NSObject {
+    func hook(_ window: NSWindow) {
+        guard let button = window.standardWindowButton(.closeButton) else { return }
+        button.target = self
+        button.action = #selector(press(_:))
+    }
+
+    @objc func press(_ sender: Any?) {
+        Tabs.shared.closeWindow()
     }
 }
 
