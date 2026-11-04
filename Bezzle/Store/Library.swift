@@ -14,11 +14,17 @@ final class Library {
         var modified: Date
         /// How it is shared, if it is.
         var sharing: SharingMark?
+        /// Which card it is on the home screen. A rename keeps it, so the card stays as it was,
+        /// with its new name.
+        var key: String
         var id: URL { url }
         var name: String { url.deletingPathExtension().lastPathComponent }
     }
 
     private(set) var entries: [Entry] = []
+    /// The cards of designs renamed since Bezzle started, by the path each is now at. (A package's
+    /// address may or may not end in a slash, so designs are told apart by path.)
+    @ObservationIgnored private var keys: [String: String] = [:]
 
     /// Debug and test runs keep their designs somewhere of their own, never among the user's.
     let folder: URL = {
@@ -92,7 +98,7 @@ final class Library {
         }
         entries = urls.map { url in
             let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            return Entry(url: url, modified: date, sharing: SharingFiles.link(of: url)?.mark)
+            return Entry(url: url, modified: date, sharing: SharingFiles.link(of: url)?.mark, key: keys[url.path] ?? url.path)
         }.sorted { $0.modified > $1.modified }
     }
 
@@ -107,12 +113,59 @@ final class Library {
         }
     }
 
+    /// Gives the design at `url` a new name, renaming its file beside where it is, and returns
+    /// where it now is; nil when it keeps its name. One open in a tab is renamed there, so the tab
+    /// goes on showing it.
+    @discardableResult
+    func rename(_ url: URL, to name: String) -> URL? {
+        if let store = Tabs.shared.designs.lazy.compactMap(\.store).first(where: { $0.isAt(url) }) {
+            let before = store.url
+            store.rename(to: name)
+            return store.url == before ? nil : store.url
+        }
+        guard let target = renamedURL(url, to: name) else { return nil }
+        // A tab just closed may still be writing it.
+        DocumentStore.finishSaving()
+        do {
+            try FileManager.default.moveItem(at: url, to: target)
+        } catch {
+            NSLog("Bezzle could not rename %@: %@", url.path, error.localizedDescription)
+            return nil
+        }
+        // A shared design is found again where it now is, by what comes in from the others.
+        if let link = SharingFiles.link(of: target) { _ = CloudSync.shared.claim(link.zone, at: target) }
+        renamed(from: url, to: target)
+        return target
+    }
+
+    /// Where the design at `url` goes when it is called `name`: beside where it is, under that
+    /// name, or the next one free. Nil when that is no new name.
+    func renamedURL(_ url: URL, to name: String) -> URL? {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
+        guard !clean.isEmpty, clean != url.deletingPathExtension().lastPathComponent else { return nil }
+        let folder = url.deletingLastPathComponent()
+        // Only its letters' case changing, the disk may take the new name for the old one's.
+        let exact = folder.appendingPathComponent(clean).appendingPathExtension(BezzleDocument.fileExtension)
+        if Self.sameFile(exact, url) { return exact }
+        return freeURL(named: clean, in: folder)
+    }
+
+    private static func sameFile(_ a: URL, _ b: URL) -> Bool {
+        let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard let x = try? a.resourceValues(forKeys: key).fileResourceIdentifier,
+              let y = try? b.resourceValues(forKeys: key).fileResourceIdentifier else { return false }
+        return x.isEqual(y)
+    }
+
     func renamed(from old: URL, to new: URL) {
+        let old = old.standardizedFileURL.path, new = new.standardizedFileURL
         var paths = defaults.stringArray(forKey: recentsKey) ?? []
-        paths.removeAll { $0 == old.standardizedFileURL.path }
+        paths.removeAll { $0 == old }
         defaults.set(paths, forKey: recentsKey)
+        keys[new.path] = keys.removeValue(forKey: old) ?? old
         remember(new)
         refresh()
+        moveThumbnail(from: old, to: entries.first { $0.url.path == new.path }?.url ?? new)
     }
 
     private func remember(_ url: URL) {
@@ -214,6 +267,22 @@ final class Library {
             makeThumbnail(entry, size: size)
         }
         return thumbnails[entry.url]?.1
+    }
+
+    /// A renamed design, at `new` from `old` (a path), keeps its thumbnail, on the screen and on disk.
+    private func moveThumbnail(from old: String, to new: URL) {
+        if let was = madeAt.keys.first(where: { $0.path == old }) { madeAt[new] = madeAt.removeValue(forKey: was) }
+        guard let was = thumbnails.keys.first(where: { $0.path == old }), let (date, image) = thumbnails.removeValue(forKey: was) else { return }
+        thumbnails[new] = (date, image)
+        if let image { Self.keep(image, for: new, modified: date) }
+        let name = Self.thumbnailName(was), folder = Self.thumbnailFolder
+        Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            for file in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            where file.lastPathComponent.hasPrefix(name + "-") {
+                try? fm.removeItem(at: file)
+            }
+        }
     }
 
     /// Whether the design's thumbnail is being made for the first time, so there is none to show yet.

@@ -220,6 +220,69 @@ struct MenuTests {
         host.passing(.scrollWheel, at: CGPoint(x: 600, y: 600))
         #expect(host.open == nil)
     }
+
+    private func key(_ characters: String, code: UInt16 = 0, _ modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0, context: nil,
+                         characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+    }
+
+    @Test func typingNarrowsTheFontsMenuBestMatchFirst() {
+        let host = MenuHost()
+        var previewed: [String] = [], chosen: String?
+        let fonts = ["SF Pro", "Arial", "Avenir Next", "Helvetica", "Helvetica Neue", "Times New Roman", "Neue Haas Grotesk", "Didot", "Zapfino"]
+        host.toggle("font-family", searchable: true, entries: fonts.map { f in
+            .item(.verbatim(f), preview: { if $0 { previewed.append(f) } }) { chosen = f }
+        })
+        #expect(host.shown.count == fonts.count)
+        for c in "neue" { #expect(host.key(key(String(c)))) }
+        // Beginning with the words, then a word beginning with them, then holding them anywhere.
+        #expect(host.shown.map(\.title) == ["Neue Haas Grotesk", "Helvetica Neue"])
+        #expect(host.highlighted == 0)
+        #expect(previewed.last == "Neue Haas Grotesk")
+        // Delete takes back a letter, arrows move through what is left, Return chooses.
+        #expect(host.key(key("\u{7F}", code: 51)))
+        #expect(host.query == "neu")
+        #expect(host.key(key("\u{F701}", code: 125)))
+        #expect(host.key(key("\r", code: 36)))
+        #expect(chosen == "Helvetica Neue")
+        #expect(host.open == nil)
+    }
+
+    @Test func caseAccentsAndLeftOutSpacesDoNotCount() {
+        let entries: [MenuEntry] = ["Times New Roman", "Côte", "Avenir"].map { .item(.verbatim($0)) {} }
+        #expect(MenuHost.matching(entries, "TIMESNEW").map(\.title) == ["Times New Roman"])
+        #expect(MenuHost.matching(entries, "cote").map(\.title) == ["Côte"])
+        #expect(MenuHost.matching(entries, "ven").map(\.title) == ["Avenir"])
+        #expect(MenuHost.matching(entries, "  ").count == 3)
+        #expect(MenuHost.matching(entries, "xyz").isEmpty)
+    }
+
+    @Test func escapeClearsTheWordsBeforeItClosesAndDeleteNeverReachesTheCanvas() {
+        let host = MenuHost()
+        host.toggle("font-family", searchable: true, entries: ["Arial", "Didot"].map { .item(.verbatim($0)) {} })
+        // Delete with nothing typed is still the menu's, so the selection on the canvas stays.
+        #expect(host.key(key("\u{7F}", code: 51)))
+        #expect(host.key(key(" ", code: 49)))
+        #expect(host.query.isEmpty)
+        #expect(host.key(key("d")))
+        #expect(host.shown.map(\.title) == ["Didot"])
+        // Shortcuts other than paste go on to the app.
+        #expect(!host.key(key("z", code: 6, .command)))
+        #expect(host.key(key("\u{1B}", code: 53)))
+        #expect(host.open != nil)
+        #expect(host.shown.count == 2)
+        #expect(host.highlighted == nil)
+        #expect(host.key(key("\u{1B}", code: 53)))
+        #expect(host.open == nil)
+    }
+
+    @Test func aMenuThatDoesNotFilterLeavesTypingToTheApp() {
+        let host = MenuHost()
+        host.toggle("zoom", entries: [.item("A") {}])
+        #expect(!host.key(key("a")))
+        #expect(!host.key(key("\u{7F}", code: 51)))
+        #expect(host.query.isEmpty)
+    }
 }
 
 struct ColorTests {

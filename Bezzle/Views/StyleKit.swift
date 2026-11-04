@@ -537,7 +537,7 @@ private struct StyleEditor: View {
     // MARK: Type
 
     @ViewBuilder private func typeControls(_ t: TypeLook) -> some View {
-        MenuButton(id: "style-family-\(style.id)", title: .verbatim(Fonts.displayName(t.family)), width: Inspector.content, fills: true) {
+        MenuButton(id: "style-family-\(style.id)", title: .verbatim(Fonts.displayName(t.family)), width: Inspector.content, fills: true, searchable: true) {
             Fonts.families.map { f in
                 MenuEntry.item(.verbatim(Fonts.displayName(f)), checked: f == t.family,
                                font: f != TextStyle.system && Fonts.showsOwnName(f) ? .custom(f, size: 13) : .system(size: 13)) {

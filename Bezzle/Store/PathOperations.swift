@@ -135,16 +135,45 @@ extension DocumentStore {
         }
     }
 
-    /// Rectangles, ellipses and lines in the selection become paths, so their points can be edited.
+    /// Rectangles, ellipses and lines in the selection become paths, so their points can be
+    /// edited, and texts the outlines of their letters.
     var canConvertToPath: Bool {
-        selectedNodes.contains { !$0.locked && $0.asPath() != nil }
+        selection.contains { id in node(id).map { !$0.locked && $0.asPath() != nil } == true || outlinable(id) }
+    }
+
+    /// Whether a text can become the outlines of its letters: one with letters to draw, whose
+    /// words are its own alone. Those of a repeat grid's cell, a component's copy or a deck's
+    /// post would take every other cell's, copy's or post's words with them.
+    private func outlinable(_ id: UUID) -> Bool {
+        guard let n = node(id), n.kind == .text, !n.locked, !(n.text ?? "").allSatisfy(\.isWhitespace) else { return false }
+        return !doc.inCopy(id) && !doc.ancestors(of: id).contains(where: \.isRepeatGrid) && doc.artboard(of: id)?.isDeck != true
     }
 
     func convertToPath() {
-        let ids = selection.filter { node($0)?.locked == false && node($0)?.asPath() != nil }
-        guard !ids.isEmpty else { return }
-        update(ids, "Convert to Path") { n in
-            if let path = n.asPath() { n = path }
+        let shapes = selection.filter { node($0)?.locked == false && node($0)?.asPath() != nil }
+        let texts = selection.filter(outlinable)
+        guard !shapes.isEmpty || !texts.isEmpty else { return }
+        // Words being typed are the text's before it is outlined.
+        if !texts.isEmpty, editingText != nil { canvas?.endEditing() }
+        var outlined: [(UUID, Node)] = []
+        for id in texts {
+            // The shape a mask holds the rest in is one path, whatever colours its letters have.
+            let holds = doc.parent(of: id)?.holder?.id == id
+            if let made = node(id)?.outlinedText(onePath: holds) { outlined.append((id, made)) }
+        }
+        // Letters that are pictures, as emoji are, have no outlines to take.
+        if outlined.count < texts.count { NSSound.beep() }
+        guard !shapes.isEmpty || !outlined.isEmpty else { return }
+        edit("Convert to Path") { doc in
+            for id in shapes {
+                doc.update(id) { n in
+                    if let path = n.asPath() { n = path }
+                }
+            }
+            // Not `update`, which keeps where each layer is known: a group holds new layers.
+            for (id, made) in outlined {
+                if let at = doc.path(of: id) { doc[at] = made }
+            }
         }
     }
 

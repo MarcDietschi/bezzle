@@ -420,7 +420,7 @@ nonisolated enum CurvedText {
     }
 
     /// The bits of the line under the letter, and through it, in its own space.
-    private static func rules(of letter: Letter) -> [CGRect] {
+    static func rules(of letter: Letter) -> [CGRect] {
         var out: [CGRect] = []
         let thickness = max(CTFontGetUnderlineThickness(letter.font), 0.5)
         if letter.underline {

@@ -667,11 +667,9 @@ final class DocumentStore {
 
     /// Gives the design a new name, renaming its file.
     func rename(to newName: String) {
-        let clean = newName.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
-        guard !clean.isEmpty, clean != name else { return }
+        guard let target = Library.shared.renamedURL(url, to: newName) else { return }
         save()
         Self.finishSaving()
-        let target = Library.shared.freeURL(named: clean, in: url.deletingLastPathComponent())
         do {
             try FileManager.default.moveItem(at: url, to: target)
             Library.shared.renamed(from: url, to: target)

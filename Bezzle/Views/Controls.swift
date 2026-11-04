@@ -9,6 +9,8 @@ struct MenuButton: View {
     var prominent = false
     /// As wide as it is given, its chevron at the far end, as a field is; otherwise as wide as its title.
     var fills = false
+    /// Typing narrows the menu, which opens on the entry checked; for long lists such as fonts.
+    var searchable = false
     let entries: () -> [MenuEntry]
     @State private var hovering = false
 
@@ -34,7 +36,7 @@ struct MenuButton: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { host.toggle(id, width: width, entries: entries()) }
+        .onTapGesture { present() }
         .menuAnchor(id)
         .animation(Theme.quick, value: hovering)
         .animation(Theme.quick, value: isOpen)
@@ -42,9 +44,14 @@ struct MenuButton: View {
         .accessibilityAddTraits(.isButton)
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .debugOpenMenu)) { note in
-            if note.object as? String == id { host.toggle(id, width: width, entries: entries()) }
+            if note.object as? String == id { present() }
         }
         #endif
+    }
+
+    private func present() {
+        let list = entries()
+        host.toggle(id, width: width, reveal: searchable ? list.firstIndex(where: \.checked) : nil, searchable: searchable, entries: list)
     }
 }
 

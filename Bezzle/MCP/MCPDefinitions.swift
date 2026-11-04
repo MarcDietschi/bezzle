@@ -153,7 +153,7 @@ extension MCPTools {
                        properties: .object([design, layers, ("operation", Self.choice(["union", "subtract", "intersect", "exclude"], "How."))]),
                        required: ["operation"], run: { [unowned self] in try await self.combineShapes($0) }),
             Definition(name: "convert_to_path", title: "Convert to path",
-                       description: "Makes rectangles, ellipses and lines paths, whose outline can then be given as SVG path data.",
+                       description: "Makes rectangles, ellipses and lines paths, whose outline can then be given as SVG path data. Texts become the outlines of their letters, looking as they did: one path filled as the text was, or, when some letters have colours of their own, a group of one path for each colour. Each keeps its id. Texts in repeat grids, component copies or decks stay texts, as do texts with emoji, which have no outlines.",
                        properties: .object([design, layers]), run: { [unowned self] in try await self.convertToPath($0) }),
             Definition(name: "place_image", title: "Place a picture",
                        description: "Puts a picture file into the design: as a new rectangle filled with it, at its own size unless that is too big; or into an existing rectangle, ellipse or path's fill, the letters of a text, or a layer's first border. The file is copied into the design.",

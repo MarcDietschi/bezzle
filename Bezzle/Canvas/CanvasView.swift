@@ -70,6 +70,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// What the editor shows, to tell when the layer has been changed from elsewhere.
     private var editorShown: Shown?
     private var editingAction: LocalizedStringResource = "Typing"
+    /// The text typed into before its handle was pressed, and what was picked out in it, to type
+    /// on once the handle is let go.
+    private var typingResumes: (id: UUID, range: NSRange)?
+    /// The text a press with the Text tool began on: a click types into it.
+    private var textUnderPress: UUID?
 
     /// The pen, and the points of a path being edited.
     private(set) lazy var pathTool: PathTool = {
@@ -841,15 +846,27 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return (bounds, 0, nil)
     }
 
-    private func handlePoints() -> [(Handle, CGPoint)] {
+    /// Whether a layer is text as wide as its words, which has one handle, at its bottom, as XD has it.
+    private static func pointText(_ node: Node?) -> Bool {
+        guard let node, node.kind == .text, node.curve == nil else { return false }
+        return (node.style?.sizing ?? .autoWidth) == .autoWidth
+    }
+
+    /// The handles the selection shows, and where; `every` gives text as wide as its words those
+    /// of any other layer, for turning it from just outside them.
+    private func handlePoints(every: Bool = false) -> [(Handle, CGPoint)] {
         guard let (frame, rotation, single) = handleFrame else { return [] }
         if single?.kind == .line || single?.locked == true { return [] }
         // A repeat grid has handles of its own, which repeat it.
         if single?.isRepeatGrid == true { return [] }
         let size = store.viewport.toView(frame).size
+        let point = !every && Self.pointText(single)
         return Handle.allCases.compactMap { h in
-            // Small things keep only their corners, so the handles do not pile up.
-            if !h.isCorner && ((h.unit.x == 0.5 && size.width < 28) || (h.unit.y == 0.5 && size.height < 28)) { return nil }
+            if point, h != .bottom { return nil }
+            // Small things keep only their corners, so the handles do not pile up; a text keeps
+            // its bottom, which fits its box to its words.
+            if !h.isCorner && !(single?.kind == .text && h == .bottom && !every) &&
+                ((h.unit.x == 0.5 && size.width < 28) || (h.unit.y == 0.5 && size.height < 28)) { return nil }
             let at = Geometry.point(h.unit, of: frame, rotation: rotation)
             return (h, store.viewport.toView(single.map { shownOnCanvas(at, of: $0) } ?? at))
         }
@@ -870,7 +887,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if ids.count == 1, ids[0] == store.editingPicture { return }
         // Shapes being built with show their pieces instead.
         if store.building != nil { return }
-        guard !ids.isEmpty, store.editingText == nil || ids.count > 1 else {
+        guard !ids.isEmpty, store.editingText == nil || ids.count > 1 || typingShowsHandles else {
             if let editing = store.editingText, let points = typingCorners(of: editing) ?? viewCorners(of: editing) {
                 ctx.addPath(outlinePath(points, closed: true))
                 ctx.setStrokeColor(CanvasInk.pencil.withAlphaComponent(0.5).cgColor)
@@ -902,7 +919,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             for p in ends { drawHandle(p, in: ctx, round: true) }
             return
         }
-        for (_, p) in handlePoints() { drawHandle(p, in: ctx, round: false) }
+        // Text as wide as its words has one round handle; a box of fixed size too small for its
+        // words has a red one at its bottom, which, double-clicked, fits it to them.
+        let single = ids.count == 1 ? store.node(ids[0]) : nil
+        let point = Self.pointText(single), hiding = single?.overflows == true
+        for (h, p) in handlePoints() { drawHandle(p, in: ctx, round: point, warning: hiding && h == .bottom) }
         if case .corner = interaction { drawCornerDots(ctx) } else if case .none = interaction, showsCornerDots { drawCornerDots(ctx) }
         if onShadow || { if case .shadow(_, _, _, true) = interaction { return true } else { return false } }() { drawShadowOutline(ctx) }
     }
@@ -973,15 +994,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return abs(q.x) <= shadowFrame.width / 2 + spread && abs(q.y) <= shadowFrame.height / 2 + spread
     }
 
-    private func drawHandle(_ p: CGPoint, in ctx: CGContext, round: Bool) {
+    private func drawHandle(_ p: CGPoint, in ctx: CGContext, round: Bool, warning: Bool = false) {
         let size: CGFloat = 8
         let rect = CGRect(center: crisp(p), size: CGSize(width: size, height: size)).offsetBy(dx: -0.5 / deviceScale, dy: -0.5 / deviceScale)
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: -0.5 * deviceScale), blur: 1.5 * deviceScale, color: NSColor.black.withAlphaComponent(0.18).cgColor)
-        ctx.setFillColor(.white)
+        ctx.setFillColor(warning ? CanvasInk.overflow.cgColor : .white)
         if round { ctx.fillEllipse(in: rect) } else { ctx.fill(rect) }
         ctx.restoreGState()
-        ctx.setStrokeColor(CanvasInk.pencil.cgColor)
+        ctx.setStrokeColor((warning ? CanvasInk.overflow : CanvasInk.pencil).cgColor)
         ctx.setLineWidth(1)
         if round { ctx.strokeEllipse(in: rect.insetBy(dx: 0.5, dy: 0.5)) } else { ctx.stroke(rect.insetBy(dx: 0.5, dy: 0.5)) }
     }
@@ -1119,8 +1140,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         store.doc.artboards.reversed().first { !$0.hidden && titleRect(of: $0).insetBy(dx: 0, dy: -2).contains(viewPoint) }?.id
     }
 
+    /// Whether the text being typed into shows its handles, as it does when only selected: when
+    /// it has words, and lies straight.
+    private var typingShowsHandles: Bool {
+        guard let id = store.editingText, store.selection == [id], let node = store.node(id) else { return false }
+        return !node.isCurved && !(node.text ?? "").isEmpty
+    }
+
     private func handleHit(_ v: CGPoint) -> HandleHit? {
-        guard store.editingText == nil, store.editingPath == nil, store.editingPicture == nil, store.building == nil else { return nil }
+        guard store.editingText == nil || typingShowsHandles, store.editingPath == nil, store.editingPicture == nil, store.building == nil else { return nil }
         let ids = store.selection
         if ids.count == 1, let node = store.node(ids[0]), node.kind == .line {
             guard !node.locked, let ends = viewCorners(of: ids[0]) else { return nil }
@@ -1140,14 +1168,18 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             outside = !outlinePath(corners, closed: true).contains(v)
         }
         guard outside else { return nil }
-        for (h, p) in points where h.isCorner {
+        // Text as wide as its words turns from just outside its one handle, as XD has it, and its
+        // corners, as anything does.
+        let point = Self.pointText(single)
+        let around = point ? handlePoints(every: true) : points
+        for (h, p) in around where h.isCorner || (point && h == .bottom) {
             let d = hypot(p.x - v.x, p.y - v.y)
             if d > 5 && d < 20 { return .rotate(h) }
         }
         if isOnShadow(v) { return .shadow }
         // Just outside the middle of a side, the pointer turns them in depth, as outside a corner
         // it turns them in the page.
-        for (h, p) in points where !h.isCorner {
+        for (h, p) in around where !h.isCorner && !(point && h == .bottom) {
             let d = hypot(p.x - v.x, p.y - v.y)
             if d > 5 && d < 22 { return .turnInDepth }
         }
@@ -1290,10 +1322,23 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 NSCursor.arrow.set()
             }
         case .text:
-            NSCursor.iBeam.set()
+            // The selected text's handles resize it with the Text tool in hand too.
+            if case .resize(let h)? = handleHit(v) {
+                Cursors.resize(h.angle + (handleFrame?.rotation ?? 0)).set()
+            } else {
+                NSCursor.iBeam.set()
+            }
         default:
             NSCursor.crosshair.set()
         }
+    }
+
+    /// A press on a handle of the text being typed into is the canvas's, though the words lie under it.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let found = super.hitTest(point)
+        guard let found, found !== self, let host = editorHost, found.isDescendant(of: host) else { return found }
+        if case .resize? = handleHit(convert(point, from: superview)) { return self }
+        return found
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1327,6 +1372,25 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if maskTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
         if !deckTool.spreading, componentTool.down(at: convert(event.locationInWindow, from: nil)) { return }
         window?.makeFirstResponder(self)
+        // A selected text's handles resize it while it is typed into, and with the Text tool in
+        // hand, as when it is only selected; typing goes on after.
+        if store.editingText != nil || store.tool == .text, !spaceHeld,
+           case .resize(let handle)? = handleHit(convert(event.locationInWindow, from: nil)) {
+            if let id = store.editingText {
+                typingResumes = (id, editor?.selectedRange() ?? NSRange(location: 0, length: 0))
+                endEditing()
+            }
+            let v = convert(event.locationInWindow, from: nil)
+            lastViewPoint = v
+            mouseDownView = v
+            store.hovered = nil
+            if event.clickCount >= 2, handle == .bottom, fitTextToWords() {
+                resumeTyping()
+                return
+            }
+            startHandleDrag(.resize(handle), at: store.viewport.toCanvas(v))
+            return
+        }
         if store.editingText != nil { endEditing() }
         // A click beside the note open puts it away.
         if store.openThread != nil { store.openThread = nil }
@@ -1378,11 +1442,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             // spot; a loop drawn round part of the design is a note about that part.
             noteCircling = (points: [p], target: titleHit(v) ?? pick(p), start: p, view: v)
         case .text:
-            if let id = hit(p), store.node(id)?.kind == .text {
-                store.selection = [id]
-                beginEditing(id, action: "Typing")
-                return
-            }
+            // A click on a text types into it, all its words picked out; a drag, over one or not,
+            // draws a new one. See `finishCreating`.
+            textUnderPress = hit(p).flatMap { store.node($0)?.kind == .text ? $0 : nil }
             fallthrough
         default:
             let board = store.tool == .artboard ? nil : store.doc.artboard(at: p)?.id
@@ -1410,6 +1472,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let handle = handleHit(v)
         if case .resize = handle {} else if outlineTool.down(at: v, event: event) { return }
         if let handle {
+            if event.clickCount >= 2, case .resize(.bottom) = handle, fitTextToWords() { return }
             startHandleDrag(handle, at: p)
             return
         }
@@ -1734,30 +1797,26 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                         }
                         if node.kind == .text {
                             let single = originals.count == 1
-                            // From a side, one text's words wrap to the new width: text of auto size
-                            // takes a fixed width, its height what its lines take.
-                            // Along a curve, it is one line: every handle grows its letters.
-                            let wraps = single && handle.unit.y == 0.5 && original.curve == nil
-                            // From a corner its box is what is dragged, from the corner across to the
-                            // pointer, of fixed size, with its letters and lines as big as fit inside.
-                            let fits = single && handle.isCorner && !shift && original.curve == nil
-                            // From the top or bottom, or a corner with Shift, its letters and lines grow
-                            // with its box, and a fixed width with them, so its words wrap where they did:
-                            // by the side the handle moves, the longer one from a corner as text is wide.
-                            // Among others, only text of auto size grows, by the height.
-                            let scales = !wraps && !fits && (single || node.style?.sizing == .autoWidth) && whole.width > 0 && whole.height > 0
-                            if wraps, node.style?.sizing == .autoWidth { node.style?.sizing = .autoHeight }
-                            if fits, let style = original.style { node.fit(style, into: next.size) }
+                            let sizing = original.style?.sizing ?? .autoWidth
+                            // As XD has it. Text as wide as its words has one handle, which grows its
+                            // letters and lines with its box; along a curve, on one line, every handle
+                            // does. Among others, such text grows by the height.
+                            let scales = (sizing == .autoWidth || original.curve != nil) && whole.width > 0 && whole.height > 0
                             if scales {
                                 let byHeight = !single || handle.unit.x == 0.5
                                 node.scaleType(by: byHeight ? next.height / whole.height : next.width / whole.width)
+                            } else if single, sizing == .autoHeight, handle.unit.y != 0.5 {
+                                // A fixed width's sides wrap its words, as tall as its lines; pulled by
+                                // its top, its bottom or a corner, it is a box of fixed size. A box of
+                                // fixed size is what is dragged, its letters as they are.
+                                node.style?.sizing = .fixed
                             }
                             node.refit()
                             // Its words settle its size to a point or so. The side across from the
                             // handle stays where it was; along it, the text grows as it does with more
                             // words, from its top and from the side it is aligned to. From the middle,
                             // or turned, it stays round the middle.
-                            if scales || fits, single {
+                            if scales, single {
                                 let fitted = node.frame.size
                                 if option || rotation != 0 {
                                     let box = next.offsetBy(dx: -o.x, dy: -o.y)
@@ -1921,22 +1980,19 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 store.measurement = ("\(Self.number(hypot(end.x - start.x, end.y - start.y)))", Geometry.rect(from: start, to: end))
             } else {
                 let rect = Geometry.snapToPixels(Geometry.drawnRect(from: start, to: end, square: shift, fromCenter: option))
-                store.edit("Draw") { doc in
-                    doc.update(nodeID) { n in
-                        n.frame = rect.offsetBy(dx: -o.x, dy: -o.y)
-                        if n.kind == .text { n.refit() }
-                    }
-                }
+                // A text's box is as it is dragged out, until words are typed into it.
+                store.edit("Draw") { doc in doc.update(nodeID) { $0.frame = rect.offsetBy(dx: -o.x, dy: -o.y) } }
                 store.measurement = ("\(Self.number(rect.width)) × \(Self.number(rect.height))", rect)
             }
             store.guides = guides
         }
     }
 
-    /// Text grows and shrinks in proportion from its top and bottom; from a side its words wrap, and
-    /// from a corner both at once.
+    /// Text as wide as its words, or along a curve, grows and shrinks in proportion from its top
+    /// and bottom.
     private func keepsAspect(_ originals: [UUID: Node], _ handle: Handle) -> Bool {
-        originals.count == 1 && originals.values.first?.kind == .text && handle.unit.x == 0.5
+        guard originals.count == 1, let text = originals.values.first, text.kind == .text else { return false }
+        return handle.unit.x == 0.5 && (text.curve != nil || (text.style?.sizing ?? .autoWidth) == .autoWidth)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -2036,6 +2092,28 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         updateHover(v)
         updateCursor(v, flags: event.modifierFlags)
         updateOverlays(v)
+        resumeTyping()
+    }
+
+    /// Typing goes on in the text whose handle was pressed while it was typed into, with what was
+    /// picked out in it then.
+    private func resumeTyping() {
+        guard let (id, range) = typingResumes else { return }
+        typingResumes = nil
+        guard store.node(id)?.kind == .text, store.selection == [id] else { return }
+        beginEditing(id, action: "Typing")
+        guard let text = editor, let length = text.textStorage?.length else { return }
+        let at = min(range.location, length)
+        text.setSelectedRange(NSRange(location: at, length: min(range.length, length - at)))
+    }
+
+    /// A selected text of a set width fitted to its words, of its own height again, as a double
+    /// click on its bottom handle does in XD. Whether there was such a text.
+    private func fitTextToWords() -> Bool {
+        guard store.selection.count == 1, let id = store.selection.first, let node = store.node(id), node.kind == .text,
+              node.curve == nil, !node.locked, let sizing = node.style?.sizing, sizing != .autoWidth else { return false }
+        store.update([id], "Auto Height") { $0.setSizing(.autoHeight) }
+        return true
     }
 
     // MARK: - Drawing new layers
@@ -2050,6 +2128,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
         var node = Node(kind: kind, name: store.doc.nextName(for: kind), frame: CGRect(origin: p, size: .zero))
         if kind == .text {
+            // New text looks as the text selected, as XD has it.
+            if store.selection.count == 1, let like = store.node(store.selection[0]), like.kind == .text, var style = like.style {
+                style.vertical = nil
+                node.style = style
+                node.fill = like.fill
+            }
             node.style?.sizing = .autoHeight
         }
         store.add(node, onto: board)
@@ -2057,6 +2141,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func finishCreating(_ tool: Tool, start: CGPoint, id: UUID?, board: UUID?) {
+        // A click with the Text tool on a text types into it.
+        let under = textUnderPress
+        textUnderPress = nil
+        if tool == .text, id == nil, let under, store.node(under) != nil {
+            store.endGesture("Draw")
+            store.selection = [under]
+            beginEditing(under, action: "Typing")
+            return
+        }
         var nodeID = id
         if nodeID == nil {
             // A click without a drag makes something of a sensible size.
@@ -2074,8 +2167,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                         n.style?.sizing = .autoWidth
                         n.frame = CGRect(origin: start - o, size: .zero)
                         n.refit()
-                        // The click marks where the first line's middle goes.
-                        n.frame.origin.y -= (n.frame.height / 2).rounded()
+                        // The click is where the first line's baseline begins, as XD has it: at
+                        // its left for words set left, its middle for centred ones, its right
+                        // for those set right.
+                        var probe = n
+                        probe.text = "X"
+                        n.frame.origin.y -= TextLayout.firstBaseline(probe).rounded()
+                        switch n.style?.align ?? .left {
+                        case .left, .justify: break
+                        case .center: n.frame.origin.x -= (n.frame.width / 2).rounded()
+                        case .right: n.frame.origin.x -= n.frame.width
+                        }
                     default:
                         n.frame = CGRect(origin: start - o, size: CGSize(width: 100, height: 100))
                     }
@@ -2083,11 +2185,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }
         }
         guard let nodeID, let node = store.node(nodeID) else { store.endGesture("Draw"); return }
-        // Text that was dragged out keeps at least a usable width.
-        if node.kind == .text, node.style?.sizing == .autoHeight, node.frame.width < 20 {
-            store.edit("Draw") { doc in doc.update(nodeID) { $0.style?.sizing = .autoWidth; $0.refit() } }
+        // Text that was dragged out keeps at least a usable width, and the height of a line.
+        if node.kind == .text, node.style?.sizing == .autoHeight {
+            if node.frame.width < 20 {
+                store.edit("Draw") { doc in doc.update(nodeID) { $0.style?.sizing = .autoWidth; $0.refit() } }
+            } else if case let fitted = TextLayout.fittedFrame(node), node.frame.height < fitted.height {
+                store.edit("Draw") { doc in doc.update(nodeID) { $0.frame.size.height = fitted.height } }
+            }
         }
-        store.tool = .select
+        // The Text tool stays in hand, as in XD: a click elsewhere is more text. Esc puts it down.
+        if tool != .text { store.tool = .select }
         if node.kind == .text {
             beginEditing(nodeID, action: "Add Text")
         } else {
@@ -2591,6 +2698,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let down = TextLayout.offset(Node.with(node, frame: frame))
         let tall = TextLayout.layout(Node.with(node, frame: frame)).usedSize.height
         text.frame = CGRect(x: 0, y: down, width: loose ? width : max(frame.width, 1), height: max(frame.height - down, tall, 1))
+        // A box of fixed size too small for its words hides the rest as they are typed, as on the canvas.
+        let hides = Node.with(node, frame: frame).overflows
+        if host.clipsToBounds != hides { host.clipsToBounds = hides }
         if editorShown != shown(node), !text.hasMarkedText() { show(node, in: text) }
         // Letters painted with a gradient or a picture show it as they are typed.
         let painted = node.fill.on && node.fill.paints ? Painted(fill: node.fill, size: frame.size, down: down) : nil

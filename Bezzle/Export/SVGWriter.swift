@@ -463,6 +463,13 @@ nonisolated struct SVGWriter {
         } else {
             attrs.append(node.fill.on ? color(node.fill.color, alpha: 1) : "fill=\"none\"")
         }
+        // A box of fixed size too small for its lines hides what is past its top and bottom.
+        if node.overflows {
+            let clip = newID("clip")
+            let w = node.frame.width
+            defs.append("<clipPath id=\"\(clip)\"><rect x=\"\(n(-w))\" width=\"\(n(w * 3))\" height=\"\(n(node.frame.height))\"/></clipPath>")
+            attrs.append("clip-path=\"url(#\(clip))\"")
+        }
         return "<g \(attrs.joined(separator: " ")) xml:space=\"preserve\">\(lines.joined())</g>"
     }
 

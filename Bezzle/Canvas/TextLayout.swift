@@ -386,6 +386,8 @@ nonisolated enum TextLayout {
         let at: CGPoint
         /// Whether its letters have a colour of their own, rather than the text's.
         var own = false
+        /// That colour, when they have one.
+        var ownColor: RGBA?
     }
 
     /// The markers of the list items whose first letters are among `characters`, or all of them.
@@ -407,8 +409,9 @@ nonisolated enum TextLayout {
                     let color = storage.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor ?? .black
                     let lift = storage.attribute(.baselineOffset, at: at, effectiveRange: nil) as? CGFloat ?? 0
                     let x = fragment.minX + place.x - marker.gap - width(of: marker.text, in: font)
+                    let look = storage.attribute(.bezzleLook, at: at, effectiveRange: nil)
                     out.append(Marker(text: marker.text, font: font, color: color, at: CGPoint(x: x, y: fragment.minY + place.y - lift),
-                                      own: Manager.ownColor(storage.attribute(.bezzleLook, at: at, effectiveRange: nil))))
+                                      own: Manager.ownColor(look), ownColor: (look as? LookBox)?.look.color))
                 }
                 at = NSMaxRange(paragraph)
             }
@@ -443,6 +446,9 @@ nonisolated enum TextLayout {
         /// Into a PDF, the outlines of the letters to paint, gathered rather than drawn, in the
         /// space the drawing began in.
         private var outlines: (path: CGMutablePath, space: CGAffineTransform)?
+        /// The outlines of everything the text draws, gathered by colour rather than drawn, for
+        /// a text made into paths. See `TextOutlines`.
+        var collecting: TextOutlines.Collector?
 
         override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
             guard let painting, let ctx = NSGraphicsContext.current?.cgContext else {
@@ -494,6 +500,11 @@ nonisolated enum TextLayout {
 
         override func showCGGlyphs(_ glyphs: UnsafePointer<CGGlyph>, positions: UnsafePointer<CGPoint>, count: Int, font: NSFont,
                                    textMatrix: CGAffineTransform, attributes: [NSAttributedString.Key: Any] = [:], in ctx: CGContext) {
+            if let collecting {
+                collecting.add(glyphs, positions: positions, count: count, font: font, textMatrix: textMatrix,
+                               color: TextOutlines.color(attributes[.bezzleLook]), in: ctx)
+                return
+            }
             if let drawing, drawing != (Self.ownColor(attributes[.bezzleLook]) ? .own : .painted) { return }
             guard let outlines else {
                 super.showCGGlyphs(glyphs, positions: positions, count: count, font: font, textMatrix: textMatrix, attributes: attributes, in: ctx)
@@ -509,6 +520,13 @@ nonisolated enum TextLayout {
 
         override func drawUnderline(forGlyphRange glyphRange: NSRange, underlineType: NSUnderlineStyle, baselineOffset: CGFloat,
                                     lineFragmentRect: NSRect, lineFragmentGlyphRange: NSRange, containerOrigin: NSPoint) {
+            if let collecting {
+                collecting.capture(color: color(of: glyphRange)) {
+                    super.drawUnderline(forGlyphRange: glyphRange, underlineType: underlineType, baselineOffset: baselineOffset,
+                                        lineFragmentRect: lineFragmentRect, lineFragmentGlyphRange: lineFragmentGlyphRange, containerOrigin: containerOrigin)
+                }
+                return
+            }
             guard drawn(glyphRange) else { return }
             super.drawUnderline(forGlyphRange: glyphRange, underlineType: underlineType, baselineOffset: baselineOffset,
                                 lineFragmentRect: lineFragmentRect, lineFragmentGlyphRange: lineFragmentGlyphRange, containerOrigin: containerOrigin)
@@ -516,6 +534,13 @@ nonisolated enum TextLayout {
 
         override func drawStrikethrough(forGlyphRange glyphRange: NSRange, strikethroughType: NSUnderlineStyle, baselineOffset: CGFloat,
                                         lineFragmentRect: NSRect, lineFragmentGlyphRange: NSRange, containerOrigin: NSPoint) {
+            if let collecting {
+                collecting.capture(color: color(of: glyphRange)) {
+                    super.drawStrikethrough(forGlyphRange: glyphRange, strikethroughType: strikethroughType, baselineOffset: baselineOffset,
+                                            lineFragmentRect: lineFragmentRect, lineFragmentGlyphRange: lineFragmentGlyphRange, containerOrigin: containerOrigin)
+                }
+                return
+            }
             guard drawn(glyphRange) else { return }
             super.drawStrikethrough(forGlyphRange: glyphRange, strikethroughType: strikethroughType, baselineOffset: baselineOffset,
                                     lineFragmentRect: lineFragmentRect, lineFragmentGlyphRange: lineFragmentGlyphRange, containerOrigin: containerOrigin)
@@ -530,6 +555,13 @@ nonisolated enum TextLayout {
 
         /// Whether letters of this look have a colour of their own, rather than the text's.
         static func ownColor(_ look: Any?) -> Bool { (look as? LookBox)?.look.color != nil }
+
+        /// The colour of their own the first letters of `glyphs` have, if any.
+        private func color(of glyphs: NSRange) -> RGBA? {
+            guard let storage = textStorage, storage.length > 0 else { return nil }
+            let at = min(characterIndexForGlyph(at: glyphs.location), storage.length - 1)
+            return TextOutlines.color(storage.attribute(.bezzleLook, at: at, effectiveRange: nil))
+        }
 
         /// The markers of the list items among `glyphs`, those being drawn now.
         private func drawMarkers(forGlyphRange glyphs: NSRange, at origin: NSPoint) {
@@ -547,6 +579,10 @@ nonisolated enum TextLayout {
                     .font: marker.font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
                 ]))
                 let at = CGPoint(x: origin.x + marker.at.x, y: origin.y + marker.at.y)
+                if let collecting {
+                    collecting.add(line, at: at, color: marker.ownColor, in: ctx)
+                    continue
+                }
                 if let outlines {
                     TextLayout.addOutlines(of: line, at: at, to: outlines.path, transform: ctx.ctm.concatenating(outlines.space.inverted()))
                     continue
@@ -735,63 +771,60 @@ extension Node {
         return n
     }
 
-    /// For text layers dragged by a corner: a box of fixed `size`, and the letters and lines of
-    /// `style` as big as they can be, to a tenth of a point, with the words wrapped inside it.
-    /// Letters of sizes of their own grow and shrink with them.
-    mutating func fit(_ style: TextStyle, into size: CGSize) {
-        guard kind == .text, style.size > 0 else { return }
-        var base = style
-        base.sizing = .fixed
-        let width = max(size.width, 1)
-        frame.size = CGSize(width: width, height: max(size.height, 1))
-        let letters = spans
-        func sized(_ tenths: Int) -> Node {
-            var n = self
-            let k = CGFloat(tenths) / (base.size * 10)
-            n.style = base.scaled(by: k)
-            n.spans = letters
-            n.scaleLetters(by: k)
-            return n
-        }
-        func fits(_ tenths: Int) -> Bool {
-            TextLayout.height(sized(tenths), width: width) <= size.height + 0.5
-        }
-        // From the size it was, doubled or halved until past the fit, then halved in between.
-        var lo = max(Int((base.size * 10).rounded()), 10), hi = lo
-        if fits(lo) {
-            repeat { lo = hi; hi *= 2 } while hi < 100_000 && fits(hi)
-        } else {
-            repeat { hi = lo; lo = max(lo / 2, 10) } while lo > 10 && !fits(lo)
-        }
-        while hi - lo > 1 {
-            let mid = (lo + hi) / 2
-            if fits(mid) { lo = mid } else { hi = mid }
-        }
-        let best = sized(lo)
-        self.style = best.style
-        spans = best.spans
-        refit()
+    /// Whether a box of fixed size is too small for its lines, which it hides past its edge.
+    nonisolated var overflows: Bool {
+        guard kind == .text, curve == nil, style?.sizing == .fixed else { return false }
+        return TextLayout.layout(self).usedSize.height > frame.height + 0.5
     }
 
-    /// For text layers, a size typed in: a new width alone wraps the words to it, and text of auto
-    /// size takes a fixed width; a new height, or both, grows or shrinks the letters and lines, and
-    /// a fixed width or size with them, so the words wrap where they did.
+    /// For text layers, a size typed in, as XD's handles have it: text as wide as its words grows
+    /// or shrinks its letters and lines, by the height when that changed and by the width when
+    /// only it did; a fixed width takes a new width and stays as tall as its lines, and a new
+    /// height makes it a box of fixed size; a box of fixed size takes the size, its letters as
+    /// they were.
     mutating func resizeText(to size: CGSize, byHeight: Bool) {
         let old = frame
         guard kind == .text, old.width > 0, old.height > 0, size != old.size else { return }
-        if !byHeight, size.height == old.height {
-            if style?.sizing == .autoWidth { style?.sizing = .autoHeight }
-            frame.size.width = size.width
-        } else {
-            let k = byHeight ? size.height / old.height : size.width / old.width
-            scaleType(by: k)
-            switch style?.sizing {
-            case .autoHeight: frame.size.width = (old.width * k).rounded()
-            case .fixed: frame.size = CGSize(width: (old.width * k).rounded(), height: (old.height * k).rounded())
-            default: break
-            }
+        switch style?.sizing ?? .autoWidth {
+        case .autoWidth:
+            scaleType(by: byHeight || size.width == old.width ? size.height / old.height : size.width / old.width)
+        case .autoHeight:
+            if size.height != old.height { style?.sizing = .fixed }
+            frame.size = size
+        case .fixed:
+            frame.size = size
         }
         refit()
+    }
+
+    /// The way a text finds its size changed, as the inspector does it. Made as wide as its
+    /// words, its lines break where they wrapped, so it looks as it did; its frame fits after.
+    mutating func setSizing(_ sizing: TextSizing) {
+        guard kind == .text, (style ?? TextStyle()).sizing != sizing else { return }
+        if sizing == .autoWidth, curve == nil { breakWhereWrapped() }
+        style?.sizing = sizing
+        refit()
+    }
+
+    /// A break put where each line wraps now, in place of the space it wraps at.
+    mutating func breakWhereWrapped() {
+        guard kind == .text, style?.sizing != .autoWidth, let words = text, !words.isEmpty else { return }
+        let laid = TextLayout.layout(self)
+        let shown = laid.storage.string as NSString
+        // Set in capitals of another length, the letters laid out are not the words: as they are.
+        guard shown.length == (words as NSString).length else { return }
+        var wraps: [Int] = []
+        let manager = laid.manager
+        manager.enumerateLineFragments(forGlyphRange: manager.glyphRange(for: laid.container)) { _, _, _, glyphs, _ in
+            let end = NSMaxRange(manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil))
+            guard end > 0, end < shown.length, let last = Unicode.Scalar(shown.character(at: end - 1)),
+                  !CharacterSet.newlines.contains(last) else { return }
+            wraps.append(end)
+        }
+        for end in wraps.reversed() {
+            let space = Unicode.Scalar(shown.character(at: end - 1)).map { CharacterSet.whitespaces.contains($0) } ?? false
+            replaceText(in: space ? NSRange(location: end - 1, length: 1) : NSRange(location: end, length: 0), with: "\n")
+        }
     }
 
     /// For text layers: the frame refitted to the words after a change.

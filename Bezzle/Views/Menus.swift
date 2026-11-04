@@ -51,14 +51,23 @@ final class MenuHost {
         let width: CGFloat
         /// Scrolls the menu so this entry shows, for long lists such as fonts.
         var reveal: Int?
+        /// Typing narrows the menu to the entries whose titles hold what was typed, as in the
+        /// fonts menu; see `search`.
+        var searchable = false
         /// Each time a menu opens it is a new one, so one opening in place of another, such as a
         /// second right click, goes and comes rather than jumping.
         let token = UUID()
     }
 
     var open: Open?
-    /// The entry under the pointer or picked out with the arrow keys; see `highlight`.
+    /// The entry under the pointer or picked out with the arrow keys, in `shown`; see `highlight`.
     private(set) var highlighted: Int?
+    /// What has been typed into a menu that filters; empty in any other.
+    private(set) var query = ""
+    /// The entries the open menu shows: all of them, or those that match what was typed, best first.
+    private(set) var shown: [MenuEntry] = []
+    /// Counts each step the keyboard takes through the menu, so the menu scrolls to where it went.
+    private(set) var stepped = 0
     private var monitor: Any?
     private var clickMonitor: Any?
     /// Where the open menu and the control it hangs from are, in the window from its top left,
@@ -75,9 +84,9 @@ final class MenuHost {
         anchorFrame = anchor
     }
 
-    func toggle(_ anchor: String, width: CGFloat = 240, reveal: Int? = nil, entries: [MenuEntry]) {
+    func toggle(_ anchor: String, width: CGFloat = 240, reveal: Int? = nil, searchable: Bool = false, entries: [MenuEntry]) {
         if open?.id == anchor { dismiss(); return }
-        present(Open(id: anchor, place: .anchor(anchor), content: .entries(entries), width: width, reveal: reveal))
+        present(Open(id: anchor, place: .anchor(anchor), content: .entries(entries), width: width, reveal: reveal, searchable: searchable))
     }
 
     static let contextID = "point"
@@ -101,15 +110,52 @@ final class MenuHost {
     /// Highlights an entry, or none, and shows on the canvas what it would do.
     func highlight(_ index: Int?) {
         guard index != highlighted else { return }
-        if case .entries(let entries)? = open?.content {
-            if let h = highlighted, entries.indices.contains(h) { entries[h].preview?(false) }
-            if let index, entries.indices.contains(index) { entries[index].preview?(true) }
-        }
+        if let h = highlighted, shown.indices.contains(h) { shown[h].preview?(false) }
+        if let index, shown.indices.contains(index) { shown[index].preview?(true) }
         highlighted = index
+    }
+
+    /// Narrows the open menu to the entries that match these words, and highlights the best of
+    /// them, so Return takes it and the canvas shows it. No words show every entry again.
+    func search(_ words: String) {
+        guard let open, open.searchable, case .entries(let entries) = open.content, words != query else { return }
+        highlight(nil)
+        query = words
+        shown = Self.matching(entries, words)
+        if !Self.blank(words) { highlight(shown.firstIndex { $0.kind == .item && $0.enabled }) }
+        stepped += 1
+    }
+
+    private static func blank(_ words: String) -> Bool { words.allSatisfy(\.isWhitespace) }
+
+    /// The entries whose titles hold the words, in the order they came: first those that begin
+    /// with them, then those with a word that does ("New" for Times New Roman), then any other.
+    /// Case and accents do not count, nor spaces left out ("timesnew").
+    static func matching(_ entries: [MenuEntry], _ words: String) -> [MenuEntry] {
+        guard !blank(words) else { return entries }
+        func fold(_ s: String) -> String {
+            s.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+        }
+        let needle = fold(words.trimmingCharacters(in: .whitespaces))
+        let tight = needle.filter { !$0.isWhitespace }
+        var begin: [MenuEntry] = [], word: [MenuEntry] = [], within: [MenuEntry] = []
+        for e in entries where e.kind == .item {
+            let title = fold(e.title)
+            if title.hasPrefix(needle) {
+                begin.append(e)
+            } else if (" " + String(title.map { $0.isLetter || $0.isNumber ? $0 : " " })).contains(" " + needle) {
+                word.append(e)
+            } else if title.contains(needle) || title.filter({ !$0.isWhitespace }).contains(tight) {
+                within.append(e)
+            }
+        }
+        return begin + word + within
     }
 
     private func present(_ next: Open) {
         highlight(nil)
+        query = ""
+        if case .entries(let entries) = next.content { shown = entries } else { shown = [] }
         withAnimation(Theme.menu) { open = next }
         window = NSApp.keyWindow
         watchKeys()
@@ -157,29 +203,67 @@ final class MenuHost {
         entry.action()
     }
 
-    /// Arrow keys move through the menu, Return chooses, Escape closes.
     private func watchKeys() {
         if monitor != nil { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let open = self.open else { return event }
-            if event.keyCode == 53 { self.dismiss(); return nil }
-            guard case .entries(let entries) = open.content else { return event }
-            let choosable = entries.indices.filter { entries[$0].kind == .item && entries[$0].enabled }
-            switch event.keyCode {
-            case 125, 126:
-                guard !choosable.isEmpty else { return nil }
-                let current = self.highlighted.flatMap { choosable.firstIndex(of: $0) }
-                let next = event.keyCode == 125
-                    ? (current.map { min($0 + 1, choosable.count - 1) } ?? 0)
-                    : (current.map { max($0 - 1, 0) } ?? choosable.count - 1)
-                self.highlight(choosable[next])
-                return nil
-            case 36, 76:
-                if let h = self.highlighted { self.choose(entries[h]) }
-                return nil
-            default: return event
-            }
+            guard let self else { return event }
+            return self.key(event) ? nil : event
         }
+    }
+
+    /// Arrow keys move through the menu, Return chooses, Escape closes. In a menu that filters,
+    /// typing narrows it, Delete takes back a letter (with Option or Command, all of them) and
+    /// Escape clears what was typed before it closes. True when the menu took the key.
+    func key(_ event: NSEvent) -> Bool {
+        guard let open else { return false }
+        if event.keyCode == 53 {
+            if open.searchable, !query.isEmpty { search("") } else { dismiss() }
+            return true
+        }
+        guard case .entries = open.content else { return false }
+        let entries = shown
+        let choosable = entries.indices.filter { entries[$0].kind == .item && entries[$0].enabled }
+        switch event.keyCode {
+        case 125, 126:
+            guard !choosable.isEmpty else { return true }
+            let current = highlighted.flatMap { choosable.firstIndex(of: $0) }
+            let next = event.keyCode == 125
+                ? (current.map { min($0 + 1, choosable.count - 1) } ?? 0)
+                : (current.map { max($0 - 1, 0) } ?? choosable.count - 1)
+            highlight(choosable[next])
+            stepped += 1
+            return true
+        case 36, 76:
+            if let h = highlighted, entries.indices.contains(h) { choose(entries[h]) }
+            return true
+        default:
+            return open.searchable && type(event)
+        }
+    }
+
+    /// A key typed into a menu that filters. Delete is kept from the canvas even with nothing to
+    /// take back, where it would delete the selection; shortcuts other than paste go on to the app.
+    private func type(_ event: NSEvent) -> Bool {
+        let held = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.keyCode == 51 || event.keyCode == 117 {
+            search(held.contains(.option) || held.contains(.command) ? "" : String(query.dropLast()))
+            return true
+        }
+        if held.contains(.command) {
+            guard event.charactersIgnoringModifiers?.lowercased() == "v",
+                  let pasted = NSPasteboard.general.string(forType: .string)?.split(whereSeparator: \.isNewline).first else { return false }
+            search(query + pasted.trimmingCharacters(in: .whitespaces))
+            return true
+        }
+        if held.contains(.control) { return false }
+        // Letters and signs, not the arrows, function keys and controls the keyboard also sends.
+        let typed = String(String.UnicodeScalarView((event.characters ?? "").unicodeScalars.filter {
+            !$0.properties.generalCategory.isControlOrPrivate
+        }))
+        guard !typed.isEmpty else { return false }
+        if query.isEmpty, Self.blank(typed) { return true }
+        search(query + typed)
+        return true
     }
 }
 
@@ -212,10 +296,12 @@ struct MenuLayer: View {
                 if let open = host.open, let rect = rect(for: open, in: geo) {
                     let gap: CGFloat = rect.height > 0 ? 6 : 2
                     let full = contentHeight(open)
+                    // A list one types into, such as the fonts, needs only a handful showing.
+                    let wanted = open.searchable ? min(full, MenuSearch.tallest) : full
                     let roomBelow = geo.size.height - 12 - rect.maxY - gap
                     let roomAbove = rect.minY - gap - 12
-                    let below = full <= roomBelow || roomBelow >= roomAbove
-                    let height = min(full, below ? roomBelow : roomAbove)
+                    let below = wanted <= roomBelow || roomBelow >= roomAbove
+                    let height = min(wanted, below ? roomBelow : roomAbove)
                     let x = min(max(rect.minX, 12), geo.size.width - open.width - 12)
                     let y = below ? rect.maxY + gap : rect.minY - gap - height
                     let window = geo.frame(in: .global).origin
@@ -250,7 +336,8 @@ struct MenuLayer: View {
 
     private func contentHeight(_ open: MenuHost.Open) -> CGFloat {
         switch open.content {
-        case .entries(let entries): MenuPanel.height(of: entries)
+        // As tall as every entry, whatever is typed, so the menu keeps its place and size.
+        case .entries(let entries): MenuPanel.height(of: entries) + (open.searchable ? MenuSearch.height : 0)
         case .panel(_, let size): size.height
         }
     }
@@ -283,13 +370,22 @@ private struct MenuPanel: View {
     }
 
     var body: some View {
-        if case .entries(let entries) = open.content {
-            Group {
+        if case .entries = open.content {
+            let entries = host.shown
+            VStack(spacing: 0) {
+                if open.searchable { MenuSearch(query: host.query, found: !entries.isEmpty) }
                 if scrolls {
                     ScrollViewReader { reader in
                         ScrollView { list(entries) }
                             .scrollIndicators(.never)
                             .onAppear { if let reveal = open.reveal { reader.scrollTo(reveal, anchor: .center) } }
+                            // To the entry the keys moved to; to the best match when typing, and
+                            // back to the one chosen before when the words are cleared.
+                            .onChange(of: host.stepped) {
+                                if let h = host.highlighted { reader.scrollTo(h) }
+                                else if host.query.isEmpty, let reveal = open.reveal { reader.scrollTo(reveal, anchor: .center) }
+                                else { reader.scrollTo(0, anchor: .top) }
+                            }
                     }
                 } else {
                     list(entries)
@@ -323,6 +419,87 @@ private struct MenuPanel: View {
         .padding(6)
         // Off the menu, nothing is highlighted and nothing shown for it.
         .onHover { if !$0 { host.highlight(nil) } }
+    }
+}
+
+/// The row at the head of a menu that filters: what has been typed, set where the entries' titles
+/// begin, after a magnifier in the column of their check marks, and a caret that waits for more.
+private struct MenuSearch: View {
+    static let height: CGFloat = 36
+    /// The tallest a menu that filters grows: about a dozen entries, the last cut through so the
+    /// list plainly goes on.
+    static let tallest: CGFloat = 400
+    let query: String
+    /// Whether anything matches; the words fade when nothing does.
+    let found: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Magnifier(color: Theme.ink3)
+                .frame(width: 12)
+            HStack(spacing: 1) {
+                Text(verbatim: query)
+                    .font(.system(size: 13))
+                    .foregroundStyle(found ? Theme.ink : Theme.ink3)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                // Lit again with each letter, as a text field's is.
+                Caret().id(query)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: Self.height - 1)
+        .overlay(alignment: .bottom) { Hairline().padding(.horizontal, 6).offset(y: 1) }
+        .padding(.bottom, 1)
+        .accessibilityElement()
+        .accessibilityLabel(Text("Filter"))
+        .accessibilityValue(Text(verbatim: query))
+    }
+}
+
+/// A magnifier, drawn as the check mark and chevron are.
+private struct Magnifier: View {
+    var color: Color
+
+    var body: some View {
+        Canvas { ctx, s in
+            let r = s.width * 0.31, c = CGPoint(x: s.width * 0.42, y: s.height * 0.42)
+            var p = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+            p.move(to: CGPoint(x: c.x + r * 0.72, y: c.y + r * 0.72))
+            p.addLine(to: CGPoint(x: s.width * 0.88, y: s.height * 0.88))
+            ctx.stroke(p, with: .color(color), style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+        }
+        .frame(width: 11, height: 11)
+        .accessibilityHidden(true)
+    }
+}
+
+/// A text caret in pencil, blinking at the pace of the system's.
+private struct Caret: View {
+    @State private var lit = true
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 0.75)
+            .fill(Theme.pencil)
+            .frame(width: 1.5, height: 16)
+            .opacity(lit ? 1 : 0)
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(530))
+                    lit.toggle()
+                }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+private extension Unicode.GeneralCategory {
+    var isControlOrPrivate: Bool {
+        switch self {
+        case .control, .format, .privateUse, .surrogate, .unassigned: true
+        default: false
+        }
     }
 }
 

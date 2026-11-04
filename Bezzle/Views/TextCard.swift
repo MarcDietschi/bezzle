@@ -81,7 +81,7 @@ struct TextCard: View {
                 Caption(picked.length == 1 ? "Changing the letter picked out." : "Changing the \(picked.length) letters picked out.")
                     .transition(.unfold)
             }
-            MenuButton(id: "font-family", title: family.map { .verbatim(Fonts.displayName($0)) } ?? "Several fonts", width: Inspector.content, fills: true) {
+            MenuButton(id: "font-family", title: family.map { .verbatim(Fonts.displayName($0)) } ?? "Several fonts", width: Inspector.content, fills: true, searchable: true) {
                 familyEntries(current: family)
             }
             HStack(spacing: 8) {
@@ -132,16 +132,16 @@ struct TextCard: View {
             // How the box finds its size, and, for a box of fixed size, where the lines lie in it.
             HStack(spacing: 8) {
                 IconChoice(selection: common(\.sizing), options: [
-                    (.autoWidth, "arrow.left.and.right", "Auto size"),
-                    (.autoHeight, "arrow.up.and.down", "Fixed width"),
+                    (.autoWidth, "arrow.left.and.right", "Auto width"),
+                    (.autoHeight, "arrow.up.and.down", "Auto height"),
                     (.fixed, "rectangle.dashed", "Fixed size"),
                 ]) { v in
                     let action: LocalizedStringResource = switch v {
-                    case .autoWidth: "Auto Size"
-                    case .autoHeight: "Fixed Width"
+                    case .autoWidth: "Auto Width"
+                    case .autoHeight: "Auto Height"
                     case .fixed: "Fixed Size"
                     }
-                    set(action) { $0.sizing = v }
+                    store.updateSelection(action) { n in n.setSizing(v) }
                 }
                 let fixed = common(\.sizing) == .fixed
                 IconChoice(selection: fixed ? common { $0.vertical ?? .top } : nil, options: [

@@ -357,101 +357,84 @@ struct CanvasTests {
         return t
     }
 
-    @Test func aSideOfTheTextWrapsItsWords() {
-        let bench = Bench(extra: [Self.autoSizeText()])
-        let id = bench.node("T")!.id
-        let start = try! #require(bench.store.doc.absoluteFrame(of: id))
-        bench.click(CGPoint(x: start.midX, y: start.midY))
-        // The right side's handle, in to three fifths: the words go onto more lines, as big as they were.
-        let width = (start.width * 0.6).rounded()
-        bench.drag(CGPoint(x: start.maxX, y: start.midY), CGPoint(x: start.minX + width, y: start.midY), flags: .command)
-        let t = try! #require(bench.node("T"))
-        #expect(t.style?.sizing == .autoHeight)
-        #expect(t.style?.size == 24)
-        let f = try! #require(bench.store.doc.absoluteFrame(of: id))
-        #expect(f.origin == start.origin)
-        #expect(f.width == width)
-        #expect(f.height > start.height * 1.5)
-        bench.undoLast()
-        #expect(bench.node("T")?.style?.sizing == .autoWidth)
+    /// "Good morning" at 24 points, 36 between lines, wrapped at `width`, on artboard A at 40,40.
+    private static func wrappedText(_ sizing: TextSizing, width: CGFloat, height: CGFloat? = nil) -> Node {
+        var t = autoSizeText()
+        t.style?.sizing = sizing
+        t.frame.size = CGSize(width: width, height: height ?? 0)
+        t.refit()
+        return t
     }
 
-    @Test func theTopOrACornerOfTheTextGrowsItsLettersAndLines() {
+    // As Adobe XD has it: text as wide as its words has one handle, at its bottom, which grows
+    // its letters; a fixed width's sides wrap its words, and its top, bottom or corners make it a
+    // box of fixed size; a box of fixed size is resized, its letters as they are.
+
+    @Test func textAsWideAsItsWordsGrowsItsLettersByItsOneHandle() {
         let bench = Bench(extra: [Self.autoSizeText()])
         let id = bench.node("T")!.id
         let start = try! #require(bench.store.doc.absoluteFrame(of: id))
         bench.click(CGPoint(x: start.midX, y: start.midY))
-        // The top's handle, pulled up by half its height: its bottom stays, and the side it is aligned to.
+        // Its bottom's handle, pulled down by half its height: its top and the side it is set to stay.
         let d = (start.height / 2).rounded(), k = (start.height + d) / start.height
-        bench.drag(CGPoint(x: start.midX, y: start.minY), CGPoint(x: start.midX, y: start.minY - d), flags: .command)
+        bench.drag(CGPoint(x: start.midX, y: start.maxY), CGPoint(x: start.midX, y: start.maxY + d), flags: .command)
         let grown = try! #require(bench.node("T")?.style)
         #expect(grown.sizing == .autoWidth)
         #expect(grown.size == (24 * k * 10).rounded() / 10)
         #expect(grown.lineSpacing == (36 * k * 10).rounded() / 10)
         let f = try! #require(bench.store.doc.absoluteFrame(of: id))
-        #expect(f.maxY == start.maxY)
-        #expect(f.minX == start.minX)
-        // The bottom right corner, in to three quarters: smaller again, the top left where it was.
-        bench.drag(CGPoint(x: f.maxX, y: f.maxY), CGPoint(x: f.minX + (f.width * 0.75).rounded(), y: f.minY + (f.height * 0.75).rounded()), flags: .command)
-        let shrunk = try! #require(bench.node("T")?.style)
-        #expect(shrunk.size < grown.size)
-        #expect(abs(shrunk.lineSpacing! / shrunk.size - 1.5) < 0.01)
-        let g = try! #require(bench.store.doc.absoluteFrame(of: id))
-        #expect(g.origin == f.origin)
-        bench.undoLast()
+        #expect(f.origin == start.origin)
+        #expect(f.width > start.width)
         bench.undoLast()
         #expect(bench.node("T")?.style?.size == 24)
         #expect(bench.node("T")?.style?.lineSpacing == 36)
     }
 
-    @Test func aFixedWidthGrowsWithItsLettersSoTheWordsWrapWhereTheyDid() {
-        var t = Self.autoSizeText()
-        t.style?.sizing = .autoHeight
-        t.frame.size.width = 100
-        t.refit()
-        let bench = Bench(extra: [t])
-        let id = bench.node("T")!.id
-        let start = try! #require(bench.store.doc.absoluteFrame(of: id))
-        bench.click(CGPoint(x: start.midX, y: start.midY))
-        // The bottom right corner, out to twice the size with Shift.
-        bench.drag(CGPoint(x: start.maxX, y: start.maxY), CGPoint(x: start.minX + start.width * 2, y: start.minY + start.height * 2), flags: [.command, .shift])
-        let n = try! #require(bench.node("T"))
-        #expect(n.style?.sizing == .autoHeight)
-        #expect(n.style?.size == 48)
-        #expect(n.style?.lineSpacing == 72)
-        let f = try! #require(bench.store.doc.absoluteFrame(of: id))
-        #expect(f.origin == start.origin)
-        #expect(f.width == 200)
-        #expect(abs(f.height - start.height * 2) <= 1)
-    }
-
-    @Test func aCornerOfTheTextGoesWhereItIsDraggedWithItsLettersAsBigAsFit() {
+    @Test func textAsWideAsItsWordsHasNoOtherHandles() {
         let bench = Bench(extra: [Self.autoSizeText()])
         let id = bench.node("T")!.id
         let start = try! #require(bench.store.doc.absoluteFrame(of: id))
         bench.click(CGPoint(x: start.midX, y: start.midY))
-        // Twice as wide and half as tall again: the height decides how big, on the one line.
-        let box = CGSize(width: start.width * 2, height: (start.height * 1.5).rounded())
-        bench.drag(CGPoint(x: start.maxX, y: start.maxY), CGPoint(x: start.minX + box.width, y: start.minY + box.height), flags: .command)
-        let t = try! #require(bench.node("T"))
-        let style = try! #require(t.style)
-        #expect(style.sizing == .fixed)
-        #expect(abs(style.size - 36) < 0.5)
-        let f = try! #require(bench.store.doc.absoluteFrame(of: id))
-        #expect(f == CGRect(origin: start.origin, size: box))
-        // A tenth of a point more would not fit.
-        var base = try! #require(Self.autoSizeText().style)
-        base.sizing = .fixed
-        var bigger = t
-        bigger.style = base.scaled(by: (style.size * 10 + 1) / 240)
-        #expect(TextLayout.height(bigger, width: f.width) > box.height + 0.5)
+        // Where a side's handle and a corner's would be: neither wraps it nor grows it.
+        for from in [CGPoint(x: start.maxX, y: start.midY), CGPoint(x: start.maxX, y: start.minY)] {
+            bench.drag(from, CGPoint(x: from.x - 40, y: from.y), flags: .command)
+            let t = try! #require(bench.node("T"))
+            #expect(t.style?.sizing == .autoWidth)
+            #expect(t.style?.size == 24)
+            #expect(bench.store.doc.absoluteFrame(of: id)?.size == start.size)
+            bench.undoLast()
+        }
     }
 
-    @Test func aCornerOfTheTextKeepsTheCornerAcrossFromIt() {
+    @Test func aFixedWidthsSideWrapsItsWordsAndItsBottomMakesItABoxOfFixedSize() {
+        let bench = Bench(extra: [Self.wrappedText(.autoHeight, width: 200)])
+        let id = bench.node("T")!.id
+        let start = try! #require(bench.store.doc.absoluteFrame(of: id))
+        bench.click(CGPoint(x: start.midX, y: start.midY))
+        // The right side in to 80: the words wrap, as big as they were, and it is as tall as its lines.
+        bench.drag(CGPoint(x: start.maxX, y: start.midY), CGPoint(x: start.minX + 80, y: start.midY), flags: .command)
+        let wrapped = try! #require(bench.node("T"))
+        #expect(wrapped.style?.sizing == .autoHeight)
+        #expect(wrapped.style?.size == 24)
+        let f = try! #require(bench.store.doc.absoluteFrame(of: id))
+        #expect(f.origin == start.origin)
+        #expect(f.width == 80)
+        #expect(f.height > start.height * 1.5)
+        // Its bottom pulled down: a box of fixed size, as tall as it is pulled, its letters as they were.
+        bench.drag(CGPoint(x: f.midX, y: f.maxY), CGPoint(x: f.midX, y: f.maxY + 50), flags: .command)
+        let boxed = try! #require(bench.node("T"))
+        #expect(boxed.style?.sizing == .fixed)
+        #expect(boxed.style?.size == 24)
+        #expect(bench.store.doc.absoluteFrame(of: id) == CGRect(x: f.minX, y: f.minY, width: 80, height: f.height + 50))
+        bench.undoLast()
+        #expect(bench.node("T")?.style?.sizing == .autoHeight)
+    }
+
+    @Test func aCornerOfAFixedWidthMakesABoxFromTheCornerAcrossToThePointer() {
         for (dx, dy) in [(1.0, 1.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)] as [(CGFloat, CGFloat)] {
             // Held partway, and let go.
             for release in [false, true] {
-                let bench = Bench(extra: [Self.autoSizeText()])
+                let bench = Bench(extra: [Self.wrappedText(.autoHeight, width: 200)])
                 let id = bench.node("T")!.id
                 let start = try! #require(bench.store.doc.absoluteFrame(of: id))
                 bench.click(CGPoint(x: start.midX, y: start.midY))
@@ -460,40 +443,92 @@ struct CanvasTests {
                 // Out by a third of its width and half its height.
                 let to = CGPoint(x: corner.x + (dx == 1 ? 1 : -1) * (start.width / 3).rounded(), y: corner.y + (dy == 1 ? 1 : -1) * (start.height / 2).rounded())
                 bench.drag(corner, to, flags: .command, release: release)
-                // The box runs from the corner across to the pointer.
                 let f = try! #require(bench.store.doc.absoluteFrame(of: id))
                 #expect(f == Geometry.rect(from: across, to: to), "corner \(dx),\(dy), let go \(release): \(f) from \(start)")
+                #expect(bench.node("T")?.style?.sizing == .fixed)
+                #expect(bench.node("T")?.style?.size == 24)
             }
         }
     }
 
-    @Test func aBoxOfFixedSizeKeepsItsHeightAsItsWordsWrap() {
-        var t = Self.autoSizeText()
-        t.style?.sizing = .fixed
-        t.frame.size = CGSize(width: 200, height: 120)
-        t.refit()
-        #expect(t.frame.size == CGSize(width: 200, height: 120))
-        t.resizeText(to: CGSize(width: 80, height: 120), byHeight: false)
-        #expect(t.style?.sizing == .fixed)
-        #expect(t.style?.size == 24)
-        #expect(t.frame.size == CGSize(width: 80, height: 120))
-        t.resizeText(to: CGSize(width: 80, height: 240), byHeight: true)
-        #expect(t.style?.size == 48)
-        #expect(t.frame.size == CGSize(width: 160, height: 240))
+    @Test func aBoxOfFixedSizeHidesWhatDoesNotFitAndItsBottomHandleFitsIt() throws {
+        let bench = Bench(extra: [Self.wrappedText(.fixed, width: 200, height: 100)])
+        let id = bench.node("T")!.id
+        let start = try #require(bench.store.doc.absoluteFrame(of: id))
+        #expect(start.size == CGSize(width: 200, height: 100))
+        #expect(bench.node("T")?.overflows == false)
+        bench.click(CGPoint(x: start.midX, y: start.midY))
+        // Its corner in to 80 by 30: the box is that, its letters as they were, and what does not fit hidden.
+        bench.drag(CGPoint(x: start.maxX, y: start.maxY), CGPoint(x: start.minX + 80, y: start.minY + 30), flags: .command)
+        let f = try #require(bench.store.doc.absoluteFrame(of: id))
+        #expect(f == CGRect(origin: start.origin, size: CGSize(width: 80, height: 30)))
+        #expect(bench.node("T")?.style?.size == 24)
+        #expect(bench.node("T")?.overflows == true)
+        // Seen as a picture, the lines it hides are cut off at its bottom.
+        var board = Node(kind: .artboard, name: "B", frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        board.children = [try #require(bench.node("T"))]
+        let item = ExportItem(artboard: board)
+        let svg = SVGWriter.document(for: item, bounds: item.bounds(assets: nil), assets: nil)
+        #expect(svg.contains("<clipPath") && svg.contains("height=\"30\""))
+        // A double click on its bottom handle fits it to its words, as tall as they are again.
+        bench.click(CGPoint(x: f.midX, y: f.maxY))
+        bench.click(CGPoint(x: f.midX, y: f.maxY), clicks: 2)
+        let fitted = try #require(bench.node("T"))
+        #expect(fitted.style?.sizing == .autoHeight)
+        #expect(fitted.overflows == false)
+        let g = try #require(bench.store.doc.absoluteFrame(of: id))
+        #expect(g.origin == f.origin)
+        #expect(g.width == 80)
+        #expect(g.height > 60)
+        bench.undoLast()
+        #expect(bench.node("T")?.style?.sizing == .fixed)
+        #expect(bench.store.doc.absoluteFrame(of: id) == f)
     }
 
-    @Test func aWidthTypedInWrapsTheWordsAndAHeightGrowsTheLetters() {
+    @Test func sizesTypedInResizeAsTheHandlesDo() {
+        // As wide as its words: its letters and lines grow, by the height, or by the width alone.
         var t = Self.autoSizeText()
-        let start = t.frame
-        t.resizeText(to: CGSize(width: 80, height: start.height), byHeight: false)
-        #expect(t.style?.sizing == .autoHeight)
-        #expect(t.style?.size == 24)
-        #expect(t.frame.width == 80)
-        #expect(t.frame.height > start.height)
-        t.resizeText(to: CGSize(width: 80, height: t.frame.height * 2), byHeight: true)
+        t.resizeText(to: CGSize(width: t.frame.width, height: t.frame.height * 2), byHeight: true)
+        #expect(t.style?.sizing == .autoWidth)
         #expect(t.style?.size == 48)
         #expect(t.style?.lineSpacing == 72)
-        #expect(t.frame.width == 160)
+        t.resizeText(to: CGSize(width: t.frame.width / 2, height: t.frame.height), byHeight: false)
+        #expect(t.style?.size == 24)
+        // A fixed width: a width wraps its words; a height makes it a box of fixed size.
+        var w = Self.wrappedText(.autoHeight, width: 200)
+        let start = w.frame
+        w.resizeText(to: CGSize(width: 80, height: start.height), byHeight: false)
+        #expect(w.style?.sizing == .autoHeight)
+        #expect(w.style?.size == 24)
+        #expect(w.frame.width == 80)
+        #expect(w.frame.height > start.height)
+        w.resizeText(to: CGSize(width: 80, height: 240), byHeight: true)
+        #expect(w.style?.sizing == .fixed)
+        #expect(w.style?.size == 24)
+        #expect(w.frame.size == CGSize(width: 80, height: 240))
+        // A box of fixed size takes the size, too small or not.
+        w.resizeText(to: CGSize(width: 60, height: 20), byHeight: false)
+        #expect(w.frame.size == CGSize(width: 60, height: 20))
+        #expect(w.style?.size == 24)
+        #expect(w.overflows)
+    }
+
+    @Test func madeAsWideAsItsWordsItsLinesBreakWhereTheyWrapped() {
+        var t = Self.wrappedText(.autoHeight, width: 110)
+        #expect(TextLayout.layout(t).usedSize.height > 60)
+        t.setSizing(.autoWidth)
+        #expect(t.text == "Good\nmorning")
+        #expect(t.style?.sizing == .autoWidth)
+        #expect(t.frame.width < 110)
+        // A fixed width again keeps the break.
+        t.setSizing(.autoHeight)
+        #expect(t.text == "Good\nmorning")
+        // Lines that do not wrap are left as they are.
+        var one = Self.autoSizeText()
+        one.style?.sizing = .fixed
+        one.frame.size = CGSize(width: 300, height: 100)
+        one.setSizing(.autoWidth)
+        #expect(one.text == "Good morning")
     }
 
     @Test func textOfAutoSizeInAGroupGrowsItsLinesWithIt() {
@@ -557,6 +592,73 @@ struct CanvasTests {
         bench.click(CGPoint(x: 150, y: 150))
         bench.step { bench.canvas.endEditing() }
         #expect(bench.a.children.isEmpty)
+    }
+
+    @Test func aClickWithTheTextToolIsWhereTheFirstBaselineBeginsAndTheToolStays() throws {
+        let bench = Bench()
+        bench.store.tool = .text
+        bench.click(CGPoint(x: 150, y: 150))
+        let editor = try #require(bench.editor)
+        editor.insertText("Hello", replacementRange: NSRange(location: 0, length: 0))
+        let id = try #require(bench.store.editingText)
+        let text = try #require(bench.store.node(id))
+        let f = try #require(bench.store.doc.absoluteFrame(of: id))
+        #expect(text.style?.sizing == .autoWidth)
+        #expect(f.minX == 150)
+        #expect(abs(f.minY + TextLayout.firstBaseline(text) - 150) <= 0.5)
+        // Done typing, the Text tool is still in hand, as in XD; Esc puts it down.
+        bench.step { bench.canvas.endEditing() }
+        #expect(bench.store.tool == .text)
+        #expect(bench.store.selection == [id])
+        bench.key(53)
+        #expect(bench.store.tool == .select)
+    }
+
+    @Test func aClickWithTheTextToolOnATextTypesIntoItAndADragDrawsANewOneLikeIt() throws {
+        var t = Self.autoSizeText()
+        t.style?.size = 40
+        t.fill.color = RGBA(r: 0.8, g: 0.1, b: 0.1, a: 1)
+        t.refit()
+        let bench = Bench(extra: [t])
+        let id = bench.node("T")!.id
+        let start = try #require(bench.store.doc.absoluteFrame(of: id))
+        bench.store.tool = .text
+        bench.click(CGPoint(x: start.midX, y: start.midY))
+        #expect(bench.store.editingText == id)
+        #expect(bench.editor?.selectedRange() == NSRange(location: 0, length: 12))
+        bench.step { bench.canvas.endEditing() }
+        // A drag, though it begins on the text, draws a new one, looking as the text selected does.
+        let from = CGPoint(x: start.minX + 10, y: start.midY)
+        bench.drag(from, CGPoint(x: from.x + 190, y: from.y + 60), flags: .command)
+        #expect(bench.a.children.count == 2)
+        let newID = try #require(bench.store.editingText)
+        #expect(newID != id)
+        let drawn = try #require(bench.store.node(newID))
+        #expect(drawn.style?.sizing == .autoHeight)
+        #expect(drawn.style?.size == 40)
+        #expect(drawn.style?.lineSpacing == 36)
+        #expect(drawn.fill.color == t.fill.color)
+        // Its box is as it was dragged out until words are typed, then as tall as they are.
+        #expect(bench.store.doc.absoluteFrame(of: newID)?.size == CGSize(width: 190, height: 60))
+        try #require(bench.editor).insertText("Hi", replacementRange: NSRange(location: 0, length: 0))
+        let typed = try #require(bench.store.doc.absoluteFrame(of: newID))
+        #expect(typed.width == 190)
+        #expect(typed.height < 60)
+        #expect(bench.store.tool == .text)
+    }
+
+    @Test func theHandlesOfATextBeingTypedIntoResizeItAndTypingGoesOn() throws {
+        let bench = Bench(extra: [Self.wrappedText(.fixed, width: 200, height: 100)])
+        let id = bench.node("T")!.id
+        bench.step { bench.canvas.beginEditing(id, action: "Typing") }
+        try #require(bench.editor).setSelectedRange(NSRange(location: 4, length: 0))
+        let f = try #require(bench.store.doc.absoluteFrame(of: id))
+        bench.drag(CGPoint(x: f.midX, y: f.maxY), CGPoint(x: f.midX, y: f.maxY + 40), flags: .command)
+        #expect(bench.store.doc.absoluteFrame(of: id)?.size == CGSize(width: 200, height: 140))
+        #expect(bench.store.editingText == id)
+        #expect(bench.editor?.selectedRange() == NSRange(location: 4, length: 0))
+        bench.undoLast()
+        #expect(bench.store.doc.absoluteFrame(of: id)?.size == CGSize(width: 200, height: 100))
     }
 
     @Test func shiftTurnsTheWheelSideways() {

@@ -79,6 +79,8 @@ enum CanvasInk {
     static let pencil = Theme.hex(0x3A63D8)
     /// Gaps as wide as each other, set apart from the guides in pencil.
     static let gap = Theme.hex(0xE0457B)
+    /// The bottom handle of a text box too small for its words, which hides the rest.
+    static let overflow = Theme.hex(0xE5484D)
     /// Copies of a component, and the light that runs between them when one changes them all.
     static let linked = Theme.dynamicNS(0x7650D8, 0xAE93F2)
     static let label = Theme.dynamicNS(0x1C1B19, 0xEDEAE4, lightAlpha: 0.50, darkAlpha: 0.50)

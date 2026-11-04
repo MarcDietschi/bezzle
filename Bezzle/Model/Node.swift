@@ -370,11 +370,12 @@ nonisolated struct BlurRamp: Codable, Hashable {
     }
 }
 
-/// How a text layer finds its size: as wide as its words (made by a click), a box of a set width
-/// that grows downward (made by dragging), or a box of a set width and height, its words wrapped
-/// inside from the top. The inspector calls them Auto size, Fixed width and Fixed size. Resizing
-/// from a side wraps the words to a new width; from the top or bottom the letters grow or shrink
-/// with the box; from a corner the box is what is dragged, of fixed size, its letters as big as fit.
+/// How a text layer finds its size, as Adobe XD has it: as wide as its words (made by a click), a
+/// box of a set width that grows downward (made by dragging), or a box of a set width and height,
+/// its words wrapped inside from the top and what does not fit hidden. The inspector calls them
+/// Auto width, Auto height and Fixed size. Text as wide as its words has one handle, at its
+/// bottom, which grows its letters; a fixed width's sides wrap its words, and its top, bottom or
+/// corners make it a box of fixed size; a box of fixed size is resized, its letters as they are.
 nonisolated enum TextSizing: String, Codable, CaseIterable {
     case autoWidth, autoHeight, fixed
 }

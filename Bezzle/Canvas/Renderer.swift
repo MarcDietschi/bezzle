@@ -493,7 +493,14 @@ nonisolated enum Renderer {
         if previous?.cgContext !== ctx {
             NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
         }
+        // A box of fixed size too small for its lines hides what is past its top and bottom.
+        let hides = node.overflows
+        if hides {
+            ctx.saveGState()
+            ctx.clip(to: CGRect(x: -node.frame.width, y: 0, width: node.frame.width * 3, height: node.frame.height))
+        }
         laid.draw(at: CGPoint(x: 0, y: TextLayout.offset(node)), painting: letterPaint(of: node, options: options))
+        if hides { ctx.restoreGState() }
         NSGraphicsContext.current = previous
     }
 

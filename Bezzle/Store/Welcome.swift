@@ -392,8 +392,8 @@ enum Welcome {
         title: String(localized: "Make it say something."),
         steps: [
             String(localized: "Double-click the headline on the poster and type something of your own."),
-            String(localized: "Drag a side of the text to wrap its words. Drag its top or bottom to make the letters bigger or smaller."),
-            String(localized: "Press T, then click anywhere for new text, or drag out a box for a paragraph."),
+            String(localized: "Drag a side of the text to wrap its words."),
+            String(localized: "Press T, then click anywhere for a line of text, or drag out a box for a paragraph. Drag a line’s one handle to make its letters bigger or smaller."),
         ],
         keys: ["↩"], tip: String(localized: "Starts typing into the selected text."),
         scene: wordsOnPoster)

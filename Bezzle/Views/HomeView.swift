@@ -200,7 +200,7 @@ private struct DesignGrid: View {
 
         var id: String {
             switch self {
-            case .design(let e): e.url.path
+            case .design(let e): e.key
             case .arriving(let a): "arriving-\(a.title)-\(a.owner ?? "")"
             case .problem: "problem"
             }
@@ -251,7 +251,8 @@ private struct DesignGrid: View {
 }
 
 /// One of your designs: as it lies on the canvas's table, and under it its name and when it was
-/// last changed. Pointed at, it lifts off the page.
+/// last changed. Pointed at, it lifts off the page. Renamed from its menu, the name is typed anew
+/// where it is.
 private struct DesignPlate: View {
     @Environment(MenuHost.self) private var menus
     let entry: Library.Entry
@@ -261,6 +262,9 @@ private struct DesignPlate: View {
     @State private var hovering = false
     /// Where the pointer is over its table, from -0.5 to 0.5 each way.
     @State private var tilt = CGPoint.zero
+    @State private var renaming = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
 
     /// The room under the table for the name and the note under it.
     static let below: CGFloat = 50
@@ -281,25 +285,66 @@ private struct DesignPlate: View {
                     }
                 }
             VStack(alignment: .leading, spacing: 3) {
-                Text(entry.name)
-                    .font(Theme.serif(15, weight: .medium))
-                    .foregroundStyle(hovering ? Theme.pencil : Theme.ink)
-                    .lineLimit(1)
+                name
                 DesignNote(entry: entry)
             }
             .padding(.horizontal, 2)
             .padding(.top, 11)
             .frame(height: Self.below, alignment: .topLeading)
         }
-        .offset(y: hovering ? -3 : 0)
+        .offset(y: hovering && !renaming ? -3 : 0)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(perform: action)
+        // While its name is typed, a click on it only ends the typing.
+        .gesture(TapGesture().onEnded(action), including: renaming ? .subviews : .all)
         .menuAnchor("design-\(entry.url.path)")
-        .contextMenuReplacement { point in menus.show(at: point, entries: DesignMenu.entries(for: entry, open: action)) }
+        .contextMenuReplacement { point in
+            menus.show(at: point, entries: DesignMenu.entries(for: entry, open: action, rename: startRenaming))
+        }
         .animation(Theme.spring, value: hovering)
-        .accessibilityElement(children: .combine)
+        .animation(Theme.quick, value: renaming)
+        // One button, but while its name is typed, the field stands on its own.
+        .accessibilityElement(children: renaming ? .contain : .combine)
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default) { if !renaming { action() } }
+        .accessibilityAction(named: Text("Rename"), startRenaming)
+    }
+
+    /// Its name, or while it is being renamed, a field in the paper holding it, in the same place.
+    @ViewBuilder private var name: some View {
+        if renaming {
+            TextField("", text: $draft)
+                .textFieldStyle(.plain)
+                .font(Theme.serif(15, weight: .medium))
+                .foregroundStyle(Theme.ink)
+                .focused($focused)
+                .onSubmit { finishRenaming(keep: true) }
+                .onExitCommand { finishRenaming(keep: false) }
+                .onChange(of: focused) { _, now in if !now { finishRenaming(keep: true) } }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .well(radius: 7)
+                .padding(.horizontal, -6)
+                .padding(.vertical, -2)
+        } else {
+            Text(entry.name)
+                .font(Theme.serif(15, weight: .medium))
+                .foregroundStyle(hovering ? Theme.pencil : Theme.ink)
+                .lineLimit(1)
+        }
+    }
+
+    private func startRenaming() {
+        guard entry.sharing != .ended else { return }
+        draft = entry.name
+        renaming = true
+        focused = true
+    }
+
+    private func finishRenaming(keep: Bool) {
+        guard renaming else { return }
+        renaming = false
+        if keep { Library.shared.rename(entry.url, to: draft) }
     }
 }
 
@@ -392,10 +437,12 @@ private struct DesignNote: View {
 
 /// What a right click on a design offers.
 private enum DesignMenu {
-    static func entries(for entry: Library.Entry, open: @escaping () -> Void) -> [MenuEntry] {
+    static func entries(for entry: Library.Entry, open: @escaping () -> Void, rename: @escaping () -> Void) -> [MenuEntry] {
         [
             .item("Open") { open() },
             .item("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.url]) },
+            // Someone else's design no longer shared with you can only be looked at, as in its tab.
+            .item("Rename", enabled: entry.sharing != .ended) { rename() },
             .item("Duplicate") { Library.shared.duplicate(entry.url) },
             .separator,
             .item(entry.url.path.hasPrefix(Library.shared.folder.path) ? "Move to Trash" : "Remove from List") {

@@ -7740,46 +7740,46 @@
         }
       }
     },
-    "Auto size" : {
+    "Auto width" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Automatisch"
+            "value" : "Automatische Breite"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Taille auto"
+            "value" : "Largeur automatique"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Automatica"
+            "value" : "Larghezza automatica"
           }
         }
       }
     },
-    "Auto Size" : {
+    "Auto Width" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Automatische Größe"
+            "value" : "Automatische Breite"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Taille auto"
+            "value" : "Largeur automatique"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Imposta dimensione automatica"
+            "value" : "Imposta larghezza automatica"
           }
         }
       }
@@ -16558,24 +16558,24 @@
         }
       }
     },
-    "Drag a side of the text to wrap its words. Drag its top or bottom to make the letters bigger or smaller." : {
+    "Drag a side of the text to wrap its words." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zieh an einer Seite des Texts, um die Zeilen neu umzubrechen. Zieh oben oder unten, um die Buchstaben größer oder kleiner zu machen."
+            "value" : "Zieh an einer Seite des Texts, um die Zeilen neu umzubrechen."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Faites glisser un côté du texte pour renvoyer les mots à la ligne. Faites glisser le haut ou le bas pour agrandir ou réduire les lettres."
+            "value" : "Faites glisser un côté du texte pour renvoyer les mots à la ligne."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Trascina un lato del testo per mandare a capo le parole. Trascina sopra o sotto per ingrandire o rimpicciolire le lettere."
+            "value" : "Trascina un lato del testo per mandare a capo le parole."
           }
         }
       }
@@ -19887,46 +19887,46 @@
         }
       }
     },
-    "Fixed width" : {
+    "Auto height" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Feste Breite"
+            "value" : "Automatische Höhe"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Largeur fixe"
+            "value" : "Hauteur automatique"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Largh. fissa"
+            "value" : "Altezza automatica"
           }
         }
       }
     },
-    "Fixed Width" : {
+    "Auto Height" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Feste Breite"
+            "value" : "Automatische Höhe"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Largeur fixe"
+            "value" : "Hauteur automatique"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Imposta larghezza fissa"
+            "value" : "Imposta altezza automatica"
           }
         }
       }
@@ -33898,24 +33898,24 @@
         }
       }
     },
-    "Press T, then click anywhere for new text, or drag out a box for a paragraph." : {
+    "Press T, then click anywhere for a line of text, or drag out a box for a paragraph. Drag a line’s one handle to make its letters bigger or smaller." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Drück T und klick irgendwohin für neuen Text, oder zieh ein Feld für einen Absatz auf."
+            "value" : "Drück T und klick irgendwohin für eine Textzeile, oder zieh ein Feld für einen Absatz auf. Zieh am einzigen Griff einer Zeile, um ihre Buchstaben größer oder kleiner zu machen."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Appuyez sur T, puis cliquez n’importe où pour un nouveau texte, ou tracez un cadre pour un paragraphe."
+            "value" : "Appuyez sur T, puis cliquez n’importe où pour une ligne de texte, ou tracez un cadre pour un paragraphe. Faites glisser l’unique poignée d’une ligne pour agrandir ou réduire ses lettres."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Premi T, poi fai clic ovunque per un nuovo testo, o trascina un riquadro per un paragrafo."
+            "value" : "Premi T, poi fai clic ovunque per una riga di testo, o trascina un riquadro per un paragrafo. Trascina l’unica maniglia di una riga per ingrandire o rimpicciolire le sue lettere."
           }
         }
       }

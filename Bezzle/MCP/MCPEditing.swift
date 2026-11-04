@@ -528,7 +528,7 @@ extension MCPTools {
         let store = try await store(args)
         let ids = try Self.layers(args, in: store)
         guard try onSelection(store, ids, "Convert to Path", { $0.convertToPath() }) else {
-            throw MCPError("Only rectangles, ellipses and lines become paths, and none of these is one (or they are locked).")
+            throw MCPError("Only rectangles, ellipses, lines and texts become paths, and none of these can (they are locked, or texts with emoji or in a repeat grid, a component copy or a deck).")
         }
         return described(ids, in: store, full: true)
     }
