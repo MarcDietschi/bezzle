@@ -30,6 +30,7 @@ struct BezzleApp: App {
         .commands {
             BezzleCommands()
             MCPCommands()
+            UpdateCommands()
         }
     }
 }
@@ -65,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MCPServer.shared.launch()
             CloudSync.shared.start()
             Welcome.makeOnFirstLaunch()
+            Updates.start()
         }
     }
 

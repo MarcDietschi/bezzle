@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Bezzle's website (mfrports.github.io/bezzle-web): the home page, Support and Privacy, in English,
-German, French and Italian. Writes everything to public/, ready for GitHub Pages.
-Pictures come from the App Store screenshots in ../screenshots."""
-import html, os, re, shutil, subprocess, sys
+German, French and Italian, and once Bezzle is released on the website, its Download and What's New
+pages and the update feed (updates/appcast.xml). Writes everything to public/, ready for GitHub Pages.
+Pictures come from the App Store screenshots in ../screenshots.
+
+Usage: AppStore/site/build.py [--feed <appcast.xml>]
+The version offered, its zip and size come from the live update feed, or from the feed given:
+Scripts/release.sh passes the new one before it goes live. The notes come from RELEASE_NOTES.md."""
+import argparse, html, os, re, shutil, subprocess, sys, time, urllib.error, urllib.request
+import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "public")
@@ -10,6 +16,8 @@ SHOTS = os.path.join(os.path.dirname(HERE), "screenshots")
 ICON = os.path.join(os.path.dirname(os.path.dirname(HERE)), "Branding", "bezzle-icon.png")
 STORE = "https://apps.apple.com/app/id6829008596"
 ISSUES = "https://github.com/mfrports/bezzle-web/issues/new"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "Scripts", "release"))
+import notes  # noqa: E402
 NB = " "
 LANGS = [("en-US", "en", "", "EN"), ("de-DE", "de", "de/", "DE"), ("fr-FR", "fr", "fr/", "FR"), ("it", "it", "it/", "IT")]
 
@@ -195,6 +203,143 @@ T["it"] = dict(
              ("Modifiche e contatti", 'Se questa informativa cambia, la nuova versione comparirà su questa pagina con una nuova data. Le domande sono benvenute: <a href="support.html">scrivici</a>.')],
 )
 
+# The download from this website, its updates and its What's New page: used once a release is in
+# the update feed (see release_info), left out before.
+T["en"].update(
+    nav_download="Download", nav_news="What’s New",
+    cta_download="Download for Mac", cta_store="Mac App Store",
+    dl_title="Download Bezzle", dl_sub="Free, with everything included. The same Bezzle as on the Mac App Store.",
+    dl_button="Download Bezzle {v}", dl_facts="{mb} MB · macOS {os} or later · Signed and notarized by Apple",
+    dl_started="Bezzle is on its way to your Downloads folder.",
+    steps_h="Three steps",
+    steps=[("Open the download", "Double-click {zip} in your Downloads folder, if your browser has not opened it already."),
+           ("Move it to Applications", "Drag Bezzle into the Applications folder."),
+           ("Open Bezzle", "From Applications or with Spotlight. Apple has checked it, so it opens like any app.")],
+    updates_h="It keeps itself up to date",
+    updates_p="Bezzle looks for a new version once a day, fetches it in the background and puts it in place the next time you quit. To look right away, choose Bezzle › Check for Updates…",
+    updates_link="What’s new in {v}",
+    both_h="Website or App Store?",
+    both_p="Both are the same Bezzle, free and complete. The App Store keeps its copy up to date, and this one updates itself. Either opens the same designs, and you can share designs between the two. Keep one of them in Applications, not both.",
+    news_h="What’s new", news_sub="Every version of Bezzle, newest first.", version="Version {v}",
+    faq_updates=("How does Bezzle stay up to date?", "The Mac App Store updates its copy. The copy from this website updates itself: it looks for a new version once a day and puts it in place when you quit. Bezzle › Check for Updates… looks right away."),
+    net_and="and ", net_updates="; and, in the copy from this website only, GitHub, which hosts this website and its downloads, once a day, to look for a new version of Bezzle, sending nothing but the version you have.",
+    effective_on="Effective {}",
+)
+T["de"].update(
+    nav_download="Download", nav_news="Neuigkeiten",
+    cta_download="Für den Mac laden", cta_store="Mac App Store",
+    dl_title="Bezzle laden", dl_sub="Kostenlos, mit allem drin. Dasselbe Bezzle wie im Mac App Store.",
+    dl_button="Bezzle {v} laden", dl_facts="{mb} MB · macOS {os} oder neuer · Signiert und von Apple beglaubigt",
+    dl_started="Bezzle ist unterwegs in deinen Downloads-Ordner.",
+    steps_h="Drei Schritte",
+    steps=[("Download öffnen", "Doppelklicke {zip} in deinem Downloads-Ordner, falls dein Browser die Datei nicht schon geöffnet hat."),
+           ("In Programme bewegen", "Zieh Bezzle in den Ordner Programme."),
+           ("Bezzle öffnen", "Aus Programme oder mit Spotlight. Apple hat es geprüft, darum öffnet es sich wie jede App.")],
+    updates_h="Es hält sich selbst aktuell",
+    updates_p="Bezzle schaut einmal am Tag nach einer neuen Version, lädt sie im Hintergrund und setzt sie ein, wenn du es das nächste Mal beendest. Um sofort nachzuschauen, wähle Bezzle › Nach Updates suchen …",
+    updates_link="Neu in {v}",
+    both_h="Website oder App Store?",
+    both_p="Beide sind dasselbe Bezzle, kostenlos und vollständig. Der App Store hält seine Kopie aktuell, diese hier aktualisiert sich selbst. Beide öffnen dieselben Designs, und du kannst Designs zwischen beiden teilen. Behalte eines davon in Programme, nicht beide.",
+    news_h="Neuigkeiten", news_sub="Jede Version von Bezzle, die neueste zuerst.", version="Version {v}",
+    faq_updates=("Wie bleibt Bezzle aktuell?", "Die Kopie aus dem Mac App Store aktualisiert der App Store. Die Kopie von dieser Website aktualisiert sich selbst: Sie schaut einmal am Tag nach einer neuen Version und setzt sie ein, wenn du Bezzle beendest. Bezzle › Nach Updates suchen … schaut sofort nach."),
+    net_and="und ", net_updates="; und, nur in der Kopie von dieser Website, mit GitHub, wo diese Website und ihre Downloads liegen, einmal am Tag, um nach einer neuen Version von Bezzle zu schauen, wobei nichts als deine Version übermittelt wird.",
+    effective_on="Gültig ab {}",
+)
+T["fr"].update(
+    nav_download="Télécharger", nav_news="Nouveautés",
+    cta_download="Télécharger pour Mac", cta_store="Mac App Store",
+    dl_title="Télécharger Bezzle", dl_sub="Gratuit, avec tout inclus. Le même Bezzle que sur le Mac App Store.",
+    dl_button="Télécharger Bezzle {v}", dl_facts="{mb} Mo · macOS {os} ou ultérieur · Signé et notarié par Apple",
+    dl_started="Bezzle arrive dans ton dossier Téléchargements.",
+    steps_h="Trois étapes",
+    steps=[("Ouvre le téléchargement", "Double-clique sur {zip} dans ton dossier Téléchargements, si ton navigateur ne l’a pas déjà ouvert."),
+           ("Place-le dans Applications", "Fais glisser Bezzle dans le dossier Applications."),
+           ("Ouvre Bezzle", "Depuis Applications ou avec Spotlight. Apple l’a vérifié, il s’ouvre donc comme n’importe quelle app.")],
+    updates_h="Il se tient à jour tout seul",
+    updates_p="Bezzle cherche une nouvelle version une fois par jour, la télécharge en arrière-plan et l’installe la prochaine fois que tu le quittes. Pour vérifier tout de suite, choisis Bezzle › Rechercher des mises à jour…",
+    updates_link="Nouveautés de la {v}",
+    both_h=f"Site ou App Store{NB}?",
+    both_p="Les deux sont le même Bezzle, gratuit et complet. L’App Store tient sa copie à jour, celle-ci se met à jour toute seule. Les deux ouvrent les mêmes designs, et tu peux partager des designs entre les deux. Garde l’un des deux dans Applications, pas les deux.",
+    news_h="Nouveautés", news_sub="Chaque version de Bezzle, de la plus récente à la plus ancienne.", version="Version {v}",
+    faq_updates=(f"Comment Bezzle reste-t-il à jour{NB}?", f"L’App Store met à jour sa copie. La copie de ce site se met à jour toute seule{NB}: elle cherche une nouvelle version une fois par jour et l’installe quand tu quittes Bezzle. Bezzle › Rechercher des mises à jour… vérifie tout de suite."),
+    net_and="et ", net_updates=f"{NB}; et, seulement dans la copie de ce site, GitHub, qui héberge ce site et ses téléchargements, une fois par jour, pour chercher une nouvelle version de Bezzle, sans rien envoyer d’autre que ta version.",
+    effective_on="En vigueur depuis le {}",
+)
+T["it"].update(
+    nav_download="Scarica", nav_news="Novità",
+    cta_download="Scarica per Mac", cta_store="Mac App Store",
+    dl_title="Scarica Bezzle", dl_sub="Gratis, con tutto incluso. Lo stesso Bezzle del Mac App Store.",
+    dl_button="Scarica Bezzle {v}", dl_facts="{mb} MB · macOS {os} o successivo · Firmato e autenticato da Apple",
+    dl_started="Bezzle sta arrivando nella tua cartella Download.",
+    steps_h="Tre passaggi",
+    steps=[("Apri il download", "Fai doppio clic su {zip} nella cartella Download, se il browser non l’ha già aperto."),
+           ("Spostalo in Applicazioni", "Trascina Bezzle nella cartella Applicazioni."),
+           ("Apri Bezzle", "Da Applicazioni o con Spotlight. Apple l’ha controllato, quindi si apre come qualsiasi app.")],
+    updates_h="Si aggiorna da solo",
+    updates_p="Bezzle cerca una nuova versione una volta al giorno, la scarica in sottofondo e la installa la prossima volta che lo chiudi. Per controllare subito, scegli Bezzle › Verifica aggiornamenti…",
+    updates_link="Novità della {v}",
+    both_h="Sito o App Store?",
+    both_p="Sono lo stesso Bezzle, gratis e completo. L’App Store tiene aggiornata la sua copia, questa si aggiorna da sola. Entrambe aprono gli stessi design, e puoi condividere design tra le due. Tieni in Applicazioni una sola delle due.",
+    news_h="Novità", news_sub="Ogni versione di Bezzle, dalla più recente.", version="Versione {v}",
+    faq_updates=("Come si mantiene aggiornato Bezzle?", "La copia del Mac App Store la aggiorna l’App Store. La copia di questo sito si aggiorna da sola: cerca una nuova versione una volta al giorno e la installa quando chiudi Bezzle. Bezzle › Verifica aggiornamenti… controlla subito."),
+    net_and="e ", net_updates="; e, solo nella copia di questo sito, GitHub, che ospita questo sito e i suoi download, una volta al giorno, per cercare una nuova versione di Bezzle, senza inviare altro che la tua versione.",
+    effective_on="In vigore dal {}",
+)
+MONTHS = {
+    "en": "January February March April May June July August September October November December".split(),
+    "de": "Januar Februar März April Mai Juni Juli August September Oktober November Dezember".split(),
+    "fr": "janvier février mars avril mai juin juillet août septembre octobre novembre décembre".split(),
+    "it": "gennaio febbraio marzo aprile maggio giugno luglio agosto settembre ottobre novembre dicembre".split(),
+}
+# The privacy policy's text without the download dates from this day.
+PRIVACY_SINCE = "2026-11-01"
+FEED = "https://mfrports.github.io/bezzle-web/updates/appcast.xml"
+SPARKLE_NS = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
+
+
+def day(date, lang):
+    y, m, d = (int(x) for x in date.split("-"))
+    month = MONTHS[lang][m - 1]
+    first = {"fr": "1er", "it": "1°"}.get(lang) if d == 1 else None
+    return {"en": f"{d} {month} {y}", "de": f"{d}. {month} {y}"}.get(lang) or f"{first or d} {month} {y}"
+
+
+def load_feed(given):
+    """The update feed the site is built with: the one given (a release about to go out), else the live
+    one, else the copy in public/ when the live one cannot be reached. None before the first release."""
+    if given:
+        return open(given, encoding="utf-8").read()
+    try:
+        with urllib.request.urlopen(f"{FEED}?site={int(time.time())}", timeout=20) as answer:
+            return answer.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        failure = f"HTTP {error.code}"
+    except OSError as error:
+        failure = str(error)
+    local = os.path.join(OUT, "updates", "appcast.xml")
+    if os.path.exists(local):
+        print(f"The live feed could not be read ({failure}): using {local}")
+        return open(local, encoding="utf-8").read()
+    # Without the feed the site would go out without the download, and without the feed itself.
+    sys.exit(f"The live feed {FEED} could not be read ({failure}). Try again once it can, or pass --feed.")
+
+
+def release_info(feed):
+    """The newest version in the feed: version, the zip's address and size, the macOS it needs."""
+    item = ET.fromstring(feed).find("channel/item")
+    enclosure = item.find("enclosure")
+    return dict(version=item.findtext(f"{SPARKLE_NS}shortVersionString"), url=enclosure.get("url"),
+                zip=enclosure.get("url").rsplit("/", 1)[-1], mb=round(int(enclosure.get("length")) / 1e6),
+                os=(item.findtext(f"{SPARKLE_NS}minimumSystemVersion") or "26").removesuffix(".0"))
+
+
+# Set by main(): the release the site offers, and its notes, newest first. None before the first release.
+RELEASE = None
+NOTES = []
+ARROW = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5v10m0 0-4-4m4 4 4-4M4.5 16.5h11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+
 MARK = '<svg class="mark" viewBox="0 0 300 24" preserveAspectRatio="none" aria-hidden="true"><path d="M3 15 C 70 8, 160 6, 297 10" stroke-width="6"/><path d="M28 20 C 110 15, 200 14, 282 16" stroke-width="3" opacity=".55"/></svg>'
 DOT = '<svg class="dot" viewBox="0 0 22 22" aria-hidden="true"><rect x="1" y="1" width="20" height="20" rx="6" fill="var(--well)"/><rect x="6" y="6" width="10" height="10" rx="3.2" fill="var(--pencil)"/></svg>'
 
@@ -223,11 +368,11 @@ def page(lang, prefix, title, desc, body, here):
 <div class="wrap">
   <header class="top">
     <a class="brand" href="./"><img src="{up}img/icon-256.png" alt="">Bezzle</a>
-    <nav class="links"><a href="support.html">{t["nav_support"]}</a><a href="privacy.html">{t["nav_privacy"]}</a><span class="langs">{switch}</span></nav>
+    <nav class="links">{f'<a href="download.html">{t["nav_download"]}</a>' if RELEASE else ""}<a href="support.html">{t["nav_support"]}</a><a href="privacy.html">{t["nav_privacy"]}</a><span class="langs">{switch}</span></nav>
   </header>
 {body}
 </div>
-<footer><div class="wrap"><span>© 2026 Erik Muffler</span><nav><a href="./">Bezzle</a><a href="support.html">{t["nav_support"]}</a><a href="privacy.html">{t["nav_privacy"]}</a></nav></div></footer>
+<footer><div class="wrap"><span>© 2026 Erik Muffler</span><nav><a href="./">Bezzle</a>{f'<a href="download.html">{t["nav_download"]}</a><a href="releases.html">{t["nav_news"]}</a>' if RELEASE else ""}<a href="support.html">{t["nav_support"]}</a><a href="privacy.html">{t["nav_privacy"]}</a></nav></div></footer>
 </body>
 </html>
 """
@@ -235,6 +380,14 @@ def page(lang, prefix, title, desc, body, here):
 
 def e(s):
     return html.escape(s, quote=False)
+
+
+def ctas(t):
+    if not RELEASE:
+        return f'<a class="button" href="{STORE}">{e(t["cta"])}</a>'
+    # The download page starts the download and says what comes next.
+    return (f'<div class="buttons"><a class="button" href="download.html#now">{ARROW}{e(t["cta_download"])}</a>'
+            f'<a class="button quiet" href="{STORE}">{e(t["cta_store"])}</a></div>')
 
 
 def home(lang, locale, up):
@@ -249,7 +402,7 @@ def home(lang, locale, up):
     <h1>{e(a)}<br><span class="marked">{e(b)}{MARK}</span></h1>
     <p class="lede">{e(t["lede"])}</p>
     <div class="cta">
-      <a class="button" href="{STORE}">{e(t["cta"])}</a>
+      {ctas(t)}
       <small>{e(t["cta_small"])}</small>
     </div>
     <img class="window" src="{img}/window.png" width="1600" height="1000" alt="">
@@ -270,13 +423,16 @@ def home(lang, locale, up):
   </section>
   <div class="closing">
     <h2>{e(t["closing"])}</h2>
-    <a class="button" href="{STORE}">{e(t["cta"])}</a>
+    {ctas(t)}
   </div>"""
 
 
 def support(lang):
     t = T[lang]
-    faq = "".join(f"<details><summary>{e(q)}</summary><p>{e(a)}</p></details>" for q, a in t["faq"])
+    faq = list(t["faq"])
+    if RELEASE:
+        faq.insert(len(faq) - 1, t["faq_updates"])
+    faq = "".join(f"<details><summary>{e(q)}</summary><p>{e(a)}</p></details>" for q, a in faq)
     return f"""  <article class="narrow">
     <h1>{e(t["support_h"])}</h1>
     <p class="meta">{e(t["support_sub"])}</p>
@@ -288,11 +444,67 @@ def support(lang):
 
 def privacy(lang):
     t = T[lang]
-    parts = "".join((f"<h2>{e(h)}</h2>" if h else "") + f"<p>{p}</p>" for h, p in t["privacy"])
+    sections, effective = list(t["privacy"]), t["effective"]
+    if RELEASE:
+        # The last connection named loses its "and", and the update check follows it.
+        i = next(i for i, (_, p) in enumerate(sections) if "Cloudflare" in p)
+        h, p = sections[i]
+        cut = p.rindex("; " + t["net_and"])
+        p = p[:cut] + p[cut:].replace("; " + t["net_and"], "; ", 1)
+        sections[i] = (h, p.removesuffix(".") + t["net_updates"])
+        since = min([r["date"] for r in NOTES] or [PRIVACY_SINCE])
+        effective = t["effective_on"].format(day(max(since, PRIVACY_SINCE), lang))
+    parts = "".join((f"<h2>{e(h)}</h2>" if h else "") + f"<p>{p}</p>" for h, p in sections)
     return f"""  <article class="narrow">
     <h1>{e(t["privacy_h"])}</h1>
-    <p class="meta">{e(t["effective"])}</p>
+    <p class="meta">{e(effective)}</p>
     {parts}
+  </article>"""
+
+
+def download(lang, up):
+    t, r = T[lang], RELEASE
+    steps = "".join(f'<li class="card"><span class="num">{i}</span><h3>{e(h)}</h3><p>{e(p.format(zip=r["zip"]))}</p></li>'
+                    for i, (h, p) in enumerate(t["steps"], 1))
+    return f"""  <div class="hero download">
+    <img class="icon" src="{up}img/icon-256.png" alt="">
+    <h1>{e(t["dl_title"])}</h1>
+    <p class="lede">{e(t["dl_sub"])}</p>
+    <div class="cta">
+      <a class="button" id="zip" href="{html.escape(r["url"])}">{ARROW}{e(t["dl_button"].format(v=r["version"]))}</a>
+      <small>{e(t["dl_facts"].format(mb=r["mb"], os=r["os"]))}</small>
+      <p class="started" hidden>{e(t["dl_started"])}</p>
+    </div>
+  </div>
+  <section>
+    <h2>{e(t["steps_h"])}</h2>
+    <ol class="grid steps">{steps}</ol>
+  </section>
+  <section>
+    <div class="grid two">
+      <div class="card">{DOT}<h3>{e(t["updates_h"])}</h3><p>{e(t["updates_p"])}</p><p class="more"><a href="releases.html">{e(t["updates_link"].format(v=r["version"]))}</a></p></div>
+      <div class="card">{DOT}<h3>{e(t["both_h"])}</h3><p>{e(t["both_p"])}</p><p class="more"><a href="{STORE}">{e(t["cta"])}</a></p></div>
+    </div>
+  </section>
+  <script>
+    // From the home page's button: the download starts at once, and this page says what comes next.
+    if (location.hash === "#now") {{
+      document.querySelector(".started").hidden = false;
+      history.replaceState(null, "", location.pathname);
+      location.href = document.getElementById("zip").href;
+    }}
+  </script>"""
+
+
+def news(lang):
+    t = T[lang]
+    entries = "".join(
+        f'<div class="release" id="v{r["version"]}"><p class="meta">{e(t["version"].format(v=r["version"]))} · {e(day(r["date"], lang))}</p>'
+        f'{notes.to_html(r["notes"][lang])}</div>' for r in NOTES)
+    return f"""  <article class="narrow">
+    <h1>{e(t["news_h"])}</h1>
+    <p class="meta">{e(t["news_sub"])}</p>
+    {entries}
   </article>"""
 
 
@@ -309,7 +521,22 @@ def check():
 
 
 def main():
+    global RELEASE, NOTES
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--feed", help="the update feed to offer, instead of the live one")
+    args = parser.parse_args()
     check()
+    feed = load_feed(args.feed)
+    if feed:
+        RELEASE = release_info(feed)
+        # Only what can be downloaded: a version is shown once the feed offers it.
+        try:
+            NOTES = [r for r in notes.parse() if notes.version_key(r["version"]) <= notes.version_key(RELEASE["version"])]
+        except ValueError as error:
+            sys.exit(f"RELEASE_NOTES.md: {error}")
+        print(f"release: Bezzle {RELEASE['version']}, {RELEASE['mb']} MB, {len(NOTES)} versions with notes")
+    else:
+        print("release: none in the feed yet, so the site offers the Mac App Store alone")
     if os.path.isdir(OUT):
         shutil.rmtree(OUT)
     os.makedirs(os.path.join(OUT, "img"))
@@ -335,9 +562,17 @@ def main():
         open(os.path.join(folder, "index.html"), "w").write(page(lang, prefix, t["title"], t["desc"], home(lang, locale, up), ""))
         open(os.path.join(folder, "support.html"), "w").write(page(lang, prefix, f'{t["support_h"]} · Bezzle', t["support_sub"], support(lang), "support.html"))
         open(os.path.join(folder, "privacy.html"), "w").write(page(lang, prefix, f'{t["privacy_h"]} · Bezzle', t["privacy"][0][1], privacy(lang), "privacy.html"))
+        if RELEASE:
+            open(os.path.join(folder, "download.html"), "w").write(page(lang, prefix, f'{t["dl_title"]} · Bezzle', t["dl_sub"], download(lang, up), "download.html"))
+            open(os.path.join(folder, "releases.html"), "w").write(page(lang, prefix, f'{t["news_h"]} · Bezzle', t["news_sub"], news(lang), "releases.html"))
+    if feed:
+        os.makedirs(os.path.join(OUT, "updates"))
+        open(os.path.join(OUT, "updates", "appcast.xml"), "w", encoding="utf-8").write(feed)
     open(os.path.join(OUT, "README.md"), "w").write(
         "# Bezzle\n\nThe website of [Bezzle](https://mfrports.github.io/bezzle-web/), the free design app for Mac: "
-        "home page, support and privacy policy in English, German, French and Italian.\n\n"
+        "home page, download, what's new, support and privacy policy in English, German, French and Italian, "
+        "and the update feed of the copy from this website (`updates/appcast.xml`). The downloads are this "
+        "repository's [releases](https://github.com/mfrports/bezzle-web/releases).\n\n"
         "To report a problem or suggest something, [open an issue](https://github.com/mfrports/bezzle-web/issues/new).\n")
     print("site written to", OUT)
 
