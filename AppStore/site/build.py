@@ -16,6 +16,8 @@ SHOTS = os.path.join(os.path.dirname(HERE), "screenshots")
 ICON = os.path.join(os.path.dirname(os.path.dirname(HERE)), "Branding", "bezzle-icon.png")
 STORE = "https://apps.apple.com/app/id6829008596"
 ISSUES = "https://github.com/mfrports/bezzle-web/issues/new"
+# No __pycache__ beside notes.py.
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "Scripts", "release"))
 import notes  # noqa: E402
 NB = " "
