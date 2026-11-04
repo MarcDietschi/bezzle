@@ -969,7 +969,7 @@ private extension Bench {
 
     /// Held still as long as it takes a shape to open under what is dragged.
     func rest() {
-        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        RunLoop.main.run(until: Date().addingTimeInterval(1.2))
     }
 }
 

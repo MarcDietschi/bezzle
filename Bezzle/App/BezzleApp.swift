@@ -127,7 +127,7 @@ struct BezzleCommands: Commands {
                 .keyboardShortcut("n")
             Button("Open…") { WindowRouter.openPanel() }
                 .keyboardShortcut("o")
-            Button("Import from XD, Figma or Sketch…") { WindowRouter.openPanel(only: DesignFile.importableTypes) }
+            Button("Import from XD, Figma, Sketch or Photoshop…") { WindowRouter.openPanel(only: DesignFile.importableTypes) }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
             Button("Import from a Website…") { WebImporting.shared.present() }
                 .keyboardShortcut("i", modifiers: [.command, .shift, .option])

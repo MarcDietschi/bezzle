@@ -12,14 +12,20 @@ struct StyleMarks: View {
         ZStack {
             outlines
             if let wave = show.wave {
+                // Never faded in, even when the change comes inside an animation, as the light and
+                // dark switch's does: it comes with the change.
                 WaveView(store: store, wave: wave)
                     .id(wave.token)
+                    .transition(.identity)
             }
             if let offer = show.offer {
                 OfferChip(store: store, offer: offer)
                     .id(offer.token)
             }
         }
+        // Always as big as the canvas: left to its marks, it shrinks to nothing when there are
+        // none, and a wave coming inside an animation would grow out from the middle with it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// The layers to outline at rest: of the style pointed at, or of the card pointed at when its
@@ -73,51 +79,105 @@ struct StyleMarks: View {
 
 // MARK: - The wave
 
+/// How a style's wave runs over the view: from where, how fast its front goes, and when it reaches
+/// each layer it lights. Ahead of the front the artboards still look as they did, which the canvas
+/// draws with the design itself (`CanvasView.drawWashes`), so the change and what hides it until
+/// the wave comes always reach the screen together; the marks draw the front and the glows.
+struct WaveCourse {
+    /// How fast it runs over the view, in points a second, and how long each layer stays lit.
+    static let speed: CGFloat = 1500
+    static let rise = 0.11, fall = 0.62
+    /// However far apart the layers lie, the last is reached within this.
+    static let longest = 0.55
+    /// How soft the edge the change washes in behind is.
+    static let edge: CGFloat = 36
+
+    /// Where it starts, in the view.
+    let origin: CGPoint
+    /// The layers it lights, in the view, and when it reaches each.
+    let paths: [Path]
+    let delays: [Double]
+    /// How fast its front goes, in points a second.
+    let pace: CGFloat
+
+    init(_ wave: StyleShow.Wave, in doc: BezzleDocument, viewport: Viewport, size: CGSize) {
+        let paths = StyleMarks.outlines(of: wave.layers, in: doc, viewport: viewport)
+        let origin = wave.origin.map { viewport.toView($0) } ?? CGPoint(x: size.width + 40, y: size.height / 2)
+        let distances = paths.map { Self.distance($0, origin) }
+        let far = distances.max() ?? 0
+        // A long way to go is gone faster, so that the last is reached within `longest`.
+        let k = far / Self.speed > CGFloat(Self.longest) ? CGFloat(Self.longest) / (far / Self.speed) : 1
+        self.paths = paths
+        self.origin = origin
+        delays = distances.map { Double($0 / Self.speed * k) }
+        pace = Self.speed * (far > 0 ? max(1, far / Self.speed / CGFloat(Self.longest)) : 1)
+    }
+
+    /// How long it runs: until the last layer it lit has faded again.
+    var end: Double { (delays.max() ?? 0) + Self.rise + Self.fall }
+
+    /// How far its front has gone, `t` seconds after it started.
+    func radius(at t: Double) -> CGFloat { CGFloat(max(t, 0)) * pace }
+
+    /// Whether some of a rectangle in the view still lies ahead of the front, `r` from the origin.
+    func reaches(_ rect: CGRect, at r: CGFloat) -> Bool {
+        let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+                       CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)]
+        return r < (corners.map { hypot($0.x - origin.x, $0.y - origin.y) }.max() ?? 0) + Self.edge
+    }
+
+    /// What of a rectangle in the view lies ahead of the front, `r` from the origin, as a grey mask
+    /// `scale` pixels to the point, its first row the rectangle's top: white ahead, black behind,
+    /// soft over the edge between.
+    func mask(for rect: CGRect, at r: CGFloat, scale: CGFloat) -> CGImage? {
+        let w = max(1, Int((rect.width * scale).rounded(.up))), h = max(1, Int((rect.height * scale).rounded(.up)))
+        let grey = CGColorSpaceCreateDeviceGray()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: grey,
+                                  bitmapInfo: CGImageAlphaInfo.none.rawValue),
+              let gradient = CGGradient(colorsSpace: grey, colors: [CGColor(gray: 0, alpha: 1), CGColor(gray: 1, alpha: 1)] as CFArray,
+                                        locations: [0, 1]) else { return nil }
+        ctx.setFillColor(gray: 1, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let kx = CGFloat(w) / max(rect.width, 0.01), ky = CGFloat(h) / max(rect.height, 0.01)
+        // The context counts up from the bottom; the mask's first row is the rectangle's top.
+        let centre = CGPoint(x: (origin.x - rect.minX) * kx, y: (rect.maxY - origin.y) * ky)
+        ctx.drawRadialGradient(gradient, startCenter: centre, startRadius: max(0, r - Self.edge) * kx,
+                               endCenter: centre, endRadius: max(r, 0.01) * kx, options: [.drawsBeforeStartLocation])
+        return ctx.makeImage()
+    }
+
+    private static func distance(_ path: Path, _ origin: CGPoint) -> CGFloat {
+        let box = path.boundingRect
+        let x = min(max(origin.x, box.minX), box.maxX), y = min(max(origin.y, box.minY), box.maxY)
+        return hypot(x - origin.x, y - origin.y)
+    }
+}
+
 /// A change to a style running out as light over every layer that has it: each lights up as the
 /// wave reaches it, the nearest to where the change was made first, and fades.
 private struct WaveView: View {
     let store: DocumentStore
     let wave: StyleShow.Wave
 
-    /// How fast it runs over the view, in points a second, and how long each layer stays lit.
-    private static let speed: CGFloat = 1500
-    private static let rise = 0.11, fall = 0.62
-    /// However far apart the layers lie, the last is reached within this.
-    private static let longest = 0.55
-
     var body: some View {
         let doc = store.seenDoc, viewport = store.viewport
-        let paths = StyleMarks.outlines(of: wave.layers, in: doc, viewport: viewport)
         GeometryReader { geo in
-            let origin = wave.origin.map { viewport.toView($0) } ?? CGPoint(x: geo.size.width + 40, y: geo.size.height / 2)
-            let delays = Self.delays(paths, from: origin)
-            let end = (delays.max() ?? 0) + Self.rise + Self.fall
+            let course = WaveCourse(wave, in: doc, viewport: viewport, size: geo.size)
+            let origin = course.origin
             TimelineView(.animation) { timeline in
                 let t = timeline.date.timeIntervalSince(wave.start)
                 Canvas { ctx, size in
                     let pencil = Color(nsColor: CanvasInk.pencil)
                     // The front of the wave itself, faint, so the layers it lights read as one change.
-                    let r = CGFloat(t) * Self.speed * Self.scale(delays, paths, origin)
+                    let r = course.radius(at: t)
                     let reach = hypot(max(origin.x, size.width - origin.x), max(origin.y, size.height - origin.y))
-                    // Ahead of the wave the artboards still look as they did; behind it, the change has
-                    // washed in, over a soft edge.
-                    for wash in wave.washes where r < Self.far(of: viewport.toView(wash.rect), from: origin) + Self.edge {
-                        ctx.drawLayer { layer in
-                            layer.clipToLayer(opacity: 1) { mask in
-                                mask.fill(Path(CGRect(origin: .zero, size: size)),
-                                          with: .radialGradient(SwiftUI.Gradient(colors: [.clear, .black]), center: origin,
-                                                                startRadius: max(0, r - Self.edge), endRadius: max(r, 0.01)))
-                            }
-                            layer.draw(Image(decorative: wash.image, scale: 1), in: viewport.toView(wash.rect))
-                        }
-                    }
                     if r < reach {
                         let ring = Path(ellipseIn: CGRect(x: origin.x - r, y: origin.y - r, width: r * 2, height: r * 2))
                         let k = 1 - Double(r / reach)
                         ctx.stroke(ring, with: .color(pencil.opacity(0.16 * k)), lineWidth: 1.5)
                         ctx.stroke(ring, with: .color(pencil.opacity(0.05 * k)), lineWidth: 14)
                     }
-                    for (path, delay) in zip(paths, delays) {
+                    for (path, delay) in zip(course.paths, course.delays) {
                         let g = Self.glow(t - delay)
                         guard g > 0.005 else { continue }
                         // A glow round the layer, not over it, so the change itself is what is seen.
@@ -128,44 +188,16 @@ private struct WaveView: View {
                 }
             }
             .task {
-                try? await Task.sleep(for: .seconds(end + 0.05))
+                try? await Task.sleep(for: .seconds(course.end + 0.05))
                 if store.styleShow.wave?.token == wave.token { store.styleShow.wave = nil }
             }
         }
         .allowsHitTesting(false)
     }
 
-    /// How soft the edge the change washes in behind is.
-    private static let edge: CGFloat = 36
-
-    /// How far from `origin` the furthest corner of a rectangle is.
-    private static func far(of r: CGRect, from origin: CGPoint) -> CGFloat {
-        [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
-            .map { hypot($0.x - origin.x, $0.y - origin.y) }.max() ?? 0
-    }
-
-    /// How much the wave is slowed down, or sped up, to reach the furthest layer within `longest`.
-    private static func scale(_ delays: [Double], _ paths: [Path], _ origin: CGPoint) -> CGFloat {
-        let far = paths.map { distance($0, origin) }.max() ?? 0
-        guard far > 0 else { return 1 }
-        return max(1, far / speed / CGFloat(longest))
-    }
-
-    private static func delays(_ paths: [Path], from origin: CGPoint) -> [Double] {
-        let distances = paths.map { distance($0, origin) }
-        let far = distances.max() ?? 0
-        let k = far / speed > CGFloat(longest) ? CGFloat(longest) / (far / speed) : 1
-        return distances.map { Double($0 / speed * k) }
-    }
-
-    private static func distance(_ path: Path, _ origin: CGPoint) -> CGFloat {
-        let box = path.boundingRect
-        let x = min(max(origin.x, box.minX), box.maxX), y = min(max(origin.y, box.minY), box.maxY)
-        return hypot(x - origin.x, y - origin.y)
-    }
-
     /// How brightly a layer is lit `t` seconds after the wave reaches it: up quickly, down slowly.
     private static func glow(_ t: Double) -> Double {
+        let rise = WaveCourse.rise, fall = WaveCourse.fall
         if t <= 0 { return 0 }
         if t < rise { let u = t / rise; return 1 - (1 - u) * (1 - u) }
         let u = (t - rise) / fall

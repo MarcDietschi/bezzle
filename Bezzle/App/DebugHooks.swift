@@ -14,6 +14,7 @@ import SwiftUI
 ///   BEZZLE_INSPECT=seconds         inspect the design, as someone building it does
 ///   BEZZLE_PLAY=seconds[:screen]   play the prototype, from this screen
 ///   BEZZLE_TAPS=t@x,y;t@back;…     tap the playing screen at its own points at these times, or go back
+///   BEZZLE_DARKS=t,t,…[:log]       turn the first artboard dark, then light, at these times, as its card does
 ///   BEZZLE_RESOURCES=seconds[:page[:words]]  bring out the resources panel, on a kit's or icon set's page
 ///   BEZZLE_RESOURCE_DRAG=seconds:resource:x,y;…  carry a part or icon over the canvas and hold it there
 ///   BEZZLE_CARD=seconds:layout     open this card of the inspector (layout, guides)
@@ -111,6 +112,23 @@ enum DebugHooks {
             after(Double(parts[0]) ?? 1) {
                 let board = parts.count > 1 ? store.doc.artboards.first { $0.name == parts[1] }?.id : nil
                 store.play(from: board)
+            }
+        }
+        // BEZZLE_DARKS=t,t,…[:log] turns the first artboard dark, then light, at these times, as the
+        // card's sun and moon do; with a log, when each began (host time, CACurrentMediaTime).
+        if let spec = env["BEZZLE_DARKS"] {
+            let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
+            for t in parts[0].split(separator: ",").compactMap({ Double($0) }) {
+                after(t) {
+                    guard let board = store.doc.artboards.first else { return }
+                    let start = CACurrentMediaTime()
+                    withAnimation(Theme.spring) { store.show(board.id, dark: !board.showsDark) }
+                    if parts.count > 1 {
+                        let line = "flip \(start) \(CACurrentMediaTime()) dark=\(!board.showsDark)\n"
+                        if let h = FileHandle(forWritingAtPath: parts[1]) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+                        else { try? line.write(toFile: parts[1], atomically: true, encoding: .utf8) }
+                    }
+                }
             }
         }
         // BEZZLE_TAPS=t@x,y;t@back;… taps the playing prototype's screen at these points (its own

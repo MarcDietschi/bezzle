@@ -985,7 +985,7 @@ private struct Converter {
             // Figma writes them as COLOR_DODGE.
             let parts = mode.lowercased().split(separator: "_")
             let camel = parts.enumerated().map { $0.offset == 0 ? String($0.element) : $0.element.capitalized }.joined()
-            if let blend = BlendMode(rawValue: camel) { n.blend = blend } else { report.note("Blend modes Bezzle does not know, drawn as normal") }
+            if let blend = BlendMode(rawValue: camel) ?? BlendMode.linear(camel) { n.blend = blend } else { report.note("Blend modes Bezzle does not know, drawn as normal") }
         }
         var shadows: [Shadow] = []
         for f in e["effects"]?.objects ?? [] where f["visible"]?.bool != false {

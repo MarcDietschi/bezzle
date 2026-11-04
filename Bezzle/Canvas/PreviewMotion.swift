@@ -92,6 +92,11 @@ extension Node {
         if t < 1, transform3D != nil || other.transform3D != nil {
             let a = transform3D ?? Transform3D(), b = other.transform3D ?? Transform3D()
             n.transform3D = Transform3D(x: mix(a.x, b.x, t), y: mix(a.y, b.y, t), z: mix(a.z, b.z, t))
+            // Pinned corners slide from where they were pinned to where they are.
+            if a.corners != nil || b.corners != nil {
+                let ca = a.corners ?? Transform3D.square, cb = b.corners ?? Transform3D.square
+                n.transform3D?.corners = zip(ca, cb).map { CGPoint(x: mix($0.x, $1.x, t), y: mix($0.y, $1.y, t)) }
+            }
         }
         if kind == .text, let a = style, let b = other.style, a != b {
             // Text keeps its frame fitted to its size, as it is when the size is set.

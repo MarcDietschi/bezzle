@@ -154,7 +154,7 @@ struct MaskTests {
         bench.store.selection = [photo]
         bench.drag(CGPoint(x: 150, y: 300), CGPoint(x: 200, y: 180), release: false)
         // The moment it rests for.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        RunLoop.main.run(until: Date().addingTimeInterval(1.2))
         bench.release(CGPoint(x: 200, y: 180))
         let mask = try #require(masked(bench))
         #expect(mask.children.map(\.name) == ["Window", "Photo"])
@@ -179,7 +179,7 @@ struct MaskTests {
         bench.store.selection = [icon.id]
         bench.drag(CGPoint(x: 160, y: 160), CGPoint(x: 180, y: 170), release: false)
         // The moment it rests for.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        RunLoop.main.run(until: Date().addingTimeInterval(1.2))
         bench.release(CGPoint(x: 180, y: 170))
         #expect(masked(bench) == nil)
     }

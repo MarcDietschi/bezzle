@@ -257,6 +257,7 @@ final class DocumentStore {
         assets = Assets(design: url)
         if let v = document.viewport { viewport = v }
         versions.attach(self)
+        if DesignPreview.exists(for: url) { previewed = version }
     }
 
     convenience init(opening url: URL) throws {
@@ -322,6 +323,8 @@ final class DocumentStore {
         // Cells held apart while something in one of them was dragged settle where they go.
         var settled = doc
         settled.relayoutGrids(since: start.doc)
+        // Copies among the cells laid out again are made again from their components.
+        settled.remakeCopies(since: doc)
         settled.fitGroups(since: doc)
         if settled != doc { doc = settled }
         if start.doc != doc {
@@ -598,6 +601,41 @@ final class DocumentStore {
         }
         Library.shared.touched(url)
         versions.saved(copy)
+        schedulePreview()
+    }
+
+    // MARK: The Finder's picture
+
+    /// Which change of the design the picture the Finder shows for its file was last made from;
+    /// nil while it has none. See `DesignPreview`.
+    @ObservationIgnored private var previewed: Int?
+    @ObservationIgnored private var previewTask: Task<Void, Never>?
+
+    /// The design was saved: if it changed, its picture is made again a little later, once for
+    /// however many changes come meanwhile, as making one of a large design takes a moment.
+    private func schedulePreview() {
+        // Unit tests leave the designs they write as they are.
+        guard !BezzleApp.isTesting, previewed != version, previewTask == nil else { return }
+        previewTask = Task { [weak self] in
+            try? await Task.sleep(for: DesignPreview.every)
+            guard !Task.isCancelled else { return }
+            self?.makePreview()
+        }
+    }
+
+    /// Makes the design's picture as it is now, if it changed since the last was made: on closing,
+    /// and as Bezzle quits, when `now` draws it before returning.
+    func makePreview(now: Bool = false) {
+        previewTask?.cancel()
+        previewTask = nil
+        guard !BezzleApp.isTesting, previewed != version else { return }
+        previewed = version
+        let doc = sharedDoc, url = url, assets = assets
+        if now {
+            DesignPreview.write(doc, assets: assets, to: url)
+        } else {
+            DesignPreview.making.async { DesignPreview.write(doc, assets: assets, to: url) }
+        }
     }
 
     /// Why the last save of each design that could not be written failed. Only ever touched on
@@ -620,7 +658,7 @@ final class DocumentStore {
 
     /// Saving happens on a queue of its own, one save after another, so writing a large design
     /// does not hold the app up.
-    static let saving = DispatchQueue(label: "com.erik.Bezzle.saving", qos: .userInitiated)
+    nonisolated static let saving = DispatchQueue(label: "com.erik.Bezzle.saving", qos: .userInitiated)
 
     /// Waits until every save asked for so far is on disk.
     static func finishSaving() {

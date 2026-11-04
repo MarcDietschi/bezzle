@@ -388,6 +388,12 @@ struct SelectionInspector: View {
 
     /// A layer at a new size. Text wraps its words to a new width, or grows its letters and lines.
     static func resize(_ n: inout Node, to size: CGSize, byHeight: Bool) {
+        // A carousel is as high as its slides, which take the height, and as wide as whole slides.
+        if n.isCarousel, let slide = n.slideSize, slide.width > 0 {
+            n.setSlideSize(CGSize(width: slide.width, height: size.height))
+            n.frame.size = n.carouselSize(count: Int((size.width / slide.width).rounded()))
+            return
+        }
         // An artboard's design is laid out again for its new size.
         if n.isArtboard {
             n = Adapting.resized(n, to: size)
@@ -443,6 +449,15 @@ struct SelectionInspector: View {
                 if n.isArtboard {
                     n = Adapting.resized(n, to: next.size)
                     n.frame.origin = next.origin
+                } else if n.isGroup, n.frame.size != next.size, n.frame.width > 0, n.frame.height > 0 {
+                    // A group's layers stretch with it, as they do when it is resized alone; set
+                    // only its frame, it would be fitted back round them as it was.
+                    let old = n.frame.size
+                    n.children = BezzleDocument.scaled(n.children, from: old, to: next.size)
+                    n.mask = n.mask.map { BezzleDocument.scaled($0, from: old, to: next.size) }
+                    n.grid?.columnGap *= next.width / old.width
+                    n.grid?.rowGap *= next.height / old.height
+                    n.frame = next
                 } else {
                     n.frame = next
                 }
@@ -459,7 +474,7 @@ struct SelectionInspector: View {
         if board.isCarousel {
             let format = board.slideSize.flatMap(Carousel.format(of:))
             let slides = board.slideCount
-            summary = [format.map { String(localized: $0.title) },
+            summary = [format.map { String(localized: $0.title) } ?? board.slideSize.map { "\(Self.said($0.width)) × \(Self.said($0.height))" },
                        slides == 1 ? String(localized: "\(slides) slide") : String(localized: "\(slides) slides")]
                 .compactMap { $0 }.joined(separator: " · ")
         }
@@ -533,16 +548,13 @@ struct SelectionInspector: View {
             MenuButton(id: "carousel-format", title: format?.title ?? LocalizedStringResource("carousel.custom-format", defaultValue: "Custom", comment: "A carousel slide size that is none of the formats."), width: 250, fills: true) {
                 Carousel.formats.map { f in
                     MenuEntry.item(f.title, detail: .verbatim("\(Int(f.size.width)) × \(Int(f.size.height))"), checked: f.size == board.slideSize) {
-                        store.updateSelection("Change Format") { n in
-                            let count = n.slideCount
-                            n.slideSize = f.size
-                            n.frame.size = n.carouselSize(count: count)
-                        }
+                        store.updateSelection("Change Format") { $0.setSlideSize(f.size) }
                     }
                 }
                 + [.separator, MenuEntry.item("Plain artboard") { store.updateSelection("Make Artboard") { $0.slideSize = nil } }]
             }
         }
+        Pair(slideField(board, width: true), slideField(board, width: false))
         Row(title: "Slides") {
             IconButton(symbol: "minus", help: "One slide fewer", size: Theme.controlHeight) { changeSlides("Remove Slide") { $0 - 1 } }
                 .opacity(count > Carousel.counts.lowerBound ? 1 : 0.35)
@@ -557,6 +569,17 @@ struct SelectionInspector: View {
         }
         if let format {
             Caption("For \(format.platforms). Up to \(Carousel.counts.upperBound) slides.")
+        }
+    }
+
+    /// A carousel's slides' width or height, which sets their proportions, whatever the format.
+    private func slideField(_ board: Node, width: Bool) -> NumberField {
+        let slide = board.slideSize ?? board.frame.size
+        return NumberField(label: width ? "W" : "H", value: Double(width ? slide.width : slide.height), range: 1...100_000, action: "Change Format") { v in
+            store.updateSelection("Change Format") { n in
+                guard let s = n.slideSize else { return }
+                n.setSlideSize(width ? CGSize(width: v, height: s.height) : CGSize(width: s.width, height: v))
+            }
         }
     }
 

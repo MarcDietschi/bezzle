@@ -7,6 +7,8 @@
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>BezzleDocument</string>
 			<key>CFBundleTypeName</key>
 			<string>Bezzle design</string>
 			<key>CFBundleTypeRole</key>
@@ -19,6 +21,8 @@
 			</array>
 		</dict>
 		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>BezzleDocument</string>
 			<key>CFBundleTypeName</key>
 			<string>Vellum design</string>
 			<key>CFBundleTypeRole</key>
@@ -67,6 +71,19 @@
 				<string>com.bohemiancoding.sketch.drawing</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Photoshop document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.photoshop-image</string>
+				<string>com.adobe.photoshop-large-image</string>
+			</array>
+		</dict>
 	</array>
 	<key>CKSharingSupported</key>
 	<true/>
@@ -77,12 +94,13 @@
 		<dict>
 			<key>UTTypeConformsTo</key>
 			<array>
-				<string>public.json</string>
 				<string>public.content</string>
 				<string>com.apple.package</string>
 			</array>
 			<key>UTTypeDescription</key>
 			<string>Bezzle design</string>
+			<key>UTTypeIconFile</key>
+			<string>BezzleDocument</string>
 			<key>UTTypeIdentifier</key>
 			<string>com.erik.bezzle.design</string>
 			<key>UTTypeTagSpecification</key>
@@ -99,7 +117,6 @@
 		<dict>
 			<key>UTTypeConformsTo</key>
 			<array>
-				<string>public.json</string>
 				<string>public.content</string>
 				<string>com.apple.package</string>
 			</array>

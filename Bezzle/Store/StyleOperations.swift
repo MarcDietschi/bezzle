@@ -26,8 +26,8 @@ import Observation
         /// Where it starts, on the canvas; nil from the inspector's side of the view.
         let origin: CGPoint?
         let layers: [UUID]
-        /// The artboards as they looked before, in the part of them on screen, laid over the canvas
-        /// until the wave has passed: the change comes in behind it, as paint washing over them.
+        /// The artboards as they looked before, in the part of them on screen, which the canvas
+        /// draws ahead of the wave: the change comes in behind it, as paint washing over them.
         var washes: [Wash] = []
         let token = UUID()
         let start = Date()

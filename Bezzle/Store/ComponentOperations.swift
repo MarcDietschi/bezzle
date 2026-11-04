@@ -117,9 +117,12 @@ extension Components {
                     Deck.fields[name]?.copy(&x, c)
                     own.insert(name)
                 }
-                if c.kind == .text, x.kind == .text {
+                if c.kind == .text, x.kind == .text, c.text != x.text || c.spans != x.spans {
                     x.text = c.text
                     x.spans = c.spans
+                    // As big as its words, round where it stays, as the variant's layers are made
+                    // again from the first's (`Deck.sync`).
+                    refit(&x, pins: plan.pins[m.id])
                 }
                 x.fill.image = c.fill.image
                 x.own = own.isEmpty ? nil : own.sorted()
@@ -141,16 +144,16 @@ extension Components {
     /// A copy shown as another variant: its box grown or shrunk at its edges as the variant's
     /// layers take up more or less room than its own did, its words and pictures kept.
     static func switched(_ copy: Node, to v: Int?, in master: Node) -> Node {
-        guard var inst = copy.instance else { return copy }
+        guard let inst = copy.instance else { return copy }
         let to = variant(v, of: master)
         guard to != variant(inst.variant, of: master) else { return copy }
         let a = box(of: master, variant: inst.variant), b = box(of: master, variant: to)
-        inst.box = CGRect(x: inst.box.minX + (b.minX - a.minX), y: inst.box.minY + (b.minY - a.minY),
-                          width: max(1, inst.box.width + b.width - a.width), height: max(1, inst.box.height + b.height - a.height))
-        inst.variant = to
-        var c = copy
-        c.instance = inst
-        return c
+        // From the size it shows, its words and all: the variant's words may be longer or shorter
+        // than those of the one it showed, and its box is what its words grow it from.
+        let shown = plan(copy, master: master)?.to ?? inst.box
+        let next = CGRect(x: shown.minX + (b.minX - a.minX), y: shown.minY + (b.minY - a.minY),
+                          width: max(1, shown.width + b.width - a.width), height: max(1, shown.height + b.height - a.height))
+        return showing(copy, variant: to, of: master, at: next)
     }
 }
 
@@ -439,11 +442,13 @@ extension DocumentStore {
             guard let i = doc.masters.firstIndex(where: { $0.id == inst.of }) else { return }
             // From the offer after a change: the other copies go back to how they were.
             var master = before?.master(inst.of) ?? doc.masters[i]
+            // It shows as big as it did, though its words are now the variant's own.
+            let shown = Components.plan(copy, master: master)?.to
             guard let n = Components.addVariant(from: copy, keeping: changes, to: &master) else { return }
             made = n
             doc.masters[i] = master
             doc.update(copy.id) { c in
-                c.instance?.variant = n
+                if let shown { c = Components.showing(c, variant: n, of: master, at: shown) } else { c.instance?.variant = n }
                 // What it kept of its own is the variant's now.
                 c = Node.forgettingOwnLooks(c)
             }

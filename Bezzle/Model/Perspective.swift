@@ -5,7 +5,8 @@ import CoreGraphics
 /// drawn flat, shows. It is seen from straight in front of its own middle, as CSS's
 /// `perspective()` sees a layer, so its middle stays where it is, and it looks the same wherever
 /// it lies. Turned and brought nearer, a layer is still flat, so the whole of it moves alike: a
-/// homography of its plane, which this is.
+/// homography of its plane, which this is. A layer pinned by its corners, as a mockup's screen is
+/// laid onto a photo, is one too, made from where the corners go, and is turned after.
 nonisolated struct Perspective {
     /// Where it is seen around, in the layer's parent: the middle of its frame.
     let center: CGPoint
@@ -13,6 +14,10 @@ nonisolated struct Perspective {
     /// coordinates: rows of three.
     private let m: (CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)
     let distance: CGFloat
+    /// How near the eye anything of it may come, as the third homogeneous coordinate.
+    private let nearest: CGFloat
+    /// Pinned by its corners, which changes how big it shows from place to place.
+    private let pinned: Bool
 
     /// How far in front of a layer it is seen from: twice as far as it is big, as a card is held
     /// to look at, so a small one shows as much depth as a large one, and no turn ever brings part
@@ -23,23 +28,83 @@ nonisolated struct Perspective {
 
     /// Nil for a layer that lies flat in the page, which is drawn as it always was. Artboards are the page.
     init?(_ node: Node, distance: CGFloat? = nil) {
-        guard let t = node.transform3D, !node.isArtboard, t.x != 0 || t.y != 0 || t.z != 0 else { return nil }
-        self.init(t, center: node.frame.center, distance: distance ?? Self.viewingDistance(for: node))
+        guard let t = node.transform3D, !node.isArtboard, t.x != 0 || t.y != 0 || t.z != 0 || t.pinned else { return nil }
+        self.init(t, frame: node.frame, distance: distance ?? Self.viewingDistance(for: node))
     }
 
     init(_ t: Transform3D, center: CGPoint, distance d: CGFloat) {
         self.center = center
         self.distance = d
+        m = Self.turn(t, distance: d)
+        nearest = d * 0.02
+        pinned = false
+    }
+
+    /// A layer pinned by its corners into `frame`, then turned.
+    init(_ t: Transform3D, frame: CGRect, distance d: CGFloat) {
+        guard t.pinned, let corners = t.corners, let pin = Self.pin(corners, size: frame.size) else {
+            self = Perspective(t, center: frame.center, distance: d)
+            return
+        }
+        center = frame.center
+        distance = d
+        let turned = Self.multiply(Self.turn(t, distance: d), pin)
+        // Its middle in front of the eye, whichever way round the corners were given.
+        m = turned.8 < 0 ? Self.scaled(turned, -1) : turned
+        nearest = abs(m.8) * 0.02 * d / max(d - min(t.z, d * 0.4), 1)
+        pinned = true
+    }
+
+    private typealias Matrix = (CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)
+
+    /// Turned about the vertical axis, then the horizontal one, and brought nearer.
+    private static func turn(_ t: Transform3D, distance d: CGFloat) -> Matrix {
         let a = CGFloat(t.x * .pi / 180), b = CGFloat(t.y * .pi / 180)
         let ca = cos(a), sa = sin(a), cb = cos(b), sb = sin(b)
-        // Turned about the vertical axis, then the horizontal one: the rows of that turn, of
-        // which a point in the page (its depth nothing) needs the first two columns.
+        // The rows of that turn, of which a point in the page (its depth nothing) needs the
+        // first two columns.
         let r11 = cb, r12: CGFloat = 0
         let r21 = sa * sb, r22 = ca
         let r31 = -ca * sb, r32 = sa
         // Never so near that the layer reaches the eye.
         let z = min(t.z, d * 0.4)
-        m = (d * r11, d * r12, 0, d * r21, d * r22, 0, -r31, -r32, d - z)
+        return (d * r11, d * r12, 0, d * r21, d * r22, 0, -r31, -r32, d - z)
+    }
+
+    /// From a point of a layer of `size`, measured from its middle, to where its corners are
+    /// pinned, measured from the same middle: the square-to-quadrilateral mapping, Heckbert's.
+    /// Nil when three corners lie on a line, which shows nothing.
+    private static func pin(_ corners: [CGPoint], size: CGSize) -> Matrix? {
+        guard corners.count == 4, size.width > 0, size.height > 0 else { return nil }
+        let q = corners.map { CGPoint(x: ($0.x - 0.5) * size.width, y: ($0.y - 0.5) * size.height) }
+        let dx1 = q[1].x - q[2].x, dx2 = q[3].x - q[2].x, dx3 = q[0].x - q[1].x + q[2].x - q[3].x
+        let dy1 = q[1].y - q[2].y, dy2 = q[3].y - q[2].y, dy3 = q[0].y - q[1].y + q[2].y - q[3].y
+        var g: CGFloat = 0, h: CGFloat = 0
+        if abs(dx3) > 1e-9 || abs(dy3) > 1e-9 {
+            let det = dx1 * dy2 - dx2 * dy1
+            guard abs(det) > 1e-9 else { return nil }
+            g = (dx3 * dy2 - dx2 * dy3) / det
+            h = (dx1 * dy3 - dx3 * dy1) / det
+        }
+        // From the unit square (s, t) to the corners.
+        let square: Matrix = (q[1].x - q[0].x + g * q[1].x, q[3].x - q[0].x + h * q[3].x, q[0].x,
+                              q[1].y - q[0].y + g * q[1].y, q[3].y - q[0].y + h * q[3].y, q[0].y,
+                              g, h, 1)
+        // From the layer's own points to the unit square.
+        let unit: Matrix = (1 / size.width, 0, 0.5, 0, 1 / size.height, 0.5, 0, 0, 1)
+        let out = multiply(square, unit)
+        let det = out.0 * (out.4 * out.8 - out.5 * out.7) - out.1 * (out.3 * out.8 - out.5 * out.6) + out.2 * (out.3 * out.7 - out.4 * out.6)
+        return abs(det) > 1e-12 && det.isFinite ? out : nil
+    }
+
+    private static func multiply(_ a: Matrix, _ b: Matrix) -> Matrix {
+        (a.0 * b.0 + a.1 * b.3 + a.2 * b.6, a.0 * b.1 + a.1 * b.4 + a.2 * b.7, a.0 * b.2 + a.1 * b.5 + a.2 * b.8,
+         a.3 * b.0 + a.4 * b.3 + a.5 * b.6, a.3 * b.1 + a.4 * b.4 + a.5 * b.7, a.3 * b.2 + a.4 * b.5 + a.5 * b.8,
+         a.6 * b.0 + a.7 * b.3 + a.8 * b.6, a.6 * b.1 + a.7 * b.4 + a.8 * b.7, a.6 * b.2 + a.7 * b.5 + a.8 * b.8)
+    }
+
+    private static func scaled(_ a: Matrix, _ k: CGFloat) -> Matrix {
+        (a.0 * k, a.1 * k, a.2 * k, a.3 * k, a.4 * k, a.5 * k, a.6 * k, a.7 * k, a.8 * k)
     }
 
     /// Where a point drawn flat, in the layer's parent, shows.
@@ -47,7 +112,7 @@ nonisolated struct Perspective {
         let u = p.x - center.x, v = p.y - center.y
         let x = m.0 * u + m.1 * v + m.2, y = m.3 * u + m.4 * v + m.5
         // Never behind the eye: what would be is pressed against it.
-        let w = max(m.6 * u + m.7 * v + m.8, distance * 0.02)
+        let w = max(m.6 * u + m.7 * v + m.8, nearest)
         return CGPoint(x: center.x + x / w, y: center.y + y / w)
     }
 
@@ -61,15 +126,21 @@ nonisolated struct Perspective {
         let det = a * d - b * c
         guard abs(det) > 1e-9 else { return nil }
         let u = (e * d - b * f) / det, v = (a * f - e * c) / det
-        guard m.6 * u + m.7 * v + m.8 > distance * 0.02 else { return nil }
+        guard m.6 * u + m.7 * v + m.8 > nearest else { return nil }
         return CGPoint(x: center.x + u, y: center.y + v)
     }
 
     /// How many times bigger the layer shows at a point drawn flat than it is drawn, at most:
     /// what a picture of it has to be made at to stay sharp there.
     func magnification(at p: CGPoint) -> CGFloat {
-        let w = max(m.6 * (p.x - center.x) + m.7 * (p.y - center.y) + m.8, distance * 0.02)
-        return distance / w
+        let u = p.x - center.x, v = p.y - center.y
+        let w = max(m.6 * u + m.7 * v + m.8, nearest)
+        guard pinned else { return distance / w }
+        // How far a step along the layer goes where it shows, the longer of the two ways.
+        let x = m.0 * u + m.1 * v + m.2, y = m.3 * u + m.4 * v + m.5
+        let xu = (m.0 * w - x * m.6) / (w * w), xv = (m.1 * w - x * m.7) / (w * w)
+        let yu = (m.3 * w - y * m.6) / (w * w), yv = (m.4 * w - y * m.7) / (w * w)
+        return max(hypot(xu, yu), hypot(xv, yv))
     }
 
     /// The upright rectangle around a rectangle drawn flat, as it shows.

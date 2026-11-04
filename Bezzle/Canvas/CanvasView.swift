@@ -58,6 +58,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// The artboards being resized by an edge, each one's design laid out again as it goes.
     private var adaptSessions: [UUID: Adapting.Session] = [:]
     private var easing: CADisplayLink?
+    /// Whether a style's wave still has artboards as they looked before it to draw, and its course
+    /// in the view as it was last worked out.
+    private var washing = false
+    private var washCourse: (token: UUID, viewport: Viewport, size: CGSize, course: WaveCourse)?
 
     // Text being typed into, in a text view laid over the canvas.
     private var editorHost: FlippedView?
@@ -363,7 +367,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     @objc private func easeStep(_ link: CADisplayLink) {
         needsDisplay = true
-        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating && !adaptTool.isAnimating && !componentTool.isAnimating && !curveTool.animating && !flowTool.isAnimating && !(store.sharing?.live?.marks.isAnimating ?? false) && !timeTable.isAnimating {
+        if !previewMotion.isMoving && !deckTool.isAnimating && !gapMarks.isAnimating && !helpersAnimating && !maskTool.animating && !adaptTool.isAnimating && !componentTool.isAnimating && !curveTool.animating && !flowTool.isAnimating && !(store.sharing?.live?.marks.isAnimating ?? false) && !timeTable.isAnimating && !washing {
             link.invalidate()
             easing = nil
         }
@@ -418,6 +422,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         options.settling = previewMotion.isMoving || adaptTool.isMoving || (live?.marks.isMoving ?? false) || timeTable.isMoving
         drawDesign(shown, in: ctx, options: options)
         ctx.restoreGState()
+        drawWashes(ctx)
         if previewMotion.isMoving || deckTool.isAnimating || adaptTool.isAnimating || timeTable.isAnimating { keepEasing() }
         cutoutTool.draw(ctx, scale: deviceScale)
         if cutoutTool.animating { redrawSoon() }
@@ -478,6 +483,34 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         inspectTool.draw(ctx, scale: deviceScale, in: bounds)
         if inspectTool.isAnimating { keepEasing() }
         _ = store.tool
+    }
+
+    /// Ahead of a style's wave, the artboards as they looked before the change, washed away behind
+    /// its front over a soft edge. Drawn here with the design, never over the canvas, so that the
+    /// change and what hides it until the wave comes always reach the screen in the same frame.
+    private func drawWashes(_ ctx: CGContext) {
+        washing = false
+        guard let wave = store.styleShow.wave, !wave.washes.isEmpty else { return }
+        let vp = store.viewport, size = bounds.size
+        if let made = washCourse, made.token == wave.token, made.viewport == vp, made.size == size {} else {
+            washCourse = (wave.token, vp, size, WaveCourse(wave, in: store.seenDoc, viewport: vp, size: size))
+        }
+        guard let course = washCourse?.course else { return }
+        let r = course.radius(at: Date().timeIntervalSince(wave.start))
+        for wash in wave.washes {
+            let rect = vp.toView(wash.rect)
+            guard course.reaches(rect, at: r), let mask = course.mask(for: rect, at: r, scale: deviceScale / 4) else { continue }
+            washing = true
+            ctx.saveGState()
+            // The view counts down from its top; a picture is drawn the right way up.
+            ctx.translateBy(x: rect.minX, y: rect.maxY)
+            ctx.scaleBy(x: 1, y: -1)
+            let local = CGRect(origin: .zero, size: rect.size)
+            ctx.clip(to: local, mask: mask)
+            ctx.draw(wash.image, in: local)
+            ctx.restoreGState()
+        }
+        if washing { keepEasing() }
     }
 
     /// The prototype's threads, fading as the design is inspected and back.
@@ -721,6 +754,41 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return store.doc.placed(p, inParentOf: node.id).flatMap { Perspective.flat($0, of: node) }.map { $0 + o }
     }
 
+    /// Moves where a layer pinned by its corners shows, by one of its handles pulled to a canvas
+    /// point: a corner goes there, and a side's two corners move as its middle does. Only a
+    /// layer pinned and not also turned; false for any other, which the handle resizes. A pull
+    /// that would fold the layer over itself leaves it as it was.
+    private func repin(_ id: UUID, _ original: Node, _ handle: Handle, to p: CGPoint) -> Bool {
+        guard var t = original.transform3D, t.pinned, t.x == 0, t.y == 0, t.z == 0, var corners = t.corners, corners.count == 4,
+              original.frame.width > 0, original.frame.height > 0, let q = store.doc.placed(p, inParentOf: id) else { return false }
+        let f = original.frame
+        func fraction(_ p: CGPoint) -> CGPoint { CGPoint(x: (p.x - f.minX) / f.width, y: (p.y - f.minY) / f.height) }
+        let order: [Handle] = [.topLeft, .topRight, .bottomRight, .bottomLeft]
+        if let k = order.firstIndex(of: handle) {
+            corners[k] = fraction(q)
+        } else {
+            let sides: [Handle: (Int, Int)] = [.top: (0, 1), .right: (1, 2), .bottom: (2, 3), .left: (3, 0)]
+            guard let (a, b) = sides[handle], let shown = Perspective(original) else { return false }
+            let u = handle.unit, was = shown.shown(CGPoint(x: f.minX + u.x * f.width, y: f.minY + u.y * f.height))
+            let d = CGPoint(x: (q.x - was.x) / f.width, y: (q.y - was.y) / f.height)
+            for k in [a, b] { corners[k] = CGPoint(x: corners[k].x + d.x, y: corners[k].y + d.y) }
+        }
+        // Still a four-sided shape turning one way all round.
+        let turns = (0..<4).map { i -> CGFloat in
+            let a = corners[i], b = corners[(i + 1) % 4], c = corners[(i + 2) % 4]
+            return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
+        }
+        guard turns.allSatisfy({ $0 > 0 }) || turns.allSatisfy({ $0 < 0 }) else { return true }
+        t.corners = corners.map { CGPoint(x: ($0.x * 10_000).rounded() / 10_000, y: ($0.y * 10_000).rounded() / 10_000) }
+        store.edit(order.contains(handle) ? "Move Corner" : "Move Side") { doc in
+            doc.update(id) { node in
+                node = original
+                node.transform3D = t
+            }
+        }
+        return true
+    }
+
     /// Whether a layer shows anywhere but where its frame says, turned in depth or in a group that is.
     private func inDepth(_ node: Node) -> Bool {
         Perspective(node) != nil || store.doc.liesInDepth(node.id)
@@ -780,8 +848,6 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if single?.isRepeatGrid == true { return [] }
         let size = store.viewport.toView(frame).size
         return Handle.allCases.compactMap { h in
-            // A carousel is as high as its slides: only its sides and corners pull it.
-            if single?.isCarousel == true && h.unit.x == 0.5 { return nil }
             // Small things keep only their corners, so the handles do not pile up.
             if !h.isCorner && ((h.unit.x == 0.5 && size.width < 28) || (h.unit.y == 0.5 && size.height < 28)) { return nil }
             let at = Geometry.point(h.unit, of: frame, rotation: rotation)
@@ -1604,6 +1670,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             store.guides = guides
 
         case .resize(let handle, let originals, let absolute, let bounds, let rotation, let targets):
+            // Pinned by its corners, as a mockup's screen is: a corner goes where it is pulled, a
+            // side's two corners with it, and the rest stay where they are pinned.
+            if originals.count == 1, let (id, original) = originals.first, repin(id, original, handle, to: p) { return }
             let carousel = originals.count == 1 ? originals.values.first.flatMap { $0.isCarousel ? $0 : nil } : nil
             // Turned in depth, the pull is measured on the layer as it would lie flat, where its handle is.
             var p = p, flat = false
@@ -1616,11 +1685,19 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             var frame = Geometry.resize(bounds, rotation: rotation, handle: handle, to: p, keepAspect: keep, fromCenter: option)
             var guides: [Guide] = []
             if let carousel, let slide = carousel.slideSize, slide.width > 0 {
-                // As many whole slides as the pointer reaches past half of one, from the side
-                // across from the handle, which stays put.
-                let reach = handle.unit.x == 0 ? bounds.maxX - p.x : p.x - bounds.minX
-                let size = carousel.carouselSize(count: Int((reach / slide.width).rounded()))
-                frame = CGRect(x: handle.unit.x == 0 ? bounds.maxX - size.width : bounds.minX, y: bounds.minY, width: size.width, height: size.height)
+                // Across, as many whole slides as the pointer reaches past half of one; up or down,
+                // the slides' height, which catches on each format's proportions. The side across
+                // from the handle stays put.
+                let u = handle.unit
+                let count = u.x == 0.5 ? carousel.slideCount : Int(((u.x == 0 ? bounds.maxX - p.x : p.x - bounds.minX) / slide.width).rounded())
+                var height = u.y == 0.5 ? slide.height : max((u.y == 0 ? bounds.maxY - p.y : p.y - bounds.minY).rounded(), 1)
+                if u.y != 0.5, snapping, !option,
+                   let caught = Carousel.formats.map({ (slide.width * $0.size.height / $0.size.width).rounded() }).min(by: { abs($0 - height) < abs($1 - height) }),
+                   abs(caught - height) <= threshold {
+                    height = caught
+                }
+                let width = carousel.carouselSize(count: count).width
+                frame = CGRect(x: u.x == 0 ? bounds.maxX - width : bounds.minX, y: u.y == 0 ? bounds.maxY - height : bounds.minY, width: width, height: height)
             } else if rotation == 0 && !flat {
                 if snapping && !option {
                     if keep, bounds.width > 0, bounds.height > 0 {
@@ -1646,6 +1723,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                     doc.update(id) { node in
                         node = original
                         node.frame = next.offsetBy(dx: -o.x, dy: -o.y)
+                        // A carousel's slides are as high as it is pulled.
+                        if carousel != nil { node.slideSize?.height = next.height }
                         if node.isGroup, !node.isRepeatGrid, originals.count == 1, rotation != 0 {
                             // A group seen turned stretches along its turn, its box as the handles show it.
                             node = BezzleDocument.scaled(original, turned: rotation, from: bounds.offsetBy(dx: -o.x, dy: -o.y), to: next.offsetBy(dx: -o.x, dy: -o.y))
@@ -1732,7 +1811,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }
             if let carousel, let slide = carousel.slideSize, slide.width > 0 {
                 let count = Int((frame.width / slide.width).rounded())
-                store.measurement = (count == 1 ? String(localized: "1 slide") : String(localized: "\(count) slides"), frame)
+                var said = count == 1 ? String(localized: "1 slide") : String(localized: "\(count) slides")
+                // Pulled up or down, what the slides are now: a format, or their size.
+                if handle.unit.y != 0.5 {
+                    let now = CGSize(width: slide.width, height: frame.height)
+                    said += " · " + (Carousel.format(of: now).map { String(localized: $0.title) } ?? "\(Self.number(now.width)) × \(Self.number(now.height))")
+                }
+                store.measurement = (said, frame)
             } else {
                 store.measurement = ("\(Self.number(shown.width)) × \(Self.number(shown.height))", Geometry.bounds(of: shown, rotation: rotation))
             }

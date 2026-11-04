@@ -60,7 +60,7 @@ final class Tabs {
     }
 
     /// Opens a design in a new tab after the others and brings it to the front. One open already
-    /// comes to the front instead. A file from Adobe XD, Figma or Sketch is brought in again each
+    /// comes to the front instead. A file from Adobe XD, Figma, Sketch or Photoshop is brought in again each
     /// time, as a new design.
     func open(_ url: URL, report: ImportReport? = nil) {
         let url = url.standardizedFileURL
@@ -175,7 +175,11 @@ final class Tabs {
         for tab in designs {
             tab.store?.canvas?.endEditing()
             tab.store?.save()
+            // The Finder shows the design as it is now, not as it was a few changes ago.
+            tab.store?.makePreview(now: true)
         }
+        // Pictures of designs closed a moment ago are still being made.
+        DesignPreview.making.sync {}
     }
 
     /// Moves a tab to another place along the bar.
@@ -241,6 +245,8 @@ final class DesignTab: Identifiable {
     private(set) var url: URL
     private(set) var store: DocumentStore?
     private(set) var failure: String?
+    /// A Photoshop document on its way in, until it is.
+    private(set) var bringing: BringingIn?
     /// Whether its name is being typed anew, in its tab.
     var renaming = false
     /// Its own history, so Undo in one design never reaches into another.
@@ -261,11 +267,15 @@ final class DesignTab: Identifiable {
         store.map { $0.isAt(url) } ?? (self.url == url)
     }
 
-    /// Opens the file. One from Adobe XD, Figma or Sketch is brought in as a new design in the
-    /// library, which the tab then shows; the file itself is left as it is.
+    /// Opens the file. One from Adobe XD, Figma, Sketch or Photoshop is brought in as a new design
+    /// in the library, which the tab then shows; the file itself is left as it is.
     /// A design just brought in from elsewhere, such as a web page, comes with what was said
     /// about bringing it in.
     fileprivate func load(report given: ImportReport? = nil) {
+        if PhotoshopImporter.fileExtensions.contains(url.pathExtension.lowercased()) {
+            bringIn()
+            return
+        }
         do {
             var design = url
             var report: ImportReport? = given
@@ -287,6 +297,30 @@ final class DesignTab: Identifiable {
         }
     }
 
+    /// A Photoshop document, read away from the main thread, as a mockup's photos take a moment
+    /// to read; the tab shows the design once it is in.
+    private func bringIn() {
+        let source = url
+        let progress = BringingIn(source)
+        bringing = progress
+        Task {
+            do {
+                let reading = try await Task.detached(priority: .userInitiated) {
+                    try PhotoshopImporter.reading(source) { done, layer in
+                        Task { @MainActor in progress.advance(to: done, at: layer) }
+                    }
+                }.value
+                let (design, report) = try Importer.write(PhotoshopImporter.imported(reading), named: source.deletingPathExtension().lastPathComponent,
+                                                          into: Library.shared.folder)
+                url = design
+                load(report: report)
+            } catch {
+                failure = "\(source.lastPathComponent): \(error.localizedDescription)"
+            }
+            bringing = nil
+        }
+    }
+
     fileprivate func leaveFront() {
         menus.dismiss()
         renaming = false
@@ -301,6 +335,7 @@ final class DesignTab: Identifiable {
         store.save()
         // Each time a design is worked on leaves a version, if it changed.
         store.versions.saved(store.sharedDoc, closing: true)
+        store.makePreview()
         DocumentStore.finishSaving()
         store.sharing?.close()
         MCPTools.closed(store)

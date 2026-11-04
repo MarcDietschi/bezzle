@@ -266,12 +266,27 @@ nonisolated struct Transform3D: Codable, Hashable {
     var x: Double = 0
     var y: Double = 0
     var z: CGFloat = 0
+    /// Pinned by its corners before it is turned, as a picture is laid onto a screen seen at an
+    /// angle in a photo: where its top left, top right, bottom right and bottom left show, as
+    /// fractions of its frame, 0,0 being its top left and 1,1 its bottom right. Nil lies square.
+    var corners: [CGPoint]?
+
+    /// Whether it is pinned by its corners anywhere but where they lie.
+    var pinned: Bool {
+        guard let corners, corners.count == 4 else { return false }
+        return zip(corners, Self.square).contains { abs($0.x - $1.x) > 1e-6 || abs($0.y - $1.y) > 1e-6 }
+    }
+
+    /// The corners where they lie: top left, top right, bottom right, bottom left.
+    static let square = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
 }
 
 /// How a layer's colours mix with what lies under it.
 nonisolated enum BlendMode: String, Codable, CaseIterable {
     case multiply, screen, overlay, darken, lighten, colorDodge, colorBurn, hardLight, softLight
     case difference, exclusion, hue, saturation, color, luminosity
+    /// Photoshop's Linear Burn and Linear Dodge (Add): the two added, darker or lighter.
+    case plusDarker, plusLighter
 
     var cg: CGBlendMode {
         switch self {
@@ -290,6 +305,8 @@ nonisolated enum BlendMode: String, Codable, CaseIterable {
         case .saturation: .saturation
         case .color: .color
         case .luminosity: .luminosity
+        case .plusDarker: .plusDarker
+        case .plusLighter: .plusLighter
         }
     }
 
@@ -310,6 +327,8 @@ nonisolated enum BlendMode: String, Codable, CaseIterable {
         case .saturation: String(localized: "Saturation")
         case .color: String(localized: "Colour")
         case .luminosity: String(localized: "Luminosity")
+        case .plusDarker: String(localized: "Linear Burn")
+        case .plusLighter: String(localized: "Linear Dodge")
         }
     }
 }
@@ -530,6 +549,9 @@ nonisolated struct Node: Identifiable, Codable, Equatable, Sendable {
     var transform3D: Transform3D?
     /// Mixes the layer with what lies under it; nil draws it over as it is.
     var blend: BlendMode?
+    /// Mockups only: the place for a design, as a Photoshop smart object is. A picture dropped
+    /// anywhere over it goes into it, through the glare and shadows lying over it; nil for any other layer.
+    var screen: Bool?
     var hidden = false
     var locked = false
     /// Artboards only: whether what reaches past the edge is cut off there.

@@ -66,6 +66,8 @@ extension DocumentStore {
     func plan(for dropped: Dropped, at p: CGPoint, on target: UUID?) -> DropPlan? {
         guard !isReadOnly else { return nil }
         if !dropped.pictures.isEmpty {
+            // Over a mockup's screen, into the screen, through the glare and shadows lying over it.
+            let target = screen(at: p) ?? target
             if let target, let node = doc.node(target), [.rectangle, .ellipse, .path, .text].contains(node.kind), !node.locked {
                 if dropped.pictures.count > 1, let grid = grid(holding: target), let slot = slot(of: target) {
                     return .fill(copies(of: slot, in: grid))
@@ -101,6 +103,26 @@ extension DocumentStore {
         guard !filled.isEmpty else { return nil }
         return .words(grid: grid.id, layers: filled.flatMap { copies(of: $0.slot, in: grid) },
                       columns: filled.count, lines: filled.map(\.values.count).max() ?? 0)
+    }
+
+    /// The topmost mockup screen under a canvas point, whatever lies over it there: where a
+    /// picture let go over it goes. Hidden and locked ones are passed over, as is any outside the
+    /// artboard that cuts it off.
+    func screen(at p: CGPoint) -> UUID? {
+        var found: UUID?
+        func look(_ nodes: [Node]) {
+            for n in nodes where !n.hidden {
+                if n.screen == true, !n.locked, let local = doc.placed(p, inParentOf: n.id), Geometry.contains(n, local, tolerance: 0) {
+                    found = n.id
+                }
+                if !n.children.isEmpty { look(n.children) }
+            }
+        }
+        for n in doc.nodes where !n.hidden {
+            if n.isArtboard, n.clips, !n.frame.contains(p) { continue }
+            look([n])
+        }
+        return found
     }
 
     func canDrop(_ dropped: Dropped, on target: UUID?, at p: CGPoint = .zero) -> Bool {

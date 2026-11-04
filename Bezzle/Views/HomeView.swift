@@ -584,7 +584,7 @@ private struct OpenPlate: View {
         .onHover { hovering = $0 }
         .onTapGesture { WindowRouter.openPanel() }
         .animation(Theme.spring, value: hovering)
-        .help("Open a design, or an XD, Figma or Sketch file  ⌘O")
+        .help("Open a design, or an XD, Figma, Sketch or Photoshop file  ⌘O")
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }

@@ -74,11 +74,52 @@ struct CarouselTests {
         #expect(bench.store.doc.absoluteFrame(of: bench.node("R")!.id)?.origin == CGPoint(x: 350, y: 120))
     }
 
-    @Test func theTopAndBottomDoNotPullACarousel() {
+    @Test func theBottomMakesTheSlidesTallerAsManyAsThereWere() {
         let bench = bench()
         bench.store.selection = [bench.a.id]
         bench.drag(CGPoint(x: 300, y: 400), CGPoint(x: 300, y: 500))
-        #expect(bench.a.frame == CGRect(x: 100, y: 100, width: 400, height: 300))
+        #expect(bench.a.frame == CGRect(x: 100, y: 100, width: 400, height: 400))
+        #expect(bench.a.slideSize == CGSize(width: 200, height: 400) && bench.a.slideCount == 2)
+        bench.undoLast()
+        #expect(bench.a.slideSize == CGSize(width: 200, height: 300) && bench.a.frame.height == 300)
+    }
+
+    @Test func theSlidesCatchOnAFormatsProportionsUnlessCommandIsHeld() {
+        let bench = bench()
+        bench.store.selection = [bench.a.id]
+        // 200 wide, Portrait 4:5 is 250 high: 252 is near enough to catch.
+        bench.drag(CGPoint(x: 300, y: 400), CGPoint(x: 300, y: 352))
+        #expect(bench.a.slideSize == CGSize(width: 200, height: 250))
+        bench.drag(CGPoint(x: 300, y: 350), CGPoint(x: 300, y: 353), flags: .command)
+        #expect(bench.a.slideSize == CGSize(width: 200, height: 253))
+    }
+
+    @Test func theTopMovesTheTopEdgeAndLeavesTheLayers() {
+        let bench = bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 60, width: 20, height: 20))])
+        bench.store.selection = [bench.a.id]
+        bench.drag(CGPoint(x: 300, y: 100), CGPoint(x: 300, y: 50))
+        #expect(bench.a.frame == CGRect(x: 100, y: 50, width: 400, height: 350))
+        #expect(bench.a.slideSize == CGSize(width: 200, height: 350))
+        #expect(bench.store.doc.absoluteFrame(of: bench.node("R")!.id)?.origin == CGPoint(x: 110, y: 160))
+    }
+
+    @Test func aCornerAddsSlidesAndMakesThemTaller() {
+        let bench = bench()
+        bench.store.selection = [bench.a.id]
+        bench.drag(CGPoint(x: 500, y: 400), CGPoint(x: 620, y: 500))
+        #expect(bench.a.frame == CGRect(x: 100, y: 100, width: 600, height: 400))
+        #expect(bench.a.slideSize == CGSize(width: 200, height: 400))
+    }
+
+    @Test func aHeightTypedInIsTheSlidesAndTheirWidthIsTheirOwn() {
+        let bench = bench()
+        bench.store.selection = [bench.a.id]
+        bench.step { bench.store.updateSelection("Resize") { SelectionInspector.resize(&$0, to: CGSize(width: 400, height: 500), byHeight: true) } }
+        #expect(bench.a.frame.size == CGSize(width: 400, height: 500) && bench.a.slideSize == CGSize(width: 200, height: 500))
+        // A slide of its own size, as many slides as before.
+        bench.step { bench.store.updateSelection("Change Format") { $0.setSlideSize(CGSize(width: 250.4, height: 375)) } }
+        #expect(bench.a.slideSize == CGSize(width: 250, height: 375))
+        #expect(bench.a.frame == CGRect(x: 100, y: 100, width: 500, height: 375))
     }
 
     @Test func aLayerSnapsToTheMiddleOfASlide() {

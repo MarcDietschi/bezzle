@@ -82,7 +82,8 @@ nonisolated enum VersionFiles {
         var buckets = Set<String>()
         for v in list.sorted(by: { $0.date > $1.date }) {
             let age = now.timeIntervalSince(v.date)
-            if v.isNamed || out.isEmpty || age < 3600 { out.append(v); continue }
+            // The newest needs no exception: its bucket is always still free, and it claims it.
+            if v.isNamed || age < 3600 { out.append(v); continue }
             let bucket: String
             if age < 86_400 { bucket = "h\(Int(v.date.timeIntervalSince1970 / 1800))" }
             else if age < 30 * 86_400 { bucket = "d\(Int(v.date.timeIntervalSince1970 / 86_400))" }

@@ -213,7 +213,7 @@ extension SelectionInspector {
     /// it is pointed at in the menu.
     private var blendRow: some View {
         let blend = common { $0.blend }
-        let groups: [[BlendMode?]] = [[nil], [.darken, .multiply, .colorBurn], [.lighten, .screen, .colorDodge],
+        let groups: [[BlendMode?]] = [[nil], [.darken, .multiply, .colorBurn, .plusDarker], [.lighten, .screen, .colorDodge, .plusLighter],
                                       [.overlay, .softLight, .hardLight], [.difference, .exclusion], [.hue, .saturation, .color, .luminosity]]
         return Row(title: "Blend") {
             MenuButton(id: "blend-mode", title: blend.map { $0.map { .verbatim($0.title) } ?? "Normal" } ?? "Several", width: 180, fills: true) {
@@ -407,7 +407,12 @@ extension SelectionInspector {
     /// one's middle; the exact turn, and how near, under it.
     func depthCard(live: Bool) -> some View {
         let turn = nodes.first?.transform3D ?? Transform3D()
-        let summary = common { $0.transform3D }.map { t in "\(Int((t?.x ?? 0).rounded()))°, \(Int((t?.y ?? 0).rounded()))°" } ?? Self.several
+        let summary = common { $0.transform3D }.map { t -> String in
+            let turned = "\(Int((t?.x ?? 0).rounded()))°, \(Int((t?.y ?? 0).rounded()))°"
+            // A screen laid onto a photo: pinned by its corners, and perhaps turned besides.
+            guard let t, t.pinned else { return turned }
+            return t.x == 0 && t.y == 0 ? String(localized: "Corners pinned") : String(localized: "Corners pinned, \(turned)")
+        } ?? Self.several
         let dial = Dial(value: hypot(turn.x, turn.y), range: 0...60, step: 2, action: "Turn in Depth") { v in
             store.updateSelection("Turn in Depth") { n in
                 var t = n.transform3D ?? Transform3D()

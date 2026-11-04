@@ -142,7 +142,7 @@ final class MCPTools {
         Library.shared.refresh()
         if let entry = Library.shared.entries.first(where: { $0.name.caseInsensitiveCompare(ref) == .orderedSame }) { return entry.url }
         if let url = Self.fileURL(ref), FileManager.default.fileExists(atPath: url.path) { return url }
-        throw MCPError("There is no design called \"\(ref)\". list_designs shows them all; a path to a .bezzle, .vellum, .xd, .fig or .sketch file works too.\(Self.unreachable)")
+        throw MCPError("There is no design called \"\(ref)\". list_designs shows them all; a path to a .bezzle, .vellum, .xd, .fig, .sketch, .psd or .psb file works too.\(Self.unreachable)")
     }
 
     private static func fileURL(_ ref: String) -> URL? {
@@ -158,13 +158,13 @@ final class MCPTools {
     }
 
     /// Opens a design in a tab, as the home screen does, and waits for it. A file from Adobe XD,
-    /// Figma or Sketch becomes a new design in the Bezzle folder, which is what opens.
+    /// Figma, Sketch or Photoshop becomes a new design in the Bezzle folder, which is what opens.
     private func open(_ url: URL) async throws -> DocumentStore {
         let url = url.standardizedFileURL
         let ext = url.pathExtension.lowercased()
         let foreign = Importer.imports(url)
         guard BezzleDocument.fileExtensions.contains(ext) || foreign else {
-            throw MCPError("\(url.lastPathComponent) is not a design: Bezzle opens .bezzle and .vellum designs, and brings in .xd, .fig and .sketch files.")
+            throw MCPError("\(url.lastPathComponent) is not a design: Bezzle opens .bezzle and .vellum designs, and brings in .xd, .fig, .sketch, .psd and .psb files.")
         }
         if !foreign {
             do { _ = try DesignFile.read(url) } catch {
@@ -177,7 +177,8 @@ final class MCPTools {
         // window shows once the app comes forward, and then opens what is waiting.
         if WindowRouter.shared.openWindow == nil { NSApp.activate() }
         WindowRouter.shared.open(url)
-        for _ in 0..<200 {
+        // Photoshop documents are read away from the main thread, and a large mockup takes a while.
+        for _ in 0..<(foreign ? 1200 : 200) {
             try await Task.sleep(for: .milliseconds(50))
             let stores = Self.stores
             if let store = stores.first(where: { $0.isAt(url) }) ?? (foreign ? stores.first { !before.contains(ObjectIdentifier($0)) } : nil) {

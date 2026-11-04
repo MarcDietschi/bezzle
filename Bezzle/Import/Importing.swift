@@ -36,10 +36,11 @@ struct Imported {
     var held: [String: Data] = [:]
 }
 
-/// Designs made in Adobe XD, Figma and Sketch. Each file is brought in as a new design in the
-/// library, and the file itself is left as it is.
+/// Designs made in Adobe XD, Figma, Sketch and Photoshop. Each file is brought in as a new design
+/// in the library, and the file itself is left as it is.
 enum Importer {
     nonisolated static let fileExtensions = [XDImporter.fileExtension, FigmaImporter.fileExtension, SketchImporter.fileExtension]
+        + PhotoshopImporter.fileExtensions
 
     nonisolated static func imports(_ url: URL) -> Bool { fileExtensions.contains(url.pathExtension.lowercased()) }
 
@@ -49,6 +50,7 @@ enum Importer {
         case XDImporter.fileExtension: "Adobe XD"
         case FigmaImporter.fileExtension: "Figma"
         case SketchImporter.fileExtension: "Sketch"
+        case let ext where PhotoshopImporter.fileExtensions.contains(ext): "Photoshop"
         default: nil
         }
     }
@@ -58,6 +60,7 @@ enum Importer {
         switch url.pathExtension.lowercased() {
         case FigmaImporter.fileExtension: try FigmaImporter.read(url)
         case SketchImporter.fileExtension: try SketchImporter.read(url)
+        case let ext where PhotoshopImporter.fileExtensions.contains(ext): try PhotoshopImporter.read(url)
         default: try XDImporter.read(url)
         }
     }

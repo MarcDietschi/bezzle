@@ -201,6 +201,7 @@ final class Library {
     nonisolated static let thumbnailSize = CGSize(width: 480, height: 300)
 
     func thumbnail(for entry: Entry, size: CGSize) -> CGImage? {
+        seekPreview(entry.url)
         if let (date, image) = thumbnails[entry.url], date == entry.modified { return image }
         if let (_, image) = thumbnails[entry.url], !homeShowing || Date().timeIntervalSince(madeAt[entry.url] ?? .distantPast) < 10 {
             return image
@@ -255,6 +256,23 @@ final class Library {
         }
         doc.nodes.forEach(visit)
         return sizes
+    }
+
+    // MARK: The Finder's pictures
+
+    /// Designs looked at for a picture for the Finder since Bezzle started.
+    @ObservationIgnored private var previewsSought: Set<URL> = []
+
+    /// A design on the home screen without a current picture for the Finder, made before Bezzle
+    /// kept them, brought in from elsewhere or changed while closed, is given one in the
+    /// background. One open in a tab makes its own as it is worked on. See `DesignPreview`.
+    private func seekPreview(_ url: URL) {
+        guard !BezzleApp.isTesting, previewsSought.insert(url).inserted,
+              !Tabs.shared.designs.contains(where: { $0.store?.url.standardizedFileURL == url.standardizedFileURL }) else { return }
+        DesignPreview.catchingUp.async {
+            guard DesignFile.isPackage(url), !DesignPreview.isCurrent(for: url), let doc = try? DesignFile.read(url) else { return }
+            DesignPreview.write(doc, assets: Assets(design: url), to: url, keepingDate: true)
+        }
     }
 
     // Kept on disk, in the caches folder, under the design's path and when it last changed.

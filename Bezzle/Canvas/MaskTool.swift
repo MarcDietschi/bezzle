@@ -26,9 +26,9 @@ final class MaskTool {
     private typealias Spring = DeckTool.Spring
 
     /// How long something has to rest over a shape for the shape to open.
-    private static let rest: CFTimeInterval = 0.55
+    private static let rest: CFTimeInterval = 0.9
     /// How far the pointer may wander on screen and still be resting.
-    private static let wander: CGFloat = 6
+    private static let wander: CGFloat = 3
     /// How much of what reaches past a mask's shape shows while it is open, faded.
     private static let ghostLevel = 0.3
     /// How much shows of something dragged wholly off its mask, on its way out.

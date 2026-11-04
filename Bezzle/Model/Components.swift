@@ -355,6 +355,17 @@ extension Components {
         let from = box(of: layers)
         var pins: [UUID: Pins] = [:]
         Pinning.table(layers, in: from, into: &pins)
+        // Which words it grows round is the component's, the same in every variant, however long
+        // the words are in one: told by its first variant.
+        var labels = labels(layers, pins: pins)
+        if let v {
+            let first = Self.layers(of: master, variant: nil)
+            var firstPins: [UUID: Pins] = [:]
+            Pinning.table(first, in: box(of: first), into: &firstPins)
+            let found = Self.labels(first, pins: firstPins), kv = Deck.key(v)
+            labels = (Set(found.x.map { $0.mixed(kv) }), Set(found.y.map { $0.mixed(kv) }))
+        }
+        aligningLabels(layers, pins: &pins, labels: labels.x)
         // The copy's layers by the layer of this variant they are, whichever variant it showed.
         let design = designIDs(of: master), kv = Deck.key(v)
         var held: [UUID: Node] = [:]
@@ -364,7 +375,7 @@ extension Components {
             n.children.forEach(note)
         }
         copy.children.forEach(note)
-        let to = hugged(inst.box, layers: layers, pins: pins, held: held)
+        let to = hugged(inst.box, layers: layers, pins: pins, held: held, labels: labels)
         return Plan(key: k, variant: v, layers: layers, from: from, pins: pins, held: held, to: to, instance: inst)
     }
 
@@ -372,7 +383,7 @@ extension Components {
     /// component's, where they are what the layer round them is as big as: a button's label, which
     /// its shape is a little bigger than all round. Words in a field much wider than they are leave
     /// it as it is.
-    static func hugged(_ box: CGRect, layers: [Node], pins: [UUID: Pins], held: [UUID: Node]) -> CGRect {
+    static func hugged(_ box: CGRect, layers: [Node], pins: [UUID: Pins], held: [UUID: Node], labels: (x: Set<UUID>, y: Set<UUID>)) -> CGRect {
         var dx: CGFloat = 0, dy: CGFloat = 0, ax = Pin.start, ay = Pin.start
         // Words anywhere in the copy, as long as every group they lie in stretches with it that way.
         func look(_ siblings: [Node], acrossX: Bool, acrossY: Bool) {
@@ -392,8 +403,8 @@ extension Components {
                 let sizing = m.style?.sizing ?? .autoWidth
                 let gw = sizing == .autoWidth ? t.frame.width - m.frame.width : 0
                 let gh = sizing != .fixed ? t.frame.height - m.frame.height : 0
-                if acrossX, gw != 0, p.x != .stretch, abs(gw) > abs(dx), holds(m, in: siblings, pins: pins, horizontally: true) { dx = gw; ax = p.x }
-                if acrossY, gh != 0, p.y != .stretch, abs(gh) > abs(dy), holds(m, in: siblings, pins: pins, horizontally: false) { dy = gh; ay = p.y }
+                if acrossX, gw != 0, p.x != .stretch, abs(gw) > abs(dx), labels.x.contains(m.id) { dx = gw; ax = p.x }
+                if acrossY, gh != 0, p.y != .stretch, abs(gh) > abs(dy), labels.y.contains(m.id) { dy = gh; ay = p.y }
             }
         }
         look(layers, acrossX: true, acrossY: true)
@@ -409,14 +420,94 @@ extension Components {
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
-    /// Whether a stretching layer lies round `m` and is little bigger than it, along a way.
+    /// A button's words, which a stretching shape a little bigger lies round, stay where they are
+    /// aligned to, as they do while they are typed: left-aligned words keep their place from the
+    /// left, and the button grows to the right round them; right-aligned words from the right;
+    /// centred ones about their middle. Words that lie in the middle of their shape stay there
+    /// however they are aligned. Where they are only near an edge, or a share of the way along, says
+    /// less than how they are aligned: next to an icon, words a little past a quarter of the way in
+    /// would otherwise keep their share and creep towards it as they grow.
+    static func aligningLabels(_ layers: [Node], pins: inout [UUID: Pins], labels: Set<UUID>) {
+        for m in layers where !m.hidden {
+            if m.isGroup, !m.isRepeatGrid, m.instance == nil {
+                aligningLabels(m.children, pins: &pins, labels: labels)
+                continue
+            }
+            guard m.kind == .text, m.curve == nil, (m.style?.sizing ?? .autoWidth) == .autoWidth, var p = pins[m.id], p.x != .middle,
+                  labels.contains(m.id) else { continue }
+            switch m.style?.align ?? .left {
+            case .center: p.x = .middle
+            case .right: p.x = .end
+            case .left, .justify: p.x = .start
+            }
+            pins[m.id] = p
+        }
+    }
+
+    /// Words refitted to what they say, grown or shrunk round where they stay: a label in the
+    /// middle stays in the middle.
+    static func refit(_ n: inout Node, pins: Pins?) {
+        let before = n.frame
+        n.refit()
+        guard let p = pins else { return }
+        switch p.x {
+        case .middle, .spread: n.frame.origin.x = before.midX - n.frame.width / 2
+        case .end: n.frame.origin.x = before.maxX - n.frame.width
+        default: n.frame.origin.x = before.minX
+        }
+        switch p.y {
+        case .middle, .spread: n.frame.origin.y = before.midY - n.frame.height / 2
+        case .end: n.frame.origin.y = before.maxY - n.frame.height
+        default: n.frame.origin.y = before.minY
+        }
+    }
+
+    /// A copy shown as a variant of its component, its box such that it shows as big as `shown`
+    /// with its words, which may be longer or shorter than the variant's.
+    static func showing(_ copy: Node, variant v: Int?, of master: Node, at shown: CGRect) -> Node {
+        var c = copy
+        guard c.instance != nil else { return c }
+        c.instance?.variant = v
+        c.instance?.box = shown
+        // How much its words grow it does not hang on its box: taken off once, it shows as it was.
+        if let to = plan(c, master: master)?.to, to != shown {
+            c.instance?.box = CGRect(x: shown.minX - (to.minX - shown.minX), y: shown.minY - (to.minY - shown.minY),
+                                     width: max(1, shown.width - (to.width - shown.width)), height: max(1, shown.height - (to.height - shown.height)))
+        }
+        return c
+    }
+
+    /// The words a stretching layer a little bigger lies round, along each way, however deep: a
+    /// button's label, which a copy grows round as its words grow.
+    static func labels(_ layers: [Node], pins: [UUID: Pins]) -> (x: Set<UUID>, y: Set<UUID>) {
+        var x = Set<UUID>(), y = Set<UUID>()
+        func visit(_ siblings: [Node]) {
+            for m in siblings where !m.hidden {
+                if m.isGroup, !m.isRepeatGrid, m.instance == nil {
+                    visit(m.children)
+                    continue
+                }
+                guard m.kind == .text else { continue }
+                if holds(m, in: siblings, pins: pins, horizontally: true) { x.insert(m.id) }
+                if holds(m, in: siblings, pins: pins, horizontally: false) { y.insert(m.id) }
+            }
+        }
+        visit(layers)
+        return (x, y)
+    }
+
+    /// Whether a stretching layer lies round `m` and is little bigger than it, along a way: by a
+    /// share of it, or across by no more than a few letters' room, as round a short label in a
+    /// button made wide enough to tap ("OK", "Save"), but not a field or a bar much wider than
+    /// what is written in it.
     private static func holds(_ m: Node, in layers: [Node], pins: [UUID: Pins], horizontally: Bool) -> Bool {
         let a = RepeatGrid.box(of: m)
+        let room = CGFloat(m.style?.size ?? 16) * 7
         return layers.contains { c in
             guard c.id != m.id, !c.hidden, let p = pins[c.id], (horizontally ? p.x : p.y) == .stretch else { return false }
             let b = RepeatGrid.box(of: c)
             return horizontally
-                ? b.minX <= a.minX + 0.5 && b.maxX >= a.maxX - 0.5 && a.width >= b.width * 0.3
+                ? b.minX <= a.minX + 0.5 && b.maxX >= a.maxX - 0.5 && (a.width >= b.width * 0.3 || b.width - a.width <= room)
                 : b.minY <= a.minY + 0.5 && b.maxY >= a.maxY - 0.5 && a.height >= b.height * 0.3
         }
     }
@@ -472,21 +563,8 @@ extension Components {
             }
             if n.kind == .text, n.text != original.text || n.spans != original.spans || n.style != original.style
                 || n.frame.size != original.frame.size {
-                let before = n.frame
-                n.refit()
                 // Grown or shrunk round where it stays: a label in the middle stays in the middle.
-                if let p = plan.pins[m.id] {
-                    switch p.x {
-                    case .middle, .spread: n.frame.origin.x = before.midX - n.frame.width / 2
-                    case .end: n.frame.origin.x = before.maxX - n.frame.width
-                    default: n.frame.origin.x = before.minX
-                    }
-                    switch p.y {
-                    case .middle, .spread: n.frame.origin.y = before.midY - n.frame.height / 2
-                    case .end: n.frame.origin.y = before.maxY - n.frame.height
-                    default: n.frame.origin.y = before.minY
-                    }
-                }
+                refit(&n, pins: plan.pins[m.id])
             }
             return n
         }
@@ -499,6 +577,14 @@ extension Components {
         out.children = kids
         out.post = copy.post
         return out
+    }
+
+    /// The copies of components in a layer, however deep, placed as `placements` say, by their ids.
+    static func place(_ n: inout Node, _ placements: [UUID: Instance]) {
+        for i in n.children.indices {
+            if let p = placements[n.children[i].id], n.children[i].instance != nil { n.children[i].instance = p }
+            if n.children[i].marksCopy { place(&n.children[i], placements) }
+        }
     }
 
     /// A layer with every copy of a component in it, however deep, made again from its component.
@@ -625,9 +711,42 @@ extension Components {
         RepeatGrid.carry(from: gridThen, into: &gridNow, step: .zero)
         guard gridNow.children.count == 2 else { return }
         var made = gridNow.children[0].children
+        settleWords(&made, as: after, plan)
         for i in made.indices { made[i].post = plan.variant }
         master.children = master.children.filter { $0.post != plan.variant } + made
         master.children = ordered(master)
+    }
+
+    /// Words moved in a copy whose words are its own, longer or shorter than the component's, go
+    /// where they stay in the copy, by their pins: their middle where its middle went, for a label
+    /// in the middle. Carried as the copy has them, the component's words were refitted round the
+    /// copy's left edge, and a label centred by hand came to lie off its middle in every copy by half
+    /// the difference.
+    private static func settleWords(_ made: inout [Node], as copy: [Node], _ plan: Plan) {
+        var theirs: [UUID: Node] = [:], was: [UUID: Node] = [:]
+        func note(_ n: Node, _ into: inout [UUID: Node], _ key: RepeatGrid.Key) {
+            into[n.id.mixed(key)] = n
+            n.children.forEach { note($0, &into, key) }
+        }
+        copy.forEach { note($0, &theirs, plan.key) }
+        plan.layers.forEach { note($0, &was, .none) }
+        func settle(_ n: inout Node) {
+            if n.kind == .text, let c = theirs[n.id], c.kind == .text, c.text != n.text || c.spans != n.spans,
+               let before = was[n.id], before.frame != n.frame, let p = plan.pins[n.id] {
+                switch p.x {
+                case .end: n.frame.origin.x = c.frame.maxX - n.frame.width
+                case .middle, .spread: n.frame.origin.x = c.frame.midX - n.frame.width / 2
+                case .start, .stretch: n.frame.origin.x = c.frame.minX
+                }
+                switch p.y {
+                case .end: n.frame.origin.y = c.frame.maxY - n.frame.height
+                case .middle, .spread: n.frame.origin.y = c.frame.midY - n.frame.height / 2
+                case .start, .stretch: n.frame.origin.y = c.frame.minY
+                }
+            }
+            for i in n.children.indices { settle(&n.children[i]) }
+        }
+        for i in made.indices { settle(&made[i]) }
     }
 
     /// Marks as a variant's own whatever was changed in its layers, so a change made in a copy of a
@@ -720,7 +839,12 @@ extension Components {
         leaves(was.children, into: &a)
         leaves(now.children, into: &b)
         guard !a.isEmpty, a.count == b.count, zip(a, b).allSatisfy({ $0.id == $1.id }) else { return nil }
-        if alike(was.children, now.children, but: ["frame", "style", "spans", "grid", "mask"]), let found = scaling(a, b, plan) { return found }
+        // Every tool that resizes a copy whole gives the copy itself its new frame, and stretches
+        // what it holds from its old one exactly; a layer resized in it leaves the copy's own frame
+        // as it was until it is fitted round it, after this. So a shape resized in a copy, however
+        // little at a time, as a drag does, is never taken for the copy resized.
+        if was.frame != now.frame, alike(was.children, now.children, but: ["frame", "style", "spans", "grid", "mask"]),
+           let found = scaling(a, b, plan) { return found }
         if alike(was.children, now.children, but: ["frame", "rotation"]), let found = turning(a, b, inst) { return found }
         let flipping: Set<String> = ["frame", "rotation", "fill", "moreFills", "border", "moreBorders", "corners", "rising", "path", "pathBox"]
         if alike(was.children, now.children, but: flipping), let found = flipped(a, b, inst) { return found }
@@ -728,6 +852,11 @@ extension Components {
     }
 
     private static func close(_ x: CGFloat, _ y: CGFloat, _ scale: CGFloat = 1) -> Bool { abs(x - y) <= 0.6 + 0.002 * abs(scale) }
+
+    /// As close as stretching by arithmetic leaves things: a resize moves every layer exactly, and
+    /// one layer changed in a copy moves the others not at all, which by a pixel at a time is less
+    /// than `close` could tell apart.
+    private static func exact(_ x: CGFloat, _ y: CGFloat, _ scale: CGFloat = 1) -> Bool { abs(x - y) <= 0.02 + 1e-4 * abs(scale) }
 
     /// Stretched or moved along its own upright ways: every layer's middle by the same line, every
     /// shape's size by the same share.
@@ -756,15 +885,15 @@ extension Components {
               let (sy, ty) = fit(ca.map(\.y), cb.map(\.y), shapes.map { (a[$0].frame.height, b[$0].frame.height) }) else { return nil }
         let span = max(plan.to.width, plan.to.height)
         for (i, j) in shapes.enumerated() {
-            guard close(sx * ca[i].x + tx, cb[i].x, span), close(sy * ca[i].y + ty, cb[i].y, span),
-                  close(sx * a[j].frame.width, b[j].frame.width, span), close(sy * a[j].frame.height, b[j].frame.height, span) else { return nil }
+            guard exact(sx * ca[i].x + tx, cb[i].x, span), exact(sy * ca[i].y + ty, cb[i].y, span),
+                  exact(sx * a[j].frame.width, b[j].frame.width, span), exact(sy * a[j].frame.height, b[j].frame.height, span) else { return nil }
         }
         // Words go where the rest went too, by the point they stay put at, as they do when the
         // whole is stretched; words left where they were mean only a shape was resized.
         if turn == 0 {
             for (x, y) in zip(a, b) where x.text {
                 let ax = x.frame.minX + x.anchor * x.frame.width, bx = y.frame.minX + y.anchor * y.frame.width
-                guard close(sx * ax + tx, bx, span), close(sy * x.frame.minY + ty, y.frame.minY, span) else { return nil }
+                guard exact(sx * ax + tx, bx, span), exact(sy * x.frame.minY + ty, y.frame.minY, span) else { return nil }
             }
         }
         // Moved alone would have left every layer where it lies in the copy.
@@ -814,7 +943,9 @@ extension Components {
             let fits = zip(a, b).allSatisfy { x, y in
                 let mx = horizontally ? 2 * axis - x.frame.midX : x.frame.midX
                 let my = horizontally ? x.frame.midY : 2 * axis - x.frame.midY
-                return close(mx, y.frame.midX) && close(my, y.frame.midY)
+                // Exactly: a centred label lies across the line, so a shape in a copy moved half a
+                // pixel, as a pull on its edge snapped to whole pixels does, was nearly a flip.
+                return exact(mx, y.frame.midX) && exact(my, y.frame.midY)
                     && abs(x.frame.width - y.frame.width) < 0.01 && abs(x.frame.height - y.frame.height) < 0.01
                     && abs(CanvasView.normalized(y.rotation + x.rotation)) < 0.05
             }
@@ -838,6 +969,7 @@ extension Components {
 }
 
 // MARK: - Keeping every copy alike
+
 
 /// What a change did to the copies of components, for the canvas to show: the copies changed by
 /// hand, and the copies that followed.
@@ -893,13 +1025,21 @@ extension BezzleDocument {
             }
             // A copy left empty is going.
             if now.children.isEmpty { continue }
-            if let placed = Components.wholeChange(from: was, to: now, master: list[i])
-                ?? began.flatMap({ b in b != was ? Components.wholeChange(from: b, to: now, master: list[i]) : nil }) {
+            // Only from what this step began with: a layer dragged in a copy is set back where the
+            // drag began each step, but the copy's other layers are as the last step laid them out,
+            // round it as it had grown by then, and from where the drag began, that would look like
+            // the whole copy stretched. Taken so at one step and not at the next, the copy and its
+            // component drifted apart further at every step, and every copy grew without end.
+            if let placed = Components.wholeChange(from: was, to: now, master: list[i]) {
                 placements[now.id] = placed
                 rebuild.insert(now.id)
                 continue
             }
             var m = list[i]
+            // A copy in it placed anew, as a button resized in a card, is placed so in its
+            // component: it is made again from its own when that is.
+            var now = now
+            if !placements.isEmpty { Components.place(&now, placements) }
             Components.carry(from: was, to: now, into: &m)
             rebuild.insert(now.id)
             sources.append(now.id)
@@ -1047,6 +1187,32 @@ extension BezzleDocument {
     /// Whether two layers hold the same layers, by id, in the same order, all the way down.
     private static func sameIDs(_ a: Node, _ b: Node) -> Bool {
         a.id == b.id && a.children.count == b.children.count && zip(a.children, b.children).allSatisfy { sameIDs($0, $1) }
+    }
+
+    /// Makes every copy changed since `before` again from its component, as it is now, carrying
+    /// nothing to the component: for what lays copies out again by rules of its own, as a repeat
+    /// grid lays its cells out anew as the first once a drag ends. A button in a cell grows round
+    /// its words again, as it did while they were typed.
+    mutating func remakeCopies(since before: BezzleDocument) {
+        guard let list = components, !list.isEmpty else { return }
+        let byID = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var updates: [(NodePath, Node)] = []
+        func visit(_ nodes: [Node], _ at: [Int]) {
+            for (j, n) in nodes.enumerated() {
+                if let was = before.node(n.id), was == n { continue }
+                guard let inst = n.instance, let master = byID[inst.of] else {
+                    if !n.children.isEmpty { visit(n.children, at + [j]) }
+                    continue
+                }
+                let built = Components.build(n, master: master, masterWas: nil, masters: byID)
+                if built != n { updates.append((NodePath(indices: at + [j]), built)) }
+            }
+        }
+        visit(nodes, [])
+        guard !updates.isEmpty else { return }
+        var all = nodes
+        for (path, node) in updates { Self.put(node, at: path.indices[...], in: &all) }
+        nodes = all
     }
 
     /// Makes every copy that does not hold what its component's variant holds again, as on a

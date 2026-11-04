@@ -160,7 +160,14 @@ extension MCPTools {
             ])))
         }
         if let t = node.transform3D {
-            pairs.append(("transform3D", ["x": .number(t.x), "y": .number(t.y), "z": .number(t.z)]))
+            var turn: [(String, JSONValue)] = [("x", .number(t.x)), ("y", .number(t.y)), ("z", .number(t.z))]
+            if t.pinned, let corners = t.corners {
+                // Where its corners are pinned, in its parent, as they are given.
+                turn.append(("corners", .array(corners.map { f in
+                    point(CGPoint(x: node.frame.minX + f.x * node.frame.width, y: node.frame.minY + f.y * node.frame.height))
+                })))
+            }
+            pairs.append(("transform3D", .object(turn)))
         }
         if let blend = node.blend { pairs.append(("blend", .string(blend.rawValue))) }
         if node.isArtboard && !node.clips { pairs.append(("clips", false)) }
@@ -892,13 +899,29 @@ extension MCPTools {
     private static func transform3D(_ v: Any?, on node: inout Node) throws {
         guard let v else { node.transform3D = nil; return }
         if let s = v as? String, s.lowercased() == "none" { node.transform3D = nil; return }
-        guard let o = v as? [String: Any] else { throw MCPError("transform3D should be \"none\" or {x, y, z}.") }
-        let unknown = Set(o.keys).subtracting(["x", "y", "z"])
-        guard unknown.isEmpty else { throw MCPError("transform3D has no \(unknown.sorted().joined(separator: ", ")). It takes x, y and z.") }
+        guard let o = v as? [String: Any] else { throw MCPError("transform3D should be \"none\" or {x, y, z, corners}.") }
+        let unknown = Set(o.keys).subtracting(["x", "y", "z", "corners"])
+        guard unknown.isEmpty else { throw MCPError("transform3D has no \(unknown.sorted().joined(separator: ", ")). It takes x, y, z and corners.") }
         var t = node.transform3D ?? Transform3D()
         if let x = try Read.number(o["x"], "transform3D.x") { t.x = x }
         if let y = try Read.number(o["y"], "transform3D.y") { t.y = y }
         if let z = try Read.number(o["z"], "transform3D.z") { t.z = CGFloat(z) }
-        node.transform3D = t
+        if o.keys.contains("corners") {
+            let given = o["corners"]
+            if given == nil || given is NSNull || (given as? String)?.lowercased() == "none" {
+                t.corners = nil
+            } else {
+                guard let list = given as? [Any], list.count == 4 else {
+                    throw MCPError("transform3D.corners should be four points in the layer's parent: top left, top right, bottom right, bottom left; or \"none\".")
+                }
+                let f = node.frame
+                guard f.width > 0, f.height > 0 else { throw MCPError("A layer with no width or height cannot be pinned by its corners.") }
+                t.corners = try list.enumerated().map { i, p in
+                    guard let q = try Read.point(p, "transform3D.corners[\(i)]") else { throw MCPError("transform3D.corners[\(i)] is missing.") }
+                    return CGPoint(x: (q.x - f.minX) / f.width, y: (q.y - f.minY) / f.height)
+                }
+            }
+        }
+        node.transform3D = t.x == 0 && t.y == 0 && t.z == 0 && !t.pinned ? nil : t
     }
 }

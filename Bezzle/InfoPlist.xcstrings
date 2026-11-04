@@ -157,6 +157,30 @@
           }
         }
       }
+    },
+    "Photoshop document" : {
+      "comment" : "A kind of document, as Finder names it (CFBundleTypeName / UTTypeDescription).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photoshop-Dokument"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Document Photoshop"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Documento Photoshop"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

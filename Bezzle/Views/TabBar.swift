@@ -79,6 +79,8 @@ private struct DesignTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.paper)
+        } else if let bringing = tab.bringing {
+            BringingInView(progress: bringing)
         } else {
             Theme.paper
         }
@@ -111,7 +113,7 @@ struct TabBar: View {
                     CardButton(title: "From a Website…", symbol: "globe", height: 28) { WebImporting.shared.present() }
                         .help("Bring a web page in as a design  ⌥⇧⌘I")
                     CardButton(title: "Open…", height: 28) { WindowRouter.openPanel() }
-                        .help("Open a design, or an XD, Figma or Sketch file  ⌘O")
+                        .help("Open a design, or an XD, Figma, Sketch or Photoshop file  ⌘O")
                 }
             }
         }

@@ -4,6 +4,8 @@
 // Usage: swift Scripts/make-icon.swift            renders `chosen` into the asset catalog
 //        swift Scripts/make-icon.swift drafts     renders every draft, and a lineup of them between Distill and
 //                                                 Gerty, into Branding/drafts
+//        swift Scripts/make-icon.swift document   renders the icon designs carry in the Finder into
+//                                                 Bezzle/App/BezzleDocument.icns
 //        swift Scripts/make-icon.swift <draft>    renders that one into Branding/drafts
 import AppKit
 import CoreGraphics
@@ -285,7 +287,143 @@ func lineup() -> CGImage {
     return ctx.makeImage()!
 }
 
-if let only {
+// MARK: The document icon
+
+/// A design's file: a sheet of the same warm paper with the chosen mark pressed into it, its top right corner
+/// folded over. The thumbnails Quick Look shows for designs (BezzleThumbnails/Sheet.swift) are this sheet with
+/// the design on it, so the sheet's paper and fold are drawn alike there.
+struct Sheet {
+    /// Where macOS lays a document's page in its icon, and its corners.
+    let rect = CGRect(x: 184, y: 72, width: 656, height: 880)
+    let corner: CGFloat = 58
+    /// How far along the top edge, and down the right one, the fold reaches.
+    let ear: CGFloat = 214
+
+    var whole: CGPath { CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil) }
+    /// Everything past the crease.
+    var past: CGPath {
+        let p = CGMutablePath()
+        p.addLines(between: [pt(rect.maxX - ear, rect.minY), pt(rect.maxX - ear + 2000, rect.minY - 2000),
+                             pt(rect.maxX + 2000, rect.minY + ear), pt(rect.maxX, rect.minY + ear)])
+        p.closeSubpath()
+        return p
+    }
+    var page: CGPath { whole.subtracting(past) }
+    /// The corner past the crease folded over onto the sheet, mirrored across the crease: its rounded tip points in.
+    var flap: CGPath {
+        let c = rect.maxX - ear - rect.minY
+        var mirror = CGAffineTransform(a: 0, b: 1, c: 1, d: 0, tx: c, ty: -c)
+        return whole.intersection(past).copy(using: &mirror)!
+    }
+}
+
+/// The app's name in New York, spaced out, centred on `centre`.
+func wordmark(_ text: String, size: CGFloat, centre: CGPoint) -> CGPath {
+    let base = NSFont.systemFont(ofSize: size, weight: .medium)
+    let font = NSFont(descriptor: base.fontDescriptor.withDesign(.serif)!, size: size)!
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font, .kern: size * 0.35]))
+    let path = CGMutablePath()
+    for run in CTLineGetGlyphRuns(line) as! [CTRun] {
+        let count = CTRunGetGlyphCount(run)
+        var glyphs = [CGGlyph](repeating: 0, count: count), positions = [CGPoint](repeating: .zero, count: count)
+        CTRunGetGlyphs(run, CFRange(location: 0, length: count), &glyphs)
+        CTRunGetPositions(run, CFRange(location: 0, length: count), &positions)
+        for i in 0..<count {
+            if let g = CTFontCreatePathForGlyph(font, glyphs[i], nil) {
+                path.addPath(g, transform: CGAffineTransform(translationX: positions[i].x, y: positions[i].y))
+            }
+        }
+    }
+    let box = path.boundingBoxOfPath
+    var t = CGAffineTransform(translationX: centre.x, y: centre.y).scaledBy(x: 1, y: -1).translatedBy(x: -box.midX, y: -box.midY)
+    return path.copy(using: &t)!
+}
+
+/// The document icon at `px` pixels square. From 256 pixels up the sheet carries the app's name under the mark, blind
+/// pressed as the mark's paper steps are; smaller, the letters would only blur.
+func renderDocument(pixels px: Int) -> CGImage {
+    let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let s = CGFloat(px) / 1024
+    ctx.translateBy(x: 0, y: CGFloat(px))
+    ctx.scaleBy(x: s, y: -s)
+    let p = Painter(ctx: ctx, s: s)
+    let sheet = Sheet(), page = sheet.page, r = sheet.rect
+    let named = px >= 256
+
+    // The sheet lies on the desk: a soft shadow under it, and a tight one along its edge.
+    for (dy, blur, alpha) in [(CGFloat(14), CGFloat(30), CGFloat(0.22)), (1.5, 3, 0.25)] {
+        ctx.saveGState()
+        p.shadow(dy: dy, blur: blur, color(0x000000, alpha))
+        ctx.addPath(page); ctx.setFillColor(color(0xEDE8DF)); ctx.fillPath()
+        ctx.restoreGState()
+    }
+
+    // Warm paper, lit from above, as the app's tile is, with the chosen mark pressed into it at 62%: its sheets
+    // are 500, 400 and 300 across there, each a step down and to the right.
+    ctx.saveGState()
+    ctx.addPath(page); ctx.clip()
+    ctx.drawLinearGradient(gradient([(0, color(0xF9F6F0)), (1, color(0xE9E4DA))]),
+                           start: pt(512, r.minY), end: pt(512, r.maxY), options: [])
+    let k: CGFloat = 0.62, c = pt(512, named ? 520 : 560)
+    func square(_ step: CGFloat, _ side: CGFloat) -> CGPath {
+        let x = c.x - 250 * k + step * 78 * k, y = c.y - 250 * k + step * 78 * k
+        return CGPath(roundedRect: CGRect(x: x, y: y, width: side * k, height: side * k), cornerWidth: side * k * 0.2,
+                      cornerHeight: side * k * 0.2, transform: nil)
+    }
+    p.press(square(0, 500), floor: paperFloor, walls: bare, depth: 0.7 * k)
+    p.press(square(1, 400), floor: paperFloor2, walls: bare, depth: 0.6 * k)
+    p.press(square(2, 300), floor: pencilFloor, walls: inked, depth: 0.6 * k)
+    if named {
+        p.press(wordmark("BEZZLE", size: 62, centre: pt(512, 838)), floor: paperFloor2, walls: bare, depth: 0.2)
+    }
+    // A light edge just inside the sheet.
+    ctx.addPath(page); ctx.setStrokeColor(color(0xFFFFFF, 0.7)); ctx.setLineWidth(5); ctx.strokePath()
+    ctx.restoreGState()
+
+    // The fold casts a shadow down onto the sheet, and is lit along the crease.
+    let flap = sheet.flap
+    ctx.saveGState()
+    ctx.addPath(page); ctx.clip()
+    p.shadow(dy: 12, blur: 26, color(0x3A2A1C, 0.28))
+    ctx.addPath(flap); ctx.setFillColor(color(0xE6E0D5)); ctx.fillPath()
+    ctx.restoreGState()
+    ctx.saveGState()
+    ctx.addPath(flap); ctx.clip()
+    ctx.drawLinearGradient(gradient([(0, color(0xFFFEFB)), (0.35, color(0xF4F0E8)), (1, color(0xDDD6CA))]),
+                           start: pt(r.maxX - sheet.ear / 2, r.minY + sheet.ear / 2), end: pt(r.maxX - sheet.ear, r.minY + sheet.ear),
+                           options: [.drawsAfterEndLocation])
+    ctx.restoreGState()
+    return ctx.makeImage()!
+}
+
+/// Renders the document icon into Bezzle/App/BezzleDocument.icns, which Info.plist names for designs, and a
+/// large copy into Branding.
+func makeDocumentIcon() throws {
+    let fm = FileManager.default
+    let set = fm.temporaryDirectory.appendingPathComponent("BezzleDocument-\(UUID().uuidString).iconset")
+    try fm.createDirectory(at: set, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: set) }
+    for points in [16, 32, 128, 256, 512] {
+        for scale in [1, 2] {
+            try png(renderDocument(pixels: points * scale))
+                .write(to: set.appendingPathComponent("icon_\(points)x\(points)\(scale == 2 ? "@2x" : "").png"))
+        }
+    }
+    let icns = root.appendingPathComponent("Bezzle/App/BezzleDocument.icns")
+    let iconutil = Process()
+    iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+    iconutil.arguments = ["-c", "icns", set.path, "-o", icns.path]
+    try iconutil.run()
+    iconutil.waitUntilExit()
+    guard iconutil.terminationStatus == 0 else { fatalError("iconutil failed") }
+    try png(renderDocument(pixels: 1024)).write(to: root.appendingPathComponent("Branding/bezzle-document.png"))
+    print("Rendered Bezzle/App/BezzleDocument.icns and Branding/bezzle-document.png")
+}
+
+if only == "document" {
+    try makeDocumentIcon()
+} else if let only {
     let dir = root.appendingPathComponent("Branding/drafts")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let picked = only == "drafts" ? drafts : drafts.filter { $0.name == only }

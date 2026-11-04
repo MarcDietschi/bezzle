@@ -206,12 +206,13 @@ extension MCPTools {
         let name = try args.string("name")
         var made: Int?
         try change(store, "New Variant") { doc in
+            let shown = Components.plan(copy, master: master)?.to
             guard let n = Components.addVariant(from: copy, keeping: [:], named: name, to: &master),
                   let i = doc.masters.firstIndex(where: { $0.id == master.id }) else { return }
             made = n
             doc.masters[i] = master
             doc.update(copy.id) { c in
-                c.instance?.variant = n
+                if let shown { c = Components.showing(c, variant: n, of: master, at: shown) } else { c.instance?.variant = n }
                 c = Node.forgettingOwnLooks(c)
             }
         }

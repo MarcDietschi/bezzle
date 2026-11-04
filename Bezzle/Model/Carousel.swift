@@ -57,6 +57,15 @@ nonisolated extension Node {
         guard let slide = slideSize else { return frame.size }
         return CGSize(width: slide.width * CGFloat(Carousel.clamped(count)), height: slide.height)
     }
+
+    /// Gives a carousel's slides another size, whole pixels, as many slides as it had. Its layers
+    /// stay where they are on it.
+    mutating func setSlideSize(_ size: CGSize) {
+        guard isCarousel else { return }
+        let count = slideCount
+        slideSize = CGSize(width: max(size.width.rounded(), 1), height: max(size.height.rounded(), 1))
+        frame.size = carouselSize(count: count)
+    }
 }
 
 nonisolated extension BezzleDocument {

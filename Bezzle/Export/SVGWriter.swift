@@ -549,6 +549,8 @@ nonisolated struct SVGWriter {
         case .saturation: "saturation"
         case .color: "color"
         case .luminosity: "luminosity"
+        case .plusDarker: "plus-darker"
+        case .plusLighter: "plus-lighter"
         }
     }
 

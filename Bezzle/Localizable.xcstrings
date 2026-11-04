@@ -5948,6 +5948,28 @@
         }
       }
     },
+    "Adjustment layers left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungsebenen weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calques de réglage omis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Livelli di regolazione omessi"
+          }
+        }
+      }
+    },
     "Advanced" : {
       "localizations" : {
         "de" : {
@@ -8353,6 +8375,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tra le righe"
+          }
+        }
+      }
+    },
+    "Bevels and satins left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abgeflachte Kanten und Glanz weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biseautages et satins omis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smussi e satinature omessi"
+          }
+        }
+      }
+    },
+    "Bezzle cannot read Photoshop files in this colour mode yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photoshop-Dateien in diesem Farbmodus kann Bezzle noch nicht lesen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle ne peut pas encore lire les fichiers Photoshop dans ce mode colorimétrique."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle non sa ancora leggere i file Photoshop in questo metodo colore."
           }
         }
       }
@@ -13857,6 +13923,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Angoli %lld"
+          }
+        }
+      }
+    },
+    "Corners pinned" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ecken fixiert"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coins fixés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Angoli fissati"
+          }
+        }
+      }
+    },
+    "Corners pinned, %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ecken fixiert, %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coins fixés, %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Angoli fissati, %@"
           }
         }
       }
@@ -21017,6 +21127,28 @@
         }
       }
     },
+    "Glows left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schein-Effekte weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lueurs omises"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bagliori omessi"
+          }
+        }
+      }
+    },
     "Go Back" : {
       "localizations" : {
         "de" : {
@@ -22949,6 +23081,7 @@
       }
     },
     "Import from XD, Figma or Sketch…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -22966,6 +23099,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Importa da XD, Figma o Sketch…"
+          }
+        }
+      }
+    },
+    "Import from XD, Figma, Sketch or Photoshop…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus XD, Figma, Sketch oder Photoshop importieren …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importer depuis XD, Figma, Sketch ou Photoshop…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importa da XD, Figma, Sketch o Photoshop…"
           }
         }
       }
@@ -24804,6 +24959,28 @@
         }
       }
     },
+    "Layer styles on groups left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenenstile auf Gruppen weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Styles de calque des groupes omis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stili di livello sui gruppi omessi"
+          }
+        }
+      }
+    },
     "Layers" : {
       "localizations" : {
         "de" : {
@@ -24888,6 +25065,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Livelli annidati troppo in profondità o troppo numerosi, omessi"
+          }
+        }
+      }
+    },
+    "Layers that could not be read" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenen, die nicht gelesen werden konnten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calques illisibles"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Livelli che non è stato possibile leggere"
           }
         }
       }
@@ -25951,6 +26150,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Lineare"
+          }
+        }
+      }
+    },
+    "Linear Burn" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linear nachbelichten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Densité linéaire +"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brucia lineare"
+          }
+        }
+      }
+    },
+    "Linear Dodge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linear abwedeln"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Densité linéaire -"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scherma lineare"
           }
         }
       }
@@ -28135,6 +28378,28 @@
         }
       }
     },
+    "Move Corner" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ecke verschieben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer le coin"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta l’angolo"
+          }
+        }
+      }
+    },
     "Move Gradient Colour" : {
       "localizations" : {
         "de" : {
@@ -28373,6 +28638,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sposta ombra"
+          }
+        }
+      }
+    },
+    "Move Side" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seite verschieben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer le côté"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta il lato"
           }
         }
       }
@@ -29517,6 +29804,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Riempimenti con disturbo, omessi"
+          }
+        }
+      }
+    },
+    "Noise gradients left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rauschverläufe weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dégradés de bruit omis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sfumature di disturbo omesse"
           }
         }
       }
@@ -30734,6 +31043,7 @@
       }
     },
     "Open a design, or an XD, Figma or Sketch file  ⌘O" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -30751,6 +31061,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apri un design o un file XD, Figma o Sketch  ⌘O"
+          }
+        }
+      }
+    },
+    "Open a design, or an XD, Figma, Sketch or Photoshop file  ⌘O" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Design oder eine XD-, Figma-, Sketch- oder Photoshop-Datei öffnen  ⌘O"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir un design, ou un fichier XD, Figma, Sketch ou Photoshop  ⌘O"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apri un design o un file XD, Figma, Sketch o Photoshop  ⌘O"
           }
         }
       }
@@ -32127,6 +32459,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Aperto"
+          }
+        }
+      }
+    },
+    "Pattern fills left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Musterfüllungen weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remplissages en motif omis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Riempimenti pattern omessi"
+          }
+        }
+      }
+    },
+    "Pattern overlays left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Musterüberlagerungen weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incrustations de motif omises"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sovrapposizioni pattern omesse"
           }
         }
       }
@@ -40106,6 +40482,50 @@
         }
       }
     },
+    "Smart objects that are masked or clipped came in as pictures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maskierte oder beschnittene Smartobjekte als Bilder übernommen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objets dynamiques masqués ou écrêtés importés comme images"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oggetti avanzati con maschera o ritaglio importati come immagini"
+          }
+        }
+      }
+    },
+    "Smart objects that could not be opened came in as pictures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smartobjekte, die sich nicht öffnen ließen, als Bilder übernommen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objets dynamiques impossibles à ouvrir importés comme images"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oggetti avanzati che non è stato possibile aprire importati come immagini"
+          }
+        }
+      }
+    },
     "Smooth" : {
       "localizations" : {
         "de" : {
@@ -43313,6 +43733,28 @@
         }
       }
     },
+    "Text came in as pictures of its letters" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text als Bild seiner Buchstaben übernommen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Texte importé comme image de ses lettres"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testo importato come immagine delle sue lettere"
+          }
+        }
+      }
+    },
     "Text Field" : {
       "localizations" : {
         "de" : {
@@ -45557,6 +45999,28 @@
         }
       }
     },
+    "This is not a Photoshop file Bezzle can read." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies ist keine Photoshop-Datei, die Bezzle lesen kann."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce n’est pas un fichier Photoshop que Bezzle peut lire."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo non è un file Photoshop leggibile da Bezzle."
+          }
+        }
+      }
+    },
     "This is not a Sketch file Bezzle can read." : {
       "localizations" : {
         "de" : {
@@ -45641,6 +46105,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Questo livello"
+          }
+        }
+      }
+    },
+    "This Photoshop file is damaged." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Photoshop-Datei ist beschädigt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce fichier Photoshop est endommagé."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo file Photoshop è danneggiato."
+          }
+        }
+      }
+    },
+    "This Photoshop file is packed in a way Bezzle cannot read yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Photoshop-Datei ist auf eine Weise gepackt, die Bezzle noch nicht lesen kann."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce fichier Photoshop est compressé d’une façon que Bezzle ne sait pas encore lire."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo file Photoshop è compresso in un modo che Bezzle non sa ancora leggere."
           }
         }
       }
@@ -48244,6 +48752,50 @@
         }
       }
     },
+    "Vector masks Bezzle cannot cut by, left out" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vektormasken, mit denen Bezzle nicht schneiden kann, weggelassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Masques vectoriels que Bezzle ne peut pas appliquer, omis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maschere vettoriali che Bezzle non sa applicare, omesse"
+          }
+        }
+      }
+    },
+    "Vector masks on groups drawn into the pictures they hold" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vektormasken auf Gruppen in deren Bilder gezeichnet"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Masques vectoriels de groupes appliqués aux images qu’ils contiennent"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maschere vettoriali sui gruppi applicate alle immagini che contengono"
+          }
+        }
+      }
+    },
     "Version history" : {
       "localizations" : {
         "de" : {
@@ -48482,6 +49034,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Riquadro di avviso"
+          }
+        }
+      }
+    },
+    "Warped smart objects came in as pictures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verkrümmte Smartobjekte als Bilder übernommen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objets dynamiques déformés importés comme images"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oggetti avanzati distorti importati come immagini"
           }
         }
       }
