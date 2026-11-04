@@ -77,7 +77,7 @@ fi
 # Sparkle, as released by its makers, checked against the download it was tried with.
 SPARKLE_DIR="$CACHE/sparkle-$SPARKLE_VERSION"
 if [ ! -x "$SPARKLE_DIR/bin/generate_appcast" ]; then
-  echo "Fetching Sparkle $SPARKLE_VERSION…"
+  echo "Fetching Sparkle ${SPARKLE_VERSION}…"
   mkdir -p "$CACHE"
   TAR="$CACHE/Sparkle-$SPARKLE_VERSION.tar.xz"
   curl -fsSL --retry 3 -o "$TAR" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
