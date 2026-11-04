@@ -9,7 +9,8 @@ Usage: Scripts/release/notes.py STEP ...
                                    feed alone, which must be <version>, with its notes in every
                                    language for Sparkle's update window
 
-AppStore/site/build.py imports it for the website's What's New page.
+The website (mfrports/bezzle-web) gets a copy of RELEASE_NOTES.md with every release, and its own
+src/notes.py reads it for the What's New page in the same shape.
 """
 import html, os, re, sys
 

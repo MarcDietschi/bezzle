@@ -5,8 +5,9 @@ The notes for every version released on the website, newest first, in English, G
 and Italian: what changed for the people who use Bezzle, in their words. Written with each
 release (CLAUDE.md › Releases). Scripts/release.sh refuses a version without its entry, puts the
 notes into the update feed, where Sparkle shows them in each Mac's language, and onto the GitHub
-release; AppStore/site/build.py turns them into the website's What's New page, showing only the
-versions the live feed has. Scripts/release/notes.py reads exactly this shape, so keep to it:
+release, and copies this file into the website's repository (mfrports/bezzle-web,
+src/releases/RELEASE_NOTES.md) for its What's New page, which shows only the versions the feed has.
+Scripts/release/notes.py and the website's src/notes.py read exactly this shape, so keep to it:
 
 ## <version> · <YYYY-MM-DD>
 

@@ -26,9 +26,9 @@ Whenever the version is raised, or Erik asks for a release:
 3. **Run `Scripts/release.sh`** (about 15 minutes; `--dry-run` first puts a notarized zip on the
    Desktop and publishes nothing). It builds from `git archive` of the commit plus the git-ignored
    subject matte, exports with the Developer ID, adds Sparkle, signs, notarizes and staples. It then
-   publishes the zip and delta updates as the GitHub release `v<version>` of mfrports/bezzle-web, and
-   pushes the rebuilt site with the new feed. Once the feed is live it tags the commit `v<version>`,
-   which marks the version as released.
+   publishes the zip and delta updates as the GitHub release `v<version>` of mfrports/bezzle-web. It
+   then commits the new feed and a copy of `RELEASE_NOTES.md` there, which rebuilds and deploys the
+   site. Once the feed is live it tags the commit `v<version>`, which marks the version as released.
 4. **Check** https://mfrports.github.io/bezzle-web/download.html and `/updates/appcast.xml`.
 
 How to write the notes: for the people who use Bezzle, not for developers. Say what they can do now
@@ -40,25 +40,29 @@ fix with nothing to show gets a title and a lede, no list.
 
 ### How the website copy is put together
 
-- **Feed**: https://mfrports.github.io/bezzle-web/updates/appcast.xml, the file `updates/appcast.xml`
-  in mfrports/bezzle-web, served by GitHub Pages. It is every copy's `SUFeedURL`, so it never moves.
-  It lists the newest version alone, with its deltas and its notes in every language.
+- **Website**: its own repository, mfrports/bezzle-web, locally `~/Sites/bezzle-web`, like gerty-web
+  for Gerty. Its source (`src/build.py`, the words in four languages, `src/style.css`, `public/img`)
+  is edited there, and every push to its main deploys it to GitHub Pages; its README has the rest.
+  This repository holds no part of the site.
+- **Feed**: https://mfrports.github.io/bezzle-web/updates/appcast.xml, the file
+  `public/updates/appcast.xml` in bezzle-web. It is every copy's `SUFeedURL`, so it never moves.
+  It lists the newest version alone, with its deltas and its notes in every language. Only
+  `release.sh` writes it.
 - **Zips and deltas**: the releases of the public repository mfrports/bezzle-web (the app's own
   repository is private). `release.sh` keeps the last released zips in
   `~/Library/Caches/bezzle-release/dist`, fetching them from GitHub when missing, to make the deltas
   from. The subject matte makes a full zip about 225 MB, while a delta is small.
-- **Site**: `AppStore/site/build.py` builds it from the live feed (or the `--feed` it is given), so the
-  download, the version and What's New show only what can be downloaded. Without a release in the
-  feed it offers the Mac App Store alone. Never push a site built without the feed: the rsync into
-  bezzle-web would delete the feed.
+- **Site and release**: the site takes the version, the zip and its size from the feed, and What's New
+  from its copy of the notes (`src/releases/RELEASE_NOTES.md`), so it shows only what can be
+  downloaded. Edit the notes here, never that copy: the next release overwrites it.
 - **Signing key**: Sparkle's EdDSA key is the one Gerty's releases use (login Keychain, account
   `ed25519`; also the `SPARKLE_PRIVATE_KEY` secret of mfrports/gerty). One key serves every app. Its
   public half is `SPARKLE_PUBLIC_KEY` in `release.sh`. Lose it, and no installed copy can be updated.
 - **Same app, same data**: both copies have the bundle id `com.erik.Bezzle`, the same sandbox
   container and the same iCloud container (production), so they open the same designs, share with
   each other, and hand over to each other like two copies of one app (`HandOver`).
-- **Withdrawing a version**: revert the site commit in bezzle-web (the feed goes back to the version
-  before), then `gh release delete v<version> -R mfrports/bezzle-web --cleanup-tag`. Copies that
+- **Withdrawing a version**: revert the release's commit in bezzle-web (the feed goes back to the
+  version before), then `gh release delete v<version> -R mfrports/bezzle-web --cleanup-tag`. Copies that
   installed it keep it.
 - **Testing the updater** without a release: build Release with
   `'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) BEZZLE_DIRECT'`. Make two copies under a test

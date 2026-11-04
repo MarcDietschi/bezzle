@@ -2,8 +2,9 @@
 # Releases Bezzle on its website, beside the Mac App Store. Builds the commit that is checked out as the
 # copy that updates itself (BEZZLE_DIRECT, see Bezzle/App/Updates.swift), puts Sparkle into it, signs it
 # with the Developer ID, has Apple notarize it, and publishes the zip, with delta updates from the last
-# versions, as a GitHub release of mfrports/bezzle-web. Then it puts the new update feed and the website
-# rebuilt with it on GitHub Pages, waits until both are live, and tags the commit v<version>.
+# versions, as a GitHub release of mfrports/bezzle-web. Then it commits the new update feed and the release
+# notes to that repository, whose Deploy workflow rebuilds the website with them, waits until the feed is
+# live, and tags the commit v<version>.
 #
 # Usage: Scripts/release.sh [--dry-run]
 # The version is the one set in Xcode (MARKETING_VERSION), the same the App Store gets: raise it there
@@ -49,7 +50,7 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 VERSION="$(git -C "$ROOT" show "$COMMIT:Bezzle.xcodeproj/project.pbxproj" | sed -nE 's/^[[:space:]]*MARKETING_VERSION = "?([^";]+)"?;$/\1/p' | sort -u)"
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || fail "The Xcode project should carry one version (MARKETING_VERSION), found: ${VERSION:-none}"
 echo "Bezzle $VERSION from $(git -C "$ROOT" log -1 --format='%h %s' "$COMMIT")"
-CHANGED="$(git -C "$ROOT" status --porcelain -- Bezzle BezzleThumbnails Bezzle.xcodeproj Packages Info.plist Bezzle.entitlements RELEASE_NOTES.md AppStore/site Scripts/release)"
+CHANGED="$(git -C "$ROOT" status --porcelain -- Bezzle BezzleThumbnails Bezzle.xcodeproj Packages Info.plist Bezzle.entitlements RELEASE_NOTES.md Scripts/release)"
 [ -z "$CHANGED" ] || printf 'Not in this release, since not committed:\n%s\n' "$CHANGED"
 
 [ -d "$ROOT/Bezzle/Canvas/BiRefNet.mlpackage" ] || fail "Bezzle/Canvas/BiRefNet.mlpackage is missing: make it with Scripts/subject-matte/make.sh"
@@ -102,7 +103,7 @@ trap 'rm -rf "$WORK"' EXIT
 SRC="$WORK/src"
 mkdir -p "$SRC"
 git -C "$ROOT" archive "$COMMIT" -- Bezzle BezzleThumbnails BezzleTests Bezzle.xcodeproj Packages Info.plist Bezzle.entitlements \
-  RELEASE_NOTES.md Scripts/release AppStore/site AppStore/screenshots AppStore/screenshots-src/assets Branding/bezzle-icon.png | tar -x -C "$SRC"
+  RELEASE_NOTES.md Scripts/release | tar -x -C "$SRC"
 # Too large for git: the subject matte comes from the working tree.
 ditto "$ROOT/Bezzle/Canvas/BiRefNet.mlpackage" "$SRC/Bezzle/Canvas/BiRefNet.mlpackage"
 if [ -z "$DRY_RUN" ]; then
@@ -229,12 +230,15 @@ LENGTH="$(curl -sSL -r 0-0 -D - -o /dev/null "$DOWNLOAD" | tr -d '\r' | sed -nE 
 [ "$LENGTH" = "$(stat -f %z "$ZIP")" ] || fail "$DOWNLOAD does not answer with the zip (length ${LENGTH:-none})"
 
 # Only now the feed: nobody is offered an update whose files are not there yet.
-echo "Publishing the feed and the website…"
-python3 "$SRC/AppStore/site/build.py" --feed "$WORK/appcast.xml"
+echo "Publishing the feed and the notes on the website…"
 gh repo clone "$SITE_REPO" "$WORK/site" -- --depth 1 -q
-rsync -a --delete --exclude .git "$SRC/AppStore/site/public/" "$WORK/site/"
-git -C "$WORK/site" add -A
-git -C "$WORK/site" commit -q -m "Bezzle $VERSION" -m "The update feed, the download and What's New for Bezzle $VERSION."
+mkdir -p "$WORK/site/public/updates" "$WORK/site/src/releases"
+cp "$WORK/appcast.xml" "$WORK/site/public/updates/appcast.xml"
+cp "$SRC/RELEASE_NOTES.md" "$WORK/site/src/releases/RELEASE_NOTES.md"
+# The site must build with them, as its Deploy workflow will, before they go up.
+python3 "$WORK/site/src/build.py" >/dev/null || fail "The website does not build with the new feed and notes: nothing was pushed to it"
+git -C "$WORK/site" add public/updates/appcast.xml src/releases/RELEASE_NOTES.md
+git -C "$WORK/site" commit -q -m "Bezzle $VERSION" -m "The update feed and the release notes, from the app's Scripts/release.sh."
 # gh's sign-in, for this push alone.
 git -C "$WORK/site" -c credential.helper= -c 'credential.helper=!gh auth git-credential' push -q origin HEAD:main
 echo "Waiting for GitHub Pages…"
@@ -243,7 +247,7 @@ for _ in $(seq 1 60); do
   if curl -fsS "$FEED_URL?check=$(date +%s)" 2>/dev/null | grep -q "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>"; then LIVE=1; break; fi
   sleep 10
 done
-[ -n "$LIVE" ] || fail "After 10 minutes $FEED_URL still does not offer $VERSION: see https://github.com/$SITE_REPO/actions. Once it does, tag the commit: git tag v$VERSION $COMMIT && git push origin refs/tags/v$VERSION"
+[ -n "$LIVE" ] || fail "After 10 minutes $FEED_URL still does not offer $VERSION: see the Deploy workflow at https://github.com/$SITE_REPO/actions. Once it does, tag the commit: git tag v$VERSION $COMMIT && git push origin refs/tags/v$VERSION"
 curl -fsS "$SITE/download.html?check=$(date +%s)" | grep -qF "Bezzle-$VERSION.zip" || echo "The download page does not show $VERSION yet: check $SITE/download.html" >&2
 
 # The tag comes last, as the mark that this version is out.
@@ -251,4 +255,4 @@ git -C "$ROOT" rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null || git -C 
 git -C "$ROOT" push -q origin "refs/tags/v$VERSION"
 rm -f "$DIST"/*.delta
 echo "Bezzle $VERSION is live: $SITE/download.html"
-echo "Tagged v$VERSION. AppStore/site/public in this repository still shows the site before it: build.py brings it up to date with the live feed."
+echo "Tagged v$VERSION. Pull ~/Sites/bezzle-web before changing the site."
