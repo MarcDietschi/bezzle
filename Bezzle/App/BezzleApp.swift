@@ -123,6 +123,10 @@ struct BezzleCommands: Commands {
     @AppStorage("BezzleChecksGrammar") private var checksGrammar = false
 
     var body: some Commands {
+        // In the Bezzle menu, where settings go.
+        CommandGroup(replacing: .appSettings) {
+            Button("Designs Folder…") { Library.shared.chooseFolder() }
+        }
         CommandGroup(replacing: .toolbar) {}
         CommandGroup(replacing: .newItem) {
             Button("New…") { WindowRouter.shared.showHome() }

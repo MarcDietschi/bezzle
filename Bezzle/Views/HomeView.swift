@@ -110,7 +110,7 @@ struct HomeView: View {
                         .foregroundStyle(Theme.ink3)
                 }
                 Spacer(minLength: 12)
-                TextButton(title: "Show in Finder") { NSWorkspace.shared.open(library.folder) }
+                FolderButton(library: library)
                     .padding(.trailing, -8)
             }
             .rising(appeared, order: 4)
@@ -435,6 +435,47 @@ private struct DesignNote: View {
     }
 }
 
+/// The designs folder by its name, opening a menu to show it in the Finder or choose another.
+private struct FolderButton: View {
+    let library: Library
+    @Environment(MenuHost.self) private var menus
+    @State private var hovering = false
+    private static let id = "designs-folder"
+
+    var body: some View {
+        let isOpen = menus.open?.id == Self.id
+        HStack(spacing: 5) {
+            Image(systemName: "folder")
+                .font(.system(size: 11))
+            Text(verbatim: library.folderName)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Chevron(color: hovering || isOpen ? Theme.ink : Theme.ink3)
+                .rotationEffect(.degrees(isOpen ? 180 : 0))
+        }
+        .foregroundStyle(hovering || isOpen ? Theme.ink : Theme.ink2)
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(isOpen ? 0.08 : hovering ? 0.06 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            menus.toggle(Self.id, width: 220, entries: [
+                .item("Show in Finder") { NSWorkspace.shared.open(library.folder) },
+                // After the menu has gone, as the panel holds everything up while it is open.
+                .item("Choose Folder…") { DispatchQueue.main.async { library.chooseFolder() } },
+            ])
+        }
+        .menuAnchor(Self.id)
+        .help(Text(verbatim: library.folder.path))
+        .animation(Theme.quick, value: hovering)
+        .animation(Theme.quick, value: isOpen)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
 /// What a right click on a design offers.
 private enum DesignMenu {
     static func entries(for entry: Library.Entry, open: @escaping () -> Void, rename: @escaping () -> Void) -> [MenuEntry] {
@@ -445,7 +486,7 @@ private enum DesignMenu {
             .item("Rename", enabled: entry.sharing != .ended) { rename() },
             .item("Duplicate") { Library.shared.duplicate(entry.url) },
             .separator,
-            .item(entry.url.path.hasPrefix(Library.shared.folder.path) ? "Move to Trash" : "Remove from List") {
+            .item(Library.shared.holds(entry.url) ? "Move to Trash" : "Remove from List") {
                 withAnimation(Theme.spring) { Library.shared.remove(entry.url) }
             },
         ]

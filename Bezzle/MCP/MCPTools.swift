@@ -154,7 +154,7 @@ final class MCPTools {
     /// user let it into. Added to what the AI hears when a file it named can't be found.
     static var unreachable: String {
         ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] == nil ? ""
-            : " Bezzle can only open files in Downloads and Pictures, and ones opened in it from the Finder or its Open panel."
+            : " Bezzle can only open files in Downloads, Pictures and its designs folder, and ones opened in it from the Finder or its Open panel."
     }
 
     /// Opens a design in a tab, as the home screen does, and waits for it. A file from Adobe XD,
@@ -315,7 +315,7 @@ final class MCPTools {
             if let tab = Tabs.shared.tab(of: store) { Tabs.shared.close(tab) }
             DocumentStore.finishSaving()
         }
-        let inFolder = url.standardizedFileURL.path.hasPrefix(Library.shared.folder.standardizedFileURL.path + "/")
+        let inFolder = Library.shared.holds(url)
         Library.shared.remove(url)
         return [.text(inFolder ? "Moved \(url.lastPathComponent) to the Trash." : "Took \(url.lastPathComponent) off the home screen; the file itself is where it was.")]
     }

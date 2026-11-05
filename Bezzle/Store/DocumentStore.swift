@@ -668,17 +668,26 @@ final class DocumentStore {
     /// Gives the design a new name, renaming its file.
     func rename(to newName: String) {
         guard let target = Library.shared.renamedURL(url, to: newName) else { return }
+        move(to: target)
+    }
+
+    /// Moves the design's file to `target`, on with its work there: for a new name, or into
+    /// another designs folder. False when it could not be moved, and it stays where it was.
+    @discardableResult
+    func move(to target: URL) -> Bool {
         save()
         Self.finishSaving()
         do {
             try FileManager.default.moveItem(at: url, to: target)
-            Library.shared.renamed(from: url, to: target)
-            url = target
-            assets = Assets(design: target)
-            sharing?.moved(to: target)
         } catch {
-            NSLog("Bezzle could not rename %@: %@", url.path, error.localizedDescription)
+            NSLog("Bezzle could not move %@ to %@: %@", url.path, target.path, error.localizedDescription)
+            return false
         }
+        Library.shared.renamed(from: url, to: target)
+        url = target
+        assets = Assets(design: target)
+        sharing?.moved(to: target)
+        return true
     }
 
     // MARK: Sharing

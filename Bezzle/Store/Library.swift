@@ -3,8 +3,9 @@ import CryptoKit
 import Observation
 import UniformTypeIdentifiers
 
-/// Where designs live: new ones go in Documents › Bezzle, and any opened from elsewhere are
-/// remembered, so the home screen can show them all, latest first.
+/// Where designs live: new ones go in the designs folder, Documents › Bezzle unless another was
+/// chosen, and any opened from elsewhere are remembered, so the home screen can show them all,
+/// latest first.
 @Observable
 final class Library {
     static let shared = Library()
@@ -26,18 +27,51 @@ final class Library {
     /// address may or may not end in a slash, so designs are told apart by path.)
     @ObservationIgnored private var keys: [String: String] = [:]
 
+    /// The designs folder: new designs are made in it, and the home screen shows every design in
+    /// it. Another can be chosen; see `use(_:moving:)`.
+    private(set) var folder: URL
+
     /// Debug and test runs keep their designs somewhere of their own, never among the user's.
-    let folder: URL = {
+    private static func startingFolder() -> URL {
         if let path = ProcessInfo.processInfo.environment["BEZZLE_LIBRARY"] {
             return URL(fileURLWithPath: path, isDirectory: true)
         }
         if Library.isolated {
             return FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests", isDirectory: true)
         }
-        return Library.documents.appendingPathComponent("Bezzle", isDirectory: true)
-    }()
+        return chosenFolder() ?? standardFolder
+    }
 
     private static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
+
+    /// Where designs are kept until another folder is chosen. In the App Store's sandbox, this is
+    /// the Documents folder of Bezzle's own container.
+    static var standardFolder: URL { documents.appendingPathComponent("Bezzle", isDirectory: true) }
+
+    /// The folder chosen for designs, as a bookmark, which the sandbox needs to let Bezzle in
+    /// again after it quits.
+    static let folderKey = "designsFolder"
+
+    /// The folder chosen for designs, opened until Bezzle quits; nil when none was chosen, or when
+    /// it can't be reached now, on a disk that isn't plugged in, say, or after it went to the
+    /// Trash. Its bookmark is kept for when it can be reached again.
+    private static func chosenFolder() -> URL? {
+        guard let data = settings.data(forKey: folderKey) else { return nil }
+        var stale = false
+        guard let url = (try? URL(resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI, .withoutMounting], bookmarkDataIsStale: &stale))
+                ?? (try? URL(resolvingBookmarkData: data, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale))
+        else { return nil }
+        _ = url.startAccessingSecurityScopedResource()
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue,
+              !url.pathComponents.contains(where: { $0 == ".Trash" || $0 == ".Trashes" }) else { return nil }
+        if stale, let fresh = bookmark(of: url) { settings.set(fresh, forKey: folderKey) }
+        return url.standardizedFileURL
+    }
+
+    private static func bookmark(of url: URL) -> Data? {
+        (try? url.bookmarkData(options: .withSecurityScope)) ?? (try? url.bookmarkData())
+    }
 
     /// The app was called Vellum before. The first time it starts as Bezzle, Documents › Vellum
     /// becomes Documents › Bezzle, and the settings kept under the old name come across.
@@ -81,11 +115,110 @@ final class Library {
     static let settings: UserDefaults = isolated ? UserDefaults(suiteName: "com.erik.Bezzle.tests") ?? .standard : .standard
     private var defaults: UserDefaults { Library.settings }
     private let recentsKey = "recentDesigns"
+    /// How many designs from outside the designs folder the home screen keeps showing; the ones
+    /// opened longest ago go first. Enough for a designs folder's worth left where it was.
+    private let recentsLimit = 200
 
     private init() {
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        folder = Self.startingFolder()
         FileAccess.reopen()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         refresh()
+    }
+
+    // MARK: The designs folder
+
+    /// The designs folder's name as the Finder shows it, in the user's language.
+    var folderName: String { FileManager.default.displayName(atPath: folder.path) }
+
+    /// The designs kept in `folder` itself, not those in folders inside it.
+    private static func designs(in folder: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+            .filter { BezzleDocument.fileExtensions.contains($0.pathExtension) }
+            .map(\.standardizedFileURL)
+    }
+
+    /// Asks which folder to keep designs in from now on, and whether the designs kept until now go
+    /// there too.
+    func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = folder.deletingLastPathComponent()
+        panel.prompt = String(localized: "Keep Designs Here")
+        panel.message = String(localized: "Choose where Bezzle keeps your designs.")
+        guard panel.runModal() == .OK, let chosen = panel.url, !isFolder(chosen) else { return }
+        let designs = Self.designs(in: folder)
+        guard !designs.isEmpty else { return use(chosen, moving: true) }
+        let place = FileManager.default.displayName(atPath: chosen.path)
+        let alert = NSAlert()
+        alert.messageText = designs.count == 1
+            ? String(localized: "Move “\(designs[0].deletingPathExtension().lastPathComponent)” to “\(place)”?")
+            : String(localized: "Move your \(designs.count) designs to “\(place)”?")
+        alert.informativeText = String(localized: "Designs left where they are stay on the home screen.")
+        alert.addButton(withTitle: String(localized: "Move"))
+        alert.addButton(withTitle: String(localized: "Leave Them"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: use(chosen, moving: true)
+        case .alertSecondButtonReturn: use(chosen, moving: false)
+        default: break
+        }
+    }
+
+    /// Whether the design at `url` is kept in the designs folder itself, so the home screen finds
+    /// it there. One in a folder inside it is remembered, as one from anywhere else is.
+    func holds(_ url: URL) -> Bool {
+        url.standardizedFileURL.deletingLastPathComponent().path == folder.standardizedFileURL.path
+    }
+
+    /// Whether `url` is the designs folder now.
+    private func isFolder(_ url: URL) -> Bool {
+        url.standardizedFileURL.path == folder.standardizedFileURL.path || Self.sameFile(url, folder)
+    }
+
+    /// Keeps designs in `new` from now on, after Bezzle quits too: new designs are made there,
+    /// and the home screen shows every design in it. With `moving`, the designs in the folder
+    /// until now go there as well, those open in tabs included, each keeping its card on the home
+    /// screen; any that can't be moved stay where they are. Otherwise all of them stay where they
+    /// are, and on the home screen as designs opened from elsewhere are.
+    func use(_ new: URL, moving: Bool) {
+        guard !isFolder(new) else { return }
+        let designs = Self.designs(in: folder)
+        if let bookmark = Self.bookmark(of: new) { Library.settings.set(bookmark, forKey: Self.folderKey) }
+        useForNow(new)
+        for design in designs where !(moving && carry(design, into: folder)) {
+            remember(design)
+        }
+        refresh()
+    }
+
+    /// Makes `new` the designs folder until Bezzle quits; `use` also keeps it for next time.
+    func useForNow(_ new: URL) {
+        folder = new.standardizedFileURL
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        refresh()
+    }
+
+    /// Moves a design into `into` under its name, or the next one free there; false when it can't.
+    private func carry(_ url: URL, into: URL) -> Bool {
+        let target = freeURL(named: url.deletingPathExtension().lastPathComponent, in: into)
+        if let store = Tabs.shared.designs.lazy.compactMap(\.store).first(where: { $0.isAt(url) }) {
+            return store.move(to: target)
+        }
+        // A tab just closed may still be writing it.
+        DocumentStore.finishSaving()
+        do {
+            try FileManager.default.moveItem(at: url, to: target)
+        } catch {
+            NSLog("Bezzle could not move %@ to %@: %@", url.path, into.path, error.localizedDescription)
+            return false
+        }
+        if let link = SharingFiles.link(of: target) { _ = CloudSync.shared.claim(link.zone, at: target) }
+        renamed(from: url, to: target)
+        return true
     }
 
     /// Reads the folder and the remembered designs again.
@@ -170,18 +303,18 @@ final class Library {
 
     private func remember(_ url: URL) {
         let path = url.standardizedFileURL.path
-        guard !path.hasPrefix(folder.standardizedFileURL.path + "/") else { return }
+        guard !holds(url) else { return }
         var paths = defaults.stringArray(forKey: recentsKey) ?? []
         paths.removeAll { $0 == path }
         paths.insert(path, at: 0)
-        defaults.set(Array(paths.prefix(40)), forKey: recentsKey)
+        defaults.set(Array(paths.prefix(recentsLimit)), forKey: recentsKey)
         FileAccess.keep(url)
     }
 
-    /// Takes a design off the home screen; one in the Bezzle folder goes to the Trash.
+    /// Takes a design off the home screen; one in the designs folder goes to the Trash.
     func remove(_ url: URL) {
         let path = url.standardizedFileURL.path
-        if path.hasPrefix(folder.standardizedFileURL.path + "/") {
+        if holds(url) {
             NSWorkspace.shared.recycle([url])
         }
         var paths = defaults.stringArray(forKey: recentsKey) ?? []
