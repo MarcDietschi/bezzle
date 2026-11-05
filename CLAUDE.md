@@ -71,4 +71,5 @@ fix with nothing to show gets a title and a lede, no list.
   Give them a throwaway CryptoKit Ed25519 key (`generate_appcast --ed-key-file`), a local
   `http://127.0.0.1` feed and `NSAllowsLocalNetworking`. Launch the older copy with `open -g -n`: it
   fetches the update within seconds. `NSRunningApplication.terminate()` quits it, and the newer
-  version is in place a moment later. Done this way on 2026-11-04.
+  version is in place a moment later. Done this way on 2026-11-04, with `SUAutomaticallyUpdate`,
+  which releases no longer set: without it, the older copy shows Sparkle's window with the notes.

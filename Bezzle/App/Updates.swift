@@ -9,7 +9,9 @@ import SwiftUI
 /// package for it and the App Store build carries no trace of it.
 ///
 /// Every launch looks for a new version in the background, and Sparkle once a day after that. A new
-/// version is downloaded quietly and put in place when Bezzle quits (`SUAutomaticallyUpdate`).
+/// version shows Sparkle's window with its notes, to install now or later. Release builds don't set
+/// `SUAutomaticallyUpdate`, which would fetch it quietly and put it in place on quit, unseen; ticking
+/// automatic updates in that window still does so on that Mac.
 enum Updates {
     /// Whether this copy updates itself: a website build with Sparkle inside.
     static var isAvailable: Bool {

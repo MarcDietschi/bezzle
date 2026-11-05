@@ -144,10 +144,11 @@ pb 'Delete :com.apple.security.temporary-exception.mach-lookup.global-name' || t
 pb 'Add :com.apple.security.temporary-exception.mach-lookup.global-name array'
 pb "Add :com.apple.security.temporary-exception.mach-lookup.global-name:0 string $BUNDLE_ID-spks"
 pb "Add :com.apple.security.temporary-exception.mach-lookup.global-name:1 string $BUNDLE_ID-spki"
-# Where it looks for updates, the key they must be signed with, and to look and fetch without asking.
+# Where it looks for updates, the key they must be signed with, and to look without asking. Not
+# SUAutomaticallyUpdate: a version fetched quietly and put in place on quit is never seen, so a new
+# one shows Sparkle's window with its notes instead, on the launch that finds it.
 /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $FEED_URL" -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY" \
-  -c "Add :SUEnableInstallerLauncherService bool true" -c "Add :SUEnableAutomaticChecks bool true" \
-  -c "Add :SUAutomaticallyUpdate bool true" "$PLIST"
+  -c "Add :SUEnableInstallerLauncherService bool true" -c "Add :SUEnableAutomaticChecks bool true" "$PLIST"
 
 echo "Putting Sparkle in and signing as ${IDENTITY}…"
 mkdir -p "$APP/Contents/Frameworks"
