@@ -1,0 +1,9 @@
+.build/
+node_modules/
+# Apple's fonts, copied for testing on this Mac only: never commit or publish them.
+site/fonts/
+# Made by prepare.sh from the app's sources.
+Sources/BezzleCore/Shared/Generated/
+out/
+site/samples.json
+venv/

@@ -1,0 +1,12 @@
+{
+  "name": "bezzle-web-core",
+  "private": true,
+  "type": "module",
+  "description": "Bezzle's model and renderer in the browser: the WebAssembly core and the page around it.",
+  "scripts": {
+    "compare": "node tools/compare.mjs"
+  },
+  "dependencies": {
+    "canvaskit-wasm": "0.42.0"
+  }
+}

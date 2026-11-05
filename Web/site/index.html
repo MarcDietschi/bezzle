@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bezzle Web Core</title>
+<style>
+  :root { --bg: #f4f1ec; --ink: #2b2620; --soft: #8a8178; --card: #fffdf9; --line: #e2dcd3; --accent: #d8643a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1d1b19; --ink: #ece6de; --soft: #9a9188; --card: #262320; --line: #3a3530; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; height: 100vh; display: grid; grid-template-columns: 260px 1fr; }
+  aside { border-right: 1px solid var(--line); padding: 16px; overflow: auto; }
+  aside h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--soft); margin: 18px 0 6px; font-weight: 600; }
+  aside button { display: block; width: 100%; text-align: left; padding: 6px 10px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  aside button:hover { background: var(--line); }
+  aside button[aria-current="true"] { background: var(--accent); color: white; }
+  label.open { display: block; margin-top: 18px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; color: var(--soft); cursor: pointer; }
+  label.open input { display: none; }
+  main { display: grid; grid-template-rows: auto 1fr; min-width: 0; }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line); color: var(--soft); display: flex; gap: 18px; flex-wrap: wrap; }
+  header b { color: var(--ink); font-weight: 600; }
+  #status { display: flex; gap: 18px; flex-wrap: wrap; }
+  #stage { overflow: auto; display: grid; place-items: center; padding: 32px; }
+  canvas { background: var(--card); box-shadow: 0 2px 14px rgba(58, 50, 38, .14); border-radius: 2px; max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<aside>
+  <h2>Designs</h2>
+  <div id="designs"></div>
+  <label class="open">Open a .bezzle design…<input type="file" id="folder" webkitdirectory></label>
+  <h2>Artboards</h2>
+  <div id="boards"></div>
+</aside>
+<main>
+  <header><span id="status">Loading the core…</span></header>
+  <div id="stage"><canvas id="view" width="10" height="10"></canvas></div>
+</main>
+<script type="module">
+import { createBezzle } from './bezzle.mjs'
+
+// Where things are when served from the Bezzle repository's root (see Web/README.md).
+const paths = {
+  canvaskit: '../node_modules/canvaskit-wasm/bin/',
+  core: new URLSearchParams(location.search).get('core') ?? '../.build/out/Products/Release-webassembly-wasm32/BezzleCore.wasm',
+  fonts: './fonts/',
+}
+const status = document.getElementById('status')
+const say = (html) => { status.innerHTML = html }
+
+await new Promise((ok, fail) => { const s = document.createElement('script'); s.src = paths.canvaskit + 'canvaskit.js'; s.onload = ok; s.onerror = fail; document.head.append(s) })
+const CK = await window.CanvasKitInit({ locateFile: (f) => paths.canvaskit + f })
+
+const fetchBytes = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer())
+const manifest = await (await fetch(paths.fonts + 'manifest.json')).json()
+const fonts = {
+  families: manifest.families,
+  faces: await Promise.all(manifest.faces.map(async (f) => ({ ...f, data: await fetchBytes(paths.fonts + f.file) }))),
+  system: { ...manifest.system, data: await fetchBytes(paths.fonts + manifest.system.file) },
+}
+const t0 = performance.now()
+const bz = await createBezzle({ CanvasKit: CK, wasm: await fetchBytes(paths.core), fonts, options: { trak: true } })
+const startMs = Math.round(performance.now() - t0)
+
+const view = document.getElementById('view')
+let boards = [], current = -1, designName = ''
+
+function show(index) {
+  current = index
+  for (const b of document.querySelectorAll('#boards button')) b.setAttribute('aria-current', String(+b.dataset.index === index))
+  const scale = Math.min(window.devicePixelRatio || 1, 2)
+  const r = bz.render(index, scale)
+  const img = r.image
+  const w = img.width(), h = img.height()
+  const pixels = img.readPixels(0, 0, { width: w, height: h, colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB })
+  view.width = w; view.height = h
+  view.style.width = `${w / scale}px`
+  view.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.length), w, h), 0, 0)
+  const board = boards.find((b) => b.index === index)
+  say(`<b>${designName}</b> <span>${board?.name ?? ''}, ${board?.frame[2]}×${board?.frame[3]} pt</span>`
+    + `<span>Bezzle's renderer in WebAssembly: <b>${Math.round(r.coreMs)} ms</b></span><span>CanvasKit: ${Math.round(r.playMs)} ms</span><span>core started in ${startMs} ms</span>`)
+}
+
+function list(opened) {
+  boards = opened.boards
+  const box = document.getElementById('boards')
+  box.replaceChildren(...boards.map((b) => {
+    const el = document.createElement('button')
+    el.textContent = b.name; el.dataset.index = b.index
+    el.onclick = () => show(b.index)
+    return el
+  }))
+  if (boards.length) show(boards[0].index)
+}
+
+async function openSample(s) {
+  say(`Opening ${s.name}…`)
+  const base = `../../AppStore/screenshots-src/designs/${encodeURIComponent(s.name)}.bezzle/`
+  const json = await fetchBytes(base + 'document.json')
+  const pictures = new Map(await Promise.all(s.images.map(async (n) => [n, await fetchBytes(base + 'images/' + encodeURIComponent(n))])))
+  designName = s.name
+  for (const b of document.querySelectorAll('#designs button')) b.setAttribute('aria-current', String(b.textContent === s.name))
+  const opened = bz.open(json, pictures)
+  if (opened.error) return say(`Could not open ${s.name}: ${opened.error}`)
+  list(opened)
+}
+
+document.getElementById('folder').onchange = async (e) => {
+  const files = [...e.target.files]
+  const doc = files.find((f) => f.webkitRelativePath.split('/').length === 2 && f.name === 'document.json')
+  if (!doc) return say('That folder is not a Bezzle design: it has no document.json.')
+  const pictures = new Map(await Promise.all(files.filter((f) => f.webkitRelativePath.split('/')[1] === 'images')
+    .map(async (f) => [f.name, new Uint8Array(await f.arrayBuffer())])))
+  designName = doc.webkitRelativePath.split('/')[0].replace(/\.bezzle$/, '')
+  list(bz.open(new Uint8Array(await doc.arrayBuffer()), pictures))
+}
+
+const samples = await (await fetch('./samples.json')).json()
+document.getElementById('designs').replaceChildren(...samples.map((s) => {
+  const el = document.createElement('button')
+  el.textContent = s.name
+  el.onclick = () => openSample(s)
+  return el
+}))
+const first = samples.find((s) => s.name === (new URLSearchParams(location.search).get('design') ?? 'Wander')) ?? samples[0]
+await openSample(first)
+const want = new URLSearchParams(location.search).get('board')
+if (want !== null) show(+want)
+window.bezzleReady = true
+</script>
+</body>
+</html>
