@@ -47,7 +47,7 @@ DECKS, GRIDS AND PHOTOS
 • Turn any layer in 3D by hand, in true perspective.
 
 DESIGN TOGETHER
-• Share over iCloud with anyone who has a Mac, no account needed. See everyone's pencil live as they work.
+• Share by link with anyone who has a Mac, no account needed. See everyone's pencil live as they work.
 • Edits merge property by property, so nothing is ever overwritten. Talk it over in margin notes and go back to any version.
 
 YOUR AI CAN DESIGN, TOO
@@ -58,7 +58,7 @@ EXPORT
 
 MADE FOR THE MAC
 • Native and fast, with tabs, light and dark mode, and designs that save themselves.
-• Your designs stay on your Mac or in your own iCloud, and live sessions are end-to-end encrypted. No tracking, no ads.
+• Your designs stay on your Mac, and what you share is end-to-end encrypted with a key only its link holds. No tracking, no ads.
 
 Free, with everything included. Just design.""",
 )
@@ -102,7 +102,7 @@ STAPEL, RASTER UND FOTOS
 • Dreh jede Ebene von Hand in 3D, in echter Perspektive.
 
 GEMEINSAM GESTALTEN
-• Teile über iCloud mit allen, die einen Mac haben, ohne Konto. Sieh live den Stift aller, während sie arbeiten.
+• Teile per Link mit allen, die einen Mac haben, ohne Konto. Sieh live den Stift aller, während sie arbeiten.
 • Änderungen werden Eigenschaft für Eigenschaft zusammengeführt, nichts wird überschrieben. Besprecht euch in Randnotizen und geh zu jeder Version zurück.
 
 DEINE KI GESTALTET MIT
@@ -113,7 +113,7 @@ EXPORT
 
 GEMACHT FÜR DEN MAC
 • Nativ und schnell, mit Tabs, hell und dunkel, und Designs, die sich selbst sichern.
-• Deine Designs bleiben auf deinem Mac oder in deiner eigenen iCloud, und Live-Sitzungen sind Ende-zu-Ende-verschlüsselt. Kein Tracking, keine Werbung.
+• Deine Designs bleiben auf deinem Mac, und was du teilst, ist Ende-zu-Ende-verschlüsselt, mit einem Schlüssel, den nur sein Link enthält. Kein Tracking, keine Werbung.
 
 Kostenlos, mit allem drin. Einfach gestalten.""",
 )
@@ -157,7 +157,7 @@ PILES, GRILLES ET PHOTOS
 • Fais pivoter n’importe quel calque en 3D à la main, en vraie perspective.
 
 CRÉER ENSEMBLE
-• Partage via iCloud avec toute personne qui a un Mac, sans compte. Vois le crayon de chacun en direct pendant qu’il travaille.
+• Partage par lien avec toute personne qui a un Mac, sans compte. Vois le crayon de chacun en direct pendant qu’il travaille.
 • Les modifications se fusionnent propriété par propriété, rien n’est jamais écrasé. Discutez dans des notes en marge et reviens à n’importe quelle version.
 
 TON IA CRÉE AVEC TOI
@@ -168,7 +168,7 @@ EXPORT
 
 FAIT POUR LE MAC
 • Natif et rapide, avec onglets, en clair comme en sombre, et des designs qui s’enregistrent tout seuls.
-• Tes designs restent sur ton Mac ou dans ton propre iCloud, et les sessions en direct sont chiffrées de bout en bout. Aucun pistage, aucune pub.
+• Tes designs restent sur ton Mac, et ce que tu partages est chiffré de bout en bout, avec une clé que seul son lien contient. Aucun pistage, aucune pub.
 
 Gratuit, tout compris. Il ne reste qu’à créer.""",
 )
@@ -212,7 +212,7 @@ PILE, GRIGLIE E FOTO
 • Ruota qualsiasi livello in 3D a mano, in vera prospettiva.
 
 PROGETTARE INSIEME
-• Condividi via iCloud con chiunque abbia un Mac, senza account. Guarda dal vivo la matita di ognuno mentre lavora.
+• Condividi tramite link con chiunque abbia un Mac, senza account. Guarda dal vivo la matita di ognuno mentre lavora.
 • Le modifiche si uniscono proprietà per proprietà, nulla viene sovrascritto. Parlatene nelle note a margine e torna a qualsiasi versione.
 
 LA TUA IA PROGETTA CON TE
@@ -223,7 +223,7 @@ EXPORT
 
 FATTO PER IL MAC
 • Nativo e veloce, con schede, chiaro e scuro, e design che si salvano da soli.
-• I tuoi design restano sul tuo Mac o nel tuo iCloud, e le sessioni dal vivo sono cifrate end-to-end. Nessun tracciamento, nessuna pubblicità.
+• I tuoi design restano sul tuo Mac, e ciò che condividi è cifrato end-to-end, con una chiave che si trova solo nel suo link. Nessun tracciamento, nessuna pubblicità.
 
 Gratis, tutto incluso. Non resta che progettare.""",
 )
@@ -266,10 +266,12 @@ meta = {
         "use + Repeat for a repeat grid, + 3D to turn it in depth. Drop a photo onto a rectangle, then choose Subject alone in "
         "the inspector (or Object > Remove Background) to cut out its subject on device with the Vision framework. "
         "File > Import from XD, Figma or Sketch opens design files from those apps.\n\n"
-        "Sharing uses CloudKit: Share... invites others through the system share sheet; their changes merge into the design. "
-        "While several people have a shared design open, the app also connects to a relay at bezzle-live.bezzle-live.workers.dev "
-        "(Cloudflare) over a WebSocket, so that they see each other's pointers and changes at once. Everything sent there is "
-        "end-to-end encrypted with a key that only the people in the share have. Nothing is sent anywhere else. The app collects no data.\n\n"
+        "Sharing works by link, with no account: in a design, Share... > Copy Link gives it a room on our relay at "
+        "bezzle-live.bezzle-live.workers.dev (Cloudflare) and copies a link; whoever opens the link in Bezzle on their Mac works on "
+        "the design too, and everyone's changes merge. Each copy sends its changes there as records sealed with AES-GCM "
+        "(CryptoKit), with keys made from a secret that is only in the link, after the #, so neither we nor Cloudflare can read "
+        "them. While several people have the design open, the same relay passes their pointers and changes on at once over a "
+        "WebSocket. Share... > Stop Sharing... deletes the room. Nothing is sent anywhere else. The app collects no data.\n\n"
         "Why the app has com.apple.security.network.server: Bezzle runs a local MCP (Model Context Protocol) server so that "
         "AI assistants on the same Mac (Claude Desktop, Claude Code, Codex) can create and edit designs in the app. It is an "
         "HTTP server built with Network.framework (NWListener) that listens on 127.0.0.1 port 7412 and is limited to the "
