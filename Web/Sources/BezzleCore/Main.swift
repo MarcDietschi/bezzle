@@ -110,7 +110,7 @@ nonisolated private func quoted(_ s: String) -> String {
 
 private func boardsAnswer(_ doc: BezzleDocument, extra: String = "") -> String {
     let boards = doc.nodes.enumerated().filter { $0.element.isArtboard }.map { i, b in
-        "{\"index\":\(i),\"id\":\"\(b.id.uuidString)\",\"name\":\(quoted(b.name)),\"frame\":[\(b.frame.minX),\(b.frame.minY),\(b.frame.width),\(b.frame.height)]}"
+        "{\"index\":\(i),\"name\":\(quoted(b.name)),\"frame\":[\(b.frame.minX),\(b.frame.minY),\(b.frame.width),\(b.frame.height)]}"
     }
     return "{\"boards\":[" + boards.joined(separator: ",") + "],\"layers\":\(BezzleDocument.layerCount(doc.nodes))\(extra)}"
 }
@@ -150,16 +150,9 @@ nonisolated func bz_shared_receive(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
 @_expose(wasm, "bz_shared_changes")
 nonisolated func bz_shared_changes() -> Int32 {
     MainActor.assumeIsolated {
-        let from = WebSharing.sentUpTo
         guard let shown = design, let packed = WebSharing.changes(in: shown) else { return answer("{}") }
-        return answer("{\"data\":\"\(packed.base64EncodedString())\",\"upTo\":\(WebSharing.sentUpTo),\"from\":\(from)}")
+        return answer("{\"data\":\"\(packed.base64EncodedString())\",\"upTo\":\(WebSharing.sentUpTo)}")
     }
-}
-
-/// The changes last answered could not be sent: they go again with the next, from `from` on.
-@_expose(wasm, "bz_shared_unsent")
-nonisolated func bz_shared_unsent(_ from: Double) {
-    MainActor.assumeIsolated { WebSharing.sentUpTo = min(WebSharing.sentUpTo, Int64(from)) }
 }
 
 /// The whole shared design as this browser has it, packed: {"data": base64}.
@@ -209,69 +202,3 @@ nonisolated func bz_document() -> Int32 {
     }
 }
 
-// MARK: Editing
-
-private func editAnswer(_ doc: BezzleDocument) -> Int32 {
-    design = doc
-    return answer(boardsAnswer(doc, extra: ",\"undo\":\(!WebEditing.undos.isEmpty),\"redo\":\(!WebEditing.redos.isEmpty)"))
-}
-
-private func json(_ value: Any) -> String {
-    (try? JSONSerialization.data(withJSONObject: value)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
-}
-
-/// The layers of an artboard with their frames on it: [{id, name, kind, depth, frame, …}].
-@_expose(wasm, "bz_layers")
-nonisolated func bz_layers(_ index: Int32) -> Int32 {
-    MainActor.assumeIsolated {
-        guard let doc = design else { return answer("[]") }
-        return answer(json(WebEditing.layers(of: doc, board: Int(index))))
-    }
-}
-
-/// The design's notes: threads, each with its answers.
-@_expose(wasm, "bz_notes")
-nonisolated func bz_notes() -> Int32 {
-    MainActor.assumeIsolated { answer(json(WebEditing.notes(of: design ?? BezzleDocument()))) }
-}
-
-/// Changes the design: {"ops": [{"op": "move", "ids": […], "dx": …, "dy": …}, …]} (see WebEditing.perform).
-@_expose(wasm, "bz_edit")
-nonisolated func bz_edit(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
-    let data = Data(bytes: p, count: Int(n))
-    return MainActor.assumeIsolated {
-        guard let doc = design, let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let ops = o["ops"] as? [[String: Any]] else { return answer("{\"error\":\"no edit\"}") }
-        return editAnswer(WebEditing.apply(ops, to: doc))
-    }
-}
-
-/// A drag begins: what follows is one gesture, measured from the design as it is now.
-@_expose(wasm, "bz_begin")
-nonisolated func bz_begin() {
-    MainActor.assumeIsolated { if let doc = design { WebEditing.begin(doc) } }
-}
-
-@_expose(wasm, "bz_end")
-nonisolated func bz_end() -> Int32 {
-    MainActor.assumeIsolated {
-        guard let doc = design else { return answer("{}") }
-        return editAnswer(WebEditing.end(doc))
-    }
-}
-
-@_expose(wasm, "bz_undo")
-nonisolated func bz_undo() -> Int32 {
-    MainActor.assumeIsolated {
-        guard let doc = design else { return answer("{}") }
-        return editAnswer(WebEditing.undo(doc) ?? doc)
-    }
-}
-
-@_expose(wasm, "bz_redo")
-nonisolated func bz_redo() -> Int32 {
-    MainActor.assumeIsolated {
-        guard let doc = design else { return answer("{}") }
-        return editAnswer(WebEditing.redo(doc) ?? doc)
-    }
-}
