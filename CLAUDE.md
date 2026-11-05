@@ -41,8 +41,8 @@ fix with nothing to show gets a title and a lede, no list.
 ### How the website copy is put together
 
 - **Website**: its own repository, mfrports/bezzle-web, locally `~/Sites/bezzle-web`, like gerty-web
-  for Gerty. Its source (`src/build.py`, the words in four languages, `src/style.css`, `public/img`)
-  is edited there, and every push to its main deploys it to GitHub Pages; its README has the rest.
+  for Gerty. Its source (Vite, React and Tailwind: the pages, the words in four languages, the
+  story's rebuilt window in `src/story/`, `public/img`) is edited there, and every push to its main deploys it to GitHub Pages; its README has the rest.
   This repository holds no part of the site.
 - **Feed**: https://mfrports.github.io/bezzle-web/updates/appcast.xml, the file
   `public/updates/appcast.xml` in bezzle-web. It is every copy's `SUFeedURL`, so it never moves.

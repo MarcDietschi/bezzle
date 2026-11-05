@@ -235,8 +235,16 @@ gh repo clone "$SITE_REPO" "$WORK/site" -- --depth 1 -q
 mkdir -p "$WORK/site/public/updates" "$WORK/site/src/releases"
 cp "$WORK/appcast.xml" "$WORK/site/public/updates/appcast.xml"
 cp "$SRC/RELEASE_NOTES.md" "$WORK/site/src/releases/RELEASE_NOTES.md"
-# The site must build with them, as its Deploy workflow will, before they go up.
-python3 "$WORK/site/src/build.py" >/dev/null || fail "The website does not build with the new feed and notes: nothing was pushed to it"
+# The site must build with them, as its Deploy workflow will, before they go up (Vite and React,
+# every page prerendered; the build reads the feed and checks the notes' shape).
+if [ -f "$WORK/site/package.json" ]; then
+  command -v npm >/dev/null || fail "npm is needed to check that the website builds (brew install node): nothing was pushed to it"
+  if ! (cd "$WORK/site" && npm ci --no-audit --no-fund --loglevel=error && npm run build --silent) > "$CACHE/site-build.log" 2>&1; then
+    fail "The website does not build with the new feed and notes ($CACHE/site-build.log): nothing was pushed to it"
+  fi
+else
+  python3 "$WORK/site/src/build.py" >/dev/null || fail "The website does not build with the new feed and notes: nothing was pushed to it"
+fi
 git -C "$WORK/site" add public/updates/appcast.xml src/releases/RELEASE_NOTES.md
 git -C "$WORK/site" commit -q -m "Bezzle $VERSION" -m "The update feed and the release notes, from the app's Scripts/release.sh."
 # gh's sign-in, for this push alone.
