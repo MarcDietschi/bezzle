@@ -562,6 +562,54 @@ struct CanvasTests {
         #expect(bench.store.selection == [bench.a.id])
     }
 
+    private func nameField(_ bench: Bench) -> NSTextField? {
+        bench.canvas.subviews.compactMap { $0 as? NSTextField }.first
+    }
+
+    @Test func doubleClickingAnArtboardsNameRenamesItThere() throws {
+        let bench = Bench()
+        bench.click(CGPoint(x: 104, y: 92))
+        bench.click(CGPoint(x: 104, y: 92), clicks: 2)
+        let field = try #require(nameField(bench))
+        #expect(bench.canvas.naming.board == bench.a.id)
+        #expect(field.stringValue == "A")
+        // Where the name is drawn.
+        #expect(abs(field.frame.minX - 98) <= 1 && abs(field.frame.minY - 82) <= 1)
+        field.stringValue = "  Sign in "
+        // A press elsewhere keeps what was typed, undone as one step.
+        bench.click(CGPoint(x: 300, y: 600))
+        #expect(bench.a.name == "Sign in")
+        #expect(nameField(bench) == nil)
+        #expect(bench.canvas.naming.board == nil)
+        bench.undo.undo()
+        #expect(bench.a.name == "A")
+    }
+
+    @Test func returnKeepsAnArtboardsNameAndEscapeLeavesItAsItWas() throws {
+        let bench = Bench()
+        bench.click(CGPoint(x: 604, y: 92), clicks: 2)
+        var field = try #require(nameField(bench))
+        #expect(bench.canvas.naming.board == bench.b.id)
+        field.stringValue = "Checkout"
+        bench.step { _ = bench.canvas.naming.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))) }
+        #expect(bench.b.name == "Checkout")
+        #expect(nameField(bench) == nil)
+
+        bench.click(CGPoint(x: 604, y: 92), clicks: 2)
+        field = try #require(nameField(bench))
+        field.stringValue = "Something else"
+        bench.step { _ = bench.canvas.naming.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:))) }
+        #expect(bench.b.name == "Checkout")
+        #expect(nameField(bench) == nil)
+
+        // A name typed away to nothing leaves it as it was.
+        bench.click(CGPoint(x: 604, y: 92), clicks: 2)
+        field = try #require(nameField(bench))
+        field.stringValue = "   "
+        bench.click(CGPoint(x: 300, y: 600))
+        #expect(bench.b.name == "Checkout")
+    }
+
     @Test func arrowKeysNudge() {
         let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50))])
         bench.click(CGPoint(x: 130, y: 130))

@@ -75,11 +75,14 @@ final class Tabs {
         show(tab.id)
     }
 
-    /// How big the window is made for designing: nearly all of the screen, but never wider than
-    /// an eye can take in on an ultrawide one.
+    /// How big the window is made for designing: all of the screen the menu bar and the Dock
+    /// leave, but on a very big or ultrawide screen no more than an eye can take in at once.
     static func designSize(in visible: CGSize) -> CGSize {
-        CGSize(width: min(visible.width - 48, 2560), height: visible.height - 48)
+        CGSize(width: min(visible.width, designMax.width), height: min(visible.height, designMax.height))
     }
+
+    /// The most room a design is given on its own: a 5K display's whole screen.
+    static let designMax = CGSize(width: 2560, height: 1440)
 
     /// How big the window is with home alone in it: home's page at its full width, with the sizes
     /// on their table and a row of designs under them, the same every time, and no more than the

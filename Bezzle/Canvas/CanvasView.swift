@@ -238,6 +238,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return tool
     }()
 
+    /// An artboard's name typed into where it shows.
+    private(set) lazy var naming: BoardNaming = {
+        let tool = BoardNaming(store: store)
+        tool.redraw = { [weak self] in
+            self?.syncNaming()
+            self?.needsDisplay = true
+        }
+        return tool
+    }()
+
     private(set) lazy var dropTool: DropTool = {
         let tool = DropTool(store: store)
         tool.redraw = { [weak self] in self?.needsDisplay = true }
@@ -357,6 +367,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             Task { @MainActor in
                 self?.needsDisplay = true
                 self?.syncEditor()
+                self?.syncNaming()
             }
         }
     }
@@ -656,6 +667,19 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return CGRect(x: r.minX, y: r.minY - 19, width: min(measured + 2, max(r.width, 40)), height: 16)
     }
 
+    /// Keeps the field an artboard is being renamed in over its name as the view moves, and takes
+    /// it away should the artboard go, undone or hidden.
+    private func syncNaming() {
+        guard let id = naming.board else { return }
+        guard let board = store.node(id), board.isArtboard, !board.hidden else {
+            naming.end(keep: false)
+            return
+        }
+        let zoom = store.viewport.zoom
+        let width = board.isCarousel ? (board.slideSize?.width ?? board.frame.width) * zoom - Self.slideNumberRoom : board.frame.width * zoom
+        naming.place(titleRect(of: board), boardWidth: width)
+    }
+
     private func drawArtboardTitles(_ ctx: CGContext) {
         let selected = Set(store.selection)
         for board in store.doc.artboards where !board.hidden {
@@ -665,7 +689,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             let on = selected.contains(board.id) || store.hovered == board.id
             let color = flowTool.labelColor(selected: on, design: on ? CanvasInk.labelSelected : CanvasInk.label)
             if board.isCarousel { drawSlideNumbers(board, color: color) }
-            guard rect.intersects(bounds) else { continue }
+            // Being renamed, the name is in its field.
+            guard rect.intersects(bounds), board.id != naming.board else { continue }
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byTruncatingTail
             (board.name as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
@@ -1342,6 +1367,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // A press anywhere on the canvas keeps the name typed into an artboard's.
+        naming.end(keep: true)
         // Looking back, a press picks a layer that differs from now, to bring back; the view moves as ever.
         if store.versions.travel != nil, !spaceHeld {
             window?.makeFirstResponder(self)
@@ -1483,6 +1510,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // A guide's line, where no layer lies under it, or its pins past the artboard's edges.
         if guideTool.down(at: v, event: event) { return }
 
+        // A double click on an artboard's name renames it, there.
+        if event.clickCount == 2, !shift, !store.isReadOnly, let board = titleHit(v) {
+            naming.begin(board, in: self, font: Self.titleFont)
+            return
+        }
         // A double click goes into a group, and each quick click after it one level further,
         // however fast they come; on a text, it starts typing; on a path or a shape, it opens its points.
         if event.clickCount >= 2, let id = pick(p), let node = store.node(id) {
