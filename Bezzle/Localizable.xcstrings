@@ -4,6 +4,50 @@
     "" : {
       "shouldTranslate" : false
     },
+    "Sign in to iCloud in System Settings to open invitations to shared designs." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich in den Systemeinstellungen bei iCloud an, um Einladungen zu geteilten Designs zu öffnen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectez-vous à iCloud dans Réglages Système pour ouvrir les invitations à des designs partagés."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accedi a iCloud in Impostazioni di Sistema per aprire gli inviti ai design condivisi."
+          }
+        }
+      }
+    },
+    "This design is not shared any more. Ask for a new invitation." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Design wird nicht mehr geteilt. Bitte um eine neue Einladung."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce design n’est plus partagé. Demandez une nouvelle invitation."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo design non è più condiviso. Chiedi un nuovo invito."
+          }
+        }
+      }
+    },
     "‹ and › in an open note go from one note to the next. A shared design carries everyone’s notes." : {
       "localizations" : {
         "de" : {

@@ -108,6 +108,26 @@ struct SharingTests {
 
     // MARK: The pieces
 
+    /// Bezzle's page on the web hands an invitation over as `bezzle://share/<token>`; that, and the
+    /// iCloud link itself, come out as the iCloud link, and nothing else is taken for one.
+    @Test func invitationsComeAsTheirICloudLink() {
+        let link = URL(string: "https://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg")
+        for given in ["bezzle://share/0bjtbTTaM5b7bG1ff6dnKFbmg", "bezzle://share/0bjtbTTaM5b7bG1ff6dnKFbmg/",
+                      "BEZZLE://Share/0bjtbTTaM5b7bG1ff6dnKFbmg",
+                      "https://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg#Wander_Pitch",
+                      "https://icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg"] {
+            #expect(CloudSync.invitationLink(from: URL(string: given)!) == link, "\(given)")
+        }
+        for given in ["bezzle://share/", "bezzle://share/a/b", "bezzle://open/0bjtbTTaM5b7bG1ff6dnKFbmg",
+                      "bezzle://share/0bjt%2F..%2Fx", "bezzle://share/0bjt%3Fa%3Db",
+                      "https://www.icloud.com/photos/0bjtbTTaM5b7bG1ff6dnKFbmg",
+                      "https://www.icloud.com.example.org/share/0bjtbTTaM5b7bG1ff6dnKFbmg",
+                      "http://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg",
+                      "file:///Users/someone/Design.bezzle"] {
+            #expect(CloudSync.invitationLink(from: URL(string: given)!) == nil, "\(given)")
+        }
+    }
+
     @Test func everyPropertyOfALayerIsSharedOnItsOwn() {
         let labels = Set(Mirror(reflecting: Node(kind: .rectangle, frame: .zero)).children.compactMap(\.label))
         #expect(labels.subtracting(["id", "children"]) == Set(LayerField.all.map(\.name)))

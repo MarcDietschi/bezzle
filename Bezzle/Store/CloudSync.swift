@@ -898,17 +898,53 @@ final class CloudSync {
         return name.isEmpty ? nil : name
     }
 
-    /// An invitation passed on by another copy of Bezzle, as its link.
+    /// An invitation as its link: passed on by another copy of Bezzle, or opened from Bezzle's
+    /// page on the web, where iCloud sends an invitation that a browser got instead of Bezzle.
+    /// What went wrong shows on the home screen, as nobody would see it anywhere else.
     func accept(link: URL) {
+        guard Self.isAvailable else { return }
         let container = container
         Task.detached {
             do {
+                if try await container.accountStatus() == .noAccount {
+                    await CloudSync.shared.notAccepted(String(localized: "Sign in to iCloud in System Settings to open invitations to shared designs."))
+                    return
+                }
                 let metadata = try await container.shareMetadata(for: link)
                 await CloudSync.shared.accept(metadata)
             } catch {
                 await CloudSync.shared.notAccepted(nil, error)
+                await WindowRouter.shared.showHome()
             }
         }
+    }
+
+    private func notAccepted(_ problem: String) {
+        Self.log.error("Could not accept an invitation: \(problem, privacy: .public)")
+        invitationProblem = problem
+        WindowRouter.shared.showHome()
+    }
+
+    /// The iCloud link of an invitation, from Bezzle's own kind of link (`bezzle://share/<token>`,
+    /// which Bezzle's page on the web makes of an iCloud link) or from the iCloud link itself.
+    /// Anything else is not an invitation.
+    nonisolated static func invitationLink(from url: URL) -> URL? {
+        let token: String
+        switch url.scheme?.lowercased() {
+        case "bezzle":
+            guard url.host()?.lowercased() == "share" else { return nil }
+            token = url.path(percentEncoded: false).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        case "https":
+            guard ["www.icloud.com", "icloud.com"].contains(url.host()?.lowercased() ?? ""),
+                  url.pathComponents.count == 3, url.pathComponents[1] == "share" else { return nil }
+            token = url.pathComponents[2]
+        default:
+            return nil
+        }
+        guard (1...200).contains(token.count),
+              token.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "-") })
+        else { return nil }
+        return URL(string: "https://www.icloud.com/share/\(token)")
     }
 
     private func accepted(_ zoneID: CKRecordZone.ID, snapshot: CKRecord?) {
@@ -928,9 +964,14 @@ final class CloudSync {
             toOpen.remove(zone)
             arriving[zone] = nil
         }
-        invitationProblem = (error as? CKError)?.code == .participantMayNeedVerification
-            ? String(localized: "This invitation is for another Apple Account. Ask to be invited with the one this Mac is signed in to.")
-            : String(localized: "The shared design could not be opened: \(error.localizedDescription)")
+        switch (error as? CKError)?.code {
+        case .participantMayNeedVerification?:
+            invitationProblem = String(localized: "This invitation is for another Apple Account. Ask to be invited with the one this Mac is signed in to.")
+        case .unknownItem?:
+            invitationProblem = String(localized: "This design is not shared any more. Ask for a new invitation.")
+        default:
+            invitationProblem = String(localized: "The shared design could not be opened: \(error.localizedDescription)")
+        }
     }
 
     /// iCloud was signed out of, or into another account: shared designs stay on this Mac as

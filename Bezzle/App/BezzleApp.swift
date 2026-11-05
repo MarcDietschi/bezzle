@@ -82,6 +82,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        // An invitation a browser got instead of Bezzle, passed on by Bezzle's page on the web.
+        for link in urls.compactMap(CloudSync.invitationLink(from:)) {
+            CloudSync.log.notice("An invitation came as a link")
+            if !HandOver.pass(invitation: link) { CloudSync.shared.accept(link: link) }
+        }
         let designs = urls.filter { BezzleDocument.fileExtensions.contains($0.pathExtension.lowercased()) || Importer.imports($0) }
         if HandOver.pass(designs: designs) { return }
         designs.forEach { WindowRouter.shared.open($0) }
