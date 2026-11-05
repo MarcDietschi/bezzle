@@ -47,6 +47,8 @@ for (const [name, data] of pictures) {
   await relay.put(keys.room, key, await keys.seal(data, key), { write: keys.writeToken })
 }
 console.log(`#2.${b64url(secret)}`)
+// For stopping it again: DELETE /v2/<room> with the write token and this.
+console.log(`owner ${owner} room ${keys.room} write ${keys.writeToken}`)
 
 if (process.argv.includes('--edit')) {
   setInterval(async () => {
