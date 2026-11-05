@@ -728,7 +728,45 @@ final class CloudSync {
         return true
     }
 
-    private func prepareShare(_ store: DocumentStore, key: URL) async throws -> CKShare {
+    /// Puts Bezzle's own invitation to the design on the pasteboard, once everything in it is in
+    /// iCloud, and returns whether it did. It is the page on Bezzle's website that hands the
+    /// invitation to Bezzle in any browser, since iCloud's own link opened in a browser only ever
+    /// reaches iCloud's sign-in page. So the design is opened to anyone with the link, to edit with
+    /// whatever iCloud account their Mac has; the owner sees and removes people in the share sheet.
+    func copyInvitationLink(for store: DocumentStore) async -> Bool {
+        let key = store.url
+        guard preparing[key] == nil else { return false }
+        preparing[key] = Upload()
+        defer { preparing[key] = nil }
+        do {
+            let share = try await prepareShare(store, key: key, openToLink: true)
+            guard let link = share.url.flatMap(Self.invitationPage(for:)) else {
+                throw SharingError(message: String(localized: "The design could not be shared."))
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link.absoluteString, forType: .string)
+            Self.log.notice("Copied the invitation link to \(store.name, privacy: .public)")
+            return true
+        } catch {
+            Self.log.error("Could not make an invitation link to \(store.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.messageText = String(localized: "“\(store.name)” could not be shared")
+            alert.informativeText = (error as? SharingError)?.message ?? error.localizedDescription
+            if let window = store.canvas?.window { alert.beginSheetModal(for: window, completionHandler: nil) } else { alert.runModal() }
+            return false
+        }
+    }
+
+    /// Bezzle's own invitation: its website's page with the share's code after the #, which the page
+    /// hands to Bezzle as `bezzle://share/<code>` (see `invitationLink(from:)`). After a #, the code
+    /// never leaves the browser.
+    nonisolated static func invitationPage(for shareURL: URL) -> URL? {
+        guard let link = invitationLink(from: shareURL) else { return nil }
+        return URL(string: "https://mfrports.github.io/bezzle-web/open.html#\(link.lastPathComponent)")
+    }
+
+    /// `openToLink` lets anyone with the share's link in, which only the owner can do.
+    private func prepareShare(_ store: DocumentStore, key: URL, openToLink: Bool = false) async throws -> CKShare {
         await checkAccount()
         if let accountProblem { throw SharingError(message: accountProblem) }
         let session = try makeShared(store)
@@ -756,15 +794,22 @@ final class CloudSync {
 
         // Only then the share, the one there is or a new one.
         let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
-        let share: CKShare
+        var share: CKShare
         if let existing = try? await database.record(for: shareID) as? CKShare {
             share = existing
         } else {
             guard session.isOwner else { throw SharingError(message: String(localized: "The design’s owner has stopped sharing it.")) }
             let new = CKShare(recordZoneID: zoneID)
             new[CKShare.SystemFieldKey.title] = store.name
+            if openToLink { new.publicPermission = .readWrite }
             guard let made = try await database.save(new) as? CKShare else { throw SharingError(message: String(localized: "The design could not be shared.")) }
             share = made
+        }
+        if openToLink, share.publicPermission != .readWrite {
+            guard session.isOwner else { throw SharingError(message: String(localized: "Only the design’s owner can make an invitation link to it.")) }
+            share.publicPermission = .readWrite
+            guard let saved = try await database.save(share) as? CKShare else { throw SharingError(message: String(localized: "The design could not be shared.")) }
+            share = saved
         }
         if session.isOwner, !session.link.shared {
             updateLink(session.zone) { $0.shared = true }

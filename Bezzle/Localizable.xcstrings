@@ -4,6 +4,116 @@
     "" : {
       "shouldTranslate" : false
     },
+    "Anyone with the link can work on the design." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle mit dem Link können am Design mitarbeiten."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Toute personne ayant le lien peut travailler sur le design."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chiunque abbia il link può lavorare al design."
+          }
+        }
+      }
+    },
+    "Copy Invitation Link" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einladungslink kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le lien d’invitation"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia link di invito"
+          }
+        }
+      }
+    },
+    "Invite People…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personen einladen …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inviter des personnes…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invita persone…"
+          }
+        }
+      }
+    },
+    "Only the design’s owner can make an invitation link to it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur der Eigentümer des Designs kann einen Einladungslink dazu erstellen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seul le propriétaire du design peut créer un lien d’invitation."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo il proprietario del design può creare un link di invito."
+          }
+        }
+      }
+    },
+    "People…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personen …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personnes…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Persone…"
+          }
+        }
+      }
+    },
     "Sign in to iCloud in System Settings to open invitations to shared designs." : {
       "localizations" : {
         "de" : {
@@ -22,6 +132,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Accedi a iCloud in Impostazioni di Sistema per aprire gli inviti ai design condivisi."
+          }
+        }
+      }
+    },
+    "The invitation link is copied: paste it into any mail or chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Einladungslink ist kopiert: Füge ihn in eine beliebige Mail oder einen Chat ein"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le lien d’invitation est copié : collez-le dans n’importe quel e-mail ou discussion"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il link di invito è copiato: incollalo in una mail o in una chat"
           }
         }
       }

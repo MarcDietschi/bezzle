@@ -128,6 +128,18 @@ struct SharingTests {
         }
     }
 
+    /// Bezzle's own invitation is its website's page with the share's code after the #, and what
+    /// that page hands Bezzle comes back as the share's iCloud link.
+    @Test func theInvitationLinkIsTheWebsitePageWithTheCode() throws {
+        let share = try #require(URL(string: "https://www.icloud.com/share/0TestCode_ab-12xYz9QwErTy#Wander_Pitch"))
+        let page = try #require(CloudSync.invitationPage(for: share))
+        #expect(page.absoluteString == "https://mfrports.github.io/bezzle-web/open.html#0TestCode_ab-12xYz9QwErTy")
+        let code = try #require(page.fragment)
+        let handed = try #require(URL(string: "bezzle://share/\(code)"))
+        #expect(CloudSync.invitationLink(from: handed) == URL(string: "https://www.icloud.com/share/0TestCode_ab-12xYz9QwErTy"))
+        #expect(CloudSync.invitationPage(for: URL(string: "https://example.com/share/0TestCode_ab-12xYz9QwErTy")!) == nil)
+    }
+
     @Test func everyPropertyOfALayerIsSharedOnItsOwn() {
         let labels = Set(Mirror(reflecting: Node(kind: .rectangle, frame: .zero)).children.compactMap(\.label))
         #expect(labels.subtracting(["id", "children"]) == Set(LayerField.all.map(\.name)))

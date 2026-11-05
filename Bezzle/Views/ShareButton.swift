@@ -2,12 +2,17 @@ import SwiftUI
 import AppKit
 
 /// Shares the design through iCloud, or shows who it is shared with. Nobody needs an account of
-/// any kind beyond the iCloud their Mac is signed in to. Before the share sheet opens, everything
-/// in the design goes up, and the button counts the pictures as they do. A design someone else
-/// no longer shares can only be saved as a copy of one's own.
+/// any kind beyond the iCloud their Mac is signed in to. Its menu copies Bezzle's own invitation
+/// link, which works from any mail, chat or browser, or opens the share sheet to invite people
+/// and see who has it. Before either, everything in the design goes up, and the button counts the
+/// pictures as they do. A design someone else no longer shares can only be saved as a copy of one's own.
 struct ShareButton: View {
     let store: DocumentStore
+    @Environment(MenuHost.self) private var menus
     @State private var spot = Spot()
+    /// A moment after the invitation went to the pasteboard, for the button to show it did.
+    @State private var copied = false
+    private static let menuID = "share"
 
     var body: some View {
         let sync = CloudSync.shared
@@ -19,17 +24,36 @@ struct ShareButton: View {
                 Uploading(upload: upload)
                     .help("Everything in the design goes to iCloud before anyone is invited")
             } else {
-                CardButton(title: store.sharing?.mark == nil ? "Share…" : "Shared", symbol: symbol(sync), height: 28) {
-                    let spot = spot
-                    Task { await sync.showSharing(for: store) { spot.rect } }
+                CardButton(title: store.sharing?.mark == nil ? "Share…" : "Shared", symbol: copied ? "checkmark" : symbol(sync), height: 28) {
+                    menus.toggle(Self.menuID, width: 260, entries: entries(sync))
                 }
-                .help(help(sync))
+                .menuAnchor(Self.menuID)
+                .help(copied ? String(localized: "The invitation link is copied: paste it into any mail or chat") : help(sync))
             }
         }
         // Where the button is in its window, for the share sheet to come out from once the
         // design is up, however the button changed meanwhile.
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { spot.rect = $0 }
         .animation(Theme.spring, value: sync.preparing[store.url])
+    }
+
+    private func entries(_ sync: CloudSync) -> [MenuEntry] {
+        let spot = spot
+        return [
+            .item("Copy Invitation Link") {
+                Task {
+                    guard await sync.copyInvitationLink(for: store) else { return }
+                    copied = true
+                    try? await Task.sleep(for: .seconds(2.5))
+                    copied = false
+                }
+            },
+            .note("Anyone with the link can work on the design."),
+            .separator,
+            .item(store.sharing?.mark == nil ? "Invite People…" : "People…") {
+                Task { await sync.showSharing(for: store) { spot.rect } }
+            },
+        ]
     }
 
     private func symbol(_ sync: CloudSync) -> String {
