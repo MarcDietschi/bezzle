@@ -107,8 +107,12 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     return cmds
   }
 
+  // Pictures a drawing asked for that the page does not have yet, as from a shared design's room.
+  const missing = new Set()
+
   function image(name) {
     const img = assets.byName.get(name)
+    if (!img) missing.add(name)
     return img ? [img.id, img.image.width(), img.image.height()] : [0]
   }
 
@@ -418,7 +422,13 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   function take(pictures) {
     for (const img of assets.byName.values()) img.image.delete()
     assets.byName.clear(); assets.byId.clear()
+    add(pictures)
+  }
+
+  function add(pictures) {
     for (const [name, data] of pictures) {
+      if (assets.byName.has(name)) continue
+      missing.delete(name)
       const image = CK.MakeImageFromEncoded(data)
       if (!image) continue
       const id = assets.next++
@@ -453,6 +463,12 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     /** What was changed here since last time, packed for a change record: { data, upTo } or {}. */
     changes() { return reply(x.bz_shared_changes()) },
     snapshot() { return reply(x.bz_shared_snapshot()) },
+    /** The whole shared design as this copy has it, packed: { data, upTo }. */
+    whole() { return reply(x.bz_shared_whole()) },
+    /** Pictures that came after the design: name → encoded bytes. */
+    addPictures(pictures) { add(pictures) },
+    /** Names of the pictures drawings asked for that are not here yet. */
+    missingPictures() { return [...missing] },
     testEdit() { return reply(x.bz_test_edit()) },
     document() { return reply(x.bz_document()) },
     /** The design as the core encodes it, sorted keys, as the Mac writes it. */

@@ -149,6 +149,15 @@ nonisolated func bz_shared_changes() -> Int32 {
     }
 }
 
+/// The whole shared design as this browser has it, packed: {"data": base64}.
+@_expose(wasm, "bz_shared_whole")
+nonisolated func bz_shared_whole() -> Int32 {
+    MainActor.assumeIsolated {
+        guard let shown = design, let packed = WebSharing.whole(of: shown) else { return answer("{}") }
+        return answer("{\"data\":\"\(packed.base64EncodedString())\",\"upTo\":\(WebSharing.state.clock.time)}")
+    }
+}
+
 /// The open design packed as an owner's first snapshot: {"data": base64}. For testing without iCloud.
 @_expose(wasm, "bz_shared_snapshot")
 nonisolated func bz_shared_snapshot() -> Int32 {

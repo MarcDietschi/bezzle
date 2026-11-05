@@ -4,182 +4,6 @@
     "" : {
       "shouldTranslate" : false
     },
-    "Anyone with the link can work on the design." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Alle mit dem Link können am Design mitarbeiten."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Toute personne ayant le lien peut travailler sur le design."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chiunque abbia il link può lavorare al design."
-          }
-        }
-      }
-    },
-    "Copy Invitation Link" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Einladungslink kopieren"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copier le lien d’invitation"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copia link di invito"
-          }
-        }
-      }
-    },
-    "Invite People…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personen einladen …"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Inviter des personnes…"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Invita persone…"
-          }
-        }
-      }
-    },
-    "Only the design’s owner can make an invitation link to it." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nur der Eigentümer des Designs kann einen Einladungslink dazu erstellen."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Seul le propriétaire du design peut créer un lien d’invitation."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Solo il proprietario del design può creare un link di invito."
-          }
-        }
-      }
-    },
-    "People…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personen …"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personnes…"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Persone…"
-          }
-        }
-      }
-    },
-    "Sign in to iCloud in System Settings to open invitations to shared designs." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Melde dich in den Systemeinstellungen bei iCloud an, um Einladungen zu geteilten Designs zu öffnen."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connectez-vous à iCloud dans Réglages Système pour ouvrir les invitations à des designs partagés."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Accedi a iCloud in Impostazioni di Sistema per aprire gli inviti ai design condivisi."
-          }
-        }
-      }
-    },
-    "The invitation link is copied: paste it into any mail or chat" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Einladungslink ist kopiert: Füge ihn in eine beliebige Mail oder einen Chat ein"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le lien d’invitation est copié : collez-le dans n’importe quel e-mail ou discussion"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il link di invito è copiato: incollalo in una mail o in una chat"
-          }
-        }
-      }
-    },
-    "This design is not shared any more. Ask for a new invitation." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieses Design wird nicht mehr geteilt. Bitte um eine neue Einladung."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ce design n’est plus partagé. Demandez une nouvelle invitation."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Questo design non è più condiviso. Chiedi un nuovo invito."
-          }
-        }
-      }
-    },
     "‹ and › in an open note go from one note to the next. A shared design carries everyone’s notes." : {
       "localizations" : {
         "de" : {
@@ -7296,6 +7120,28 @@
         }
       }
     },
+    "Anyone with the link can work on the design." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle mit dem Link können am Design mitarbeiten."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Toute personne ayant le lien peut travailler sur le design."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chiunque abbia il link può lavorare al design."
+          }
+        }
+      }
+    },
     "App icon" : {
       "localizations" : {
         "de" : {
@@ -7890,6 +7736,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Auto"
+          }
+        }
+      }
+    },
+    "Auto height" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatische Höhe"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hauteur automatique"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Altezza automatica"
+          }
+        }
+      }
+    },
+    "Auto Height" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatische Höhe"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hauteur automatique"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imposta altezza automatica"
           }
         }
       }
@@ -8577,6 +8467,28 @@
         }
       }
     },
+    "Bezzle cannot connect right now. Your changes are kept and go out once it can." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle kann gerade keine Verbindung herstellen. Deine Änderungen bleiben erhalten und gehen raus, sobald es wieder geht."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle ne peut pas se connecter pour l’instant. Vos modifications sont conservées et partiront dès que possible."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle non riesce a connettersi ora. Le tue modifiche restano e partono appena possibile."
+          }
+        }
+      }
+    },
     "Bezzle cannot read Photoshop files in this colour mode yet." : {
       "localizations" : {
         "de" : {
@@ -8595,6 +8507,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bezzle non sa ancora leggere i file Photoshop in questo metodo colore."
+          }
+        }
+      }
+    },
+    "Bezzle could not connect. Check the connection and try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle konnte keine Verbindung herstellen. Prüfe die Verbindung und versuche es noch einmal."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle n’a pas pu se connecter. Vérifiez la connexion et réessayez."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle non è riuscito a connettersi. Controlla la connessione e riprova."
+          }
+        }
+      }
+    },
+    "Bezzle could not reach the design. Check the connection and open the link again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle konnte das Design nicht erreichen. Prüfe die Verbindung und öffne den Link noch einmal."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle n’a pas pu atteindre le design. Vérifiez la connexion et ouvrez à nouveau le lien."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle non è riuscito a raggiungere il design. Controlla la connessione e apri di nuovo il link."
+          }
+        }
+      }
+    },
+    "Bezzle could not stop sharing “%@”" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle konnte das Teilen von „%@“ nicht beenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle n’a pas pu arrêter le partage de « %@ »"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bezzle non è riuscito a interrompere la condivisione di “%@”"
           }
         }
       }
@@ -11441,6 +11419,7 @@
       }
     },
     "Changes could not be sent: %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -11506,28 +11485,6 @@
         }
       }
     },
-    "Check Grammar With Spelling" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Grammatik mit Rechtschreibung prüfen"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vérifier la grammaire avec l’orthographe"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Controlla grammatica con ortografia"
-          }
-        }
-      }
-    },
     "Check for Updates…" : {
       "localizations" : {
         "de" : {
@@ -11546,6 +11503,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Verifica aggiornamenti…"
+          }
+        }
+      }
+    },
+    "Check Grammar With Spelling" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grammatik mit Rechtschreibung prüfen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifier la grammaire avec l’orthographe"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Controlla grammatica con ortografia"
           }
         }
       }
@@ -11770,6 +11749,28 @@
         }
       }
     },
+    "Choose Folder…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ordner wählen …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisir un dossier…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scegli una cartella…"
+          }
+        }
+      }
+    },
     "Choose pictures, or a folder of them. Each cell gets the next one." : {
       "localizations" : {
         "de" : {
@@ -11810,6 +11811,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scegli immagini…"
+          }
+        }
+      }
+    },
+    "Choose where Bezzle keeps your designs." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle, wo Bezzle deine Designs aufbewahrt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisissez où Bezzle conserve vos designs."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scegli dove Bezzle conserva i tuoi design."
           }
         }
       }
@@ -13883,7 +13906,52 @@
         }
       }
     },
+    "Copy Invitation Link" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einladungslink kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le lien d’invitation"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia link di invito"
+          }
+        }
+      }
+    },
     "Copy link" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link kopieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le lien"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copia link"
+          }
+        }
+      }
+    },
+    "Copy Link" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -15665,6 +15733,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Progettare con carta e inchiostro"
+          }
+        }
+      }
+    },
+    "Designs Folder…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Designordner …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dossier des designs…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cartella dei design…"
+          }
+        }
+      }
+    },
+    "Designs left where they are stay on the home screen." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Designs, die bleiben, wo sie sind, siehst du weiter auf der Startseite."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les designs laissés à leur place restent sur l’accueil."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I design lasciati dove sono restano nella Home."
           }
         }
       }
@@ -18235,6 +18347,7 @@
       }
     },
     "Everything in the design goes to iCloud before anyone is invited" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -18252,6 +18365,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tutto il design viene caricato su iCloud prima di invitare qualcuno"
+          }
+        }
+      }
+    },
+    "Everything in the design goes up before the link is copied" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alles im Design wird hochgeladen, bevor der Link kopiert wird"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tout le contenu du design est envoyé avant que le lien soit copié"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tutto il design viene caricato prima di copiare il link"
           }
         }
       }
@@ -20059,50 +20194,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Imposta dimensione fissa"
-          }
-        }
-      }
-    },
-    "Auto height" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatische Höhe"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hauteur automatique"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Altezza automatica"
-          }
-        }
-      }
-    },
-    "Auto Height" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatische Höhe"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hauteur automatique"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Imposta altezza automatica"
           }
         }
       }
@@ -22809,6 +22900,7 @@
       }
     },
     "iCloud could not be reached: %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -22831,6 +22923,7 @@
       }
     },
     "iCloud could not be reached." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -22853,6 +22946,7 @@
       }
     },
     "iCloud is not available right now." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -22875,6 +22969,7 @@
       }
     },
     "iCloud is restricted on this Mac." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -23898,6 +23993,29 @@
         }
       }
     },
+    "Invite People…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personen einladen …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inviter des personnes…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invita persone…"
+          }
+        }
+      }
+    },
     "Invited" : {
       "localizations" : {
         "de" : {
@@ -24484,6 +24602,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Con “Mantieni entrambi” i nuovi file ricevono un numero, come Card 2.png."
+          }
+        }
+      }
+    },
+    "Keep Designs Here" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Designs hier aufbewahren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conserver les designs ici"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conserva i design qui"
           }
         }
       }
@@ -25575,6 +25715,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scopri di più"
+          }
+        }
+      }
+    },
+    "Leave Them" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dort lassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les laisser"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lasciali lì"
           }
         }
       }
@@ -28554,6 +28716,50 @@
         }
       }
     },
+    "Move “%@” to “%@”?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%1$@“ nach „%2$@“ verschieben?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer « %1$@ » vers « %2$@ » ?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spostare “%1$@” in “%2$@”?"
+          }
+        }
+      }
+    },
+    "Move “%@” to the Trash and stop sharing it?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ in den Papierkorb legen und nicht mehr teilen?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Placer « %@ » dans la corbeille et arrêter de le partager ?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spostare “%@” nel Cestino e interrompere la condivisione?"
+          }
+        }
+      }
+    },
     "Move around" : {
       "localizations" : {
         "de" : {
@@ -28924,6 +29130,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sposta nel Cestino"
+          }
+        }
+      }
+    },
+    "Move your %lld designs to “%@”?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine %1$lld Designs nach „%2$@“ verschieben?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer vos %1$lld designs vers « %2$@ » ?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spostare i tuoi %1$lld design in “%2$@”?"
           }
         }
       }
@@ -31108,6 +31336,29 @@
         }
       }
     },
+    "Only the design’s owner can make an invitation link to it." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur der Eigentümer des Designs kann einen Einladungslink dazu erstellen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seul le propriétaire du design peut créer un lien d’invitation."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo il proprietario del design può creare un link di invito."
+          }
+        }
+      }
+    },
     "Only This Copy" : {
       "localizations" : {
         "de" : {
@@ -32789,6 +33040,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Le persone che inviti possono vedere e modificare ogni pagina di Linden Website."
+          }
+        }
+      }
+    },
+    "People…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personen …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personnes…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Persone…"
           }
         }
       }
@@ -39358,6 +39632,28 @@
         }
       }
     },
+    "Shared by link: everyone’s changes come in as they are made" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per Link geteilt: Alle Änderungen kommen an, sobald sie gemacht werden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Partagé par lien : les modifications de chacun arrivent au fur et à mesure"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Condiviso tramite link: le modifiche di tutti arrivano mentre vengono fatte"
+          }
+        }
+      }
+    },
     "Shared Design" : {
       "localizations" : {
         "de" : {
@@ -39376,6 +39672,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Design condiviso"
+          }
+        }
+      }
+    },
+    "Shared in %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In %@ geteilt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Partagé dans %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Condiviso in %@"
           }
         }
       }
@@ -39402,7 +39720,30 @@
         }
       }
     },
+    "Shared through %@: everyone’s changes come in as they are made" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Über %@ geteilt: Alle Änderungen kommen an, sobald sie gemacht werden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Partagé via %@ : les modifications de chacun arrivent au fur et à mesure"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Condiviso tramite %@: le modifiche di tutti arrivano mentre vengono fatte"
+          }
+        }
+      }
+    },
     "Shared through iCloud" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -39425,6 +39766,7 @@
       }
     },
     "Shared through iCloud: everyone’s changes come in as they are made" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -40106,7 +40448,31 @@
         }
       }
     },
+    "Sign in to iCloud in System Settings to open invitations to shared designs." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich in den Systemeinstellungen bei iCloud an, um Einladungen zu geteilten Designs zu öffnen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectez-vous à iCloud dans Réglages Système pour ouvrir les invitations à des designs partagés."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accedi a iCloud in Impostazioni di Sistema per aprire gli inviti ai design condivisi."
+          }
+        }
+      }
+    },
     "Sign in to iCloud in System Settings to share designs." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -42337,6 +42703,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Interrompi  esc"
+          }
+        }
+      }
+    },
+    "Stop Sharing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Teilen beenden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrêter le partage"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrompi condivisione"
+          }
+        }
+      }
+    },
+    "Stop sharing “%@”?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ nicht mehr teilen?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrêter de partager « %@ » ?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrompere la condivisione di “%@”?"
+          }
+        }
+      }
+    },
+    "Stop Sharing…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Teilen beenden …"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrêter le partage…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrompi condivisione…"
           }
         }
       }
@@ -45075,7 +45507,30 @@
         }
       }
     },
+    "The design could not be kept." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Design konnte nicht gesichert werden."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le design n’a pas pu être enregistré."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossibile salvare il design."
+          }
+        }
+      }
+    },
     "The design could not be packed up to send." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -45142,6 +45597,7 @@
       }
     },
     "The design’s owner has stopped sharing it." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -45229,6 +45685,29 @@
         }
       }
     },
+    "The invitation link is copied: paste it into any mail or chat" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Einladungslink ist kopiert: Füge ihn in eine beliebige Mail oder einen Chat ein"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le lien d’invitation est copié : collez-le dans n’importe quel e-mail ou discussion"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il link di invito è copiato: incollalo in una mail o in una chat"
+          }
+        }
+      }
+    },
     "the kind of %@" : {
       "localizations" : {
         "de" : {
@@ -45269,6 +45748,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Il livello"
+          }
+        }
+      }
+    },
+    "The link is copied: paste it into any mail or chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Link ist kopiert: Füge ihn in eine beliebige Mail oder einen Chat ein"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le lien est copié : collez-le dans n’importe quel e-mail ou discussion"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il link è copiato: incollalo in una mail o in una chat"
+          }
+        }
+      }
+    },
+    "The link stops working. Everyone who has the design keeps it as it is now, read only." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Link funktioniert dann nicht mehr. Alle, die das Design haben, behalten es so, wie es jetzt ist, nur zum Ansehen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le lien ne fonctionnera plus. Toutes les personnes qui ont le design le gardent tel qu’il est maintenant, en lecture seule."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il link smetterà di funzionare. Chi ha il design lo conserva com’è ora, in sola lettura."
           }
         }
       }
@@ -45692,6 +46215,7 @@
       }
     },
     "The shared design could not be opened: %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -45889,6 +46413,28 @@
         }
       }
     },
+    "This copy of Bezzle cannot share designs." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Kopie von Bezzle kann keine Designs teilen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette copie de Bezzle ne peut pas partager de designs."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questa copia di Bezzle non può condividere design."
+          }
+        }
+      }
+    },
     "This data is not Zstandard compressed." : {
       "localizations" : {
         "de" : {
@@ -45977,7 +46523,53 @@
         }
       }
     },
+    "This design is no longer shared." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Design wird nicht mehr geteilt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce design n’est plus partagé."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo design non è più condiviso."
+          }
+        }
+      }
+    },
+    "This design is not shared any more. Ask for a new invitation." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Design wird nicht mehr geteilt. Bitte um eine neue Einladung."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce design n’est plus partagé. Demandez une nouvelle invitation."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo design non è più condiviso. Chiedi un nuovo invito."
+          }
+        }
+      }
+    },
     "This design is shared through iCloud’s development environment, which this copy of Bezzle does not use." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -46000,6 +46592,7 @@
       }
     },
     "This design is shared through iCloud’s production environment, which this copy of Bezzle does not use." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -46022,6 +46615,7 @@
       }
     },
     "This design was shared by a later Bezzle. Update Bezzle to share it." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -46154,6 +46748,7 @@
       }
     },
     "This invitation is for another Apple Account. Ask to be invited with the one this Mac is signed in to." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -46303,6 +46898,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Questo livello"
+          }
+        }
+      }
+    },
+    "This link does not lead to a design." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Link führt zu keinem Design."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce lien ne mène à aucun design."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo link non porta a nessun design."
           }
         }
       }
@@ -50318,7 +50935,30 @@
         }
       }
     },
+    "Work on this design together with others, by link" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per Link gemeinsam mit anderen an diesem Design arbeiten"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Travailler sur ce design avec d’autres personnes, par lien"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lavora a questo design insieme ad altri, tramite link"
+          }
+        }
+      }
+    },
     "Work on this design together with others, through iCloud" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -50567,6 +51207,7 @@
       }
     },
     "You can look at this design but not change it." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -50633,6 +51274,7 @@
       }
     },
     "Your iCloud storage is full, so changes can’t be sent." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -50945,622 +51587,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Adatta alla selezione"
-          }
-        }
-      }
-    },
-    "Designs Folder…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Designordner …"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dossier des designs…"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cartella dei design…"
-          }
-        }
-      }
-    },
-    "Choose Folder…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ordner wählen …"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choisir un dossier…"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scegli una cartella…"
-          }
-        }
-      }
-    },
-    "Keep Designs Here" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Designs hier aufbewahren"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conserver les designs ici"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conserva i design qui"
-          }
-        }
-      }
-    },
-    "Choose where Bezzle keeps your designs." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wähle, wo Bezzle deine Designs aufbewahrt."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choisissez où Bezzle conserve vos designs."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scegli dove Bezzle conserva i tuoi design."
-          }
-        }
-      }
-    },
-    "Move “%@” to “%@”?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "„%1$@“ nach „%2$@“ verschieben?"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Déplacer « %1$@ » vers « %2$@ » ?"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Spostare “%1$@” in “%2$@”?"
-          }
-        }
-      }
-    },
-    "Move your %lld designs to “%@”?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Deine %1$lld Designs nach „%2$@“ verschieben?"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Déplacer vos %1$lld designs vers « %2$@ » ?"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Spostare i tuoi %1$lld design in “%2$@”?"
-          }
-        }
-      }
-    },
-    "Designs left where they are stay on the home screen." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Designs, die bleiben, wo sie sind, siehst du weiter auf der Startseite."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Les designs laissés à leur place restent sur l’accueil."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "I design lasciati dove sono restano nella Home."
-          }
-        }
-      }
-    },
-    "Leave Them" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dort lassen"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Les laisser"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lasciali lì"
-          }
-        }
-      }
-    },
-    "Shared in %@" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "In %@ geteilt"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Partagé dans %@"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Condiviso in %@"
-          }
-        }
-      }
-    },
-    "Shared through %@: everyone’s changes come in as they are made" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Über %@ geteilt: Alle Änderungen kommen an, sobald sie gemacht werden"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Partagé via %@ : les modifications de chacun arrivent au fur et à mesure"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Condiviso tramite %@: le modifiche di tutti arrivano mentre vengono fatte"
-          }
-        }
-      }
-    },
-    "Shared by link: everyone’s changes come in as they are made" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Per Link geteilt: Alle Änderungen kommen an, sobald sie gemacht werden"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Partagé par lien : les modifications de chacun arrivent au fur et à mesure"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Condiviso tramite link: le modifiche di tutti arrivano mentre vengono fatte"
-          }
-        }
-      }
-    },
-    "Copy Link" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Link kopieren"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copier le lien"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copia link"
-          }
-        }
-      }
-    },
-    "Stop Sharing…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Teilen beenden …"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Arrêter le partage…"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Interrompi condivisione…"
-          }
-        }
-      }
-    },
-    "Stop sharing “%@”?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "„%@“ nicht mehr teilen?"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Arrêter de partager « %@ » ?"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Interrompere la condivisione di “%@”?"
-          }
-        }
-      }
-    },
-    "The link stops working. Everyone who has the design keeps it as it is now, read only." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Link funktioniert dann nicht mehr. Alle, die das Design haben, behalten es so, wie es jetzt ist, nur zum Ansehen."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le lien ne fonctionnera plus. Toutes les personnes qui ont le design le gardent tel qu’il est maintenant, en lecture seule."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il link smetterà di funzionare. Chi ha il design lo conserva com’è ora, in sola lettura."
-          }
-        }
-      }
-    },
-    "Stop Sharing" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Teilen beenden"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Arrêter le partage"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Interrompi condivisione"
-          }
-        }
-      }
-    },
-    "Work on this design together with others, by link" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Per Link gemeinsam mit anderen an diesem Design arbeiten"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Travailler sur ce design avec d’autres personnes, par lien"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lavora a questo design insieme ad altri, tramite link"
-          }
-        }
-      }
-    },
-    "The link is copied: paste it into any mail or chat" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Link ist kopiert: Füge ihn in eine beliebige Mail oder einen Chat ein"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le lien est copié : collez-le dans n’importe quel e-mail ou discussion"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il link è copiato: incollalo in una mail o in una chat"
-          }
-        }
-      }
-    },
-    "Everything in the design goes up before the link is copied" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Alles im Design wird hochgeladen, bevor der Link kopiert wird"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tout le contenu du design est envoyé avant que le lien soit copié"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tutto il design viene caricato prima di copiare il link"
-          }
-        }
-      }
-    },
-    "Bezzle cannot connect right now. Your changes are kept and go out once it can." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle kann gerade keine Verbindung herstellen. Deine Änderungen bleiben erhalten und gehen raus, sobald es wieder geht."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle ne peut pas se connecter pour l’instant. Vos modifications sont conservées et partiront dès que possible."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle non riesce a connettersi ora. Le tue modifiche restano e partono appena possibile."
-          }
-        }
-      }
-    },
-    "Bezzle could not connect. Check the connection and try again." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle konnte keine Verbindung herstellen. Prüfe die Verbindung und versuche es noch einmal."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle n’a pas pu se connecter. Vérifiez la connexion et réessayez."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle non è riuscito a connettersi. Controlla la connessione e riprova."
-          }
-        }
-      }
-    },
-    "This copy of Bezzle cannot share designs." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Diese Kopie von Bezzle kann keine Designs teilen."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cette copie de Bezzle ne peut pas partager de designs."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Questa copia di Bezzle non può condividere design."
-          }
-        }
-      }
-    },
-    "Bezzle could not stop sharing “%@”" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle konnte das Teilen von „%@“ nicht beenden"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle n’a pas pu arrêter le partage de « %@ »"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle non è riuscito a interrompere la condivisione di “%@”"
-          }
-        }
-      }
-    },
-    "This link does not lead to a design." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieser Link führt zu keinem Design."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ce lien ne mène à aucun design."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Questo link non porta a nessun design."
-          }
-        }
-      }
-    },
-    "This design is no longer shared." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieses Design wird nicht mehr geteilt."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ce design n’est plus partagé."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Questo design non è più condiviso."
-          }
-        }
-      }
-    },
-    "Bezzle could not reach the design. Check the connection and open the link again." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle konnte das Design nicht erreichen. Prüfe die Verbindung und öffne den Link noch einmal."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle n’a pas pu atteindre le design. Vérifiez la connexion et ouvrez à nouveau le lien."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bezzle non è riuscito a raggiungere il design. Controlla la connessione e apri di nuovo il link."
-          }
-        }
-      }
-    },
-    "The design could not be kept." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das Design konnte nicht gesichert werden."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le design n’a pas pu être enregistré."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Impossibile salvare il design."
-          }
-        }
-      }
-    },
-    "Move “%@” to the Trash and stop sharing it?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "„%@“ in den Papierkorb legen und nicht mehr teilen?"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Placer « %@ » dans la corbeille et arrêter de le partager ?"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Spostare “%@” nel Cestino e interrompere la condivisione?"
           }
         }
       }

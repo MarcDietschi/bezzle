@@ -16,7 +16,8 @@ nonisolated final class Assets: @unchecked Sendable {
         if let image = kept[name] { return image }
         let reply = Host.call(.image, doubles: Array(name.utf8).map { Double($0) })
         let image: CGImage? = reply.count == 3 && reply[0] > 0 ? CGImage(width: Int(reply[1]), height: Int(reply[2]), source: .asset(Int(reply[0]))) : nil
-        kept[name] = image
+        // One not here yet, as from a shared design's room, is asked for again next time.
+        if image != nil { kept[name] = image }
         return image
     }
 

@@ -71,6 +71,13 @@ nonisolated enum WebSharing {
         return packed
     }
 
+    /// The whole design as this browser has it, everyone's changes in it, packed for a whole of
+    /// its own (`w.` on the relay), after taking in what was changed here.
+    static func whole(of shown: BezzleDocument) -> Data? {
+        if state.absorb(FlatDesign(shown), since: base, by: replica, at: now) { base = FlatDesign(shown) }
+        return pack(state)
+    }
+
     /// A design as its owner's Mac first puts it in a zone: all of it, as one snapshot.
     static func snapshot(of doc: BezzleDocument, by replica: String) -> Data? {
         var s = SharedDesign()
