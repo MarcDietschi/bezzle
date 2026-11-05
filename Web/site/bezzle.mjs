@@ -25,9 +25,10 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   const texts = new Map()
   let nextText = 1
 
-  // Fonts: SF Pro whole as "System", every other face as "<family>|<face>".
+  // Fonts: the system font whole as "System", every other face as "<family>|<face>". A face
+  // without its data yet is known by name, and registered once the page has fetched it (`addFonts`).
   const provider = CK.TypefaceFontProvider.Make()
-  for (const f of fonts.faces) provider.registerFont(f.data, `${f.family}|${f.face}`)
+  for (const f of fonts.faces) if (f.data) provider.registerFont(f.data, `${f.family}|${f.face}`)
   provider.registerFont(fonts.system.data, 'System')
   const system = fonts.system
 
@@ -465,6 +466,16 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     snapshot() { return reply(x.bz_shared_snapshot()) },
     /** The whole shared design as this copy has it, packed: { data, upTo }. */
     whole() { return reply(x.bz_shared_whole()) },
+    /** Faces fetched after the design was opened, [{ family, face, data }]: texts are set again with them. */
+    addFonts(faces) {
+      for (const f of faces) {
+        provider.registerFont(f.data, `${f.family}|${f.face}`)
+        const known = fonts.faces.find((k) => k.family === f.family && k.face === f.face)
+        if (known) known.data = f.data; else fonts.faces.push(f)
+      }
+      leadings.clear()
+      x.bz_forget_text()
+    },
     /** Pictures that came after the design: name → encoded bytes. */
     addPictures(pictures) { add(pictures) },
     /** Names of the pictures drawings asked for that are not here yet. */

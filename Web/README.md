@@ -43,9 +43,9 @@ follows kerning pairs (Yo, Ly, "1,") at some sizes, not tracking.
 
 ## Shared designs
 
-The browser opens a shared design from iCloud with the Mac's own code: a zone's snapshot and
-change records are JSON of `SharedDesign`, packed with LZFSE, merged with `SharedDesign.merge`
-and shown with `flatDesign().document()`, as `Collaboration.merge` does on the Mac. An edit
+The browser opens a shared design with the Mac's own code: its records are JSON of
+`SharedDesign`, packed with LZFSE, merged with `SharedDesign.merge` and shown with
+`flatDesign().document()`, as `Collaboration` does on the Mac. An edit
 becomes a change record of the browser's own with `absorb` and `changes(by:after:)`
 (`Web/WebSharing.swift`). `tools/sharing.mjs` tests it without iCloud, on the six sample designs:
 
@@ -69,29 +69,28 @@ Graphics makes them; arcs, cut as it cuts them (quarter turns from the start, th
 over √ε), agree within 4e-10. Left: tangent arcs at very sharp angles (2.5e-7 apart), one turning
 straight back from its own corner, and a point lying exactly on a curve.
 
-**Set aside (2026-11-05):** Erik is replacing iCloud sharing and Apple ID sign-in with a way of
-his own, simpler across systems; the browser will speak that instead. What follows was the iCloud
-route, kept until the new one is known. A token from the CloudKit Console did work (sign-in
-redirects to Apple), but nothing past sign-in was tried.
+### By link, through the relay (since Bezzle 1.4)
 
-`site/cloudkit.mjs` and `site/shared.html` are the iCloud side: sign in with an Apple ID,
-accept the share by its invitation code (`open.html#<code>`), read the zone's records and
-pictures, check for others' changes every 10 seconds, send a change record. Written to Apple's
-CloudKit Web Services Reference; **not yet run against iCloud**, which needs an API token:
+Designs are shared by link through Bezzle's relay on Cloudflare, as `Relay/SHARING.md` lays it
+out; iCloud is gone from the app, and the CloudKit route this prototype first took with it.
+`site/share.mjs` is the browser's side of that protocol, the same as the Mac's `Sharing` and
+`CloudShare`: the keys made from the link's secret (HKDF-SHA256 in WebCrypto), records sealed with
+AES-256-GCM under a key of this session's own, the relay's calls, the same rule for which of a
+copy's records to read and when to fold them into a whole, picture names by HMAC, and the live
+socket that says when there are new records. What the records hold, and how they merge, stays the
+core's: `bz_shared_open`, `bz_shared_receive`, `bz_shared_changes`, `bz_shared_whole`.
 
-1. In the CloudKit Console (https://icloud.developer.apple.com), container
-   `iCloud.com.erik.Bezzle`, **API Access › API Tokens › +**. Sign In Callback: the default (the
-   page is told by message). Allowed Origins: `http://127.0.0.1:8765` for testing here, later
-   `https://mfrports.github.io`.
-2. A design shared with Copy Invitation Link, and an Apple ID that is not the owner's to open it
-   with (the owner's own share is in their private database, not the shared one).
-3. Serve the repository's root (below) and open
-   `http://127.0.0.1:8765/Web/site/shared.html?token=<token>#<invitation code>`.
+`site/shared.html` is the page a link opens: `shared.html#2.<secret>` shows the design, with its
+name and who shared it, takes in everyone's changes as the relay says they are there, and fetches
+pictures as drawings ask for them. It edits nothing yet. `?relay=` points it at another relay.
 
-What the reference (2016) leaves open, which that first run answers: whether `records/accept`
-takes the code of a zone-wide share (Bezzle shares whole zones, which came in 2021), and whether
-files can be uploaded into another person's zone (the reference names only the public and private
-databases). The second matters for large changes and pictures added in the browser.
+Tested against the relay itself, running here (`cd ../Relay && npx wrangler dev --port 8790`):
+
+| | Result |
+|---|---|
+| `node tools/link.mjs`: a design shared by one browser, opened from the link by another | the same design; edits both ways; 63 records folded to 40 with two wholes; a copy coming later has everything; pictures whole; nothing opens without the link; unsharing heard at once |
+| `node tools/link.mjs --mac <file>` between the two halves of `CloudShareTests.forTheBrowser` (`TEST_RUNNER_BEZZLE_RELAY_TEST`, `TEST_RUNNER_BEZZLE_WEB_LINK=<file>`) | a design the Mac shared opens here as the Mac's to the byte; the browser's edit comes back to the Mac, merged the same |
+| `node tools/room.mjs <design.bezzle> --edit`, then `shared.html?relay=http://127.0.0.1:8790#2.<secret>` in Chrome | the page shows the design live, with its pictures, and follows the edits |
 
 ## How it is put together
 
@@ -130,7 +129,7 @@ platform-neutral half of `TextLayout.swift` (the `Node` extension at its end).
 
 Text on curves, list markers, paragraph spacing, letters painted with a gradient or picture,
 photo develop, blurs that grow along a ramp, "plus darker" mixing (drawn as multiply), live
-co-working (Live.swift uses CryptoKit's ChaChaPoly; the browser has WebCrypto), the icon
+co-working's pointers and presence (the page hears only that there are new records), the icon
 library (needs zlib), localization (English only), any editing UI.
 
 ## Building and running

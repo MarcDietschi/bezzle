@@ -340,4 +340,50 @@ struct CloudShareTests {
         await ben.cloud?.syncForTesting()
         #expect(ben.isReadOnly)
     }
+
+    /// For the browser's own test (Web/tools/link.mjs --mac <file>), through the relay itself: run
+    /// once, it shares a design and writes its link and the design as the Mac has it into the file;
+    /// run again after the browser has edited it there, it reads the browser's edit back. Needs
+    /// `TEST_RUNNER_BEZZLE_RELAY_TEST` and `TEST_RUNNER_BEZZLE_WEB_LINK=<file>`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["BEZZLE_RELAY_TEST"] != nil
+                   && ProcessInfo.processInfo.environment["BEZZLE_WEB_LINK"] != nil))
+    func forTheBrowser() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let address = try #require(env["BEZZLE_RELAY_TEST"].flatMap(URL.init(string:)))
+        let file = URL(fileURLWithPath: try #require(env["BEZZLE_WEB_LINK"]))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        if let data = try? Data(contentsOf: file), let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let browser = json["browser"] as? [String: Any], let link = (json["link"] as? String).flatMap(URL.init(string:)) {
+            // The browser has been: its edit comes back here, merged as the Mac merges everything.
+            let keys = try #require(Sharing.secret(from: link).flatMap { ShareKeys(link: $0) })
+            let arrived = try await CloudShare.download(keys, from: RelayServer(base: address)) { _ in }
+            let doc = arrived.state.flatDesign().document()
+            #expect(doc.allNodes.contains { $0.text == browser["text"] as? String })
+            #expect(String(decoding: try encoder.encode(doc), as: UTF8.self) == browser["document"] as? String)
+            #expect(arrived.state.layers.values.contains { layer in layer.fields.values.contains { $0.stamp.by == "webtest" } })
+            try? FileManager.default.removeItem(at: file)
+            return
+        }
+        Sharing.shared.server = RelayServer(base: address)
+        let shared = Shared(server: RelayServer(base: address))
+        try await shared.server.create(shared.keys.room, hashes: ["read": Sharing.hash(shared.keys.readToken),
+                                                                 "write": Sharing.hash(shared.keys.writeToken),
+                                                                 "owner": Sharing.hash(shared.owner)])
+        Sharing.shared.own(shared.keys.room, with: shared.owner)
+        let url = shared.folder.appendingPathComponent("For the browser.bezzle")
+        var board = Node(kind: .artboard, name: "Poster", frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        board.children = [AdaptTests.text("Hello from a Mac", 24, at: CGPoint(x: 20, y: 20)),
+                          CanvasTests.rect("Card", CGRect(x: 20, y: 80, width: 200, height: 120))]
+        try DesignFile.write(design([board]), to: url)
+        try SharingFiles.write(shared.link, to: url)
+        let anna = try #require(Collaboration.open(url, replica: "anna", claiming: false))
+        try await anna.cloud?.sendMeta(ShareMeta(title: "For the browser", owner: "Anna", made: Collaboration.now))
+        anna.cloud?.start(for: anna)
+        await anna.cloud?.syncForTesting()
+        let out: [String: Any] = ["link": try #require(shared.link.page).absoluteString,
+                                  "document": String(decoding: try encoder.encode(anna.state.flatDesign().document()), as: UTF8.self)]
+        try JSONSerialization.data(withJSONObject: out).write(to: file)
+        done(shared, [anna])
+    }
 }

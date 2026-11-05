@@ -7,3 +7,6 @@ Sources/BezzleCore/Shared/Generated/
 out/
 site/samples.json
 venv/
+# Open fonts made by tools/openfonts.py, and their sources: published with the page, made again at will.
+site/openfonts/
+.fonts-src/

@@ -35,6 +35,12 @@ nonisolated func bz_fonts(_ p: UnsafeRawPointer, _ n: Int32) {
     }
 }
 
+/// The page has fonts it had not: texts are set again with them.
+@_expose(wasm, "bz_forget_text")
+nonisolated func bz_forget_text() {
+    MainActor.assumeIsolated { TextLayout.forget() }
+}
+
 /// Opens a design from its document.json; answers its artboards.
 @_expose(wasm, "bz_open")
 nonisolated func bz_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {

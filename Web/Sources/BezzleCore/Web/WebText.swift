@@ -63,6 +63,9 @@ nonisolated enum TextLayout {
 
     nonisolated(unsafe) private static var kept: [Key: Laid] = [:]
 
+    /// Forgets every text set so far, as when the page has fonts it had not: each is set again.
+    static func forget() { kept = [:] }
+
     /// How far the letters are raised in lines set further apart than the font's own, as on the Mac.
     private static func lift(_ style: TextStyle, natural: CGFloat) -> CGFloat {
         guard let spacing = style.lineSpacing, spacing > 0 else { return 0 }
