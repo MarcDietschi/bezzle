@@ -1,3 +1,4 @@
+import Foundation
 import AppKit
 
 // Text in the browser: the same questions the Mac's TextLayout answers (how wide, how tall,

@@ -1,4 +1,4 @@
-@_exported import CoreGraphics
+import Foundation
 
-public func CACurrentMediaTime() -> CFTimeInterval { ProcessInfo.processInfo.systemUptime }
+nonisolated public func CACurrentMediaTime() -> CFTimeInterval { ProcessInfo.processInfo.systemUptime }
 public typealias CFTimeInterval = Double

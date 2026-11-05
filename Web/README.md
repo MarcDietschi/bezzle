@@ -41,21 +41,80 @@ What made text match:
 Still open: a few SF Pro and Avenir words come out up to 0.2 pt a letter narrower. The difference
 follows kerning pairs (Yo, Ly, "1,") at some sizes, not tracking.
 
+## Shared designs
+
+The browser opens a shared design from iCloud with the Mac's own code: a zone's snapshot and
+change records are JSON of `SharedDesign`, packed with LZFSE, merged with `SharedDesign.merge`
+and shown with `flatDesign().document()`, as `Collaboration.merge` does on the Mac. An edit
+becomes a change record of the browser's own with `absorb` and `changes(by:after:)`
+(`Web/WebSharing.swift`). `tools/sharing.mjs` tests it without iCloud, on the six sample designs:
+
+| | Result |
+|---|---|
+| A snapshot the Mac packed (WebTruthTests) | opens as the Mac's own design, byte for byte, all six (up to 232 KB of JSON) |
+| Apple's LZFSE and the browser's | read each other both ways |
+| An edit in one browser | goes out as a change record of about 195 bytes; a second browser takes it in and shows the same |
+
+Two things had to change for that. `CGFloat` is `Double` (`Platform/CGGeometry.swift`), as on the
+Mac: Foundation's is a `Float` on 32-bit WebAssembly, and the browser measured and merged at single
+precision (22.33 came back as 22.330017). And the stand-ins live in the core's own module, since
+only a module's own declarations shadow Foundation's.
+
+`tools/geometry` compiles that geometry and `CGPath` on the Mac and checks them against Core
+Graphics on random cases (`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift run -c
+release` there). Rectangles, points, sizes and transforms agree to the last digit in 4.4 million
+checks; for that, every `x·y + z·w` is fused as a Mac fuses it (`fma(x, y, z·w)`), and the inverse
+goes by the determinant's reciprocal. Rectangles, ellipses and rounded rectangles come out as Core
+Graphics makes them; arcs, cut as it cuts them (quarter turns from the start, then the rest when
+over √ε), agree within 4e-10. Left: tangent arcs at very sharp angles (2.5e-7 apart), one turning
+straight back from its own corner, and a point lying exactly on a curve.
+
+**Set aside (2026-11-05):** Erik is replacing iCloud sharing and Apple ID sign-in with a way of
+his own, simpler across systems; the browser will speak that instead. What follows was the iCloud
+route, kept until the new one is known. A token from the CloudKit Console did work (sign-in
+redirects to Apple), but nothing past sign-in was tried.
+
+`site/cloudkit.mjs` and `site/shared.html` are the iCloud side: sign in with an Apple ID,
+accept the share by its invitation code (`open.html#<code>`), read the zone's records and
+pictures, check for others' changes every 10 seconds, send a change record. Written to Apple's
+CloudKit Web Services Reference; **not yet run against iCloud**, which needs an API token:
+
+1. In the CloudKit Console (https://icloud.developer.apple.com), container
+   `iCloud.com.erik.Bezzle`, **API Access › API Tokens › +**. Sign In Callback: the default (the
+   page is told by message). Allowed Origins: `http://127.0.0.1:8765` for testing here, later
+   `https://mfrports.github.io`.
+2. A design shared with Copy Invitation Link, and an Apple ID that is not the owner's to open it
+   with (the owner's own share is in their private database, not the shared one).
+3. Serve the repository's root (below) and open
+   `http://127.0.0.1:8765/Web/site/shared.html?token=<token>#<invitation code>`.
+
+What the reference (2016) leaves open, which that first run answers: whether `records/accept`
+takes the code of a zone-wide share (Bezzle shares whole zones, which came in 2021), and whether
+files can be uploaded into another person's zone (the reference names only the public and private
+databases). The second matters for large changes and pictures added in the browser.
+
 ## How it is put together
 
-- `Sources/CoreGraphics`: Core Graphics for WebAssembly. `CGPath` in Swift (boolean operations,
-  stroke outlines and dashes by Skia, through the page); `CGContext` records every call, keeping
-  Core Graphics' state and space (y up, shadows in device pixels, transparency layers) so the
+- `Sources/BezzleCore/Platform`: Core Graphics for WebAssembly, in the core's own module (see
+  above). `CGFloat` is `Double`; `CGPoint`, `CGSize` and `CGRect` follow Core Graphics' rules as a
+  Mac answered them (null is (inf, inf, 0, 0), rectangles are standardized first, `contains` is
+  half-open, touching rectangles do not intersect). `CGPath` in Swift (boolean operations, stroke
+  outlines and dashes by Skia, through the page); `CGContext` records every call, keeping Core
+  Graphics' state and space (y up, shadows in device pixels, transparency layers) so the
   renderer's own questions get the answers Core Graphics would give. `CGImage` is a description:
-  a design's picture, an offscreen recording, or one of those blurred or bent.
-- `Sources/CoreImage`, `AppKit`, `CryptoKit`, `ImageIO`, `QuartzCore`: as little of each as the
-  shared code asks for. Core Image's blur and perspective become descriptions for the page.
+  a design's picture, an offscreen recording, or one of those blurred or bent. Also as little of
+  AppKit, Core Image, CryptoKit, ImageIO and QuartzCore as the shared code asks for, and LZFSE
+  for `NSData.compressed`.
+- `Sources/CoreGraphics`, `AppKit`, `CoreImage`…: empty modules, so the shared sources' imports
+  find one. They bring Foundation, as the frameworks do.
+- `Sources/LZFSE`: Apple's LZFSE, which shared designs are packed with (see its README).
 - `Sources/BezzleCore/Web`: what is the app's but not shared yet. `WebText.swift` is TextLayout with
   Skia's paragraphs behind it; `WebStandIns.swift` holds pictures from the page, and small copies
   of things the model reaches into the app for (see below).
 - `prepare.sh`: copies the few shared files that need a line changed (Blurs.swift's
-  `CoreImage.CIFilterBuiltins` import) or only part taken (the reach functions of
-  BoardTiles.swift, `Preset` from Library.swift).
+  `CoreImage.CIFilterBuiltins` import; DesignTokens.swift's CGFloat overload of `number`, the
+  same as its Double one here) or only part taken (the reach functions of BoardTiles.swift,
+  `Preset` from Library.swift).
 - `site/bezzle.mjs`: the page's side, for a browser or Node. A small WASI, the host calls (path
   operations, pictures, text) and the playback of the recording with CanvasKit.
 - `site/index.html`: a viewer of the sample designs, or of any `.bezzle` folder opened.

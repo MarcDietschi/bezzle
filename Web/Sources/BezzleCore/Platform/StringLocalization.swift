@@ -3,7 +3,7 @@ import Foundation
 // Apple's Foundation looks words up in the app's string catalog; here, for now, they stay as
 // written in the code, in English.
 
-public extension String {
+nonisolated public extension String {
     struct LocalizationValue: ExpressibleByStringInterpolation, Hashable, Sendable {
         public var text: String
         public init(_ text: String) { self.text = text }
@@ -32,7 +32,7 @@ public extension String {
     init(localized resource: LocalizedStringResource) { self = resource.key }
 }
 
-public struct LocalizedStringResource: ExpressibleByStringInterpolation, Hashable, Sendable {
+nonisolated public struct LocalizedStringResource: ExpressibleByStringInterpolation, Hashable, Sendable {
     public var key: String
     public init(_ key: String) { self.key = key }
     public init(stringLiteral value: String) { key = value }

@@ -1,6 +1,6 @@
 import Foundation
 
-public final class CGColorSpace: @unchecked Sendable, Equatable {
+nonisolated public final class CGColorSpace: @unchecked Sendable, Equatable {
     public let name: CFString?
     public init?(name: CFString) { self.name = name }
     init(named: String) { name = named }
@@ -17,11 +17,11 @@ public final class CGColorSpace: @unchecked Sendable, Equatable {
     public var numberOfComponents: Int { name == Self.genericGrayGamma2_2 || name == Self.linearGray ? 1 : 3 }
 }
 
-public func CGColorSpaceCreateDeviceRGB() -> CGColorSpace { CGColorSpace(named: CGColorSpace.sRGB) }
-public func CGColorSpaceCreateDeviceGray() -> CGColorSpace { CGColorSpace(named: CGColorSpace.genericGrayGamma2_2) }
+nonisolated public func CGColorSpaceCreateDeviceRGB() -> CGColorSpace { CGColorSpace(named: CGColorSpace.sRGB) }
+nonisolated public func CGColorSpaceCreateDeviceGray() -> CGColorSpace { CGColorSpace(named: CGColorSpace.genericGrayGamma2_2) }
 
 /// A colour in sRGB, as everything here is drawn.
-public final class CGColor: Equatable, Hashable, @unchecked Sendable {
+nonisolated public final class CGColor: Equatable, Hashable, @unchecked Sendable {
     public let red: CGFloat, green: CGFloat, blue: CGFloat
     public let alpha: CGFloat
     let gray: Bool
@@ -67,18 +67,18 @@ public final class CGColor: Equatable, Hashable, @unchecked Sendable {
     var rgba: [Double] { [Double(red), Double(green), Double(blue), Double(alpha)] }
 }
 
-public enum CGColorRenderingIntent: Int32, Sendable {
+nonisolated public enum CGColorRenderingIntent: Int32, Sendable {
     case defaultIntent, absoluteColorimetric, relativeColorimetric, perceptual, saturation
 }
 
-public struct CGGradientDrawingOptions: OptionSet, Sendable {
+nonisolated public struct CGGradientDrawingOptions: OptionSet, Sendable {
     public let rawValue: UInt32
     public init(rawValue: UInt32) { self.rawValue = rawValue }
     public static let drawsBeforeStartLocation = CGGradientDrawingOptions(rawValue: 1)
     public static let drawsAfterEndLocation = CGGradientDrawingOptions(rawValue: 2)
 }
 
-public final class CGGradient: @unchecked Sendable {
+nonisolated public final class CGGradient: @unchecked Sendable {
     let colors: [CGColor]
     let locations: [CGFloat]
 
@@ -103,21 +103,21 @@ public final class CGGradient: @unchecked Sendable {
     }
 }
 
-public enum CGBlendMode: Int32, Sendable {
+nonisolated public enum CGBlendMode: Int32, Sendable {
     case normal, multiply, screen, overlay, darken, lighten, colorDodge, colorBurn, softLight, hardLight,
          difference, exclusion, hue, saturation, color, luminosity, clear, copy, sourceIn, sourceOut, sourceAtop,
          destinationOver, destinationIn, destinationOut, destinationAtop, xor, plusDarker, plusLighter
 }
 
-public enum CGInterpolationQuality: Int32, Sendable { case `default`, none, low, high, medium }
-public enum CGPathDrawingMode: Int32, Sendable { case fill, eoFill, stroke, fillStroke, eoFillStroke }
-public enum CGTextDrawingMode: Int32, Sendable { case fill, stroke, fillStroke, invisible, fillClip, strokeClip, fillStrokeClip, clip }
+nonisolated public enum CGInterpolationQuality: Int32, Sendable { case `default`, none, low, high, medium }
+nonisolated public enum CGPathDrawingMode: Int32, Sendable { case fill, eoFill, stroke, fillStroke, eoFillStroke }
+nonisolated public enum CGTextDrawingMode: Int32, Sendable { case fill, stroke, fillStroke, invisible, fillClip, strokeClip, fillStrokeClip, clip }
 
-public enum CGImageAlphaInfo: UInt32, Sendable {
+nonisolated public enum CGImageAlphaInfo: UInt32, Sendable {
     case none, premultipliedLast, premultipliedFirst, last, first, noneSkipLast, noneSkipFirst, alphaOnly
 }
 
-public struct CGBitmapInfo: OptionSet, Sendable {
+nonisolated public struct CGBitmapInfo: OptionSet, Sendable {
     public let rawValue: UInt32
     public init(rawValue: UInt32) { self.rawValue = rawValue }
     public static let alphaInfoMask = CGBitmapInfo(rawValue: 0x1F)

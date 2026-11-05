@@ -33,6 +33,18 @@ struct WebTruthTests {
                 boards.append(["index": i, "name": board.name, "file": file, "frame": [board.frame.minX, board.frame.minY, board.frame.width, board.frame.height]])
             }
             all[name] = ["texts": texts, "boards": boards]
+
+            // The design as its owner's Mac first puts it in iCloud, packed as CloudSync packs it,
+            // and the design the Mac makes of that again: the browser must make the same of it.
+            var state = SharedDesign()
+            _ = state.absorb(FlatDesign(doc), since: FlatDesign(BezzleDocument()), by: "owner-test", at: 1000)
+            let shared = out.appendingPathComponent("shared", isDirectory: true)
+            try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+            let packed = try (JSONEncoder().encode(state) as NSData).compressed(using: .lzfse) as Data
+            try packed.write(to: shared.appendingPathComponent("\(name).snapshot"))
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            try encoder.encode(state.flatDesign().document()).write(to: shared.appendingPathComponent("\(name).document.json"))
         }
         let data = try JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: out.appendingPathComponent("truth.json"))

@@ -8,7 +8,7 @@ import Foundation
 /// Its space is Core Graphics' own: device pixels, y up from the bottom left, `width` by
 /// `height`. Paths are kept in device space as they are added, as Core Graphics keeps them, and
 /// written down in user space at the transform current when they are filled.
-public final class CGContext: @unchecked Sendable {
+nonisolated public final class CGContext: @unchecked Sendable {
     public let width: Int
     public let height: Int
     public private(set) var commands: [Double] = []
@@ -200,7 +200,7 @@ public final class CGContext: @unchecked Sendable {
         putLook()
         put(Double(state.lineWidth), Double(state.cap.rawValue), Double(state.join.rawValue), Double(state.miter), Double(state.dashPhase))
         put(Double(state.dashes.count))
-        commands.append(contentsOf: state.dashes.map(Double.init))
+        commands.append(contentsOf: state.dashes.map { Double($0) })
         put(state.stroke)
         putPath(p)
     }

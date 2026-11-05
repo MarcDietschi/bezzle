@@ -1,22 +1,22 @@
-@_exported import CoreGraphics
+import Foundation
 
 // What Bezzle's shared drawing takes from Core Image, which is a blur and a bend into perspective:
 // each picture made here is only a description, made by the page when it is drawn.
 
-public struct CIVector: Sendable {
+nonisolated public struct CIVector: Sendable {
     public let x: CGFloat, y: CGFloat
     public init(x: CGFloat, y: CGFloat) { self.x = x; self.y = y }
 }
 
-public struct CIColor: Sendable {
+nonisolated public struct CIColor: Sendable {
     public let red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat
     public init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat = 1) { self.red = red; self.green = green; self.blue = blue; self.alpha = alpha }
 }
 
-public struct CIFormat: Sendable { public static let RGBA8 = CIFormat() }
+nonisolated public struct CIFormat: Sendable { public static let RGBA8 = CIFormat() }
 
 /// A picture and what is done to it, measured as Core Image measures, in pixels from the bottom left.
-public final class CIImage: @unchecked Sendable {
+nonisolated public final class CIImage: @unchecked Sendable {
     let source: CGImage?
     let changes: [Images.Change]
     public let extent: CGRect
@@ -66,14 +66,14 @@ public final class CIImage: @unchecked Sendable {
     }
 }
 
-public struct CIContextOption: Hashable, Sendable {
+nonisolated public struct CIContextOption: Hashable, Sendable {
     public let name: String
     public static let cacheIntermediates = CIContextOption(name: "cache")
     public static let workingColorSpace = CIContextOption(name: "space")
     public static let useSoftwareRenderer = CIContextOption(name: "software")
 }
 
-public final class CIContext: @unchecked Sendable {
+nonisolated public final class CIContext: @unchecked Sendable {
     public init(options: [CIContextOption: Any]? = nil) {}
     public func createCGImage(_ image: CIImage, from rect: CGRect, format: CIFormat = .RGBA8, colorSpace: CGColorSpace? = nil) -> CGImage? {
         image.made(rect)
@@ -82,7 +82,7 @@ public final class CIContext: @unchecked Sendable {
 }
 
 /// The filters Bezzle's blurs name; a blur that grows along a ramp is made even for now.
-public class CIFilter: @unchecked Sendable {
+nonisolated public class CIFilter: @unchecked Sendable {
     public var inputImage: CIImage?
     public var outputImage: CIImage? { inputImage }
     public init() {}
@@ -103,7 +103,7 @@ public class CIFilter: @unchecked Sendable {
 }
 
 /// The 3×3 matrix taking four points to four others, row by row, as CanvasKit reads it.
-public enum Homography {
+nonisolated public enum Homography {
     public static func square(from a: [CGPoint], to b: [CGPoint]) -> [Double]? {
         // Solve for h0…h7 with h8 = 1: eight equations, two per corner.
         var m = [[Double]](repeating: [Double](repeating: 0, count: 9), count: 8)

@@ -1,10 +1,10 @@
-@_exported import CoreGraphics
+import Foundation
 
 // What Bezzle's shared code takes from AppKit, in the browser.
 
 /// Text Kit draws into the current graphics context; here the renderer's text goes straight
 /// into the recording context, so this only carries it.
-public final class NSGraphicsContext: @unchecked Sendable {
+nonisolated public final class NSGraphicsContext: @unchecked Sendable {
     public let cgContext: CGContext
     public let isFlipped: Bool
     public nonisolated(unsafe) static var current: NSGraphicsContext?
@@ -14,7 +14,7 @@ public final class NSGraphicsContext: @unchecked Sendable {
     }
 }
 
-public final class NSColor: @unchecked Sendable {
+nonisolated public final class NSColor: @unchecked Sendable {
     public let redComponent: CGFloat, greenComponent: CGFloat, blueComponent: CGFloat, alphaComponent: CGFloat
     public init(srgbRed r: CGFloat, green g: CGFloat, blue b: CGFloat, alpha a: CGFloat) {
         redComponent = r; greenComponent = g; blueComponent = b; alphaComponent = a
@@ -37,18 +37,18 @@ public final class NSColor: @unchecked Sendable {
     public static let white = NSColor(white: 1, alpha: 1)
 }
 
-public final class NSColorSpace: @unchecked Sendable {
+nonisolated public final class NSColorSpace: @unchecked Sendable {
     public static let sRGB = NSColorSpace()
     public static let extendedSRGB = NSColorSpace()
     public static let displayP3 = NSColorSpace()
 }
 
-extension CGColor {
+nonisolated extension CGColor {
     convenience init(red: CGFloat, green: CGFloat, _ blue: CGFloat, alpha: CGFloat) { self.init(red: red, green: green, blue: blue, alpha: alpha) }
 }
 
 /// The fonts the page has, by family; see `Fonts` in the web build.
-public final class NSFontManager: @unchecked Sendable {
+nonisolated public final class NSFontManager: @unchecked Sendable {
     public static let shared = NSFontManager()
     public nonisolated(unsafe) var families: [String: [String]] = [:]
     public var availableFontFamilies: [String] { families.keys.sorted() }

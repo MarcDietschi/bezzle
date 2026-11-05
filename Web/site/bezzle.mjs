@@ -414,18 +414,23 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
 
   send(x.bz_fonts, JSON.stringify(fonts.families))
 
+  // The design's pictures, decoded once: name → encoded bytes.
+  function take(pictures) {
+    for (const img of assets.byName.values()) img.image.delete()
+    assets.byName.clear(); assets.byId.clear()
+    for (const [name, data] of pictures) {
+      const image = CK.MakeImageFromEncoded(data)
+      if (!image) continue
+      const id = assets.next++
+      const mipped = image.makeCopyWithDefaultMipmaps()
+      image.delete()
+      assets.byName.set(name, { id, image: mipped }); assets.byId.set(id, mipped)
+    }
+  }
+
   return {
     open(json, pictures = new Map()) {
-      for (const img of assets.byName.values()) img.image.delete()
-      assets.byName.clear(); assets.byId.clear()
-      for (const [name, data] of pictures) {
-        const image = CK.MakeImageFromEncoded(data)
-        if (!image) continue
-        const id = assets.next++
-        const mipped = image.makeCopyWithDefaultMipmaps()
-        image.delete()
-        assets.byName.set(name, { id, image: mipped }); assets.byId.set(id, mipped)
-      }
+      take(pictures)
       return reply(send(x.bz_open, json))
     },
     render(index, scale = 1) {
@@ -438,5 +443,19 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       return { image: img, coreMs: r.ms, totalMs: performance.now() - t0, playMs: performance.now() - t1 }
     },
     texts() { return reply(x.bz_texts()) },
+
+    // Shared designs: records are each record's packed data, base64, as CloudKit gives it.
+    openShared(records, replica, pictures = new Map()) {
+      take(pictures)
+      return reply(send(x.bz_shared_open, JSON.stringify({ records, replica })))
+    },
+    receive(records) { return reply(send(x.bz_shared_receive, JSON.stringify({ records }))) },
+    /** What was changed here since last time, packed for a change record: { data, upTo } or {}. */
+    changes() { return reply(x.bz_shared_changes()) },
+    snapshot() { return reply(x.bz_shared_snapshot()) },
+    testEdit() { return reply(x.bz_test_edit()) },
+    document() { return reply(x.bz_document()) },
+    /** The design as the core encodes it, sorted keys, as the Mac writes it. */
+    documentBytes() { const n = x.bz_document(); return bytes().slice(x.bz_outbox(), x.bz_outbox() + n) },
   }
 }

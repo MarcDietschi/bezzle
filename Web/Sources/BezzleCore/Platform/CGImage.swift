@@ -4,7 +4,7 @@ import Foundation
 /// read, a drawing recorded into an offscreen context, or another picture changed (blurred,
 /// bent into perspective, cut to part of it). All of them are listed in `Images`, which goes to
 /// the page with the drawing.
-public final class CGImage: @unchecked Sendable, Equatable, Hashable {
+nonisolated public final class CGImage: @unchecked Sendable, Equatable, Hashable {
     public let id: Int
     public let width: Int
     public let height: Int
@@ -54,13 +54,13 @@ public final class CGImage: @unchecked Sendable, Equatable, Hashable {
     }
 }
 
-public final class CGDataProvider: @unchecked Sendable {
+nonisolated public final class CGDataProvider: @unchecked Sendable {
     public let data: Data
     public init?(data: CFData) { self.data = data }
 }
 
 /// Every picture made for one drawing, in the order made.
-public final class Images: @unchecked Sendable {
+nonisolated public final class Images: @unchecked Sendable {
     public nonisolated(unsafe) static let shared = Images()
     public var list: [CGImage] = []
     private var next = 1
@@ -108,7 +108,7 @@ public final class Images: @unchecked Sendable {
     }
 }
 
-public enum Recording {
+nonisolated public enum Recording {
     public static func json(_ values: [Double]) -> String {
         var s = "["
         s.reserveCapacity(values.count * 6)

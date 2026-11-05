@@ -1,3 +1,4 @@
+import Foundation
 import AppKit
 
 // What the page calls. Every answer is JSON, left in `outbox` for the page to read from memory.
@@ -98,3 +99,91 @@ nonisolated private func quoted(_ s: String) -> String {
     let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
     return String(String(decoding: data, as: UTF8.self).dropFirst().dropLast())
 }
+
+// MARK: Shared designs
+
+private func boardsAnswer(_ doc: BezzleDocument, extra: String = "") -> String {
+    let boards = doc.nodes.enumerated().filter { $0.element.isArtboard }.map { i, b in
+        "{\"index\":\(i),\"name\":\(quoted(b.name)),\"frame\":[\(b.frame.minX),\(b.frame.minY),\(b.frame.width),\(b.frame.height)]}"
+    }
+    return "{\"boards\":[" + boards.joined(separator: ",") + "],\"layers\":\(BezzleDocument.layerCount(doc.nodes))\(extra)}"
+}
+
+private func records(_ json: Data) -> (records: [Data], replica: String) {
+    let o = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any] ?? [:]
+    let list = (o["records"] as? [String] ?? []).compactMap { Data(base64Encoded: $0) }
+    return (list, o["replica"] as? String ?? "web")
+}
+
+/// Opens a shared design from its zone's records: {"records": [base64 of each record's data], "replica": "…"}.
+@_expose(wasm, "bz_shared_open")
+nonisolated func bz_shared_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
+    let json = Data(bytes: p, count: Int(n))
+    return MainActor.assumeIsolated {
+        let (list, replica) = records(json)
+        let (doc, unread) = WebSharing.open(list, replica: replica)
+        design = doc
+        assets = Assets(folder: URL(fileURLWithPath: "/images"))
+        return answer(boardsAnswer(doc, extra: ",\"unread\":\(unread),\"clock\":\(WebSharing.state.clock.time)"))
+    }
+}
+
+/// Takes in others' change records, as `bz_shared_open` takes them.
+@_expose(wasm, "bz_shared_receive")
+nonisolated func bz_shared_receive(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
+    let json = Data(bytes: p, count: Int(n))
+    return MainActor.assumeIsolated {
+        guard let shown = design else { return answer("{\"error\":\"no design\"}") }
+        let doc = WebSharing.receive(records(json).records, into: shown)
+        design = doc
+        return answer(boardsAnswer(doc))
+    }
+}
+
+/// What was changed here since it was last sent, packed: {"data": base64} or {} for nothing.
+@_expose(wasm, "bz_shared_changes")
+nonisolated func bz_shared_changes() -> Int32 {
+    MainActor.assumeIsolated {
+        guard let shown = design, let packed = WebSharing.changes(in: shown) else { return answer("{}") }
+        return answer("{\"data\":\"\(packed.base64EncodedString())\",\"upTo\":\(WebSharing.sentUpTo)}")
+    }
+}
+
+/// The open design packed as an owner's first snapshot: {"data": base64}. For testing without iCloud.
+@_expose(wasm, "bz_shared_snapshot")
+nonisolated func bz_shared_snapshot() -> Int32 {
+    MainActor.assumeIsolated {
+        guard let doc = design, let packed = WebSharing.snapshot(of: doc, by: "owner-test") else { return answer("{}") }
+        return answer("{\"data\":\"\(packed.base64EncodedString())\"}")
+    }
+}
+
+/// For testing an edit without an editor: renames the first text found and moves it by 10 points.
+@_expose(wasm, "bz_test_edit")
+nonisolated func bz_test_edit() -> Int32 {
+    MainActor.assumeIsolated {
+        guard var doc = design else { return answer("{}") }
+        func first(_ nodes: [Node]) -> UUID? {
+            for n in nodes { if n.kind == .text { return n.id }; if let id = first(n.children) { return id } }
+            return nil
+        }
+        guard let id = first(doc.nodes) else { return answer("{}") }
+        doc.update(id) { $0.text = "Edited in a browser"; $0.refit(); $0.frame.origin.x += 10 }
+        // As every edit in the app does: groups fit what they hold again.
+        doc.fitGroups()
+        design = doc
+        return answer("{\"id\":\"\(id.uuidString)\"}")
+    }
+}
+
+/// The open design as JSON, for comparing two copies.
+@_expose(wasm, "bz_document")
+nonisolated func bz_document() -> Int32 {
+    MainActor.assumeIsolated {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let doc = design, let data = try? encoder.encode(doc) else { return answer("{}") }
+        return answer(String(decoding: data, as: UTF8.self))
+    }
+}
+

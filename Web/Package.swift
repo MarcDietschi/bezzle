@@ -2,34 +2,31 @@
 import PackageDescription
 
 // Bezzle in a browser: the app's own model and renderer compiled to WebAssembly.
-// `Sources/BezzleCore/Shared` links to the app's sources, so both build the same code. Where those
-// import Apple frameworks that WebAssembly lacks, the modules of the same name here stand in:
-// `CoreGraphics` records each drawing call for CanvasKit to play back in the page.
-// Build with the swift.org toolchain: see README.md.
+// `Sources/BezzleCore/Shared` links to the app's sources, so both build the same code. What those
+// take from Apple frameworks that WebAssembly lacks is in `Sources/BezzleCore/Platform`, in the
+// core's own module, so that its CGFloat, CGPoint, CGSize and CGRect stand in for Foundation's
+// (which are single precision here): `CGContext` records each drawing call for CanvasKit to
+// play back in the page. The modules named after the frameworks are empty, so the shared
+// sources' imports find them. Build with the swift.org toolchain: see README.md.
 
-let isolation: [SwiftSetting] = [
-    .defaultIsolation(MainActor.self),
-    .enableExperimentalFeature("Extern"),
-    .unsafeFlags(["-Xfrontend", "-disable-availability-checking", "-Xfrontend", "-import-module", "-Xfrontend", "CoreGraphics"]),
-]
+let frameworks = ["CoreGraphics", "AppKit", "CryptoKit", "ImageIO", "UniformTypeIdentifiers", "CoreImage", "CoreText", "QuartzCore"]
 
 let package = Package(
     name: "BezzleWeb",
-    targets: [
-        .target(name: "CoreGraphics", swiftSettings: [.enableExperimentalFeature("Extern")]),
-        .target(name: "AppKit", dependencies: ["CoreGraphics"]),
-        .target(name: "CryptoKit"),
-        .target(name: "ImageIO", dependencies: ["CoreGraphics"]),
-        .target(name: "UniformTypeIdentifiers", dependencies: ["CoreGraphics"]),
-        .target(name: "CoreImage", dependencies: ["CoreGraphics"]),
-        .target(name: "CoreText", dependencies: ["CoreGraphics"]),
-        .target(name: "QuartzCore", dependencies: ["CoreGraphics"]),
+    targets: frameworks.map { .target(name: $0) } + [
+        // Apple's LZFSE, which shared designs are packed with in iCloud.
+        .target(name: "LZFSE", exclude: ["LICENSE", "README.md"]),
         .executableTarget(
             name: "BezzleCore",
-            dependencies: ["CoreGraphics", "AppKit", "CryptoKit", "ImageIO", "UniformTypeIdentifiers", "CoreImage", "CoreText", "QuartzCore"],
+            dependencies: frameworks.map { .target(name: $0) } + ["LZFSE"],
             // Live co-working seals its messages with CryptoKit; the browser would use WebCrypto.
-            exclude: ["Shared/Model/Live.swift"],
-            swiftSettings: isolation,
+            // DesignTokens.swift comes from prepare.sh (see there).
+            exclude: ["Shared/Model/Live.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],
+            swiftSettings: [
+                .defaultIsolation(MainActor.self),
+                .enableExperimentalFeature("Extern"),
+                .unsafeFlags(["-Xfrontend", "-disable-availability-checking"]),
+            ],
             linkerSettings: [.unsafeFlags(["-Xclang-linker", "-mexec-model=reactor", "-Xlinker", "-z", "-Xlinker", "stack-size=8388608"])]
         ),
     ],

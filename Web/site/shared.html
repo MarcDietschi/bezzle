@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bezzle Shared Design</title>
+<style>
+  :root { --bg: #f4f1ec; --ink: #2b2620; --soft: #8a8178; --card: #fffdf9; --line: #e2dcd3; --accent: #d8643a; --bad: #b23b2a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1d1b19; --ink: #ece6de; --soft: #9a9188; --card: #262320; --line: #3a3530; --bad: #e0715f; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; height: 100vh; display: grid; grid-template-columns: 300px 1fr; }
+  aside { border-right: 1px solid var(--line); padding: 16px; overflow: auto; }
+  aside h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--soft); margin: 18px 0 6px; font-weight: 600; }
+  aside button.board { display: block; width: 100%; text-align: left; padding: 6px 10px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  aside button.board:hover { background: var(--line); }
+  aside button.board[aria-current="true"] { background: var(--accent); color: white; }
+  .action { padding: 7px 14px; border-radius: 8px; border: 0; background: var(--accent); color: white; font: inherit; cursor: pointer; }
+  .action[hidden] { display: none; }
+  input { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: inherit; font: 12px ui-monospace, monospace; }
+  ol { margin: 0; padding-left: 18px; color: var(--soft); font-size: 12px; }
+  ol li { margin: 4px 0; overflow-wrap: anywhere; }
+  ol li.bad { color: var(--bad); }
+  ol li b { color: var(--ink); font-weight: 600; }
+  #stage { overflow: auto; display: grid; place-items: center; padding: 32px; }
+  canvas { background: var(--card); box-shadow: 0 2px 14px rgba(58, 50, 38, .14); max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<aside>
+  <h2>API token</h2>
+  <input id="token" placeholder="from the CloudKit Console" autocomplete="off">
+  <h2>Invitation link</h2>
+  <input id="invite" placeholder="from Share › Copy Invitation Link" autocomplete="off">
+  <p><button class="action" id="signin" hidden>Sign in with Apple ID</button> <button class="action" id="edit" hidden>Test edit</button></p>
+  <h2>Steps</h2>
+  <ol id="log"></ol>
+  <h2>Artboards</h2>
+  <div id="boards"></div>
+</aside>
+<div id="stage"><canvas id="view" width="10" height="10"></canvas></div>
+<script type="module">
+import { createBezzle } from './bezzle.mjs'
+import { CloudKit } from './cloudkit.mjs'
+
+// Opens a design shared by link, from its invitation code after the #, as open.html has it.
+// The code is the long run starting with 0, after open.html# in an invitation link, as open.html reads it.
+const codeIn = (s) => (String(s).match(/0[0-9A-Za-z_-]{10,}/) ?? [])[0]
+let code = codeIn(location.hash)
+const inviteEl = document.getElementById('invite')
+if (code) inviteEl.value = code
+const logEl = document.getElementById('log')
+function log(html, bad = false) { const li = document.createElement('li'); li.innerHTML = html; if (bad) li.className = 'bad'; logEl.append(li); return li }
+const show = (v) => typeof v === 'string' ? v : JSON.stringify(v)?.slice(0, 400)
+
+const tokenEl = document.getElementById('token')
+tokenEl.value = new URLSearchParams(location.search).get('token') ?? (() => { try { return localStorage.getItem('bezzle.ckAPIToken') ?? '' } catch { return '' } })()
+let replica = (() => { try { return localStorage.getItem('bezzle.replica') } catch { return null } })()
+if (!replica) { replica = `web-${crypto.randomUUID().toUpperCase()}`; try { localStorage.setItem('bezzle.replica', replica) } catch {} }
+
+// The core and its fonts, as the test page loads them (Web/README.md).
+const ck = '../node_modules/canvaskit-wasm/bin/'
+await new Promise((ok, fail) => { const s = document.createElement('script'); s.src = ck + 'canvaskit.js'; s.onload = ok; s.onerror = fail; document.head.append(s) })
+const CK = await window.CanvasKitInit({ locateFile: (f) => ck + f })
+const fetchBytes = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer())
+const manifest = await (await fetch('./fonts/manifest.json')).json()
+const fonts = {
+  families: manifest.families,
+  faces: await Promise.all(manifest.faces.map(async (f) => ({ ...f, data: await fetchBytes('./fonts/' + f.file) }))),
+  system: { ...manifest.system, data: await fetchBytes('./fonts/' + manifest.system.file) },
+}
+const bz = await createBezzle({ CanvasKit: CK, wasm: await fetchBytes('../.build/out/Products/Release-webassembly-wasm32/BezzleCore.wasm'), fonts, options: { trak: true } })
+log('Bezzle’s core is ready.')
+
+if (!code) log('Paste an invitation link to open its design.')
+
+let cloud, zoneID, database = 'shared', syncToken, pictures = new Map(), current = -1
+
+async function start() {
+  const apiToken = tokenEl.value.trim()
+  if (!apiToken || !code) return
+  try { localStorage.setItem('bezzle.ckAPIToken', apiToken) } catch {}
+  cloud = new CloudKit({ apiToken })
+  const me = await cloud.me()
+  if (me.signIn) {
+    log('iCloud asks for a sign-in.')
+    const b = document.getElementById('signin')
+    b.hidden = false
+    b.onclick = async () => {
+      b.hidden = true
+      try { await cloud.signIn(me.signIn); log('Signed in.'); open() } catch (e) { log(`Sign-in: ${e.message}`, true) }
+    }
+    return
+  }
+  if (!me.ok) return log(`Who is signed in: ${me.status} ${show(me.body)}`, true)
+  log(`Signed in (${me.body?.zones?.length ?? 0} zones of your own).`)
+  open()
+}
+
+async function open() {
+  const accepted = await cloud.accept(code)
+  const result = accepted.body?.results?.[0]
+  if (!accepted.ok || !result || result.serverErrorCode || result.reason) return log(`Accepting the share: ${accepted.status} ${show(accepted.body)}`, true)
+  zoneID = result.zoneID
+  // The owner's own design is in their private database; anyone else's in the shared one.
+  database = result.databaseScope === 'PRIVATE' ? 'private' : 'shared'
+  log(`Accepted: zone <b>${zoneID?.zoneName}</b> of ${zoneID?.ownerRecordName}, ${result.participantPermission ?? ''}, in the ${database} database.`)
+  const all = await cloud.records(zoneID, undefined, database)
+  if (!all.ok) return log(`Reading the zone: ${all.status} ${show(all.body)}`, true)
+  syncToken = all.syncToken
+  const kinds = all.records.reduce((k, r) => ({ ...k, [r.recordType]: (k[r.recordType] ?? 0) + 1 }), {})
+  log(`Read ${all.records.length} records: ${show(kinds)}.`)
+  for (const r of all.records.filter((r) => r.recordType === 'Picture')) {
+    const p = await cloud.picture(r)
+    if (p) pictures.set(p[0], p[1])
+  }
+  const packed = (await Promise.all(all.records.filter((r) => r.recordType === 'Snapshot' || r.recordType === 'Change').map((r) => cloud.packed(r)))).filter(Boolean)
+  const opened = bz.openShared(packed, replica, pictures)
+  if (opened.unread) log(`${opened.unread} records could not be read.`, true)
+  log(`Opened: <b>${opened.boards.length}</b> artboards, ${opened.layers} layers, ${pictures.size} pictures.`)
+  list(opened.boards)
+  document.getElementById('edit').hidden = false
+  setInterval(poll, 10_000)
+}
+
+async function poll() {
+  const since = await cloud.records(zoneID, syncToken, database)
+  if (!since.ok) return
+  syncToken = since.syncToken
+  const news = since.records.filter((r) => r.recordType === 'Change' || r.recordType === 'Snapshot')
+  for (const r of since.records.filter((r) => r.recordType === 'Picture')) { const p = await cloud.picture(r); if (p) pictures.set(p[0], p[1]) }
+  if (!news.length) return
+  const opened = bz.receive((await Promise.all(news.map((r) => cloud.packed(r)))).filter(Boolean))
+  log(`Took in ${news.length} changes from the others.`)
+  list(opened.boards, current)
+}
+
+document.getElementById('edit').onclick = async () => {
+  bz.testEdit()
+  const change = bz.changes()
+  if (!change.data) return log('Nothing to send.')
+  const sent = await cloud.sendChange(zoneID, change, replica, database)
+  log(sent.ok && !sent.body?.records?.[0]?.serverErrorCode ? 'Sent the edit as a change record.' : `Sending the edit: ${sent.status} ${show(sent.body)}`, !sent.ok)
+  draw(current)
+}
+
+function list(boards, keep = -1) {
+  document.getElementById('boards').replaceChildren(...boards.map((b) => {
+    const el = document.createElement('button')
+    el.className = 'board'; el.textContent = b.name; el.dataset.index = b.index
+    el.onclick = () => draw(b.index)
+    return el
+  }))
+  if (boards.length) draw(boards.some((b) => b.index === keep) ? keep : boards[0].index)
+}
+
+function draw(index) {
+  current = index
+  for (const b of document.querySelectorAll('button.board')) b.setAttribute('aria-current', String(+b.dataset.index === index))
+  const scale = Math.min(window.devicePixelRatio || 1, 2)
+  const img = bz.render(index, scale).image
+  const w = img.width(), h = img.height(), view = document.getElementById('view')
+  const px = img.readPixels(0, 0, { width: w, height: h, colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB })
+  view.width = w; view.height = h; view.style.width = `${w / scale}px`
+  view.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, px.length), w, h), 0, 0)
+}
+
+tokenEl.onchange = start
+inviteEl.onchange = () => {
+  code = codeIn(inviteEl.value)
+  if (!code) return log('That is not an invitation link: it has no code after open.html#.', true)
+  history.replaceState(null, '', '#' + code)
+  start()
+}
+start()
+</script>
+</body>
+</html>

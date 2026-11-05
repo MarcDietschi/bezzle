@@ -9,3 +9,5 @@ sed '/^import CoreImage.CIFilterBuiltins/d' ../Bezzle/Canvas/Blurs.swift > $out/
 awk '/^nonisolated extension Renderer \{/{p=1} p' ../Bezzle/Canvas/BoardTiles.swift > $out/Reach.swift
 # From Library.swift only the artboard sizes, which Adapt tells interfaces from compositions by.
 awk '/^struct Preset:/{p=1} p{print} p&&/^}$/{exit}' ../Bezzle/Store/Library.swift > $out/Preset.swift
+# DesignTokens.swift without its CGFloat overload of `number`, which here is the Double one: CGFloat is Double.
+grep -v '^    static func number(_ x: CGFloat, _ places: Int = 2) -> String { number(Double(x), places) }$' ../Bezzle/Model/DesignTokens.swift > $out/DesignTokens.swift

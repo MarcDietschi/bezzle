@@ -1,7 +1,7 @@
-@_exported import Foundation
+import Foundation
 
 // SHA-256, which is all Bezzle's shared code takes from CryptoKit: for a library's fingerprint.
-public enum SHA256 {
+nonisolated public enum SHA256 {
     public struct Digest: Sequence {
         public let bytes: [UInt8]
         public func makeIterator() -> IndexingIterator<[UInt8]> { bytes.makeIterator() }

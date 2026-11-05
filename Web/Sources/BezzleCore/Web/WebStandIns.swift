@@ -1,3 +1,4 @@
+import Foundation
 import AppKit
 
 // What the shared drawing needs from parts of the app that are not here yet, kept as small as
@@ -13,7 +14,7 @@ nonisolated final class Assets: @unchecked Sendable {
 
     func image(_ name: String, pixels: CGFloat = .infinity) -> CGImage? {
         if let image = kept[name] { return image }
-        let reply = Host.call(.image, doubles: Array(name.utf8).map(Double.init))
+        let reply = Host.call(.image, doubles: Array(name.utf8).map { Double($0) })
         let image: CGImage? = reply.count == 3 && reply[0] > 0 ? CGImage(width: Int(reply[1]), height: Int(reply[2]), source: .asset(Int(reply[0]))) : nil
         kept[name] = image
         return image

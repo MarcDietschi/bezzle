@@ -3,20 +3,20 @@ import Foundation
 // CGPath kept in Swift: its elements, as Core Graphics lists them. What only Skia knows how to do
 // (outlines of strokes, dashes, union and difference) goes to the page.
 
-public enum CGPathElementType: Int32, Sendable {
+nonisolated public enum CGPathElementType: Int32, Sendable {
     case moveToPoint, addLineToPoint, addQuadCurveToPoint, addCurveToPoint, closeSubpath
 }
 
-public struct CGPathElement {
+nonisolated public struct CGPathElement {
     public var type: CGPathElementType
     public var points: UnsafeMutablePointer<CGPoint>
 }
 
-public enum CGPathFillRule: Int32, Sendable { case winding, evenOdd }
-public enum CGLineJoin: Int32, Sendable { case miter, round, bevel }
-public enum CGLineCap: Int32, Sendable { case butt, round, square }
+nonisolated public enum CGPathFillRule: Int32, Sendable { case winding, evenOdd }
+nonisolated public enum CGLineJoin: Int32, Sendable { case miter, round, bevel }
+nonisolated public enum CGLineCap: Int32, Sendable { case butt, round, square }
 
-public class CGPath: Equatable, Hashable, @unchecked Sendable {
+nonisolated public class CGPath: Equatable, Hashable, @unchecked Sendable {
     public internal(set) var types: [CGPathElementType] = []
     /// One point per line and move, two per quad curve, three per curve.
     public internal(set) var points: [CGPoint] = []
@@ -171,7 +171,7 @@ public class CGPath: Equatable, Hashable, @unchecked Sendable {
     func polygons(tolerance: CGFloat = 0.1) -> [[CGPoint]] {
         var out: [[CGPoint]] = [], poly: [CGPoint] = []
         var k = 0, current = CGPoint.zero
-        func steps(_ length: CGFloat) -> Int { max(2, min(64, Int((length / max(tolerance * 8, 0.01)).squareRoot().rounded(.up)) * 2)) }
+        func steps(_ length: CGFloat) -> Int { max(2, min(1024, Int((length / max(tolerance * 8, 1e-6)).squareRoot().rounded(.up)) * 2)) }
         for t in types {
             switch t {
             case .moveToPoint:
@@ -203,7 +203,8 @@ public class CGPath: Equatable, Hashable, @unchecked Sendable {
     public func contains(_ point: CGPoint, using rule: CGPathFillRule = .winding, transform: CGAffineTransform = .identity) -> Bool {
         let p = point.applying(transform.inverted())
         var winding = 0, crossings = 0
-        for poly in polygons() {
+        // Cut fine, so a point just inside a curve is inside, as Core Graphics finds it.
+        for poly in polygons(tolerance: 1e-5) {
             for i in 0..<poly.count {
                 let a = poly[i], b = poly[(i + 1) % poly.count]
                 if a.y <= p.y {
@@ -247,7 +248,7 @@ public class CGPath: Equatable, Hashable, @unchecked Sendable {
     }
 
     public func copy(dashingWithPhase phase: CGFloat, lengths: [CGFloat], transform: CGAffineTransform = .identity) -> CGPath {
-        let out = Skia.op(.dash, self, nil, params: [Double(phase)] + lengths.map(Double.init))
+        let out = Skia.op(.dash, self, nil, params: [Double(phase)] + lengths.map { Double($0) })
         return transform.isIdentity ? out : (out.copy(using: [transform]) ?? out)
     }
 
@@ -335,38 +336,48 @@ public class CGPath: Equatable, Hashable, @unchecked Sendable {
     }
 
     /// An arc as curves of a quarter turn at most, from `start` to `end` in radians, the way given.
+    /// An arc from `start` to `end`, in radians, the way given, as Core Graphics draws one: the
+    /// way it goes taken as the angles say, past a whole turn too when the end is further on
+    /// that way, and the rest of a turn when it lies back the other way.
     func appendArc(center: CGPoint, radius: CGFloat, start: CGFloat, end: CGFloat, clockwise: Bool, _ t: CGAffineTransform) {
-        var sweep = end - start
         // Clockwise in Core Graphics' own space, y up: towards smaller angles.
-        if clockwise {
-            if sweep > 0 { sweep -= ((sweep / (2 * .pi)).rounded(.up)) * 2 * .pi }
-            if sweep < -2 * .pi { sweep = -2 * .pi }
+        let d = clockwise ? start - end : end - start
+        var sweep: CGFloat
+        if d >= 0 {
+            sweep = d
         } else {
-            if sweep < 0 { sweep += ((-sweep / (2 * .pi)).rounded(.up)) * 2 * .pi }
-            if sweep > 2 * .pi { sweep = 2 * .pi }
+            sweep = fmod(d, 2 * .pi)
+            if sweep < 0 { sweep += 2 * .pi }
+            if sweep == 0 { sweep = 2 * .pi }
         }
-        appendSweep(center: center, radius: radius, start: start, sweep: sweep, t)
+        appendSweep(center: center, radius: radius, start: start, sweep: clockwise ? -sweep : sweep, t)
     }
 
     func appendSweep(center: CGPoint, radius: CGFloat, start: CGFloat, sweep: CGFloat, _ t: CGAffineTransform) {
         let first = CGPoint(x: center.x + radius * cos(start), y: center.y + radius * sin(start)).applying(t)
         if types.isEmpty || types.last == .closeSubpath { append(.moveToPoint, [first]) } else { append(.addLineToPoint, [first]) }
-        let pieces = max(1, Int((abs(sweep) / (.pi / 2)).rounded(.up)))
-        let step = sweep / CGFloat(pieces)
-        let k = 4.0 / 3.0 * tan(step / 4)
-        var a = start
-        for _ in 0..<pieces {
-            let b = a + step
+        appendCurves(center: center, radius: radius, start: start, sweep: sweep, t)
+    }
+
+    /// The curves of an arc, as Core Graphics makes them: a quarter turn each from its start,
+    /// then one for what is left, when that is more than √ε of a radian.
+    func appendCurves(center: CGPoint, radius: CGFloat, start: CGFloat, sweep: CGFloat, _ t: CGAffineTransform) {
+        let quarter = CGFloat.pi / 2, least = CGFloat.ulpOfOne.squareRoot(), way: CGFloat = sweep < 0 ? -1 : 1
+        var left = abs(sweep), a = start
+        func place(_ q: CGPoint) -> CGPoint { CGPoint(x: center.x + radius * q.x, y: center.y + radius * q.y).applying(t) }
+        while left > least {
+            let step = way * Swift.min(left, quarter), b = a + step
+            let k = 4.0 / 3.0 * tan(step / 4)
             let p0 = CGPoint(x: cos(a), y: sin(a)), p1 = CGPoint(x: cos(b), y: sin(b))
             let c1 = CGPoint(x: p0.x - k * p0.y, y: p0.y + k * p0.x), c2 = CGPoint(x: p1.x + k * p1.y, y: p1.y - k * p1.x)
-            func place(_ q: CGPoint) -> CGPoint { CGPoint(x: center.x + radius * q.x, y: center.y + radius * q.y).applying(t) }
             append(.addCurveToPoint, [place(c1), place(c2), place(p1)])
+            left -= abs(step)
             a = b
         }
     }
 }
 
-public final class CGMutablePath: CGPath, @unchecked Sendable {
+nonisolated public final class CGMutablePath: CGPath, @unchecked Sendable {
     public override init() { super.init() }
 
     public func move(to p: CGPoint, transform t: CGAffineTransform = .identity) { append(.moveToPoint, [p.applying(t)]) }
@@ -420,6 +431,18 @@ public final class CGMutablePath: CGPath, @unchecked Sendable {
         let p0 = currentPoint.applying(back)
         let v1 = CGPoint(x: p0.x - p1.x, y: p0.y - p1.y), v2 = CGPoint(x: p2.x - p1.x, y: p2.y - p1.y)
         let l1 = hypot(v1.x, v1.y), l2 = hypot(v2.x, v2.y)
+        // Begun at its own corner, Core Graphics draws a line there and curves that stay there, as
+        // many as an arc turning from +x to the way out would take.
+        if l1 == 0, radius > 0, l2 > 0 {
+            let q = p1.applying(t)
+            append(.addLineToPoint, [q])
+            var left = abs(atan2(v2.y, v2.x))
+            while left > CGFloat.ulpOfOne.squareRoot() {
+                append(.addCurveToPoint, [q, q, q])
+                left -= Swift.min(left, .pi / 2)
+            }
+            return
+        }
         guard radius > 0, l1 > 0, l2 > 0 else { addLine(to: p1, transform: t); return }
         let u1 = CGPoint(x: v1.x / l1, y: v1.y / l1), u2 = CGPoint(x: v2.x / l2, y: v2.y / l2)
         let cosA = max(-1, min(1, u1.x * u2.x + u1.y * u2.y))
@@ -435,17 +458,7 @@ public final class CGMutablePath: CGPath, @unchecked Sendable {
         while sweep > .pi { sweep -= 2 * .pi }
         while sweep < -.pi { sweep += 2 * .pi }
         append(.addLineToPoint, [t1.applying(t)])
-        let pieces = max(1, Int((abs(sweep) / (.pi / 2)).rounded(.up)))
-        let step = sweep / CGFloat(pieces), k = 4.0 / 3.0 * tan(step / 4)
-        var a = a0
-        for _ in 0..<pieces {
-            let b = a + step
-            let q0 = CGPoint(x: cos(a), y: sin(a)), q1 = CGPoint(x: cos(b), y: sin(b))
-            let c1 = CGPoint(x: q0.x - k * q0.y, y: q0.y + k * q0.x), c2 = CGPoint(x: q1.x + k * q1.y, y: q1.y - k * q1.x)
-            func place(_ q: CGPoint) -> CGPoint { CGPoint(x: c.x + radius * q.x, y: c.y + radius * q.y).applying(t) }
-            append(.addCurveToPoint, [place(c1), place(c2), place(q1)])
-            a = b
-        }
+        appendCurves(center: c, radius: radius, start: a0, sweep: sweep, t)
     }
 
     public func addPath(_ path: CGPath, transform t: CGAffineTransform = .identity) {
@@ -456,7 +469,7 @@ public final class CGMutablePath: CGPath, @unchecked Sendable {
 
 // MARK: Skia's path operations, in the page
 
-public enum Skia {
+nonisolated public enum Skia {
     public enum Op: Int {
         case union = 1, intersect, difference, xor, simplify, stroke, dash
     }

@@ -1,16 +1,16 @@
-@_exported import Foundation
+import Foundation
 
 // The page around the WebAssembly: what it does for Bezzle that Swift cannot here, such as path
 // operations, which Skia does, and reading pictures and fonts. Each call hands it bytes and gets
 // bytes back, synchronously: the page keeps the answer until it is taken.
 
 @_extern(wasm, module: "bezzle", name: "call")
-private func hostCall(_ function: Int32, _ bytes: UnsafeRawPointer?, _ count: Int32) -> Int32
+nonisolated private func hostCall(_ function: Int32, _ bytes: UnsafeRawPointer?, _ count: Int32) -> Int32
 
 @_extern(wasm, module: "bezzle", name: "take")
-private func hostTake(_ into: UnsafeMutableRawPointer?)
+nonisolated private func hostTake(_ into: UnsafeMutableRawPointer?)
 
-public enum Host {
+nonisolated public enum Host {
     /// What the page is asked to do.
     public enum Function: Int32 {
         case pathOp = 1
