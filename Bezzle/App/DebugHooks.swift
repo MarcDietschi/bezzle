@@ -60,21 +60,12 @@ enum DebugHooks {
             after(0.3) { XDCheck.run(spec) }
             return
         }
-        if let out = env["BEZZLE_ICLOUD_SCHEMA"] {
-            Task {
-                let report: String
-                do { report = try await CloudSync.shared.teachSchema() } catch { report = "failed: \(error)" }
-                try? report.write(toFile: out, atomically: true, encoding: .utf8)
-                NSApp.terminate(nil)
-            }
-            return
-        }
         if let look = env["BEZZLE_APPEARANCE"] { NSApp.appearance = NSAppearance(named: look == "dark" ? .darkAqua : .aqua) }
         if let spec = env["BEZZLE_ARRIVING"] {
             let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
-            CloudSync.shared.pretendArriving(parts[0], from: parts.count > 1 ? parts[1] : nil)
+            Sharing.shared.pretendArriving(parts[0], from: parts.count > 1 ? parts[1] : nil)
         }
-        if let problem = env["BEZZLE_INVITATION_PROBLEM"] { CloudSync.shared.invitationProblem = problem }
+        if let problem = env["BEZZLE_INVITATION_PROBLEM"] { Sharing.shared.invitationProblem = problem }
         if env["BEZZLE_WELCOME"] != nil, let url = Welcome.make() {
             WindowRouter.shared.open(url)
         } else if env["BEZZLE_DEMO"] != nil, let url = makeDemo() {
@@ -96,9 +87,6 @@ enum DebugHooks {
 
     /// When a design window opens.
     static func attach(_ store: DocumentStore) {
-        if let s = env["BEZZLE_SHARE_SHEET"].flatMap(Double.init) {
-            after(s) { CloudSync.shared.presentSheet([URL(string: "https://www.apple.com")!], for: store, at: nil) }
-        }
         if let names = env["BEZZLE_SELECT"] {
             let wanted = names.split(separator: ",").map(String.init)
             after(0.6) { store.selection = store.doc.allNodes.filter { wanted.contains($0.name) }.map(\.id) }

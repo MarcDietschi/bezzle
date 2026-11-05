@@ -95,7 +95,7 @@ struct HomeView: View {
 
     /// Your designs under a heading of their own, in a grid as wide as the page.
     private var recents: some View {
-        let sync = CloudSync.shared
+        let sync = Sharing.shared
         let arriving = sync.arriving.sorted { $0.value.title < $1.value.title }.map(\.value)
         let query = search.trimmingCharacters(in: .whitespaces)
         let entries = query.isEmpty ? library.entries : library.entries.filter { $0.name.localizedCaseInsensitiveContains(query) }
@@ -181,7 +181,7 @@ private struct SideFade: ViewModifier {
 /// rows and the names line up across the page.
 private struct DesignGrid: View {
     let entries: [Library.Entry]
-    let arriving: [CloudSync.Arrival]
+    let arriving: [Sharing.Arrival]
     let problem: String?
     let dismissProblem: () -> Void
     let appeared: Bool
@@ -195,7 +195,7 @@ private struct DesignGrid: View {
 
     private enum Item: Identifiable {
         case design(Library.Entry)
-        case arriving(CloudSync.Arrival)
+        case arriving(Sharing.Arrival)
         case problem(String)
 
         var id: String {
@@ -487,6 +487,7 @@ private enum DesignMenu {
             .item("Duplicate") { Library.shared.duplicate(entry.url) },
             .separator,
             .item(Library.shared.holds(entry.url) ? "Move to Trash" : "Remove from List") {
+                guard Library.shared.mayTrash(entry.url) else { return }
                 withAnimation(Theme.spring) { Library.shared.remove(entry.url) }
             },
         ]
@@ -514,7 +515,7 @@ struct TableRim: View {
 /// what is on it is laid in, line by line, as it will be once it is here. It gives way to the
 /// design's own card, in the same place, as soon as there is one.
 private struct ArrivingCard: View {
-    let arrival: CloudSync.Arrival
+    let arrival: Sharing.Arrival
     let well: CGFloat
 
     var body: some View {

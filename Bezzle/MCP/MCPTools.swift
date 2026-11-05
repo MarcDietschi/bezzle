@@ -311,6 +311,10 @@ final class MCPTools {
         guard let ref = try args.string("design") else { throw MCPError("Say which design to delete.") }
         let store = Self.openStore(ref)
         let url = try store?.url ?? locate(ref)
+        // One this Mac shared would stop being shared: the person at the Mac says whether it may.
+        guard Library.shared.mayTrash(url) else {
+            throw MCPError("\(url.lastPathComponent) is shared from this Mac, and moving it to the Trash would stop sharing it; the person at the Mac chose to keep it.")
+        }
         if let store {
             if let tab = Tabs.shared.tab(of: store) { Tabs.shared.close(tab) }
             DocumentStore.finishSaving()

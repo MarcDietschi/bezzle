@@ -98,8 +98,6 @@
 			</array>
 		</dict>
 	</array>
-	<key>CKSharingSupported</key>
-	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Erik Muffler.</string>
 	<key>UTExportedTypeDeclarations</key>

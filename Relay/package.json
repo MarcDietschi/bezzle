@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "wrangler dev --port 8787",
     "deploy": "wrangler deploy",
-    "test": "node test/relay-test.mjs"
+    "test": "node test/relay-test.mjs && node test/sharing-test.mjs",
+    "test:live": "node test/relay-test.mjs",
+    "test:sharing": "node test/sharing-test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

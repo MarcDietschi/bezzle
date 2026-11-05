@@ -14,8 +14,7 @@
 #
 # Needs:
 # - the commit pushed to origin/main, and Bezzle/Canvas/BiRefNet.mlpackage (Scripts/subject-matte/make.sh)
-# - a "Developer ID Application" certificate in the Keychain, and Xcode signed in to the team: the
-#   export uses the Developer ID provisioning profile for com.erik.Bezzle, which carries iCloud
+# - a "Developer ID Application" certificate in the Keychain, and Xcode signed in to the team
 # - the notary credentials: the keychain profile BEZZLE_NOTARY_PROFILE (harness-notary, Gerty's, by
 #   default), or ASC_KEY_PATH, ASC_KEY_ID and ASC_ISSUER as for Scripts/appstore/publish.py
 # - Sparkle's EdDSA key in the login Keychain, the one Gerty's releases sign with (one key serves every
@@ -125,21 +124,17 @@ APP="$WORK/export/Bezzle.app"
 PLIST="$APP/Contents/Info.plist"
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")"
 grep -aq SPUStandardUpdaterController "$APP/Contents/MacOS/Bezzle" || fail "This build has no updater: BEZZLE_DIRECT did not reach it"
-[ -f "$APP/Contents/embedded.provisionprofile" ] || fail "The export holds no provisioning profile, so iCloud would not work"
 
-# The export's entitlements, and what the copy from the website needs beyond the App Store's: production
-# iCloud and push (the export usually sets them), and Sparkle's installer, which a sandboxed app reaches
-# through these two services (sparkle-project.org/documentation/sandboxing). The App Store build never has them.
+# The export's entitlements, and what the copy from the website needs beyond the App Store's: Sparkle's
+# installer, which a sandboxed app reaches through these two services
+# (sparkle-project.org/documentation/sandboxing). The App Store build never has them.
 ENT="$WORK/Bezzle.entitlements"
 codesign -d --entitlements - --xml "$APP" > "$ENT" 2>/dev/null
 pb() { /usr/libexec/PlistBuddy -c "$1" "$ENT" 2>/dev/null; }
 [ "$(pb 'Print :com.apple.security.app-sandbox')" = true ] || fail "The exported app is not sandboxed"
-case "$(pb 'Print :com.apple.developer.icloud-container-environment' || echo none)" in
-  Production) ;;
-  none) pb 'Add :com.apple.developer.icloud-container-environment string Production' ;;
-  *) fail "The export chose iCloud's $(pb 'Print :com.apple.developer.icloud-container-environment') environment" ;;
-esac
-pb 'Set :com.apple.developer.aps-environment production' || pb 'Add :com.apple.developer.aps-environment string production'
+# Bezzle shares through its relay, not iCloud: neither the export nor anything after it may bring iCloud back.
+for key in com.apple.developer.icloud-container-environment com.apple.developer.icloud-container-identifiers \
+  com.apple.developer.icloud-services com.apple.developer.aps-environment; do pb "Delete :$key" || true; done
 pb 'Delete :com.apple.security.temporary-exception.mach-lookup.global-name' || true
 pb 'Add :com.apple.security.temporary-exception.mach-lookup.global-name array'
 pb "Add :com.apple.security.temporary-exception.mach-lookup.global-name:0 string $BUNDLE_ID-spks"

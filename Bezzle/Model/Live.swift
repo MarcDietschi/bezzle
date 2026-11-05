@@ -6,27 +6,94 @@ import ImageIO
 import UniformTypeIdentifiers
 
 // Working on a shared design at the same moment: everyone's hand, gaze and changes as they
-// happen, passed between the Macs that have it open by a relay that cannot read them. iCloud
-// keeps the design; this only makes it quick. See `LiveRoom`.
+// happen, passed between the Macs that have it open by a relay that cannot read them. The
+// design's records on the relay, or the synced folder it is kept in, keep it; this only makes
+// it quick. See `LiveRoom`.
 
 // MARK: - Keys
 
-/// What a shared design's live room is called, and the key everything in it is sealed with. Both
-/// come from the design's zone in iCloud, which only those it is shared with know; the relay sees
-/// the room's name alone, from which neither the key nor the zone can be worked out.
-nonisolated struct LiveKey: Sendable, Equatable {
+/// Everything a shared design's room needs, made from its secret: the 32 random bytes in the
+/// design's link, or for a design kept in a synced folder, in its `sharing/room.json`. Only those
+/// it is shared with know the secret. The relay is given the room's id and its tokens, from which
+/// neither the secret nor the key can be worked out. See Relay/SHARING.md.
+nonisolated struct ShareKeys: Sendable, Equatable {
+    let secret: Data
+    /// The room's id on the relay: 64 hex digits.
     let room: String
-    let key: SymmetricKey
+    /// What reading from the room takes, and writing to it.
+    let readToken: String
+    let writeToken: String
+    private let sealKey: SymmetricKey
+    private let namesKey: SymmetricKey
+    /// This launch's salt, which everything it seals carries, and the key made from it: each copy
+    /// seals with a key of its own, so that no key is used for more than a little.
+    private let salt: Data
+    private let sessionKey: SymmetricKey
 
-    init(zone: String) {
-        let material = SymmetricKey(data: Data(zone.utf8))
-        let salt = Data("bezzle-live-1".utf8)
-        key = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("seal".utf8), outputByteCount: 32)
-        let name = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("room".utf8), outputByteCount: 32)
-        room = name.withUnsafeBytes { Data($0) }.map { String(format: "%02x", $0) }.joined()
+    init?(secret: Data) {
+        guard secret.count == 32 else { return nil }
+        self.secret = secret
+        func derive(_ info: String) -> SymmetricKey {
+            HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: secret), salt: Data("bezzle-share-2".utf8), info: Data(info.utf8), outputByteCount: 32)
+        }
+        room = derive("room").withUnsafeBytes { Data($0) }.hex
+        readToken = derive("read").withUnsafeBytes { Data($0) }.base64URL
+        writeToken = derive("write").withUnsafeBytes { Data($0) }.base64URL
+        sealKey = derive("seal")
+        namesKey = derive("names")
+        var random = SystemRandomNumberGenerator()
+        salt = Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &random) })
+        sessionKey = Self.subkey(sealKey, salt)
     }
 
-    static func == (a: LiveKey, b: LiveKey) -> Bool { a.room == b.room }
+    /// The keys from a link's secret, as base64url.
+    init?(link secret: String) {
+        guard let data = Data(base64URL: secret) else { return nil }
+        self.init(secret: data)
+    }
+
+    /// 32 new random bytes, a secret no room has had.
+    static func newSecret() -> Data {
+        var random = SystemRandomNumberGenerator()
+        return Data((0..<32).map { _ in UInt8.random(in: .min ... .max, using: &random) })
+    }
+
+    static func == (a: ShareKeys, b: ShareKeys) -> Bool { a.room == b.room }
+
+    private static func subkey(_ key: SymmetricKey, _ salt: Data) -> SymmetricKey {
+        HKDF<SHA256>.deriveKey(inputKeyMaterial: key, salt: salt, info: Data("bezzle-seal-2".utf8), outputByteCount: 32)
+    }
+
+    /// The name a picture goes by in the room, which tells the relay nothing of it.
+    func pictureName(_ name: String) -> String {
+        Data(HMAC<SHA256>.authenticationCode(for: Data(name.utf8), using: namesKey)).hex
+    }
+
+    /// `plain`, sealed so that only those with the secret can open it, and none can change it or
+    /// pass it off as something else (`about`, the record's key or "live") unseen.
+    func seal(_ plain: Data, about: String) -> Data? {
+        guard let box = try? AES.GCM.seal(plain, using: sessionKey, authenticating: Data("\(room)/\(about)".utf8)),
+              let combined = box.combined else { return nil }
+        return Data([0x02]) + salt + combined
+    }
+
+    func open(_ sealed: Data, about: String) -> Data? {
+        let bytes = [UInt8](sealed)
+        guard bytes.count >= 1 + 16 + 12 + 16, bytes[0] == 0x02 else { return nil }
+        let saltOf = Data(bytes[1..<17])
+        let key = saltOf == salt ? sessionKey : Self.subkey(sealKey, saltOf)
+        guard let box = try? AES.GCM.SealedBox(combined: Data(bytes[17...])) else { return nil }
+        return try? AES.GCM.open(box, using: key, authenticating: Data("\(room)/\(about)".utf8))
+    }
+}
+
+/// A shared design's live room: what it is called on the relay, and how what is said in it is
+/// sealed. It is the room of the design's share, or of the synced folder it is kept in.
+nonisolated struct LiveKey: Sendable, Equatable {
+    let keys: ShareKeys
+    var room: String { keys.room }
+
+    init(_ keys: ShareKeys) { self.keys = keys }
 
     /// A message sealed so that only the room's own can open it, and none can change it unseen.
     func seal(_ message: LiveMessage) -> Data? {
@@ -36,18 +103,45 @@ nonisolated struct LiveKey: Sendable, Equatable {
             data = small
             packed = 1
         }
-        return try? ChaChaPoly.seal(Data([packed]) + data, using: key).combined
+        return keys.seal(Data([packed]) + data, about: "live")
     }
 
     func open(_ sealed: Data) -> LiveMessage? {
-        guard let box = try? ChaChaPoly.SealedBox(combined: sealed),
-              let plain = try? ChaChaPoly.open(box, using: key), let flag = plain.first else { return nil }
+        guard let plain = keys.open(sealed, about: "live"), let flag = plain.first else { return nil }
         var data = plain.dropFirst()
         if flag == 1 {
             guard let wide = try? (Data(data) as NSData).decompressed(using: .lzfse) as Data else { return nil }
             data = wide[...]
         }
         return try? JSONDecoder().decode(LiveMessage.self, from: Data(data))
+    }
+}
+
+nonisolated extension Data {
+    var hex: String { map { String(format: "%02x", $0) }.joined() }
+
+    var base64URL: String {
+        base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
+    init?(base64URL text: String) {
+        guard !text.isEmpty, text.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else { return nil }
+        var plain = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while plain.count % 4 != 0 { plain += "=" }
+        self.init(base64Encoded: plain)
+    }
+
+    init?(hex text: String) {
+        guard text.count % 2 == 0, text.allSatisfy(\.isHexDigit) else { return nil }
+        var bytes: [UInt8] = []
+        var i = text.startIndex
+        while i < text.endIndex {
+            let j = text.index(i, offsetBy: 2)
+            guard let byte = UInt8(text[i..<j], radix: 16) else { return nil }
+            bytes.append(byte)
+            i = j
+        }
+        self.init(bytes)
     }
 }
 
@@ -60,6 +154,10 @@ nonisolated enum LiveFrame: Equatable, Sendable {
     case joined(UInt32)
     case left(UInt32)
     case message(from: UInt32, Data)
+    /// The room's records go up to this now: what is new is to be fetched.
+    case records(UInt64)
+    /// The room's owner stopped sharing it.
+    case gone
 
     static func read(_ data: Data) -> LiveFrame? {
         let b = [UInt8](data)
@@ -74,6 +172,8 @@ nonisolated enum LiveFrame: Equatable, Sendable {
         case 0x02 where b.count >= 5: return .joined(u32(1))
         case 0x03 where b.count >= 5: return .left(u32(1))
         case 0x04 where b.count >= 5: return .message(from: u32(1), Data(b[5...]))
+        case 0x05 where b.count >= 9: return .records(b[1..<9].reduce(0) { $0 << 8 | UInt64($1) })
+        case 0x06: return .gone
         default: return nil
         }
     }
@@ -91,7 +191,7 @@ nonisolated enum LiveFrame: Equatable, Sendable {
 
 /// Who someone is, said on coming in and to each who comes after.
 nonisolated struct LiveHello: Codable, Equatable, Sendable {
-    /// Their Mac's name among those sharing the design (`CloudSync.replica`), which their changes carry.
+    /// Their Mac's name among those sharing the design (`Sharing.replica`), which their changes carry.
     var replica: String
     var name: String
     /// Where they are in the world, to say what time it is for them.

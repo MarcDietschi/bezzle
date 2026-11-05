@@ -4,13 +4,15 @@ import QuartzCore
 
 /// A shared design open on several Macs at once, each in the same room on the live relay. Here
 /// everyone sees everyone else's pointer, where they are looking, what they hold, and their drags
-/// as they go; what they change comes in a moment after, merged exactly as iCloud's changes are
-/// (see `SharedDesign`), so nothing anyone does is ever lost or put over someone else's. iCloud
-/// keeps carrying every change too: it is what keeps the design, for those who come later, for
-/// those offline, and should the relay be away.
+/// as they go; what they change comes in a moment after, merged exactly as the design's records
+/// are (see `SharedDesign`), so nothing anyone does is ever lost or put over someone else's. The
+/// records on the relay, or the synced folder the design is kept in, carry every change too:
+/// they are what keeps the design, for those who come later, for those offline, and should the
+/// room be away.
 ///
-/// Everything sent is sealed with a key made from the design's zone (`LiveKey`), which only those
-/// it is shared with know. The relay passes on what it cannot read.
+/// Everything sent is sealed with a key made from the design's secret (`LiveKey`), the one in
+/// its link or in its synced folder, which only those it is shared with know. The relay passes
+/// on what it cannot read.
 @Observable
 final class LiveRoom {
     /// Someone else in the room.
@@ -119,9 +121,9 @@ final class LiveRoom {
     init(collaboration: Collaboration, store: DocumentStore, transport: LiveTransport) {
         self.collaboration = collaboration
         self.store = store
-        key = LiveKey(zone: collaboration.zone)
+        key = LiveKey(collaboration.liveKeys)
         self.transport = transport
-        relayedUpTo = collaboration.link.changedUpTo
+        relayedUpTo = collaboration.changedUpTo
         offered = Collaboration.pictures(in: store.sharedDoc)
         transport.onFrame = { [weak self] in self?.handle($0) }
         transport.onLink = { [weak self] link in
@@ -141,8 +143,9 @@ final class LiveRoom {
 
     /// The room for a shared design that has just been opened, when there is a relay to use.
     static func open(for collaboration: Collaboration, store: DocumentStore) -> LiveRoom? {
-        guard !BezzleApp.isTesting, let relay = LiveRelay.address, !collaboration.link.ended else { return nil }
-        let socket = LiveSocket(room: LiveKey(zone: collaboration.zone).room, relay: relay)
+        guard !BezzleApp.isTesting, let relay = LiveRelay.address, !collaboration.isReadOnly else { return nil }
+        let keys = collaboration.liveKeys
+        let socket = LiveSocket(room: keys.room, read: keys.readToken, relay: relay)
         return LiveRoom(collaboration: collaboration, store: store, transport: socket)
     }
 
@@ -188,7 +191,7 @@ final class LiveRoom {
     }()
 
     /// This Mac's name among those sharing the design.
-    private var myReplica: String { collaboration?.replica ?? CloudSync.replica }
+    private var myReplica: String { collaboration?.replica ?? Sharing.replica }
     /// How the others see this Mac's person named.
     @ObservationIgnored var name = LiveRoom.myName
 
@@ -209,7 +212,7 @@ final class LiveRoom {
     /// whenever it takes in a change made here.
     func relay() {
         guard let collaboration else { return }
-        let upTo = collaboration.link.changedUpTo
+        let upTo = collaboration.changedUpTo
         guard upTo > relayedUpTo else { return }
         if inCompany {
             let changes = collaboration.state.changes(by: collaboration.replica, after: relayedUpTo)
@@ -218,11 +221,11 @@ final class LiveRoom {
         relayedUpTo = upTo
     }
 
-    /// What this Mac changed that iCloud does not have yet, for someone who has just come in:
-    /// they would otherwise wait for it to arrive from there.
+    /// What this Mac changed that the room's records or the folder do not have yet, for someone who
+    /// has just come in: they would otherwise wait for it to arrive from there.
     private func catchUp(_ peer: UInt32?) {
         guard let collaboration else { return }
-        let changes = collaboration.state.changes(by: collaboration.replica, after: collaboration.link.sentUpTo)
+        let changes = collaboration.state.changes(by: collaboration.replica, after: collaboration.sentUpTo)
         if !changes.isEmpty { send(.changes(changes), to: peer) }
     }
 
@@ -351,9 +354,13 @@ final class LiveRoom {
             catchUp(peer)
         case .left(let peer):
             remove(peer)
+        case .records(let upTo):
+            collaboration?.cloud?.recordsChanged(upTo: upTo)
+        case .gone:
+            collaboration?.cloud?.gone()
         case .message(let from, let sealed):
             guard let message = key.open(sealed) else {
-                CloudSync.log.error("A live message could not be opened")
+                Sharing.log.error("A live message could not be opened")
                 return
             }
             heard[from] = Date()
@@ -400,7 +407,7 @@ final class LiveRoom {
             beat += 1
         case .changes(let changes):
             guard let collaboration else { return }
-            collaboration.receive([changes])
+            collaboration.receive([changes], from: .relay)
             collaboration.persist()
         case .wink(let at):
             winks.append(Wink(by: peer, at: at, time: now))

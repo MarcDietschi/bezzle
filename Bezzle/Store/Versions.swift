@@ -25,6 +25,11 @@ nonisolated struct DesignVersion: Codable, Identifiable, Hashable, Sendable {
 /// Where a design keeps its versions: a folder in its package, with a list of them and each
 /// one packed small. Pictures never change once in a design, so a version only needs the design
 /// itself to be whole.
+///
+/// In a design shared through a synced folder, each Mac keeps its list in its own folder there
+/// (see `FolderShare`), as two writing one list would lose one's; the versions themselves, each
+/// a file of its own, never written over, stay where they are. Each Mac sees its own and the
+/// versions everyone named.
 nonisolated enum VersionFiles {
     static let folderName = "versions"
 
@@ -32,18 +37,58 @@ nonisolated enum VersionFiles {
     private static func indexFile(_ design: URL) -> URL { folder(of: design).appendingPathComponent("index.json") }
     static func file(_ id: UUID, of design: URL) -> URL { folder(of: design).appendingPathComponent("\(id.uuidString).lzfse") }
 
-    static func index(of design: URL) -> [DesignVersion] {
-        guard let data = try? Data(contentsOf: indexFile(design)) else { return [] }
+    /// The list a Mac with `replica` keeps of a design shared through its folder.
+    private static func ownIndexFile(_ design: URL, _ replica: String) -> URL {
+        FolderSync.folder(of: replica, in: design).appendingPathComponent(FolderShare.versionsFile)
+    }
+
+    static func index(of design: URL, replica: String) -> [DesignVersion] {
+        guard FolderSync.isShared(design) else { return list(at: indexFile(design)) }
+        let fm = FileManager.default
+        let mine = ownIndexFile(design, replica)
+        let others = ((try? fm.contentsOfDirectory(at: FolderSync.peopleFolder(of: design), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
+            .filter { $0.lastPathComponent != replica }
+            .map { $0.appendingPathComponent(FolderShare.versionsFile) }
+            .filter { fm.fileExists(atPath: $0.path) }
+        var out = list(at: mine)
+        // The design's versions from before it was shared through its folder are the first
+        // Mac's to share it, to keep on as its own.
+        if !fm.fileExists(atPath: mine.path), others.isEmpty { out = list(at: indexFile(design)) }
+        var at: [UUID: Int] = [:]
+        for (i, v) in out.enumerated() { at[v.id] = i }
+        for file in others {
+            for v in list(at: file) where v.isNamed && v.shared == true {
+                if let i = at[v.id] {
+                    // Its name as the one who took it last gave it.
+                    if v.replica == file.deletingLastPathComponent().lastPathComponent { out[i].name = v.name }
+                } else {
+                    at[v.id] = out.count
+                    out.append(v)
+                }
+            }
+        }
+        return out.sorted { $0.date < $1.date }
+    }
+
+    static func list(at file: URL) -> [DesignVersion] {
+        guard let data = try? Data(contentsOf: file) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
         return ((try? decoder.decode([DesignVersion].self, from: data)) ?? []).sorted { $0.date < $1.date }
     }
 
-    static func writeIndex(_ list: [DesignVersion], to design: URL) throws {
-        try FileManager.default.createDirectory(at: folder(of: design), withIntermediateDirectories: true)
+    static func writeIndex(_ list: [DesignVersion], to design: URL, replica: String) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
-        try encoder.encode(list).write(to: indexFile(design), options: .atomic)
+        let data = try encoder.encode(list)
+        if FolderSync.isShared(design) {
+            let file = ownIndexFile(design, replica)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: file, options: .atomic)
+            return
+        }
+        try FileManager.default.createDirectory(at: folder(of: design), withIntermediateDirectories: true)
+        try data.write(to: indexFile(design), options: .atomic)
     }
 
     /// The design packed as a version keeps it: without where it was looked at.
@@ -145,13 +190,15 @@ final class VersionShelf {
     }
 
     private var url: URL? { store.flatMap { DesignFile.isPackage($0.url) ? $0.url : nil } }
+    /// Which Mac's list of versions is this one's, in a design shared through its folder.
+    private var replica: String { store?.sharing?.replica ?? Sharing.replica }
 
     /// Reads the versions kept with the design, once. One whose file is missing, as when its
     /// copy never arrived, is left out: there would be nothing to show for it.
     func load() {
         guard !loaded, let url else { return }
         loaded = true
-        list = VersionFiles.index(of: url).filter { FileManager.default.fileExists(atPath: VersionFiles.file($0.id, of: url).path) }
+        list = VersionFiles.index(of: url, replica: replica).filter { FileManager.default.fileExists(atPath: VersionFiles.file($0.id, of: url).path) }
     }
 
     /// A design kept as a single file becomes a package, where versions have room.
@@ -205,12 +252,12 @@ final class VersionShelf {
         cache[version.id] = bare
         for id in dropped { cache[id] = nil }
         // Packed away from the main thread, in turn with the design's own saves.
-        let made = version, kept = all, packing = bare
+        let made = version, kept = all, packing = bare, replica = replica
         DocumentStore.saving.async { [weak self] in
             guard let data = VersionFiles.pack(packing) else { return }
             do {
                 try VersionFiles.write(data, as: made.id, to: url)
-                try VersionFiles.writeIndex(kept, to: url)
+                try VersionFiles.writeIndex(kept, to: url, replica: replica)
                 VersionFiles.remove(dropped, from: url)
             } catch {
                 NSLog("Bezzle could not keep a version of %@: %@", url.path, error.localizedDescription)
@@ -239,10 +286,10 @@ final class VersionShelf {
         guard list[i].name != named else { return }
         list[i].name = named
         if store.sharing != nil, named != nil { list[i].shared = true }
-        let all = list, version = list[i]
+        let all = list, version = list[i], replica = replica
         // Its file may still be on its way to the disk: read once it is.
         DocumentStore.saving.async { [weak self] in
-            try? VersionFiles.writeIndex(all, to: url)
+            try? VersionFiles.writeIndex(all, to: url, replica: replica)
             guard version.shared == true, let data = try? Data(contentsOf: VersionFiles.file(version.id, of: url)) else { return }
             Task { @MainActor in self?.shareNamed(version, data: data) }
         }
@@ -260,10 +307,10 @@ final class VersionShelf {
     private func shareNamed(_ version: DesignVersion, data: Data) {
         guard let session = store?.sharing else { return }
         session.live?.announce(version, data: data)
-        CloudSync.shared.sendVersion(version.id, of: session)
+        session.cloud?.sendVersion(version, data: data)
     }
 
-    /// A named version someone sharing the design kept, from iCloud or the live room.
+    /// A named version someone sharing the design kept, from the room's records, its folder or the live room.
     func arrived(_ version: DesignVersion, data: Data) {
         guard let url else { return }
         load()
@@ -278,10 +325,10 @@ final class VersionShelf {
             list = (list + [version]).sorted { $0.date < $1.date }
             cache[version.id] = doc
         }
-        let all = list
+        let all = list, replica = replica
         DocumentStore.saving.async {
             if !FileManager.default.fileExists(atPath: VersionFiles.file(version.id, of: url).path) { try? VersionFiles.write(data, as: version.id, to: url) }
-            try? VersionFiles.writeIndex(all, to: url)
+            try? VersionFiles.writeIndex(all, to: url, replica: replica)
         }
     }
 
@@ -521,5 +568,14 @@ final class VersionShelf {
 
     func dropPicked() {
         travel?.picked = []
+    }
+}
+
+extension VersionFiles {
+    /// The versions this Mac sees of a design.
+    @MainActor static func index(of design: URL) -> [DesignVersion] { index(of: design, replica: Sharing.replica) }
+
+    @MainActor static func writeIndex(_ list: [DesignVersion], to design: URL) throws {
+        try writeIndex(list, to: design, replica: Sharing.replica)
     }
 }

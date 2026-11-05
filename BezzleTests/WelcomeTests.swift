@@ -65,7 +65,7 @@ struct WelcomeTests {
         #expect(note.by == Welcome.noteWriter)
         #expect(note.on == Welcome.ticketTitleID)
         #expect(!note.isDone)
-        #expect(doc.unread(note.id, seen: nil, replica: CloudSync.replica))
+        #expect(doc.unread(note.id, seen: nil, replica: Sharing.replica))
         let title = try #require(doc.node(Welcome.ticketTitleID))
         #expect(title.kind == .text)
         let area = try #require(doc.area(of: note))

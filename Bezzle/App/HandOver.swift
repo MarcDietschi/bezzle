@@ -33,7 +33,7 @@ enum HandOver {
         BezzleApp.isTesting || ProcessInfo.processInfo.environment["BEZZLE_LIBRARY"] != nil
     }
 
-    private static var environment: String { CloudSync.isAvailable ? CloudSync.environment : "none" }
+    private static var environment: String { Sharing.isAvailable ? "relay" : "none" }
 
     /// At launch, before anything is opened: asks whether another copy is there to take over.
     static func start() {
@@ -117,7 +117,7 @@ enum HandOver {
         let (paths, links) = waiting
         waiting = ([], [])
         paths.forEach { WindowRouter.shared.open(URL(fileURLWithPath: $0)) }
-        links.compactMap(URL.init(string:)).forEach { CloudSync.shared.accept(link: $0) }
+        links.compactMap(URL.init(string:)).forEach { Sharing.shared.accept(link: $0) }
     }
 
     // MARK: The copy taking over
@@ -138,7 +138,7 @@ enum HandOver {
             MainActor.assumeIsolated {
                 NSApp.activate()
                 paths.forEach { WindowRouter.shared.open(URL(fileURLWithPath: $0)) }
-                links.compactMap(URL.init(string:)).forEach { CloudSync.shared.accept(link: $0) }
+                links.compactMap(URL.init(string:)).forEach { Sharing.shared.accept(link: $0) }
             }
         })
     }

@@ -187,7 +187,7 @@ struct DesignBarControls: View {
             MenuButton(id: "zoom", title: .verbatim("\(Int((store.viewport.zoom * 100).rounded()))%"), width: 220) { zoomMenu }
                 .help("Zoom")
             VersionsButton(store: store)
-            if CloudSync.isAvailable || store.isReadOnly { ShareButton(store: store) }
+            if Sharing.isAvailable || store.isReadOnly { ShareButton(store: store) }
             ModeSwitch(store: store)
             ModeAction(store: store)
         }

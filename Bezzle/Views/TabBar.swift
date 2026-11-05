@@ -377,7 +377,7 @@ private struct TabButton: View {
                 Image(systemName: mark == .ended ? "lock.fill" : "person.2.fill")
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(mark == .ended ? Theme.ink3 : Theme.pencil)
-                    .help(mark == .ended ? "Read only: this design is no longer shared with you. Save a copy to keep working on it." : "Shared through iCloud")
+                    .help(Text(mark.help))
             }
             if tab.renaming {
                 TextField("", text: $draft)

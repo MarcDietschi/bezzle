@@ -216,7 +216,7 @@ final class Library {
             NSLog("Bezzle could not move %@ to %@: %@", url.path, into.path, error.localizedDescription)
             return false
         }
-        if let link = SharingFiles.link(of: target) { _ = CloudSync.shared.claim(link.zone, at: target) }
+        if let room = SharingFiles.link(of: target)?.keys?.room { _ = Sharing.shared.claim(room, at: target) }
         renamed(from: url, to: target)
         return true
     }
@@ -231,7 +231,7 @@ final class Library {
         }
         entries = urls.map { url in
             let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            return Entry(url: url, modified: date, sharing: SharingFiles.link(of: url)?.mark, key: keys[url.path] ?? url.path)
+            return Entry(url: url, modified: date, sharing: Self.mark(of: url), key: keys[url.path] ?? url.path)
         }.sorted { $0.modified > $1.modified }
     }
 
@@ -266,7 +266,7 @@ final class Library {
             return nil
         }
         // A shared design is found again where it now is, by what comes in from the others.
-        if let link = SharingFiles.link(of: target) { _ = CloudSync.shared.claim(link.zone, at: target) }
+        if let room = SharingFiles.link(of: target)?.keys?.room { _ = Sharing.shared.claim(room, at: target) }
         renamed(from: url, to: target)
         return target
     }
@@ -311,10 +311,25 @@ final class Library {
         FileAccess.keep(url)
     }
 
+    /// Whether the design at `url` may go to the Trash: one this Mac shared stops being shared with
+    /// it, so the person is asked first. Taking one off the home screen asks nothing, as its file
+    /// stays and so does its share.
+    func mayTrash(_ url: URL) -> Bool {
+        guard holds(url), let room = SharingFiles.link(of: url)?.keys?.room, Sharing.shared.owns(room) else { return true }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Move “\(url.deletingPathExtension().lastPathComponent)” to the Trash and stop sharing it?")
+        alert.informativeText = String(localized: "The link stops working. Everyone who has the design keeps it as it is now, read only.")
+        alert.addButton(withTitle: String(localized: "Move to Trash"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     /// Takes a design off the home screen; one in the designs folder goes to the Trash.
     func remove(_ url: URL) {
         let path = url.standardizedFileURL.path
         if holds(url) {
+            // One this Mac shared stops being shared, and the others keep it as it last was.
+            Sharing.shared.stopSharing(designAt: url)
             NSWorkspace.shared.recycle([url])
         }
         var paths = defaults.stringArray(forKey: recentsKey) ?? []
@@ -358,12 +373,28 @@ final class Library {
         }
     }
 
+    /// How a design not open is shared, for its card: by link, or through the synced folder it
+    /// is kept in.
+    static func mark(of url: URL) -> SharingMark? {
+        SharingFiles.leaveICloud(url)
+        if let link = SharingFiles.link(of: url) {
+            if link.ended { return .ended }
+            if let room = link.keys?.room { return Sharing.shared.owns(room) ? .shared : .sharedBy(link.ownerName) }
+        }
+        return FolderSync.mark(of: url)
+    }
+
     /// Makes a copy of a design next to it.
     func duplicate(_ url: URL) {
         let target = freeURL(named: String(localized: "\(url.deletingPathExtension().lastPathComponent) copy"), in: url.deletingLastPathComponent())
         try? FileManager.default.copyItem(at: url, to: target)
+        // Its own file may lag behind what everyone's files in its folder have.
+        if FolderSync.isShared(url), var doc = FolderSync.document(of: url) {
+            doc.viewport = (try? DesignFile.read(url))?.viewport
+            try? DesignFile.write(doc, to: target)
+        }
         // A copy is a design of its own, never shared.
-        SharingFiles.unlink(target)
+        SharingFiles.forget(target)
         remember(target)
         refresh()
     }

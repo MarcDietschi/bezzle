@@ -261,6 +261,8 @@ final class DocumentStore {
     }
 
     convenience init(opening url: URL) throws {
+        // A design once shared through iCloud is first kept as it was last shared.
+        SharingFiles.leaveICloud(url)
         var document = try DesignFile.read(url)
         // A shared design opens as it is shared, which its own file may lag behind.
         let sharing = Collaboration.open(url)
@@ -687,6 +689,12 @@ final class DocumentStore {
         url = target
         assets = Assets(design: target)
         sharing?.moved(to: target)
+        // Into a folder Google Drive or the like keeps in step: shared with everyone who has it.
+        if sharing == nil, FolderSync.applies(to: target), let session = Collaboration.open(target) {
+            _ = session.document()
+            sharing = session
+            session.attach(to: self)
+        }
         return true
     }
 
@@ -696,7 +704,7 @@ final class DocumentStore {
     var sharedDoc: BezzleDocument { withShapeBack(doc) }
 
     /// Whether it can only be looked at: someone else's design this Mac no longer shares.
-    var isReadOnly: Bool { sharing?.mark == .ended }
+    var isReadOnly: Bool { sharing?.isReadOnly == true }
 
     /// Makes a design of its own from this one as it is now, beside the others in the Bezzle
     /// folder, and opens it. For a design someone shared, it is how to keep one of one's own.

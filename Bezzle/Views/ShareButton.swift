@@ -1,84 +1,86 @@
 import SwiftUI
 import AppKit
 
-/// Shares the design through iCloud, or shows who it is shared with. Nobody needs an account of
-/// any kind beyond the iCloud their Mac is signed in to. Its menu copies Bezzle's own invitation
-/// link, which works from any mail, chat or browser, or opens the share sheet to invite people
-/// and see who has it. Before either, everything in the design goes up, and the button counts the
-/// pictures as they do. A design someone else no longer shares can only be saved as a copy of one's own.
+/// Shares the design by link, or shows that it is shared. Nobody needs an account of any kind:
+/// anyone with the link can work on the design, from Bezzle on a Mac or in a browser. Before the
+/// link is copied, everything in the design goes to the relay, and the button counts the pictures
+/// as they do. Whoever shared the design can stop sharing it; a design someone else no longer
+/// shares can only be saved as a copy of one's own.
 struct ShareButton: View {
     let store: DocumentStore
     @Environment(MenuHost.self) private var menus
-    @State private var spot = Spot()
-    /// A moment after the invitation went to the pasteboard, for the button to show it did.
+    /// A moment after the link went to the pasteboard, for the button to show it did.
     @State private var copied = false
     private static let menuID = "share"
 
     var body: some View {
-        let sync = CloudSync.shared
+        let sharing = Sharing.shared
         ZStack {
             if store.isReadOnly {
                 CardButton(title: "Save a Copy", symbol: "doc.on.doc", height: 28) { store.saveCopy() }
                     .help("Make a design of your own from this one  ⇧⌘S")
-            } else if let upload = sync.preparing[store.url] {
+            } else if let upload = sharing.preparing[store.url] {
                 Uploading(upload: upload)
-                    .help("Everything in the design goes to iCloud before anyone is invited")
+                    .help("Everything in the design goes up before the link is copied")
             } else {
-                CardButton(title: store.sharing?.mark == nil ? "Share…" : "Shared", symbol: copied ? "checkmark" : symbol(sync), height: 28) {
-                    menus.toggle(Self.menuID, width: 260, entries: entries(sync))
+                CardButton(title: store.sharing?.mark == nil ? "Share…" : "Shared", symbol: copied ? "checkmark" : symbol, height: 28) {
+                    menus.toggle(Self.menuID, width: 260, entries: entries)
                 }
                 .menuAnchor(Self.menuID)
-                .help(copied ? String(localized: "The invitation link is copied: paste it into any mail or chat") : help(sync))
+                .help(copied ? Text("The link is copied: paste it into any mail or chat") : help)
             }
         }
-        // Where the button is in its window, for the share sheet to come out from once the
-        // design is up, however the button changed meanwhile.
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { spot.rect = $0 }
-        .animation(Theme.spring, value: sync.preparing[store.url])
+        .animation(Theme.spring, value: sharing.preparing[store.url])
     }
 
-    private func entries(_ sync: CloudSync) -> [MenuEntry] {
-        let spot = spot
-        return [
-            .item("Copy Invitation Link") {
+    private var entries: [MenuEntry] {
+        var out: [MenuEntry] = [
+            .item("Copy Link") {
                 Task {
-                    guard await sync.copyInvitationLink(for: store) else { return }
+                    guard await Sharing.shared.copyLink(for: store) else { return }
                     copied = true
                     try? await Task.sleep(for: .seconds(2.5))
                     copied = false
                 }
             },
             .note("Anyone with the link can work on the design."),
-            .separator,
-            .item(store.sharing?.mark == nil ? "Invite People…" : "People…") {
-                Task { await sync.showSharing(for: store) { spot.rect } }
-            },
         ]
+        if store.sharing?.mark == .shared {
+            out += [.separator, .item("Stop Sharing…") { confirmStop() }]
+        }
+        return out
     }
 
-    private func symbol(_ sync: CloudSync) -> String {
+    private func confirmStop() {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Stop sharing “\(store.name)”?")
+        alert.informativeText = String(localized: "The link stops working. Everyone who has the design keeps it as it is now, read only.")
+        alert.addButton(withTitle: String(localized: "Stop Sharing"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        let stop = { (response: NSApplication.ModalResponse) in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { _ = await Sharing.shared.stopSharing(store) }
+        }
+        if let window = store.canvas?.window { alert.beginSheetModal(for: window, completionHandler: stop) } else { stop(alert.runModal()) }
+    }
+
+    private var problem: String? { store.sharing?.cloud?.problem }
+
+    private var symbol: String {
         guard store.sharing?.mark != nil else { return "person.crop.circle.badge.plus" }
-        if sync.problem != nil || sync.accountProblem != nil { return "exclamationmark.icloud" }
-        return sync.busy ? "arrow.triangle.2.circlepath.icloud" : "person.2"
+        return problem != nil ? "exclamationmark.triangle" : "person.2"
     }
 
-    private func help(_ sync: CloudSync) -> String {
-        if let problem = sync.accountProblem ?? (store.sharing != nil ? sync.problem : nil) { return problem }
-        return store.sharing?.mark == nil
-            ? String(localized: "Work on this design together with others, through iCloud")
-            : String(localized: "Shared through iCloud: everyone’s changes come in as they are made")
-    }
-
-    /// Where the button is in its window, from the window's top left, kept out of the view's state
-    /// so it is not drawn again each time it moves.
-    final class Spot {
-        var rect: CGRect?
+    private var help: Text {
+        if let problem { return Text(problem) }
+        guard let mark = store.sharing?.mark else { return Text("Work on this design together with others, by link") }
+        return Text(mark.help)
     }
 }
 
 /// The Share button while the design goes up: a ring filling as the pictures do, and how many.
 private struct Uploading: View {
-    let upload: CloudSync.Upload
+    let upload: Sharing.Upload
 
     var body: some View {
         HStack(spacing: 7) {
@@ -132,7 +134,7 @@ struct SharingTag: View {
         .padding(.horizontal, 8)
         .frame(height: 20)
         .background(Capsule().fill(mark == .ended ? Theme.ink.opacity(0.06) : Theme.pencilWash))
-        .help(mark == .ended ? "Read only: this design is no longer shared with you. Save a copy to keep working on it." : "Shared through iCloud")
+        .help(Text(mark.help))
         .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }

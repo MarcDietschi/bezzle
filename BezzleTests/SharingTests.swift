@@ -108,36 +108,24 @@ struct SharingTests {
 
     // MARK: The pieces
 
-    /// Bezzle's page on the web hands an invitation over as `bezzle://share/<token>`; that, and the
-    /// iCloud link itself, come out as the iCloud link, and nothing else is taken for one.
-    @Test func invitationsComeAsTheirICloudLink() {
-        let link = URL(string: "https://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg")
-        for given in ["bezzle://share/0bjtbTTaM5b7bG1ff6dnKFbmg", "bezzle://share/0bjtbTTaM5b7bG1ff6dnKFbmg/",
-                      "BEZZLE://Share/0bjtbTTaM5b7bG1ff6dnKFbmg",
-                      "https://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg#Wander_Pitch",
-                      "https://icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg"] {
-            #expect(CloudSync.invitationLink(from: URL(string: given)!) == link, "\(given)")
+    /// A design's link is Bezzle's page on the web with its secret after the #, which the page hands
+    /// Bezzle as `bezzle://share/2.<secret>`; both give the secret back, and nothing else is taken
+    /// for a link.
+    @Test func aLinkCarriesItsSecretAfterTheHash() throws {
+        let secret = ShareKeys.newSecret().base64URL
+        let link = ShareLink(secret: secret)
+        let page = try #require(link.page)
+        #expect(page.absoluteString == "https://mfrports.github.io/bezzle-web/open.html#2.\(secret)")
+        #expect(Sharing.secret(from: page) == secret)
+        for given in ["bezzle://share/2.\(secret)", "bezzle://share/2.\(secret)/", "BEZZLE://Share/2.\(secret)"] {
+            #expect(Sharing.secret(from: URL(string: given)!) == secret, "\(given)")
         }
-        for given in ["bezzle://share/", "bezzle://share/a/b", "bezzle://open/0bjtbTTaM5b7bG1ff6dnKFbmg",
-                      "bezzle://share/0bjt%2F..%2Fx", "bezzle://share/0bjt%3Fa%3Db",
-                      "https://www.icloud.com/photos/0bjtbTTaM5b7bG1ff6dnKFbmg",
-                      "https://www.icloud.com.example.org/share/0bjtbTTaM5b7bG1ff6dnKFbmg",
-                      "http://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg",
-                      "file:///Users/someone/Design.bezzle"] {
-            #expect(CloudSync.invitationLink(from: URL(string: given)!) == nil, "\(given)")
+        for given in ["bezzle://share/", "bezzle://share/\(secret)", "bezzle://share/2.abc", "bezzle://open/2.\(secret)",
+                      "https://example.com/bezzle-web/open.html#2.\(secret)", "https://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg",
+                      "http://mfrports.github.io/bezzle-web/open.html#2.\(secret)", "file:///Users/someone/Design.bezzle"] {
+            #expect(Sharing.secret(from: URL(string: given)!) == nil, "\(given)")
         }
-    }
-
-    /// Bezzle's own invitation is its website's page with the share's code after the #, and what
-    /// that page hands Bezzle comes back as the share's iCloud link.
-    @Test func theInvitationLinkIsTheWebsitePageWithTheCode() throws {
-        let share = try #require(URL(string: "https://www.icloud.com/share/0TestCode_ab-12xYz9QwErTy#Wander_Pitch"))
-        let page = try #require(CloudSync.invitationPage(for: share))
-        #expect(page.absoluteString == "https://mfrports.github.io/bezzle-web/open.html#0TestCode_ab-12xYz9QwErTy")
-        let code = try #require(page.fragment)
-        let handed = try #require(URL(string: "bezzle://share/\(code)"))
-        #expect(CloudSync.invitationLink(from: handed) == URL(string: "https://www.icloud.com/share/0TestCode_ab-12xYz9QwErTy"))
-        #expect(CloudSync.invitationPage(for: URL(string: "https://example.com/share/0TestCode_ab-12xYz9QwErTy")!) == nil)
+        #expect(ShareLink(secret: secret, ended: true).page == nil)
     }
 
     @Test func everyPropertyOfALayerIsSharedOnItsOwn() {
@@ -563,13 +551,17 @@ struct SharingTests {
 
     // MARK: In the app
 
-    /// A bench whose design is shared, with another Mac that has fetched it.
+    /// A bench whose design is shared by link, kept on disk as a shared design is, with another
+    /// Mac that has fetched it. No relay is reached: tests have none.
     private func sharedBench() -> (Bench, Collaboration, Mac) {
         let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50)),
                                   CanvasTests.rect("S", CGRect(x: 100, y: 10, width: 50, height: 50))])
-        let session = Collaboration(url: bench.store.url, link: SharingLink(zone: "design-test-\(UUID().uuidString)", owner: nil), state: SharedDesign())
+        bench.store.save()
+        DocumentStore.finishSaving()
+        try? SharingFiles.write(ShareLink(secret: ShareKeys.newSecret().base64URL, title: "Test"), to: bench.store.url)
+        let session = Collaboration.open(bench.store.url)!
+        _ = session.document()
         bench.store.sharing = session
-        _ = CloudSync.shared.claim(session.zone, at: bench.store.url)
         session.attach(to: bench.store)
         var other = Mac("other")
         other.time = Collaboration.now
@@ -581,7 +573,7 @@ struct SharingTests {
         let (bench, session, initial) = sharedBench()
         var other = initial
         let store = bench.store
-        defer { try? FileManager.default.removeItem(at: store.url) }
+        defer { session.close(); try? FileManager.default.removeItem(at: store.url) }
         #expect(other.doc.nodes == store.doc.nodes)
 
         bench.step { store.update([bench.node("R")!.id], "Colour") { $0.fill.color = .black } }
@@ -589,7 +581,7 @@ struct SharingTests {
         other.receive(session.state)
         other.time = Collaboration.now + 10
         other.edit { set(&$0, "S") { $0.frame.origin.x = 333 } }
-        session.receive([other.state])
+        session.receive([other.state], from: .cloud)
         #expect(bench.node("S")?.frame.minX == 333)
         #expect(bench.node("R")?.fill.color == .black)
 
@@ -611,14 +603,14 @@ struct SharingTests {
         let (bench, session, initial) = sharedBench()
         var other = initial
         let store = bench.store
-        defer { try? FileManager.default.removeItem(at: store.url) }
+        defer { session.close(); try? FileManager.default.removeItem(at: store.url) }
         other.time = Collaboration.now + 10
         other.edit { set(&$0, "S") { $0.name = "S, renamed" } }
 
         bench.step {
             store.beginGesture()
             store.update([bench.node("R")!.id], "Move") { $0.frame.origin.x = 40 }
-            session.receive([other.state])
+            session.receive([other.state], from: .cloud)
             #expect(bench.node("S, renamed") == nil)
             store.endGesture("Move")
         }
@@ -635,26 +627,26 @@ struct SharingTests {
         DocumentStore.finishSaving()
         other.time = Collaboration.now + 10
         other.edit { $0.nodes[0].children.append(CanvasTests.rect("Late", CGRect(x: 0, y: 200, width: 10, height: 10))) }
-        session.receive([other.state])
+        session.receive([other.state], from: .cloud)
         session.persist()
         DocumentStore.finishSaving()
         // Bezzle stops before the design's own file is written.
         session.close()
         let reopened = try DocumentStore(opening: url)
         #expect(reopened.doc.allNodes.contains { $0.name == "Late" })
-        #expect(reopened.sharing?.zone == session.zone)
+        #expect(reopened.sharing?.link == session.link)
         reopened.sharing?.close()
     }
 
     @Test func aDesignNoLongerSharedCanOnlyBeLookedAtAndSavedAsACopy() throws {
         let (bench, session, _) = sharedBench()
         let store = bench.store
-        defer { try? FileManager.default.removeItem(at: store.url) }
-        session.link.owner = "_someoneElse"
+        defer { session.close(); try? FileManager.default.removeItem(at: store.url) }
         #expect(store.sharing?.mark == .sharedBy(nil))
-        session.link.ended = true
+        session.unshared(own: false)
         #expect(store.isReadOnly)
         #expect(store.sharing?.mark == .ended)
+        #expect(SharingFiles.link(of: store.url)?.ended == true)
         let before = store.doc
         bench.step { store.update([bench.node("R")!.id], "Colour") { $0.fill.color = .black } }
         #expect(store.doc == before)
@@ -667,13 +659,12 @@ struct SharingTests {
         let opened = try DocumentStore(opening: copy)
         #expect(opened.sharing == nil && !opened.isReadOnly)
         #expect(opened.doc.allNodes.map(\.name) == store.doc.allNodes.map(\.name))
-        session.close()
     }
 
     @Test func aDuplicateOfASharedDesignIsNotShared() throws {
         let (bench, session, _) = sharedBench()
         let url = bench.store.url
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { session.close(); try? FileManager.default.removeItem(at: url) }
         bench.store.save()
         DocumentStore.finishSaving()
         Library.shared.duplicate(url)
@@ -681,7 +672,7 @@ struct SharingTests {
         defer { try? FileManager.default.removeItem(at: copy) }
         #expect(FileManager.default.fileExists(atPath: copy.path))
         #expect(SharingFiles.link(of: copy) == nil)
-        session.close()
+        #expect(!FolderSync.isShared(copy))
     }
 
     @Test func aCopyOfASharedDesignIsADesignOfItsOwn() throws {
@@ -689,6 +680,7 @@ struct SharingTests {
         let url = bench.store.url
         let copy = url.deletingLastPathComponent().appendingPathComponent("Copy-\(UUID().uuidString).bezzle")
         defer {
+            session.close()
             try? FileManager.default.removeItem(at: url)
             try? FileManager.default.removeItem(at: copy)
         }
@@ -696,9 +688,42 @@ struct SharingTests {
         DocumentStore.finishSaving()
         try FileManager.default.copyItem(at: url, to: copy)
         let opened = try DocumentStore(opening: copy)
-        #expect(opened.sharing == nil)
+        #expect(opened.sharing?.link == nil)
+        #expect(opened.sharing?.mark == nil)
         #expect(SharingFiles.link(of: copy) == nil)
-        #expect(SharingFiles.link(of: url)?.zone == session.zone)
-        session.close()
+        #expect(SharingFiles.link(of: url) == session.link)
+        opened.sharing?.close()
+    }
+
+    /// A design someone shared through iCloud, which Bezzle no longer does, opens as it was last
+    /// shared: one's own as a design of one's own, someone else's read only.
+    @Test func aDesignOnceSharedThroughICloudKeepsHowItWasLastShared() throws {
+        for owner in [nil, "_someoneElse"] as [String?] {
+            let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50))])
+            let url = bench.store.url
+            defer { try? FileManager.default.removeItem(at: url) }
+            bench.store.save()
+            DocumentStore.finishSaving()
+            var mac = Mac("old", doc: bench.store.doc)
+            mac.time = Collaboration.now
+            mac.edit { set(&$0, "R") { $0.name = "Shared last" } }
+            let folder = SharingFiles.folder(of: url)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var link: [String: Any] = ["zone": "design-\(UUID().uuidString)", "environment": "Production", "ownerName": "Ada"]
+            if let owner { link["owner"] = owner }
+            try JSONSerialization.data(withJSONObject: link).write(to: folder.appendingPathComponent("link.json"))
+            try JSONEncoder().encode(mac.state).write(to: folder.appendingPathComponent("design.json"))
+
+            let opened = try DocumentStore(opening: url)
+            #expect(opened.doc.allNodes.contains { $0.name == "Shared last" })
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("link.json").path))
+            if owner == nil {
+                #expect(opened.sharing == nil && !opened.isReadOnly)
+            } else {
+                #expect(opened.isReadOnly)
+                #expect(opened.sharing?.mark == .ended)
+            }
+            opened.sharing?.close()
+        }
     }
 }

@@ -261,9 +261,8 @@ struct VersionsTests {
         let store = bench.store
         let first = try #require(store.versions.take(store.sharedDoc, name: "Then"))
         move(bench, "R", to: 30)
-        var link = SharingLink(zone: "design-ended-\(UUID().uuidString)", owner: "someone")
-        link.ended = true
-        store.sharing = Collaboration(url: store.url, link: link, state: SharedDesign())
+        store.sharing = Collaboration(url: store.url, state: SharedDesign(), folder: nil,
+                                      link: ShareLink(secret: "", ownerName: "someone", ended: true))
         #expect(store.isReadOnly)
         store.versions.saved(store.sharedDoc, closing: true)
         #expect(store.versions.nameNow("Mine") == nil)
@@ -729,7 +728,7 @@ struct VersionsTests {
         let bench = try bench()
         defer { done(bench) }
         let store = bench.store
-        store.sharing = Collaboration(url: store.url, link: SharingLink(zone: "design-\(UUID().uuidString)", owner: nil), state: SharedDesign())
+        store.sharing = Collaboration(url: store.url, keys: testKeys("design-\(UUID().uuidString)"))
         let named = try #require(store.versions.nameNow("For everyone"))
         #expect(named.shared == true)
         let own = try #require(store.versions.take(store.sharedDoc, name: nil))

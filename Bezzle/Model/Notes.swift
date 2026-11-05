@@ -26,7 +26,7 @@ nonisolated struct MarginNote: Codable, Hashable, Identifiable, Sendable {
     var text: String
     /// Who wrote it, as their Mac names them.
     var by: String
-    /// Their Mac among those sharing the design (`CloudSync.replica`), for their pencil.
+    /// Their Mac among those sharing the design (`Sharing.replica`), for their pencil.
     var replica: String?
     /// When it was written, in seconds since 1970.
     var time: Double

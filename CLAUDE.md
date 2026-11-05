@@ -58,16 +58,16 @@ fix with nothing to show gets a title and a lede, no list.
 - **Signing key**: Sparkle's EdDSA key is the one Gerty's releases use (login Keychain, account
   `ed25519`; also the `SPARKLE_PRIVATE_KEY` secret of mfrports/gerty). One key serves every app. Its
   public half is `SPARKLE_PUBLIC_KEY` in `release.sh`. Lose it, and no installed copy can be updated.
-- **Same app, same data**: both copies have the bundle id `com.erik.Bezzle`, the same sandbox
-  container and the same iCloud container (production), so they open the same designs, share with
-  each other, and hand over to each other like two copies of one app (`HandOver`).
+- **Same app, same data**: both copies have the bundle id `com.erik.Bezzle` and the same sandbox
+  container, so they open the same designs, share through the same relay (`Relay/SHARING.md`), and
+  hand over to each other like two copies of one app (`HandOver`).
 - **Withdrawing a version**: revert the release's commit in bezzle-web (the feed goes back to the
   version before), then `gh release delete v<version> -R mfrports/bezzle-web --cleanup-tag`. Copies that
   installed it keep it.
 - **Testing the updater** without a release: build Release with
   `'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) BEZZLE_DIRECT'`. Make two copies under a test
   bundle id (never `com.erik.Bezzle`, whose container holds Erik's designs), an older and a newer
-  version, each with Sparkle inside and signed with Apple Development, without the iCloud entitlements.
+  version, each with Sparkle inside and signed with Apple Development.
   Give them a throwaway CryptoKit Ed25519 key (`generate_appcast --ed-key-file`), a local
   `http://127.0.0.1` feed and `NSAllowsLocalNetworking`. Launch the older copy with `open -g -n`: it
   fetches the update within seconds. `NSRunningApplication.terminate()` quits it, and the newer

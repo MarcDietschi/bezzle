@@ -1,9 +1,9 @@
 import Foundation
 import AppKit
 
-/// Where the live relay is: the Cloudflare Worker in Relay/, deployed with `wrangler deploy`. Its
-/// address goes into Info.plist as BezzleLiveRelay; without one, shared designs sync through
-/// iCloud alone, as before.
+/// Where the relay is: the Cloudflare Worker in Relay/, deployed with `wrangler deploy`, which keeps
+/// shared designs' sealed records and their live rooms (see Relay/SHARING.md). Its address goes
+/// into Info.plist as BezzleLiveRelay; without one, there is no sharing.
 enum LiveRelay {
     static var address: URL? {
         #if DEBUG
@@ -54,8 +54,11 @@ final class LiveSocket: LiveTransport {
     private var retry: Timer?
     private var wake: NSObjectProtocol?
 
-    init(room: String, relay: URL) {
-        url = relay.appendingPathComponent("v1").appendingPathComponent(room)
+    init(room: String, read: String, relay: URL) {
+        var parts = URLComponents(url: relay.appendingPathComponent("v2").appendingPathComponent(room).appendingPathComponent("live"),
+                                  resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "read", value: read)]
+        url = parts.url!
         let config = URLSessionConfiguration.ephemeral
         config.waitsForConnectivity = false
         config.timeoutIntervalForRequest = 20
@@ -112,7 +115,7 @@ final class LiveSocket: LiveTransport {
                     message = try await task.receive()
                 } catch {
                     guard let self, self.generation == generation else { return }
-                    CloudSync.log.info("Live relay connection ended: \(error.localizedDescription, privacy: .public)")
+                    Sharing.log.info("Live relay connection ended: \(error.localizedDescription, privacy: .public)")
                     self.reconnect(now: false)
                     return
                 }

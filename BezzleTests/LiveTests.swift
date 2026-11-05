@@ -1,4 +1,5 @@
 import Testing
+import CryptoKit
 import AppKit
 @testable import Bezzle
 
@@ -64,6 +65,11 @@ private final class TestRelay {
     }
 }
 
+/// The keys of a room whose secret is made from `name`, the same each time.
+func testKeys(_ name: String) -> ShareKeys {
+    ShareKeys(secret: Data(SHA256.hash(data: Data(name.utf8))))!
+}
+
 /// One Mac with a shared design open, in a live room.
 private struct Seat {
     let bench: Bench
@@ -76,7 +82,7 @@ private struct Seat {
     init(_ name: String, zone: String, relay: TestRelay, from state: SharedDesign? = nil) {
         bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50)),
                               CanvasTests.rect("S", CGRect(x: 100, y: 10, width: 50, height: 50))])
-        session = Collaboration(url: bench.store.url, link: SharingLink(zone: zone, owner: nil), state: state ?? SharedDesign())
+        session = Collaboration(url: bench.store.url, state: state ?? SharedDesign(), keys: testKeys(zone))
         session.replica = name
         if state != nil {
             // Opened as it is shared, as a design someone else shared is.
@@ -102,28 +108,30 @@ private struct Seat {
 struct LiveTests {
     // MARK: Sealing
 
-    @Test func aRoomIsNamedAfterItsKeyAndNotItsZone() {
-        let a = LiveKey(zone: "design-1"), b = LiveKey(zone: "design-1"), c = LiveKey(zone: "design-2")
+    @Test func aRoomIsNamedAfterItsSecretWhichItNeverShows() {
+        let a = LiveKey(testKeys("design-1")), b = LiveKey(testKeys("design-1")), c = LiveKey(testKeys("design-2"))
         #expect(a.room == b.room)
         #expect(a.room != c.room)
         #expect(a.room.count == 64)
         #expect(a.room.allSatisfy { "0123456789abcdef".contains($0) })
-        #expect(!a.room.contains("design"))
+        #expect(!a.room.contains(a.keys.secret.hex))
     }
 
     @Test func onlyTheRoomsOwnCanOpenWhatIsSealed() throws {
-        let key = LiveKey(zone: "design-\(UUID().uuidString)")
+        let key = LiveKey(testKeys("design-\(UUID().uuidString)"))
         let message = LiveMessage.presence(LivePresence(pointer: CGPoint(x: 4, y: 2), view: CGRect(x: 0, y: 0, width: 800, height: 600), selection: [UUID()]))
         let sealed = try #require(key.seal(message))
         #expect(key.open(sealed) == message)
-        #expect(LiveKey(zone: "design-other").open(sealed) == nil)
+        #expect(LiveKey(testKeys("design-other")).open(sealed) == nil)
+        // Another copy with the same secret, sealing with a key of its own, opens it.
+        #expect(LiveKey(ShareKeys(secret: key.keys.secret)!).open(sealed) == message)
         var tampered = sealed
         tampered[tampered.count / 2] ^= 1
         #expect(key.open(tampered) == nil)
     }
 
     @Test func largeMessagesArePackedSmall() throws {
-        let key = LiveKey(zone: "design-big")
+        let key = LiveKey(testKeys("design-big"))
         let nodes = (0..<200).map { i in CanvasTests.rect("Layer \(i)", CGRect(x: i, y: i, width: 40, height: 40)) }
         let message = LiveMessage.motion(nodes)
         let sealed = try #require(key.seal(message))
@@ -135,6 +143,9 @@ struct LiveTests {
         #expect(LiveFrame.read(Data([0x01, 0, 0, 0, 7, 0, 2, 0, 0, 0, 1, 0, 0, 1, 0])) == .welcome(you: 7, others: [1, 256]))
         #expect(LiveFrame.read(Data([0x02, 0, 0, 0, 9])) == .joined(9))
         #expect(LiveFrame.read(Data([0x03, 1, 0, 0, 0])) == .left(1 << 24))
+        #expect(LiveFrame.read(Data([0x05, 0, 0, 0, 0, 0, 0, 1, 2])) == .records(258))
+        #expect(LiveFrame.read(Data([0x05, 0, 0, 0])) == nil)
+        #expect(LiveFrame.read(Data([0x06])) == .gone)
         #expect(LiveFrame.read(Data([0x04, 0, 0, 0, 3, 42, 43])) == .message(from: 3, Data([42, 43])))
         #expect(LiveFrame.read(Data([0x01, 0, 0])) == nil)
         #expect(LiveFrame.to(0x01020304, Data([9])) == Data([0x11, 1, 2, 3, 4, 9]))
@@ -229,12 +240,12 @@ struct LiveTests {
         anna.room.tickForTesting()
         relay.pump()
         #expect(ben.bench.node("R")?.fill.color == .black)
-        // Nothing was saved, and nothing went through iCloud.
-        #expect(anna.session.link.sentUpTo == 0)
+        // Nothing was saved, and nothing went through the room's records.
+        #expect(anna.session.sentUpTo == 0)
 
-        // The same change arriving from iCloud later changes nothing.
+        // The same change arriving from the records later changes nothing.
         let before = ben.store.doc
-        ben.session.receive([anna.session.state])
+        ben.session.receive([anna.session.state], from: .cloud)
         #expect(ben.store.doc == before)
     }
 
@@ -514,7 +525,7 @@ struct LiveTests {
         let before = ben.store.doc
         var stranger = SharedDesign()
         stranger.clock = Stamp(time: .max / 2, by: "mallory")
-        let sealed = try #require(LiveKey(zone: "design-elsewhere").seal(.changes(stranger)))
+        let sealed = try #require(LiveKey(testKeys("design-elsewhere")).seal(.changes(stranger)))
         ben.room.receiveForTesting(.message(from: 99, sealed))
         #expect(ben.store.doc == before)
     }

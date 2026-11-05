@@ -7,7 +7,7 @@ import QuartzCore
 extension DocumentStore {
     /// Who writes here, as the others see them.
     var noteAuthor: (name: String, replica: String) {
-        (sharing?.live?.name ?? LiveRoom.myName, sharing?.replica ?? CloudSync.replica)
+        (sharing?.live?.name ?? LiveRoom.myName, sharing?.replica ?? Sharing.replica)
     }
 
     /// Starts a note at a canvas point, about the layer there if any: it is written in the margin

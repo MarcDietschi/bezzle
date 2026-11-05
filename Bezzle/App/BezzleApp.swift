@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import CloudKit
 import UniformTypeIdentifiers
 
 @main
@@ -64,28 +63,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Not in a copy that is about to hand over to one already running, which has these.
         HandOver.whenRunningAlone {
             MCPServer.shared.launch()
-            CloudSync.shared.start()
             Welcome.makeOnFirstLaunch()
             Updates.start()
         }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        CloudSync.shared.fetchNow()
-    }
-
-    /// An invitation to a shared design was clicked.
-    func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
-        CloudSync.log.notice("macOS handed over an invitation")
-        if let link = metadata.share.url, HandOver.pass(invitation: link) { return }
-        CloudSync.shared.accept(metadata)
+        Sharing.shared.lookNow()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        // An invitation a browser got instead of Bezzle, passed on by Bezzle's page on the web.
-        for link in urls.compactMap(CloudSync.invitationLink(from:)) {
-            CloudSync.log.notice("An invitation came as a link")
-            if !HandOver.pass(invitation: link) { CloudSync.shared.accept(link: link) }
+        // A shared design's link, passed on by Bezzle's page on the web.
+        for link in urls where Sharing.secret(from: link) != nil {
+            Sharing.log.notice("A shared design's link came")
+            if !HandOver.pass(invitation: link) { Sharing.shared.accept(link: link) }
         }
         let designs = urls.filter { BezzleDocument.fileExtensions.contains($0.pathExtension.lowercased()) || Importer.imports($0) }
         if HandOver.pass(designs: designs) { return }
