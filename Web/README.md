@@ -82,7 +82,17 @@ core's: `bz_shared_open`, `bz_shared_receive`, `bz_shared_changes`, `bz_shared_w
 
 `site/shared.html` is the page a link opens: `shared.html#2.<secret>` shows the design, with its
 name and who shared it, takes in everyone's changes as the relay says they are there, and fetches
-pictures as drawings ask for them. It edits nothing yet. `?relay=` points it at another relay.
+pictures and fonts as drawings ask for them. `?relay=` points it at another relay.
+
+It edits, with `site/editor.mjs` on the page and `Web/WebEditing.swift` in the core: layers are
+picked on the artboard (double-click goes into a group, or types into a text), dragged and resized
+by their handles as one gesture, nudged with the arrow keys, deleted; a small inspector sets the
+frame, fill, border, corners, opacity and type; the notes of the artboard or of a layer are read,
+written, answered and closed. Every change goes through the steps the Mac's `DocumentStore.edit`
+takes after one (grids, decks, components, styles, masks, notes, groups fitted), undo takes back
+only what was done here (`FlatDesign.apply`), and a moment later it goes to the room as a record of
+this browser's own, under the name asked once. Others' changes wait while something is dragged or
+typed. `node tools/edit.mjs` tests the core's side on a sample, two copies at once.
 
 Tested against the relay itself, running here (`cd ../Relay && npx wrangler dev --port 8790`):
 
@@ -129,8 +139,9 @@ platform-neutral half of `TextLayout.swift` (the `Node` extension at its end).
 
 Text on curves, list markers, paragraph spacing, letters painted with a gradient or picture,
 photo develop, blurs that grow along a ramp, "plus darker" mixing (drawn as multiply), live
-co-working's pointers and presence (the page hears only that there are new records), the icon
-library (needs zlib), localization (English only), any editing UI.
+co-working's pointers and presence (the page hears only that there are new records), drawing
+new shapes, the icon
+library (needs zlib), localization (four languages on the shared page, English elsewhere).
 
 ## Building and running
 
