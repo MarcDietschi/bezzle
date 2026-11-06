@@ -316,7 +316,7 @@ final class CloudShare {
 
     /// Pictures the design shows that are not here yet, from the room.
     private func fetchPictures(_ collaboration: Collaboration, _ server: ShareServer) async throws {
-        let images = collaboration.url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+        let design = collaboration.url, images = design.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
         let wanted = shown.isEmpty ? Collaboration.pictures(in: collaboration.state.flatDesign().document()) : shown
         for name in wanted.sorted() where !FileManager.default.fileExists(atPath: images.appendingPathComponent(name).path) {
             guard !name.hasPrefix("."), (name as NSString).lastPathComponent == name else { continue }
@@ -326,7 +326,7 @@ final class CloudShare {
             guard progress.known[key] != nil, let sealed = try await server.get(keys.room, key, read: keys.readToken),
                   let data = await Self.open(file: sealed, keys, about: key) else { continue }
             do {
-                try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+                try DesignFile.makeFolder(images, in: design)
                 try data.write(to: images.appendingPathComponent(name), options: .atomic)
             } catch {
                 Sharing.log.error("Could not keep a picture: \(error.localizedDescription, privacy: .public)")
@@ -456,7 +456,7 @@ final class CloudShare {
         let file = progressFile(design, replica)
         guard let data = FolderShare.encode(progress) else { return }
         DocumentStore.saving.async {
-            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            guard (try? DesignFile.makeFolder(file.deletingLastPathComponent(), in: design)) != nil else { return }
             try? data.write(to: file, options: .atomic)
         }
     }

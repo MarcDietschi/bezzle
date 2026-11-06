@@ -43,6 +43,15 @@ enum SharingMark: Equatable {
     /// Kept in a folder that Google Drive or the like keeps in step, where others work on it too.
     case inFolder(String)
 
+    /// Whether the design may be given a new name here. Someone else's keeps the name it was
+    /// shared under.
+    var renamable: Bool {
+        switch self {
+        case .sharedBy, .ended: false
+        case .shared, .inFolder: true
+        }
+    }
+
     var title: LocalizedStringResource {
         switch self {
         case .shared: "Shared"
@@ -76,7 +85,7 @@ nonisolated enum SharingFiles {
     }
 
     static func write(_ link: ShareLink, to design: URL) throws {
-        try FileManager.default.createDirectory(at: folder(of: design), withIntermediateDirectories: true)
+        try DesignFile.makeFolder(folder(of: design), in: design)
         guard let data = FolderShare.encode(link) else { throw CocoaError(.fileWriteUnknown) }
         try data.write(to: linkFile(design), options: .atomic)
     }

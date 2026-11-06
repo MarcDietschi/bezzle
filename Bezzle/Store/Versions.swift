@@ -83,11 +83,11 @@ nonisolated enum VersionFiles {
         let data = try encoder.encode(list)
         if FolderSync.isShared(design) {
             let file = ownIndexFile(design, replica)
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try DesignFile.makeFolder(file.deletingLastPathComponent(), in: design)
             try data.write(to: file, options: .atomic)
             return
         }
-        try FileManager.default.createDirectory(at: folder(of: design), withIntermediateDirectories: true)
+        try DesignFile.makeFolder(folder(of: design), in: design)
         try data.write(to: indexFile(design), options: .atomic)
     }
 
@@ -111,7 +111,7 @@ nonisolated enum VersionFiles {
     }
 
     static func write(_ data: Data, as id: UUID, to design: URL) throws {
-        try FileManager.default.createDirectory(at: folder(of: design), withIntermediateDirectories: true)
+        try DesignFile.makeFolder(folder(of: design), in: design)
         try data.write(to: file(id, of: design), options: .atomic)
     }
 

@@ -289,6 +289,7 @@ final class MCPTools {
     func renameDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         guard let name = try args.string("name"), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw MCPError("Give the new name.") }
+        guard store.mayRename else { throw MCPError("\(store.name) was shared with you, so it keeps the name it was shared under.") }
         store.rename(to: name)
         return [.text(summary(of: store).text)]
     }

@@ -214,6 +214,9 @@ final class DocumentStore {
     }
 
     private(set) var url: URL
+    /// Leads to the design's file wherever it goes on this disk, to find it again should it be
+    /// renamed or moved while open; see `follow`.
+    @ObservationIgnored private var bookmark: Data?
     /// Set by the window; Undo and Redo in the Edit menu use it.
     @ObservationIgnored weak var undoManager: UndoManager?
     /// Watched, so the inspector can lift the card a drag changes for as long as it goes on.
@@ -254,6 +257,7 @@ final class DocumentStore {
     init(url: URL, document: BezzleDocument) {
         self.url = url
         self.doc = document
+        bookmark = Self.bookmark(of: url)
         assets = Assets(design: url)
         if let v = document.viewport { viewport = v }
         versions.attach(self)
@@ -579,6 +583,7 @@ final class DocumentStore {
     func save() {
         saveTask?.cancel()
         saveTask = nil
+        follow()
         var copy = withShapeBack(doc)
         // Saved for where it was looked at alone, the design has nothing new for sharing to take
         // in, and taking in a large one again holds the canvas up just as moving about resumes.
@@ -591,11 +596,15 @@ final class DocumentStore {
             sharing.persist()
         }
         copy.viewport = viewport
-        let url = url
+        // Nowhere to be found, it is written again where it was, so that nothing done is lost.
+        let url = url, creating = !DesignFile.exists(url)
         Self.saving.async { [copy] in
             do {
-                try DesignFile.write(copy, to: url)
+                try DesignFile.write(copy, to: url, creating: creating)
                 Self.unwritten[url] = nil
+            } catch is DesignFile.Gone {
+                // It went in the moment since: saved again where it went, once found.
+                DispatchQueue.main.async { [weak self] in self?.lost(copy, from: url) }
             } catch {
                 Self.unwritten[url] = error.localizedDescription
                 NSLog("Bezzle could not save %@: %@", url.path, error.localizedDescription)
@@ -667,9 +676,12 @@ final class DocumentStore {
         saving.sync {}
     }
 
+    /// Whether the design may be given a new name here: not someone else's, shared with this Mac.
+    var mayRename: Bool { sharing?.mark?.renamable ?? true }
+
     /// Gives the design a new name, renaming its file.
     func rename(to newName: String) {
-        guard let target = Library.shared.renamedURL(url, to: newName) else { return }
+        guard mayRename, let target = Library.shared.renamedURL(url, to: newName) else { return }
         move(to: target)
     }
 
@@ -685,8 +697,79 @@ final class DocumentStore {
             NSLog("Bezzle could not move %@ to %@: %@", url.path, target.path, error.localizedDescription)
             return false
         }
+        arrived(at: target)
+        return true
+    }
+
+    /// Finds the design's file again when it is no longer where it was: renamed or moved in the
+    /// Finder, or by someone else and brought here by the folder that keeps it in step with
+    /// their Mac. The design goes on where its file now is, rather than beginning again where it
+    /// was and leaving everyone else's work in the other. True when it was found elsewhere.
+    @discardableResult
+    func follow() -> Bool {
+        guard !DesignFile.exists(url) else {
+            // One saved for the first time only now has a file to lead to.
+            if bookmark == nil { bookmark = Self.bookmark(of: url) }
+            return false
+        }
+        guard let found = whereNow() else { return false }
+        NSLog("Bezzle found %@ again at %@", url.path, found.path)
+        arrived(at: found)
+        return true
+    }
+
+    /// Where the design's file is now: where its bookmark leads, or else, in the folder it was in,
+    /// the one shared in the same room. Never one in the Trash, nor a guess between several.
+    private func whereNow() -> URL? {
+        let old = url.standardizedFileURL
+        func usable(_ candidate: URL) -> Bool {
+            candidate != old && BezzleDocument.fileExtensions.contains(candidate.pathExtension.lowercased())
+                && !candidate.pathComponents.contains { $0 == ".Trash" || $0 == ".Trashes" } && DesignFile.exists(candidate)
+        }
+        var stale = false
+        if let bookmark, let found = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale) {
+            // A bookmark leads to the file by its real path; one renamed where it was keeps the
+            // path the design had, as the designs folder knows it.
+            let beside = old.deletingLastPathComponent().appendingPathComponent(found.lastPathComponent)
+            let found = beside.resolvingSymlinksInPath() == found.resolvingSymlinksInPath() ? beside : found.standardizedFileURL
+            if usable(found) { return found }
+        }
+        let linkRoom = sharing?.link?.keys?.room, folderRoom = sharing?.folder?.room.seed
+        guard linkRoom != nil || folderRoom != nil else { return nil }
+        let beside = (try? FileManager.default.contentsOfDirectory(at: old.deletingLastPathComponent(), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        let same = beside.map(\.standardizedFileURL).filter { candidate in
+            guard usable(candidate) else { return false }
+            if let linkRoom, SharingFiles.link(of: candidate)?.keys?.room == linkRoom { return true }
+            if let folderRoom, FolderSync.room(of: candidate)?.seed == folderRoom { return true }
+            return false
+        }
+        return same.count == 1 ? same[0] : nil
+    }
+
+    /// The design's file went while it was being saved. Found again, the design is saved where
+    /// it now is; nowhere to be found, it is written again where it was, so that nothing done to
+    /// it is lost.
+    private func lost(_ copy: BezzleDocument, from old: URL) {
+        if url != old || follow() {
+            save()
+            return
+        }
+        Self.saving.async {
+            do {
+                try DesignFile.write(copy, to: old)
+                Self.unwritten[old] = nil
+            } catch {
+                Self.unwritten[old] = error.localizedDescription
+                NSLog("Bezzle could not save %@: %@", old.path, error.localizedDescription)
+            }
+        }
+    }
+
+    /// Goes on with the design where its file now is.
+    private func arrived(at target: URL) {
         Library.shared.renamed(from: url, to: target)
         url = target
+        bookmark = Self.bookmark(of: target)
         assets = Assets(design: target)
         sharing?.moved(to: target)
         // Into a folder Google Drive or the like keeps in step: shared with everyone who has it.
@@ -695,7 +778,10 @@ final class DocumentStore {
             sharing = session
             session.attach(to: self)
         }
-        return true
+    }
+
+    private static func bookmark(of url: URL) -> Data? {
+        try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
     // MARK: Sharing

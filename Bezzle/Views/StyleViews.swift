@@ -116,24 +116,79 @@ struct NameRing: View {
 struct StyleRow: View {
     @Environment(DocumentStore.self) private var store
     let place: StylePlace
+    /// Whether every style shows, when there are more than a few.
+    @State private var all = false
+
+    /// How many of a kind's styles show before the rest wait behind a chip that counts them, so
+    /// that a design with many does not put a wall of them before the card's own controls.
+    static let shown = 5
 
     var body: some View {
         let options = store.styles(for: place)
         let current = store.sharedStyle(at: place)
         let dark = store.showsDark(place)
+        let many = options.count > Self.shown + 1
+        let visible = many && !all ? Self.first(of: options, keeping: current?.id) : options
         Flow(spacing: 6) {
-            ForEach(options) { style in
+            ForEach(visible) { style in
                 StyleChip(place: place, style: style, active: style.id == current?.id, dark: dark)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
+            if many {
+                MoreChip(hidden: all ? nil : options.count - visible.count) { all.toggle() }
             }
             if current == nil, let look = store.holding(place).first.flatMap(place.look(of:)) {
                 NameChip(place: place, look: look)
                     .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
         }
-        .animation(Theme.pop, value: options.map(\.id))
+        .animation(Theme.pop, value: visible.map(\.id))
         .animation(Theme.pop, value: current?.id)
         .geometryGroup()
+    }
+
+    /// The first few styles, in their order, the one the selection has among them.
+    static func first(of options: [Style], keeping id: UUID?) -> [Style] {
+        var kept = Array(options.prefix(shown))
+        if let id, !kept.contains(where: { $0.id == id }), let style = options.first(where: { $0.id == id }) {
+            kept[kept.count - 1] = style
+        }
+        return kept
+    }
+}
+
+/// Shows the styles left out of a long row, saying how many; with all of them showing, puts
+/// them away again.
+private struct MoreChip: View {
+    /// How many wait; nil when they all show.
+    let hidden: Int?
+    let toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Group {
+                if let hidden { Text("\(hidden) more") } else { Text("Fewer") }
+            }
+            .font(.system(size: 12))
+            .contentTransition(.identity)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8.5, weight: .bold))
+                .rotationEffect(.degrees(hidden == nil ? 180 : 0))
+        }
+        .foregroundStyle(hovering ? Theme.ink : Theme.ink2)
+        .padding(.horizontal, 9)
+        .frame(height: 26)
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Theme.ink.opacity(hovering ? 0.28 : 0.16), lineWidth: 1)
+        }
+        .contentShape(Rectangle())
+        .onHover { inside in withAnimation(Theme.quick) { hovering = inside } }
+        .onTapGesture { withAnimation(Theme.pop) { toggle() } }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { withAnimation(Theme.pop) { toggle() } }
     }
 }
 

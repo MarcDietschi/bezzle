@@ -783,6 +783,47 @@ struct CanvasTests {
         }
     }
 
+    /// Each letter typed grows the layer; the words stay still as it does, on their left edge,
+    /// their middle or their right edge as they are aligned, upright or turned, at any zoom.
+    @Test(arguments: [TextAlign.left, .center, .right])
+    func theWordsBeingTypedStayStillAsTheyGrow(align: TextAlign) throws {
+        for zoom in [1.0, 0.5, 1.37] {
+            for rotation in [0.0, 30] {
+                var t = Node(kind: .text, name: "T", frame: CGRect(x: 40.3, y: 40, width: 0, height: 0))
+                t.text = "A"
+                var style = TextStyle()
+                style.align = align
+                t.style = style
+                t.refit()
+                t.rotation = rotation
+                let bench = Bench(extra: [t])
+                bench.store.viewport = Viewport(origin: CGPoint(x: -13.3, y: 0), zoom: zoom)
+                let id = try #require(bench.node("T")?.id)
+                bench.step { bench.canvas.beginEditing(id, action: "Typing") }
+                let editor = try #require(bench.editor)
+                editor.setSelectedRange(NSRange(location: 1, length: 0))
+                var still: CGFloat?
+                for letter in "ello world, wow" {
+                    bench.step { editor.insertText(String(letter), replacementRange: editor.selectedRange()) }
+                    let host = try #require(editor.superview), frame = try #require(bench.store.doc.absoluteFrame(of: id))
+                    let middle = host.convert(CGPoint(x: host.bounds.midX, y: host.bounds.midY), to: bench.canvas)
+                    let wanted = bench.store.viewport.toView(CGPoint(x: frame.minX + host.bounds.width / 2, y: frame.midY))
+                    #expect(hypot(middle.x - wanted.x, middle.y - wanted.y) < 0.01, "\(align) at \(zoom), turned \(rotation), after \(letter)")
+                    guard rotation == 0, let manager = editor.layoutManager, let container = editor.textContainer else { continue }
+                    manager.ensureLayout(for: container)
+                    // A space at the end of a line hangs outside it, as a line is aligned.
+                    let letters = editor.string.trimmingCharacters(in: .whitespaces) as NSString
+                    let glyphs = manager.boundingRect(forGlyphRange: manager.glyphRange(forCharacterRange: NSRange(location: 0, length: letters.length), actualCharacterRange: nil), in: container)
+                    let left = editor.convert(glyphs.origin, to: bench.canvas).x, right = editor.convert(CGPoint(x: glyphs.maxX, y: 0), to: bench.canvas).x
+                    let edge = align == .left ? left : align == .right ? right : (left + right) / 2
+                    if let still { #expect(abs(edge - still) < 0.75, "\(align) at \(zoom), after \(letter)") }
+                    still = still ?? edge
+                }
+                bench.step { bench.canvas.endEditing() }
+            }
+        }
+    }
+
     @Test func drawingALineEndsWhereThePointerWas() {
         let bench = Bench()
         bench.store.tool = .line

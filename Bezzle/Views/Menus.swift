@@ -78,6 +78,12 @@ final class MenuHost {
     /// Somewhere outside the menu a click leaves it open, such as the handles that shape on the
     /// canvas what the menu shows; at a point in the window from its top left.
     @ObservationIgnored var spares: ((CGPoint) -> Bool)?
+    /// How far scrolling has moved things since the open menu came; see `scrolling`.
+    @ObservationIgnored private var scrolled: CGFloat = 0
+    /// How far a scroll moves things before a right-click menu goes. Two fingers on a trackpad
+    /// send scrolls as they land and as they lift, moving nothing, and slide a point or two as
+    /// they click: the very click that opens the menu would close it again.
+    static let scrollSlack: CGFloat = 16
 
     func track(menu: CGRect, anchor: CGRect?) {
         menuFrame = menu
@@ -155,6 +161,7 @@ final class MenuHost {
     private func present(_ next: Open) {
         highlight(nil)
         query = ""
+        scrolled = 0
         if case .entries(let entries) = next.content { shown = entries } else { shown = [] }
         withAnimation(Theme.menu) { open = next }
         window = NSApp.keyWindow
@@ -181,20 +188,33 @@ final class MenuHost {
             if let window = self.window, event.window !== window {
                 if event.type != .scrollWheel { self.dismiss() }
             } else if let content = event.window?.contentView {
-                self.passing(event.type, at: CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y))
+                let p = CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
+                if event.type == .scrollWheel { self.scrolling(Self.travel(of: event), at: p) } else { self.passing(event.type, at: p) }
             }
             return event
         }
     }
 
-    /// A click or a scroll on its way past the open menu, at a point in the window from its top left.
+    /// A click on its way past the open menu, at a point in the window from its top left.
     func passing(_ type: NSEvent.EventType, at p: CGPoint) {
-        guard let open, !menuFrame.contains(p) else { return }
-        if type == .scrollWheel {
-            if case .point = open.place { dismiss() }
-        } else if !(anchorFrame?.contains(p) ?? false), !(spares?(p) ?? false) {
-            dismiss()
-        }
+        guard open != nil, !menuFrame.contains(p) else { return }
+        if !(anchorFrame?.contains(p) ?? false), !(spares?(p) ?? false) { dismiss() }
+    }
+
+    /// A scroll on its way past the open menu, moving things this far, at a point in the window
+    /// from its top left. A right-click menu goes once the scrolling has really moved things,
+    /// more than the fingers that opened it do; a menu under a control stays.
+    func scrolling(_ travel: CGFloat, at p: CGPoint) {
+        guard let open, case .point = open.place, !menuFrame.contains(p) else { return }
+        scrolled += travel
+        if scrolled > Self.scrollSlack { dismiss() }
+    }
+
+    /// How far a scroll moves things, in points. A mouse wheel's turn, counted in lines, is
+    /// always meant, so it counts as far as any.
+    static func travel(of event: NSEvent) -> CGFloat {
+        let distance = hypot(event.scrollingDeltaX, event.scrollingDeltaY)
+        return event.hasPreciseScrollingDeltas || distance == 0 ? distance : .infinity
     }
 
     func choose(_ entry: MenuEntry) {

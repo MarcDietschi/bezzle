@@ -2720,6 +2720,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         host.bounds = CGRect(origin: .zero, size: box.size)
         host.frame = box
         host.frameCenterRotation = -node.rotation
+        // Grown since it was last placed, as with each letter typed, it is turned about the middle
+        // it had before and lands off to one side, to come back only when next placed: the words
+        // would shake as they are typed. Its middle goes back where it belongs.
+        if let around = host.superview {
+            let middle = host.convert(CGPoint(x: host.bounds.midX, y: host.bounds.midY), to: around)
+            host.setFrameOrigin(CGPoint(x: host.frame.minX + box.midX - middle.x, y: host.frame.minY + box.midY - middle.y))
+        }
         host.setBoundsSize(CGSize(width: width, height: max(frame.height, 4 / zoom)))
         let sizing = node.style?.sizing ?? .autoWidth
         let align = node.style?.align ?? .left

@@ -234,7 +234,7 @@ private struct TabStrip: View {
     private func entries(for tab: DesignTab) -> [MenuEntry] {
         var entries: [MenuEntry] = []
         if let store = tab.store {
-            entries.append(.item("Rename", enabled: !store.isReadOnly) {
+            entries.append(.item("Rename", enabled: store.mayRename) {
                 tabs.select(tab)
                 tab.renaming = true
             })
@@ -455,7 +455,7 @@ private struct TabButton: View {
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(.default, press)
         .accessibilityAction(named: Text("Close Tab"), close)
-        .accessibilityAction(named: Text("Rename")) { if tab.store?.isReadOnly == false { tab.renaming = true } }
+        .accessibilityAction(named: Text("Rename")) { if tab.store?.mayRename == true { tab.renaming = true } }
     }
 
     /// Down, the tab comes to the front at once; moved, it is dragged; a second click renames.
@@ -472,7 +472,7 @@ private struct TabButton: View {
             .onEnded { _ in
                 if moved {
                     dropped()
-                } else if (NSApp.currentEvent?.clickCount ?? 1) >= 2, tab.store?.isReadOnly == false {
+                } else if (NSApp.currentEvent?.clickCount ?? 1) >= 2, tab.store?.mayRename == true {
                     tab.renaming = true
                 }
                 moved = false

@@ -335,7 +335,7 @@ private struct DesignPlate: View {
     }
 
     private func startRenaming() {
-        guard entry.sharing != .ended else { return }
+        guard entry.sharing?.renamable ?? true else { return }
         draft = entry.name
         renaming = true
         focused = true
@@ -482,8 +482,8 @@ private enum DesignMenu {
         [
             .item("Open") { open() },
             .item("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.url]) },
-            // Someone else's design no longer shared with you can only be looked at, as in its tab.
-            .item("Rename", enabled: entry.sharing != .ended) { rename() },
+            // Someone else's design keeps the name it was shared under, as in its tab.
+            .item("Rename", enabled: entry.sharing?.renamable ?? true) { rename() },
             .item("Duplicate") { Library.shared.duplicate(entry.url) },
             .separator,
             .item(Library.shared.holds(entry.url) ? "Move to Trash" : "Remove from List") {

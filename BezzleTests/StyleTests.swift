@@ -55,6 +55,17 @@ struct StyleTests {
         #expect(b.node("Two")!.fill.named == style.id && b.node("Three")!.fill.named == style.id)
     }
 
+    /// A long row of styles shows its first few, the one the selection has always among them.
+    @Test func aLongRowShowsItsFirstFewAndTheOneInUse() {
+        let styles = (1...12).map { Style(name: "S\($0)", look: .colour(ColourLook(color: Self.red))) }
+        let ids = styles.map(\.id)
+        #expect(StyleRow.first(of: styles, keeping: nil).map(\.id) == Array(ids.prefix(StyleRow.shown)))
+        #expect(StyleRow.first(of: styles, keeping: ids[2]).map(\.id) == Array(ids.prefix(StyleRow.shown)))
+        let kept = StyleRow.first(of: styles, keeping: ids[9]).map(\.id)
+        #expect(kept.count == StyleRow.shown)
+        #expect(kept == Array(ids.prefix(StyleRow.shown - 1)) + [ids[9]])
+    }
+
     @Test func aNameLeftEmptyIsOneThatSaysWhatTheLookIs() {
         let b = bench()
         b.store.selection = [id(b, "One")]

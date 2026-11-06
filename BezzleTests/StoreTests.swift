@@ -205,7 +205,7 @@ struct MenuTests {
         // The control toggles the menu itself.
         host.passing(.leftMouseDown, at: CGPoint(x: 120, y: 70))
         #expect(host.open != nil)
-        host.passing(.scrollWheel, at: CGPoint(x: 600, y: 600))
+        host.scrolling(200, at: CGPoint(x: 600, y: 600))
         #expect(host.open != nil)
         host.passing(.leftMouseDown, at: CGPoint(x: 600, y: 600))
         #expect(host.open == nil)
@@ -215,9 +215,35 @@ struct MenuTests {
         let host = MenuHost()
         host.show(at: CGPoint(x: 100, y: 100), entries: [.item("A") {}])
         host.track(menu: CGRect(x: 100, y: 100, width: 200, height: 300), anchor: nil)
-        host.passing(.scrollWheel, at: CGPoint(x: 150, y: 150))
+        host.scrolling(200, at: CGPoint(x: 150, y: 150))
         #expect(host.open != nil)
-        host.passing(.scrollWheel, at: CGPoint(x: 600, y: 600))
+        host.scrolling(40, at: CGPoint(x: 600, y: 600))
+        #expect(host.open == nil)
+    }
+
+    /// Two fingers clicking on a trackpad send scrolls of their own as they land, slide a little
+    /// and lift; the menu they opened stays. A real scroll after it, or a wheel's turn, still
+    /// closes it.
+    @Test func theFingersThatRightClickDoNotCloseTheirMenu() throws {
+        func scroll(_ dy: Int32, pixels: Bool = true, phase: Int64 = 0) throws -> NSEvent {
+            let cg = try #require(CGEvent(scrollWheelEvent2Source: nil, units: pixels ? .pixel : .line, wheelCount: 1, wheel1: dy, wheel2: 0, wheel3: 0))
+            if phase != 0 { cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase) }
+            return try #require(NSEvent(cgEvent: cg))
+        }
+        let away = CGPoint(x: 600, y: 600)
+        let host = MenuHost()
+        host.show(at: CGPoint(x: 100, y: 100), entries: [.item("A") {}])
+        host.track(menu: CGRect(x: 100, y: 100, width: 200, height: 300), anchor: nil)
+        // Landing (may begin), sliding a few points as they press, lifting (cancelled).
+        for event in [try scroll(0, phase: 128), try scroll(2, phase: 1), try scroll(-3, phase: 2), try scroll(0, phase: 16)] {
+            host.scrolling(MenuHost.travel(of: event), at: away)
+        }
+        #expect(host.open != nil)
+        for _ in 0..<4 { host.scrolling(MenuHost.travel(of: try scroll(-6, phase: 2)), at: away) }
+        #expect(host.open == nil)
+
+        host.show(at: CGPoint(x: 100, y: 100), entries: [.item("A") {}])
+        host.scrolling(MenuHost.travel(of: try scroll(-1, pixels: false)), at: away)
         #expect(host.open == nil)
     }
 

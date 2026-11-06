@@ -24,6 +24,22 @@ nonisolated enum DesignFile {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && isFolder.boolValue
     }
 
+    /// Whether the design is where `url` says: its package with the design in it, or its file.
+    static func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: isPackage(url) ? url.appendingPathComponent(documentName).path : url.path)
+    }
+
+    /// The design that was at `url` is not there now; see `write(_:to:creating:)`.
+    struct Gone: Error {}
+
+    /// Makes a folder in the package of a design that is there, never the package itself: a
+    /// design renamed or moved away while open, as by someone else in a synced folder, must not
+    /// begin again where it was, with everyone working on one or the other.
+    static func makeFolder(_ folder: URL, in design: URL) throws {
+        guard isPackage(design) else { throw Gone() }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
     static func read(_ url: URL) throws -> BezzleDocument {
         let data = try Data(contentsOf: isPackage(url) ? url.appendingPathComponent(documentName) : url)
         var doc = try JSONDecoder().decode(BezzleDocument.self, from: data)
@@ -49,7 +65,10 @@ nonisolated enum DesignFile {
     }
 
     /// Saves over what is there, in the form it already has; a new design becomes a package.
-    static func write(_ doc: BezzleDocument, to url: URL) throws {
+    /// Not `creating`, a design that is not there throws `Gone` instead, as for an open design
+    /// whose file went while it was being saved.
+    static func write(_ doc: BezzleDocument, to url: URL, creating: Bool = true) throws {
+        if !creating, !exists(url) { throw Gone() }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(doc)

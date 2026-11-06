@@ -251,6 +251,8 @@ final class Library {
     /// goes on showing it.
     @discardableResult
     func rename(_ url: URL, to name: String) -> URL? {
+        // Someone else's design shared with this Mac keeps the name it was shared under.
+        guard Self.mark(of: url)?.renamable ?? true else { return nil }
         if let store = Tabs.shared.designs.lazy.compactMap(\.store).first(where: { $0.isAt(url) }) {
             let before = store.url
             store.rename(to: name)

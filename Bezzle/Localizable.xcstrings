@@ -1301,6 +1301,28 @@
         }
       }
     },
+    "%lld more" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld weitere"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld autres"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Altri %lld"
+          }
+        }
+      }
+    },
     "%lld more layers look the same" : {
       "localizations" : {
         "de" : {
@@ -19160,6 +19182,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Feedback"
+          }
+        }
+      }
+    },
+    "Fewer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weniger"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moins"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meno"
           }
         }
       }

@@ -145,6 +145,11 @@ final class FolderSync {
         SharingFiles.folder(of: design).appendingPathComponent(FolderShare.roomFile)
     }
 
+    /// The folder room the design at `design` is shared in, if any.
+    nonisolated static func room(of design: URL) -> FolderShare.Room? {
+        (try? Data(contentsOf: roomFile(design))).flatMap { FolderShare.decode(FolderShare.Room.self, from: $0) }
+    }
+
     /// Whether a design keeps its changes in parts: one in a synced folder, or one that has been
     /// or is shared, whose parts go on being written wherever it is, so that none of what is done
     /// to it meanwhile is missing should it go back.
@@ -278,6 +283,7 @@ final class FolderSync {
 
     func moved(to url: URL) {
         self.url = url
+        _ = Self.claim(room, at: url)
         service = SyncedFolders.service(of: url)
         guard let collaboration else { return }
         start(for: collaboration)
@@ -286,6 +292,8 @@ final class FolderSync {
 
     /// Looks through the folder for what is new from the others, away from the main thread.
     func lookSoon() {
+        // Renamed or moved, as by someone else in the folder: the design goes on where it is now.
+        if !DesignFile.exists(url) { collaboration?.store?.follow() }
         guard !looking else {
             lookAgain = true
             return
@@ -367,10 +375,10 @@ final class FolderSync {
         let from = writtenUpTo
         writtenUpTo = state.clock.time
         own = names
-        let folder = Self.folder(of: replica, in: url), writing = writes, deleting = gone
+        let design = url, folder = Self.folder(of: replica, in: url), writing = writes, deleting = gone
         DocumentStore.saving.async {
             do {
-                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try DesignFile.makeFolder(folder, in: design)
                 for (name, design) in writing {
                     guard let data = FolderShare.pack(design) else { throw CocoaError(.fileWriteUnknown) }
                     try data.write(to: folder.appendingPathComponent(name), options: .atomic)
@@ -502,7 +510,8 @@ final class FolderSync {
     }
 }
 
-/// Tells when anything changes in or under some folders, on the main thread.
+/// Tells when anything changes in or under some folders, or one of them is renamed or moved,
+/// on the main thread.
 nonisolated final class FolderWatch: @unchecked Sendable {
     private var stream: FSEventStreamRef?
     private let changed: @MainActor () -> Void
@@ -516,7 +525,7 @@ nonisolated final class FolderWatch: @unchecked Sendable {
             MainActor.assumeIsolated { watch.changed() }
         }
         guard let stream = FSEventStreamCreate(nil, callback, &context, paths as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.5,
-                                               FSEventStreamCreateFlags(kFSEventStreamCreateFlagNoDefer)) else { return }
+                                               FSEventStreamCreateFlags(kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagWatchRoot)) else { return }
         FSEventStreamSetDispatchQueue(stream, .main)
         FSEventStreamStart(stream)
         self.stream = stream

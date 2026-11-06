@@ -69,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        // A design renamed or moved in the Finder meanwhile goes on where it is now.
+        for store in Tabs.shared.designs.compactMap(\.store) { store.follow() }
         Sharing.shared.lookNow()
     }
 
