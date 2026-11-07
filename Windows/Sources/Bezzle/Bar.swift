@@ -44,9 +44,7 @@ final class Bar {
         tabs.spacing = 14
         tabs.verticalAlignment = .center
         tabs.margin = Theme.inset(16, 0, 0, 0)
-        let home = Theme.text("Bezzle", size: 15, weight: 600, serif: true)
-        home.margin = Theme.inset(10, 0, 10, 0)
-        tabs.children.append(home)
+        tabs.children.append(appMenu())
         tabs.children.append(frontTab(onClose: onClose))
         tabs.children.append(plus())
         root.children.append(tabs)
@@ -141,6 +139,37 @@ final class Bar {
         button.box.height = 26
         button.box.child = Glyphs.view(Glyphs.plus(), size: 26, brush: Theme.ink(2))
         return button.box
+    }
+
+    /// The Bezzle menu, as the Mac's app menu has it: whether AI assistants may work in the app,
+    /// and how to connect one to it.
+    private func appMenu() -> UIElement {
+        var holder: Border?
+        let button = Pressable(radius: 8) { [weak self] in
+            guard let self, let menus = self.menus, let holder else { return }
+            menus.show(below: holder, width: 260, entries: Self.appEntries())
+        }
+        holder = button.box
+        let word = Theme.text("Bezzle", size: 15, weight: 600, serif: true)
+        word.margin = Theme.inset(10, 3, 10, 3)
+        button.box.child = word
+        return button.box
+    }
+
+    static func appEntries() -> [MenuHost.Entry] {
+        let server = MCPServer.shared
+        let on = AIControl.allowed
+        var entries: [MenuHost.Entry] = [.item(Words.t("Allow AI Control"), checked: on) { AIControl.allowed = !on }]
+        if on, let failure = server.failure { entries.append(.note(Words.t("AI control is off: %@", failure))) }
+        entries.append(.separator)
+        let address = server.address
+        entries.append(.item(Words.t("Copy Claude Code Command"), enabled: on) {
+            Clipboard.copyText("claude mcp add --transport http --scope user bezzle \(address)")
+        })
+        // Codex in the terminal and in the ChatGPT app, which share their servers.
+        entries.append(.item(Words.t("Copy Codex Command"), enabled: on) { Clipboard.copyText("codex mcp add bezzle --url \(address)") })
+        entries.append(.item(Words.t("Copy Server Address"), enabled: on) { Clipboard.copyText(address) })
+        return entries
     }
 
     private func zoomMenu() -> UIElement {

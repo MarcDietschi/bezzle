@@ -483,6 +483,16 @@ final class DesignCanvas {
         drawAll()
     }
 
+    /// A part of the canvas brought into view, 80 points round it, never above 8×: what an AI
+    /// assistant asks to look at.
+    func show(_ r: CGRect) { fit(r, padding: 80, most: 8) }
+
+    /// The part of the canvas in view.
+    var visibleRect: CGRect { visibleOnCanvas }
+
+    /// Typing into a text ends, kept, before something else changes the design.
+    func finishTyping() { if editing != nil { endEditing() } }
+
     /// The zoom menu's steps: in or out one step, or to a zoom, about the middle of the canvas.
     func zoomStep(in grow: Bool) { step(in: grow) }
     func zoom(to z: Double) { zoom(to: z, around: CGPoint(x: root.actualWidth / 2, y: root.actualHeight / 2)) }

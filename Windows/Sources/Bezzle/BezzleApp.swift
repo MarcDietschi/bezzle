@@ -59,6 +59,18 @@ enum Main {
     }
 }
 
+/// Whether AI assistants may work in the app (the AI server); on unless turned off in the
+/// Bezzle menu, as on the Mac, under the Mac's own key.
+@MainActor enum AIControl {
+    static var allowed: Bool {
+        get { UserDefaults.standard.object(forKey: "aiControl") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "aiControl")
+            if newValue { MCPServer.shared.start() } else { MCPServer.shared.stop() }
+        }
+    }
+}
+
 /// Bezzle on Windows: one window, home or a design in it, as the Mac's tabs show one or the other.
 final class BezzleApp: SwiftApplication {
     var window: Window?
@@ -125,9 +137,39 @@ final class BezzleApp: SwiftApplication {
             }
             if CommandLine.arguments.count > 1 { openDesign(URL(fileURLWithPath: CommandLine.arguments[1])) } else { showHome() }
             Trace.time("first view made")
+            startAIServer()
         }
         try? window.activate()
         Trace.time("window activated")
+    }
+
+    /// The AI server (Model Context Protocol) at 127.0.0.1:7412, as on the Mac: what it asks of
+    /// the window, and it started. BEZZLE_NO_MCP leaves it off, for a copy beside the one in use.
+    @MainActor private func startAIServer() {
+        guard ProcessInfo.processInfo.environment["BEZZLE_NO_MCP"] == nil else { return }
+        let host = MCPHost.shared
+        host.designsFolder = { Self.designsFolder }
+        host.open = { [weak self] url in
+            self?.openDesign(url)
+            return self?.design != nil
+        }
+        host.close = { [weak self] in self?.showHome() }
+        host.selection = { [weak self] in self?.design?.session.selection ?? [] }
+        host.select = { [weak self] ids in
+            guard let session = self?.design?.session else { return }
+            session.select(ids, on: ids.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+        }
+        host.edited = { [weak self] in self?.design?.session.edited(board: nil) }
+        host.visible = { [weak self] in self?.design?.canvas.visibleRect ?? .zero }
+        host.zoom = { [weak self] in self?.design?.session.zoom ?? 1 }
+        host.zoomToFit = { [weak self] in self?.design?.canvas.fit() }
+        host.show = { [weak self] r in self?.design?.canvas.show(r) }
+        host.setZoom = { [weak self] z in self?.design?.canvas.zoom(to: z) }
+        host.focusedBoard = { [weak self] in self?.design?.session.board }
+        host.endEditing = { [weak self] in self?.design?.canvas.finishTyping() }
+        MCPServer.shared.failed = { why in Trace.say("AI server: \(why)") }
+        if AIControl.allowed { MCPServer.shared.start() }
+        Trace.time("AI server at \(MCPServer.shared.address)")
     }
 
     @MainActor func showHome() {
