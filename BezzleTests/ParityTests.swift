@@ -403,6 +403,49 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: Developing photos
+
+    /// The colour cube photos are developed through, for each setting at both ends and a few
+    /// together, each colour's colour bands and the isolations: every value, bit for bit, hashed.
+    @Test func developCubes() {
+        var develops: [(String, Develop)] = [("neutral", Develop())]
+        for setting in Develop.Setting.allCases {
+            for end in [setting.range.lowerBound, setting.range.upperBound / 2, setting.range.upperBound] {
+                var d = Develop()
+                d[setting] = end
+                develops.append(("\(setting) \(end)", d))
+            }
+        }
+        var mixed = Develop()
+        mixed[.exposure] = 0.7
+        mixed[.contrast] = 35
+        mixed[.highlights] = -60
+        mixed[.shadows] = 45
+        mixed[.temperature] = 30
+        mixed[.vibrance] = 40
+        develops.append(("mixed", mixed))
+        for band in Develop.Band.allCases {
+            var d = mixed
+            d[band] = Develop.Shift(hue: 40, saturation: -30, luminance: 25)
+            develops.append(("band \(band)", d))
+            var shown = d
+            shown.isolate = .band(band)
+            develops.append(("isolated \(band)", shown))
+        }
+        for setting in [Develop.Setting.blacks, .shadows, .highlights, .whites] {
+            var d = mixed
+            d.isolate = .tone(setting)
+            develops.append(("isolated \(setting)", d))
+        }
+        for (name, d) in develops {
+            let data = Developer.cube(d)
+            var hash: UInt64 = 0xcbf29ce484222325
+            for byte in data { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
+            Self.log("develop", "\(name): \(data.count) bytes, \(String(hash, radix: 16))")
+        }
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.
