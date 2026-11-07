@@ -446,6 +446,57 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: The prototype
+
+    /// Layers linked to a screen, noted, moved, sent back and unlinked; a layer in a copy linking
+    /// the copy; a screen going on by itself and stopping; and where the prototype starts.
+    @Test func prototypeEditing() {
+        let bench = Bench(extra: [CanvasTests.rect("Button", CGRect(x: 40, y: 200, width: 160, height: 44)),
+                                  CanvasTests.rect("Card", CGRect(x: 40, y: 300, width: 160, height: 80))])
+        let id = { (name: String) in bench.node(name)!.id }
+        bench.store.selection = [id("Card")]
+        bench.step { bench.store.makeComponent() }
+        func line(_ what: String) {
+            let doc = bench.store.doc
+            let flows = doc.allNodes.filter { $0.flow != nil || $0.starts == true }.sorted { $0.name < $1.name }
+                .map { n in
+                    let f = n.flow.map { f in "to \(f.to.flatMap { doc.node($0)?.name } ?? "-") back \(f.back ?? false) note \(f.note ?? "-") motion \(f.motion?.rawValue ?? "-") after \(f.after.map { "\($0)" } ?? "-")" }
+                    return "\(n.name): \(f ?? "-") starts \(n.starts ?? false)"
+                }
+            Self.log("prototype", "\(what): " + flows.joined(separator: " ; "))
+        }
+        let a = bench.a.id, b = bench.b.id
+        bench.step { bench.store.linkFlow([id("Button")], to: b) }
+        line("linked")
+        bench.step { bench.store.setNote("  after signing in ", for: [id("Button")]) }
+        line("noted")
+        bench.step { bench.store.setMotion(.dissolve, for: [id("Button")]) }
+        line("dissolves")
+        bench.step { bench.store.setMotion(.auto, for: [id("Button")]) }
+        line("auto")
+        bench.step { bench.store.linkFlow([id("Button")], to: nil, back: true) }
+        line("back")
+        bench.step { bench.store.linkFlow([a], to: a) }
+        line("a screen to itself")
+        if let copy = bench.store.doc.allNodes.first(where: { $0.isCopy }), let inner = copy.children.first {
+            bench.step { bench.store.linkFlow([inner.id], to: b) }
+            line("a layer in a copy")
+        }
+        bench.step { bench.store.setGoesOn(after: 2.34, board: a) }
+        line("goes on")
+        bench.step { bench.store.setGoesOn(after: 0.01, board: a) }
+        line("at least a tenth")
+        bench.step { bench.store.setGoesOn(after: nil, board: a) }
+        line("stops")
+        bench.step { bench.store.setStart(b) }
+        line("starts on B")
+        bench.step { bench.store.unlinkFlow([id("Button")]) }
+        line("unlinked")
+        bench.undoLast()
+        line("undone")
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// The look of a few pictures (their tones, colours, what is lost to black and white) and
     /// what Auto makes of them, plain and developed.
     @Test func pictureLooksAndAuto() {

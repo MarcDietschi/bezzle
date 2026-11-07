@@ -38,63 +38,27 @@ extension DocumentStore {
     }
 
     /// Sends layers to a screen, or back, or nowhere (nil, not back). What else their flows say,
-    /// their notes and motion, stays.
+    /// their notes and motion, stays (`BezzleDocument.linkFlow`, in Model/PrototypeEditing.swift).
     func linkFlow(_ ids: [UUID], to board: UUID?, back: Bool = false) {
         let ids = ids.compactMap { doc.linkable($0) }
         guard !ids.isEmpty else { return }
-        edit(board == nil && !back ? "Remove Link" : "Link") { doc in
-            for id in ids {
-                doc.update(id) { n in
-                    // A screen doesn't go to itself.
-                    if n.isArtboard, board == n.id, !back { return }
-                    var f = n.flow ?? FlowLink()
-                    f.to = back ? nil : board
-                    f.back = back ? true : nil
-                    if !f.leads { f.note = nil; f.motion = nil }
-                    n.flow = f.leads || f.after != nil ? f : nil
-                }
-            }
-        }
+        edit(board == nil && !back ? "Remove Link" : "Link") { $0.linkFlow(ids, to: board, back: back) }
     }
 
     func unlinkFlow(_ ids: [UUID]) { linkFlow(ids, to: nil) }
 
     /// What is said of where layers go, written on their threads.
     func setNote(_ note: String?, for ids: [UUID]) {
-        let note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let clean = note?.isEmpty == false ? note : nil
-        edit("Write Note") { doc in
-            for id in ids {
-                doc.update(id) { n in
-                    guard var f = n.flow, f.leads else { return }
-                    f.note = clean
-                    n.flow = f
-                }
-            }
-        }
+        edit("Write Note") { $0.setFlowNote(note, for: ids) }
     }
 
     func setMotion(_ motion: FlowMotion, for ids: [UUID]) {
-        edit("Change Motion") { doc in
-            for id in ids {
-                doc.update(id) { n in
-                    guard var f = n.flow, f.leads else { return }
-                    f.motion = motion == .auto ? nil : motion
-                    n.flow = f
-                }
-            }
-        }
+        edit("Change Motion") { $0.setFlowMotion(motion, for: ids) }
     }
 
     /// A screen goes on by itself after `seconds`, to where its own flow leads; nil stops it.
     func setGoesOn(after seconds: Double?, board: UUID) {
-        edit("Go On by Itself") { doc in
-            doc.update(board) { n in
-                var f = n.flow ?? FlowLink()
-                f.after = seconds.map { max(0.1, ($0 * 10).rounded() / 10) }
-                n.flow = f.leads || f.after != nil ? f : nil
-            }
-        }
+        edit("Go On by Itself") { $0.setGoesOn(after: seconds, board: board) }
     }
 
     /// Where the prototype starts.
