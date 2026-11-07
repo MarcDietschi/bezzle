@@ -153,6 +153,8 @@ int32_t bz_image_encode(int32_t width, int32_t height, const void *pixels, int32
 /// Writes premultiplied RGBA pixels as a picture file: `format` 0 PNG, 1 JPEG, 2 WebP (lossless at
 /// a quality of 1), `quality` 0…1. Returns 0 when written.
 int32_t bz_image_write(const char *path, int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
+/// 1 when this build reads and writes AVIF (Windows/avif.ps1 made libavif and libaom for it), else 0.
+int32_t bz_avif_available(void);
 /// A PDF: begun at a path (0 if it cannot be), given pages, each a recorded picture the core made
 /// at `scale` pixels a point and `width` by `height` points, and ended, which writes it.
 int32_t bz_pdf_begin(const char *path);

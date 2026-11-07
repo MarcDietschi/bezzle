@@ -29,8 +29,14 @@ In the VM, in `C:\src\Bezzle\Windows`:
 
 ```powershell
 .\winrt.ps1                  # WinUI bindings into Packages\, and the Windows App Runtime
+.\skia.ps1                   # Skia into Packages\skia
+.\avif.ps1                   # libavif and libaom into Packages\avif, for AVIF (a few minutes)
 swift build
 ```
+
+Without `Packages\avif`, Bezzle builds all the same but neither reads nor writes AVIF, as a Mac whose
+Image I/O cannot write it leaves the format out. Run `.\avif.ps1` before the first `swift build`; when
+it comes after one, touch `Package.swift`, since SwiftPM may keep its earlier reading of the manifest.
 
 See `VM/make-vm.sh` for what the VM is and where its key, password and disks live.
 

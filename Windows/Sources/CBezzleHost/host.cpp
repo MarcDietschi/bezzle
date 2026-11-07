@@ -3,6 +3,7 @@
 // a design draws and measures here as it does there, and there as on the Mac.
 
 #include "BezzleHost.h"
+#include "avif-files.h"
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorSpace.h"
@@ -1482,6 +1483,8 @@ extern "C" int32_t bz_image_write(const char* path, int32_t width, int32_t heigh
             return SkPngEncoder::Encode(&file, pixmap, {}) ? 0 : 2;
     }
 }
+
+extern "C" int32_t bz_avif_available(void) { return avif::available() ? 1 : 0; }
 
 extern "C" int32_t bz_image_encode(int32_t width, int32_t height, const void* pixels, int32_t format, double quality) {
     std::lock_guard<std::mutex> guard(lock);

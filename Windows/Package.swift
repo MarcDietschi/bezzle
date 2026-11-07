@@ -25,6 +25,14 @@ let swiftrt = (Context.environment["SDKROOT"] ?? "") + "\\usr\\lib\\swift\\windo
 let resources = Context.packageDirectory + "\\Resources\\Generated\\Bezzle.res"
 let resourceFlags = FileManager.default.fileExists(atPath: resources) ? ["-Xlinker", resources] : []
 
+// AVIF, read and written by libavif with libaom (avif.ps1 builds them into Packages/avif): linked
+// into CBezzleHost when they are there, which then reads and writes it (Sources/CBezzleHost/avif.cpp).
+let avifFolder = "Packages\\avif\\out\\" + (arch == "aarch64" ? "arm64" : "x64")
+let hasAVIF = FileManager.default.fileExists(atPath: Context.packageDirectory + "\\" + avifFolder + "\\lib\\avif.lib")
+let avifCxx: [CXXSetting] = hasAVIF ? [.headerSearchPath("../../" + avifFolder.replacingOccurrences(of: "\\", with: "/") + "/include"), .define("BEZZLE_AVIF")] : []
+let avifLinking: [LinkerSetting] = hasAVIF
+    ? [.unsafeFlags(["-L" + Context.packageDirectory + "\\" + avifFolder + "\\lib"]), .linkedLibrary("avif"), .linkedLibrary("aom")] : []
+
 let frameworks = ["CoreGraphics", "AppKit", "CryptoKit", "ImageIO", "UniformTypeIdentifiers", "CoreImage", "CoreText", "QuartzCore"]
 
 // What Skia's own build defines for code that uses it (gn desc … defines), so its headers agree.
@@ -61,8 +69,8 @@ let package = Package(
             cxxSettings: [.headerSearchPath("../../Packages/skia")] + skiaDefines.map { define in
                 let parts = define.split(separator: "=", maxSplits: 1).map(String.init)
                 return .define(parts[0], to: parts.count > 1 ? parts[1] : nil)
-            },
-            linkerSettings: [.unsafeFlags(["-L" + skiaOut])] + skiaLibraries.map { .linkedLibrary($0) }
+            } + avifCxx,
+            linkerSettings: [.unsafeFlags(["-L" + skiaOut])] + skiaLibraries.map { .linkedLibrary($0) } + avifLinking
                 + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt"].map { .linkedLibrary($0) }
         ),
         .target(
