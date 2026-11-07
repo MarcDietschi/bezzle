@@ -64,6 +64,8 @@ extension WindowsCore {
     @MainActor public final class Versions {
         /// Oldest first.
         private var all: [DesignVersion] = []
+        /// As they are kept, for sharing them.
+        var kept: [DesignVersion] { all }
         public var list: [Version] { all.map(Version.init) }
         /// Whether the time ruler is out.
         public private(set) var browsing = false
@@ -174,6 +176,8 @@ extension WindowsCore {
                 try data.write(to: file(version.id, url), options: .atomic)
                 try writeIndex(url)
                 for id in dropped { try? FileManager.default.removeItem(at: file(id, url)) }
+                // Named in a design shared by link, it goes to the room for everyone.
+                if version.shared == true { WindowsCore.sharing?.cloud?.sendVersion(version, data: data) }
             } catch {
                 NSLog("Bezzle could not keep a version of %@: %@", url.path, "\(error)")
             }
@@ -228,6 +232,7 @@ extension WindowsCore {
             all[i].name = named
             if WindowsCore.sharing != nil, named != nil { all[i].shared = true }
             try? writeIndex(url)
+            if all[i].shared == true, let data = try? Data(contentsOf: file(id, url)) { WindowsCore.sharing?.cloud?.sendVersion(all[i], data: data) }
             changed()
         }
 

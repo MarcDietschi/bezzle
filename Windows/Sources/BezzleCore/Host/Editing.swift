@@ -288,6 +288,8 @@ extension WindowsCore {
     }
 
     static func edit(_ change: (inout BezzleDocument) -> Void) {
+        // Someone else's design no longer shared is kept as it last was.
+        guard !isReadOnly else { return }
         beginChange()
         guard let doc = design else { return }
         design = Editing.apply(to: doc, change)

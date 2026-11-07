@@ -63,14 +63,15 @@ let package = Package(
                 return .define(parts[0], to: parts.count > 1 ? parts[1] : nil)
             },
             linkerSettings: [.unsafeFlags(["-L" + skiaOut])] + skiaLibraries.map { .linkedLibrary($0) }
-                + ["user32", "gdi32", "ole32", "advapi32", "usp10"].map { .linkedLibrary($0) }
+                + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt"].map { .linkedLibrary($0) }
         ),
         .target(
             name: "BezzleCore",
             dependencies: frameworks.map { .target(name: $0) } + ["LZFSE", "CBezzleHost", "Compression", "Accelerate"],
-            // The browser's host and Main.swift are replaced by Host/; Live.swift seals with
-            // CryptoKit, and DesignTokens.swift comes from Web/prepare.sh, as for the web core.
-            exclude: ["Platform/WebHost.swift", "Shared/Model/Live.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],
+            // The browser's host and Main.swift are replaced by Host/; DesignTokens.swift comes
+            // from Web/prepare.sh, as for the web core. Live.swift seals with CryptoKit, which
+            // Host/Sealing.swift stands in for with Windows' own cryptography.
+            exclude: ["Platform/WebHost.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],
             swiftSettings: [.defaultIsolation(MainActor.self), .unsafeFlags(["-Xfrontend", "-disable-availability-checking"])]
         ),
         .executableTarget(

@@ -51,6 +51,12 @@ extension WindowsCore {
 
     /// How the open design is shared, for the window to show (the Mac's SharingMark).
     nonisolated public enum ShareMark: Equatable, Sendable {
+        /// Shared from this computer, by link.
+        case shared
+        /// Someone else's, shared with this computer by link, by its owner's name.
+        case sharedBy(String?)
+        /// Someone else's, no longer shared: read only.
+        case ended
         /// Kept in a folder that OneDrive, Google Drive or the like keeps in step, where others work on it too.
         case inFolder(String)
     }
@@ -69,12 +75,13 @@ extension WindowsCore {
     /// The open design as it is shared, which its own file may lag behind: a design in a synced
     /// folder, or one with people's files in it.
     static func openShared(_ url: URL, file doc: BezzleDocument) -> BezzleDocument {
+        sharing?.close()
         sharing = nil
         guard let session = SharedSession.open(url, replica: replica, file: doc) else { return doc }
         var shown = session.document()
         shown.viewport = doc.viewport
-        session.takeIn(shown)
         sharing = session
+        session.start(with: shown)
         return shown
     }
 
@@ -186,6 +193,12 @@ final class SharedSession {
     private(set) var state: SharedDesign
     /// Where the design keeps its parts.
     let folder: FolderCopy?
+    /// The design's share by link, while it has one or had one (`sharing/share.json`).
+    private(set) var link: ShareLink?
+    /// The design's room on the relay, while it is shared by link.
+    private(set) var cloud: CloudCopy?
+    /// The pictures each artboard and loose layer of `baseDoc` shows.
+    private var basePictures: [UUID: Set<String>] = [:]
     /// The layers as this computer last showed them, to tell what was changed here since.
     private var base = FlatDesign()
     /// The design `base` was made from, while it is (see the Mac's Collaboration.baseDoc).
@@ -198,29 +211,92 @@ final class SharedSession {
     /// The latest change made here.
     private(set) var changedUpTo: Int64 = 0
 
-    init(url: URL, state: SharedDesign, folder: FolderCopy?, replica: String) {
+    init(url: URL, state: SharedDesign, folder: FolderCopy?, link: ShareLink?, replica: String) {
         self.url = url
         self.state = state
         self.folder = folder
+        self.link = link
         self.replica = replica
         changedUpTo = state.clock.time
+        if let keys = link?.keys { cloud = CloudCopy(keys: keys, replica: replica) }
     }
 
-    /// The shared design at `url`, if it is one: kept in a synced folder, or with people's files.
+    /// The shared design at `url`, if it is one: shared by link, kept in a synced folder, or with
+    /// people's files. A copy of a design shared by link, as Explorer makes, is not shared: it
+    /// becomes a design of its own.
     static func open(_ url: URL, replica: String, file: BezzleDocument) -> SharedSession? {
-        guard FolderCopy.isPackage(url), FolderCopy.applies(to: url),
-              let opened = FolderCopy.open(url, replica: replica, file: file) else { return nil }
-        return SharedSession(url: url, state: opened.state, folder: opened.copy, replica: replica)
+        guard FolderCopy.isPackage(url) else { return nil }
+        var link = Linking.link(of: url)
+        if let keys = link?.keys, !Linking.claim(keys.room, at: url) {
+            Linking.unlink(url)
+            link = nil
+        }
+        guard link != nil || FolderCopy.applies(to: url), let opened = FolderCopy.open(url, replica: replica, file: file) else { return nil }
+        return SharedSession(url: url, state: opened.state, folder: opened.copy, link: link, replica: replica)
     }
 
-    var mark: WindowsCore.ShareMark? { folder?.mark }
+    /// The design as it is shown is taken in, and its room looked at (the Mac's attach).
+    func start(with doc: BezzleDocument) {
+        takeIn(doc)
+        cloud?.start(for: self)
+    }
+
+    func close() {
+        cloud?.stop()
+    }
+
+    var mark: WindowsCore.ShareMark? {
+        guard let link else { return folder?.mark }
+        if link.ended { return .ended }
+        guard let room = link.keys?.room else { return folder?.mark }
+        return Linking.owns(room) ? .shared : .sharedBy(link.ownerName)
+    }
 
     /// Whether it can only be looked at: someone else's design this computer no longer shares.
-    var isReadOnly: Bool { false }
+    var isReadOnly: Bool { link?.ended == true }
 
     func moved(to url: URL) {
         self.url = url
+        if let room = cloud?.keys.room { _ = Linking.claim(room, at: url) }
         folder?.moved(to: url)
+    }
+
+    /// This computer shared the design: its room on the relay is `link`'s.
+    func shared(_ link: ShareLink) {
+        self.link = link
+        cloud?.stop()
+        cloud = link.keys.map { CloudCopy(keys: $0, replica: replica) }
+        cloud?.start(for: self)
+    }
+
+    /// Its owner gave the design another name, or theirs.
+    func retitled(_ link: ShareLink) { self.link = link }
+
+    /// The design is no longer shared by link. This computer's own goes on as a design of its
+    /// own; someone else's stays as it last was, read only.
+    func unshared(own: Bool) {
+        cloud?.stop()
+        cloud = nil
+        if own {
+            link = nil
+            Linking.unlink(url)
+        } else if var ended = link {
+            ended.ended = true
+            link = ended
+            try? Linking.write(ended, to: url)
+        }
+    }
+
+    /// The pictures layers show, in their looks and their masks.
+    static func pictures(in nodes: [Node]) -> Set<String> {
+        var names = Set<String>()
+        func visit(_ n: Node) {
+            for image in n.paintedPictures { names.formUnion(image.assets) }
+            n.children.forEach(visit)
+            n.mask?.forEach(visit)
+        }
+        nodes.forEach(visit)
+        return names
     }
 
     /// The design as it is shared, which is what this computer shows.
@@ -233,6 +309,7 @@ final class SharedSession {
     /// Takes in what was changed here since last time: only the artboards and loose layers that
     /// changed, while the layers as last shown are known to be those of the design taken in last.
     func takeIn(_ doc: BezzleDocument) {
+        guard !isReadOnly else { return }
         if let before = baseDoc {
             let (old, new) = FlatDesign.changes(from: before, to: doc)
             absorb(new, since: old)
@@ -242,11 +319,22 @@ final class SharedSession {
             absorb(now, since: base)
             base = now
         }
+        var shown: [UUID: Set<String>] = [:]
+        var was: [UUID: Node] = [:]
+        for node in baseDoc?.nodes ?? [] { was[node.id] = node }
+        for node in doc.nodes {
+            if was[node.id] == node, let kept = basePictures[node.id] { shown[node.id] = kept } else { shown[node.id] = Self.pictures(in: [node]) }
+        }
         baseDoc = doc
+        basePictures = shown
+        cloud?.offer(shown.values.reduce(into: Set<String>()) { $0.formUnion($1) })
     }
 
     private func absorb(_ now: FlatDesign, since was: FlatDesign) {
-        if state.absorb(now, since: was, by: replica, at: WindowsCore.nowMilliseconds) { changedUpTo = state.clock.time }
+        if state.absorb(now, since: was, by: replica, at: WindowsCore.nowMilliseconds) {
+            changedUpTo = state.clock.time
+            cloud?.changed()
+        }
     }
 
     /// Takes in changes from the others; what was done here (`current`) is taken in first, so it
@@ -258,6 +346,7 @@ final class SharedSession {
             if source != .folder { toKeep.append(c) }
             if !layers.isEmpty { unshown = true }
         }
+        if source == .relay { cloud?.relayed(changes) }
     }
 
     /// The design with what others changed, if there is anything not shown yet.

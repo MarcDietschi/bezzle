@@ -159,6 +159,14 @@ int32_t bz_pdf_begin(const char *path);
 int32_t bz_pdf_page(int32_t pdf, int32_t picture, double width, double height, double scale);
 int32_t bz_pdf_end(int32_t pdf);
 
+/// AES-256-GCM with Windows' own cryptography (sealing.cpp): `seal` 1 seals `count` bytes of
+/// `input` into `output` and writes the 16-byte `tag`; 0 opens them, checking `tag`. A 32-byte
+/// key and a 12-byte nonce. Returns 0 when done, and when opening, only if nothing was changed.
+int32_t bz_gcm(int32_t seal, const uint8_t *key, const uint8_t *nonce, const uint8_t *aad, int32_t aadCount,
+               const uint8_t *input, int64_t count, uint8_t *output, uint8_t *tag);
+/// HMAC-SHA256 of `data` with `key` into the 32 bytes at `out`. Returns 0 when done.
+int32_t bz_hmac_sha256(const uint8_t *key, int32_t keyCount, const uint8_t *data, int64_t count, uint8_t *out);
+
 #ifdef __cplusplus
 }
 #endif

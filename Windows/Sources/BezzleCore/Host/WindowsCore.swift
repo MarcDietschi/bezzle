@@ -90,6 +90,7 @@ public enum WindowsCore {
 
     /// Lets the open design go, once it is saved: a save that comes later has nothing to write.
     public static func close() {
+        sharing?.close()
         sharing = nil
         fronts = [:]
         versions.reset()
