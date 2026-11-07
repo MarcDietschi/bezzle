@@ -126,7 +126,7 @@ final class Bar {
     /// With a design in front, its spelling's entries too (the Mac's Edit › Spelling and Grammar).
     static func appEntries(front url: URL?, spelling: [MenuHost.Entry] = []) -> [MenuHost.Entry] {
         // A design here is a folder, which Open (Ctrl+O) picks, so files from other apps come in by their own entry.
-        [.item(Words.t("Bring In a Design…"), shortcut: "Ctrl+Shift+I") { Bar.bringIn?() }, .separator]
+        [.item(Words.t("Bring In a Design…"), shortcut: "Ctrl+Shift+I") { Bar.bringIn?() }, WebImporting.menuEntry, .separator]
             + (spelling.isEmpty ? [] : spelling + [.separator]) + appEntries(showing: url)
     }
 

@@ -99,6 +99,8 @@ final class BezzleApp: SwiftApplication {
         // BEZZLE_DESIGNS: a test copy's own, away from the person's designs.
         if let given = ProcessInfo.processInfo.environment["BEZZLE_DESIGNS"], !given.isEmpty { return URL(fileURLWithPath: given, isDirectory: true) }
         #endif
+        // BEZZLE_LIBRARY, as on the Mac, keeps a test copy's designs apart from everyone's.
+        if let test = ProcessInfo.processInfo.environment["BEZZLE_LIBRARY"], !test.isEmpty { return URL(fileURLWithPath: test, isDirectory: true) }
         if let chosen = UserDefaults.standard.string(forKey: "designsFolderPath"), FileManager.default.fileExists(atPath: chosen) {
             return URL(fileURLWithPath: chosen, isDirectory: true)
         }
@@ -185,6 +187,12 @@ final class BezzleApp: SwiftApplication {
             fitWindow(forDesigns: false, centred: true)
             Tabs.shared.showFront()
             openCommandLine(Array(CommandLine.arguments.dropFirst()), in: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+            // Import from a Website, over the page in front; what it makes opens in a tab with what
+            // came across at the canvas's foot, as a design from another app does.
+            let web = WebImporting.shared
+            web.host = { [weak self] in self?.presented?.root }
+            web.folder = { Self.designsFolder }
+            web.opened = { made, summary in Tabs.shared.open(made, report: summary) }
             Trace.time("first view made")
             startAIServer()
             // Later starts of this Bezzle.exe hand over what they were asked to open.

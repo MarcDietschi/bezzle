@@ -76,6 +76,12 @@ final class HomeView {
             self.pasteLink(args)
         }
         takeDrops()
+        // Ctrl+Alt+Shift+I brings a web page in, as ⌥⇧⌘I does on the Mac.
+        root.keyDown.addHandler { _, args in
+            guard let args, !args.handled, !WebImporting.shared.showing, WebImporting.isShortcut(args.key) else { return }
+            args.handled = true
+            WebImporting.shared.present()
+        }
     }
 
     // MARK: Bar
@@ -123,6 +129,11 @@ final class HomeView {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
         }
         right.children.append(search)
+        // A web page brought in as a design, as the Mac's home has it first.
+        let website = Controls.cardButton(Words.t("From a Website…"), glyph: Glyphs.globe(size: 12), height: 28) { WebImporting.shared.present() }
+        website.verticalAlignment = .center
+        try? ToolTipService.setToolTip(website, Words.t("Bring a web page in as a design  Ctrl+Alt+Shift+I"))
+        right.children.append(website)
         // A design here is a folder, which Open… picks: files from other apps come in by their own button.
         let bringIn = Theme.card(radius: 8)
         bringIn.height = 28
@@ -155,6 +166,8 @@ final class HomeView {
 
     /// StandardDataFormats.StorageItems, which the bindings leave out: files, as Explorer drags them.
     private static let storageItems = "Shell IDList Array"
+    /// StandardDataFormats.WebLink: a link, as a browser drags one.
+    private static let webLink = "UniformResourceLocatorW"
 
     /// Designs and files from other apps dropped anywhere on home open, each in a tab of its own,
     /// as on the Mac.
@@ -162,14 +175,14 @@ final class HomeView {
         root.allowDrop = true
         root.dragOver.addHandler { _, args in
             guard let args, let view = args.dataView else { return }
-            // Words or a link dragged in, as from a browser or a mail, may be a design's link.
-            let link = (try? view.contains("Text")) == true || (try? view.contains("UniformResourceLocatorW")) == true
+            // Words or a link dragged in, as from a browser or a mail: a design's link, or a page to bring in.
+            let link = (try? view.contains(Self.webLink)) == true || (try? view.contains("Text")) == true
             args.acceptedOperation = (try? view.contains(Self.storageItems)) == true || link ? .copy : .none
         }
         root.drop.addHandler { [weak self] _, args in
             guard let args, let view = args.dataView else { return }
             if (try? view.contains(Self.storageItems)) != true {
-                let web = (try? view.contains("UniformResourceLocatorW")) == true, words = (try? view.contains("Text")) == true
+                let web = (try? view.contains(Self.webLink)) == true, words = (try? view.contains("Text")) == true
                 guard web || words else { return }
                 let deferral = try? args.getDeferral()
                 Task { @MainActor [weak self] in
@@ -620,10 +633,16 @@ final class HomeView {
     }
 
     /// Words or a link dropped here: a design's link opens.
+    /// A link dropped on home: a design's link opens the design; another web page's address is a
+    /// page to bring in, as on the Mac.
     private func dropped(link text: String?) {
-        guard let text, WindowsCore.isShareLink(text) else { return }
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
         // After the drop is over: opening replaces home, which the drop is still on.
-        DispatchQueue.main.async { MainActor.assumeIsolated { self.openShareLink?(text) } }
+        if WindowsCore.isShareLink(text) {
+            DispatchQueue.main.async { MainActor.assumeIsolated { self.openShareLink?(text) } }
+        } else if ["http://", "https://"].contains(where: { text.lowercased().hasPrefix($0) }) {
+            DispatchQueue.main.async { MainActor.assumeIsolated { WebImporting.shared.present(text) } }
+        }
     }
 
     /// The designs listed again, as they are in the folder now.

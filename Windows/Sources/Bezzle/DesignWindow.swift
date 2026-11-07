@@ -197,6 +197,14 @@ final class DesignWindow {
                 return
             }
             if self.questions.key(args) { return }
+            // Import from a Website keeps the keys while it is over the window; Ctrl+Alt+Shift+I
+            // brings it, as ⌥⇧⌘I does on the Mac.
+            if WebImporting.shared.showing { return }
+            if WebImporting.isShortcut(args.key) {
+                args.handled = true
+                WebImporting.shared.present()
+                return
+            }
             if let playing = self.playing {
                 playing.key(args)
                 return

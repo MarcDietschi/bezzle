@@ -67,7 +67,10 @@ Web pages are read in WebView2, the Edge engine Windows 11 has (`CBezzleHost/web
 SDK fetched by `winrt.ps1` into `Packages\webview2`), by the Mac's own page reader
 (`Bezzle/Import/WebPageReader.js` and `WebPageAwake.js`, built into the core) and the Mac's
 converter (`WebImporter.swift`, `WebPage.swift`, `CSSValues.swift`, linked); `Import/WebCapture.swift`
-is the Mac's WebCapture with WebKit's calls asked of the DevTools protocol instead.
+is the Mac's WebCapture with WebKit's calls asked of the DevTools protocol instead. As on the Mac,
+home's From a Website… button, the Bezzle menu's Import from a Website… (Ctrl+Alt+Shift+I), a
+link dropped on home and the AI tool `import_website` bring one in (`WebImportSheet.swift`).
+`BEZZLE_LIBRARY` gives a test copy a designs folder of its own.
 
 Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O
