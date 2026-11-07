@@ -109,7 +109,7 @@ extension WindowsCore {
 
     @MainActor public final class FlowHand {
         /// The canvas seen as a prototype.
-        public var on = false { didSet { if on != oldValue { press = nil; pull = nil; flag = nil; redraw() } } }
+        public var on = false { didSet { if on != oldValue { modeChanged() } } }
         public var selection: [UUID] = []
         /// A screen pointed at in the inspector: the threads the picked layers would take to it.
         public var preview: UUID? { didSet { if preview != oldValue { redraw() } } }
@@ -128,6 +128,41 @@ extension WindowsCore {
         public var writeNote: (UUID, CGPoint) -> Void = { _, _ in }
 
         public init() {}
+
+        // MARK: Coming into the prototype, and out of it
+
+        /// How far into the prototype the canvas is, from what, toward what, since when.
+        private var mode: (from: Double, to: Double, at: Double) = (0, 0, 0)
+        private static let modeTime = 0.55
+        /// When the current began running through the flows, and how many flows from the start
+        /// each screen is.
+        private var wave: (at: Double, steps: [UUID: Int])?
+        private static let waveStep = 0.26
+
+        private func modeChanged() {
+            let now = Self.now()
+            mode = (shown(at: now), on ? 1 : 0, now)
+            press = nil
+            pull = nil
+            flag = nil
+            if on, let seen = doc, let start = Prototype.start(of: seen) {
+                wave = (now + 0.12, Prototype.steps(from: start.id, in: seen))
+            } else if on {
+                wave = nil
+            }
+            redraw()
+        }
+
+        /// How far into the prototype the canvas is at `now`, eased: the threads fade and draw in
+        /// as it comes, and draw back into their layers as it goes.
+        public func shown(at now: Double? = nil) -> Double {
+            let t = min(max(((now ?? Self.now()) - mode.at) / Self.modeTime, 0), 1)
+            let e = 1 - pow(1 - t, 3)
+            return mode.from + (mode.to - mode.from) * e
+        }
+
+        /// Whether anything of the prototype shows: while it is seen as one, and while it fades.
+        public var showing: Bool { on || shown() > 0.001 }
 
         private var doc: BezzleDocument? { WindowsCore.design }
         private static func now() -> Double { Date().timeIntervalSinceReferenceDate }
@@ -410,10 +445,16 @@ extension WindowsCore {
                 WindowsCore.endGesture()
             case .flag:
                 if press.moved {
-                    if let to = flag?.target, doc?.node(to)?.starts != true { WindowsCore.edit { $0.markStart(to) } }
+                    if let carry = flag, let to = carry.target, doc?.node(to)?.starts != true {
+                        flagFlight = (CGRect(x: carry.spring.at.x - Self.flagSize.width / 2, y: carry.spring.at.y - Self.flagSize.height / 2,
+                                             width: Self.flagSize.width, height: Self.flagSize.height), to, now)
+                        WindowsCore.edit { $0.markStart(to) }
+                    }
                     flag = nil
                 } else if let id = press.id, doc?.node(id)?.starts != true {
-                    // A click on a ghost flag: the prototype starts there.
+                    // A click on a ghost flag: the flag flies over from where it was.
+                    let was = doc.flatMap { d in Prototype.screens(in: d).first { $0.starts == true } }.flatMap { boardRect($0.id) }.map(flagRect(of:))
+                    if let was { flagFlight = (was, id, now) }
                     WindowsCore.edit { $0.markStart(id) }
                 }
             case .layer, .thread:
@@ -513,6 +554,7 @@ extension WindowsCore {
             if let to = pull.target {
                 WindowsCore.edit { $0.linkFlow([id], to: to) }
                 landing = (id, pull.sag + 26, now)
+                lit = (to, now + 0.32)
             } else if pull.back {
                 WindowsCore.edit { $0.linkFlow([id], to: nil, back: true) }
                 landing = (id, 0, now)
@@ -606,11 +648,26 @@ extension WindowsCore {
             public var lifted: [(rect: CGRect, on: Bool)] = []
             public var well: (rect: CGRect, on: Bool)?
             public var lights: [(at: CGPoint, size: Double)] = []
+            /// A screen ringing as it answers a thread tied to it.
+            public var answer: (rect: CGRect, width: Double, alpha: Double, radius: Double)?
+            /// How much of it all shows, as the canvas comes into the prototype and goes out.
+            public var alpha: Double = 1
         }
 
         public var animating: Bool {
-            pull != nil || flag != nil || landing != nil || retracting != nil
+            let now = Self.now()
+            if now - mode.at < Self.modeTime + 0.05 { return true }
+            if on, let wave, now < wave.at + Double((wave.steps.values.max() ?? 0) + 2) * Self.waveStep + 0.8 { return true }
+            if pull != nil || flag != nil || landing != nil || retracting != nil || flagFlight != nil { return true }
+            if let lit, now - lit.at < 1.2 { return true }
+            // A pulse runs along the thread pointed at, or picked.
+            return on && (hoveredThread != nil || threads().contains { linkSources.contains($0.source) })
         }
+
+        /// A screen a thread was just tied to, ringing once as if it heard it, from when.
+        private var lit: (board: UUID, at: Double)?
+        /// The start flag flying to the screen it was set on, from where.
+        private var flagFlight: (from: CGRect, to: UUID, at: Double)?
 
         /// Moves the springs on.
         private func step(_ now: Double) {
@@ -635,15 +692,30 @@ extension WindowsCore {
             }
             if let l = landing, now - l.at > 1.1 { landing = nil }
             if let r = retracting, now - r.at > 0.4 { retracting = nil }
+            if let f = flagFlight, now - f.at > 0.6 { flagFlight = nil }
+            if let l = lit, now - l.at > 1.2 { lit = nil }
         }
 
         public func marks() -> Marks {
             var m = Marks()
-            guard on, let seen = doc else { return m }
             let now = Self.now()
+            let k = shown(at: now)
+            guard k > 0.001, let seen = doc else { return m }
+            m.alpha = k
             step(now)
+            // Going out, every thread draws back into its layer at once.
+            let leaving = !on
             let picked = Set(linkSources)
-            for t in threads() where pull?.source != t.source {
+            let all = threads()
+            let last = (wave?.steps.values.max() ?? 0) + 1
+            for t in all where pull?.source != t.source {
+                var drawn = leaving ? CGFloat(k) : 1
+                if !leaving, let wave {
+                    let step = t.bySelf ? (wave.steps[t.board] ?? 0) : (wave.steps[t.board] ?? last)
+                    let local = (now - wave.at - Double(step) * Self.waveStep) / 0.5
+                    drawn = CGFloat(1 - pow(1 - min(max(local, 0), 1), 3))
+                }
+                guard drawn > 0.001 else { continue }
                 var curve = t.curve
                 if let landing, landing.source == t.source {
                     let e = now - landing.at
@@ -651,15 +723,53 @@ extension WindowsCore {
                     curve.c1.y += wobble
                     curve.c2.y += wobble
                 }
-                let lit = picked.contains(t.source) || hoveredThread == t.source
-                m.threads.append((curve, lit, t.flow.goesBack || t.bySelf, false, 1))
-                let d = curve.tangent(1)
-                m.arrows.append((curve.p3, atan2(Double(d.dy), Double(d.dx)), lit))
+                let lit = !leaving && (picked.contains(t.source) || hoveredThread == t.source)
+                m.threads.append((curve.upTo(drawn), lit, t.flow.goesBack || t.bySelf, false, 1))
+                if drawn >= 0.999 {
+                    let d = curve.tangent(1)
+                    m.arrows.append((curve.p3, atan2(Double(d.dy), Double(d.dx)), lit))
+                    // A pulse runs along the thread pointed at, or picked.
+                    if lit {
+                        let u = now.truncatingRemainder(dividingBy: 1.5) / 1.5
+                        let e = u < 0.5 ? 2 * u * u : 1 - pow(-2 * u + 2, 2) / 2
+                        m.lights.append((curve.point(CGFloat(e)), 5.5))
+                    }
+                    // A thread just tied: a light runs along it to the screen.
+                    if let landing, landing.source == t.source, now - landing.at < 0.7 {
+                        let u = (now - landing.at) / 0.6
+                        if u <= 1 { m.lights.append((curve.point(CGFloat(1 - pow(1 - u, 2))), 7)) }
+                    }
+                }
                 m.dots.append((curve.p0, lit))
                 if t.bySelf, let after = t.flow.after {
                     m.timers.append((CGPoint(x: curve.p0.x + 4, y: curve.p0.y - 18), String(format: after < 10 ? "%.1f s" : "%.0f s", after)))
                 }
-                if let plate = notePlate(of: t) { m.notes.append((plate, t.flow.note ?? "", lit)) }
+                if drawn >= 0.999, let plate = notePlate(of: t) { m.notes.append((plate, t.flow.note ?? "", lit)) }
+            }
+            // A wave of light runs along each thread as it is drawn in, coming into the prototype.
+            if !leaving, let wave {
+                for t in all where pull?.source != t.source {
+                    let step = wave.steps[t.board] ?? last
+                    let local = (now - wave.at - Double(step) * Self.waveStep) / 0.5
+                    if local > 0, local < 1 { m.lights.append((t.curve.point(CGFloat(1 - pow(1 - local, 3))), 6)) }
+                }
+            }
+            // A screen a thread was just tied to rings once, as if it heard it.
+            if let lit, let r = boardRect(lit.board) {
+                let e = now - lit.at
+                if e > 0, e < 0.9 {
+                    let u = e / 0.9
+                    let grow = CGFloat(4 + 26 * (1 - pow(1 - u, 3)))
+                    m.answer = (r.insetBy(dx: -grow, dy: -grow), 2.5 * (1 - u) + 0.5, (1 - u) * 0.9, 10 + Double(grow) / 2)
+                }
+            }
+            guard !leaving else {
+                // Going out: only the start flag stays with the threads, fading.
+                for board in Prototype.screens(in: seen) where board.starts == true {
+                    let r = view(board.frame)
+                    if r.height > 30 { m.flags.append((flagRect(of: r), false, false, 1)) }
+                }
+                return m
             }
             // The flags.
             for board in Prototype.screens(in: seen) {
@@ -667,7 +777,18 @@ extension WindowsCore {
                 guard r.height > 30 else { continue }
                 let spot = flagRect(of: r)
                 if board.starts == true {
-                    if flag == nil { m.flags.append((spot, false, hoveredFlag == board.id, 1)) }
+                    if flag == nil, let f = flagFlight, f.to == board.id {
+                        // Along an arc, from where it was.
+                        let u = CGFloat(min((now - f.at) / 0.5, 1))
+                        let e = 1 - pow(1 - u, 3)
+                        let a = CGPoint(x: f.from.midX, y: f.from.midY), b = CGPoint(x: spot.midX, y: spot.midY)
+                        let mid = CGPoint(x: (a.x + b.x) / 2, y: min(a.y, b.y) - 60)
+                        let x = (1 - e) * (1 - e) * a.x + 2 * (1 - e) * e * mid.x + e * e * b.x
+                        let y = (1 - e) * (1 - e) * a.y + 2 * (1 - e) * e * mid.y + e * e * b.y
+                        m.flags.append((CGRect(x: x - spot.width / 2, y: y - spot.height / 2, width: spot.width, height: spot.height), false, true, 1))
+                    } else if flag == nil {
+                        m.flags.append((spot, false, hoveredFlag == board.id, 1))
+                    }
                 } else if flag == nil, hoveredBoard == board.id || hoveredFlag == board.id {
                     m.flags.append((spot, true, false, hoveredFlag == board.id ? 1 : 0.6))
                 }

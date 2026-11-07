@@ -547,7 +547,7 @@ final class DesignCanvas {
             try? stage.children.insertAt(0, paper)
         }
         paper.children.clear()
-        guard session.mode != 0 else { return }
+        guard session.mode != 0 || flow.showing else { return }
         let w = Double(stage.actualWidth), h = Double(stage.actualHeight)
         guard w > 0, h > 0 else { return }
         var step = 8.0
@@ -1352,9 +1352,18 @@ final class DesignCanvas {
             overlay.children.append(flowMarks)
         }
         flowMarks.children.clear()
-        guard prototyping else { return }
+        // Seen as a prototype, and a moment longer as the threads draw back into their layers.
+        guard flow.showing else {
+            if session.mode == 0, !paper.children.isEmpty { drawPaper() }
+            paper.opacity = 1
+            return
+        }
         syncFlow()
         let m = flow.marks()
+        flowMarks.opacity = m.alpha
+        // The paper's ruling comes and goes with the threads; inspected, it simply is.
+        if session.mode == 0, paper.children.isEmpty { drawPaper() }
+        paper.opacity = session.mode == 2 ? 1 : m.alpha
         let dark = Theme.dark
         let thread: UInt32 = dark ? 0x8FA8F2 : 0x3A63D8, bright: UInt32 = dark ? 0xC2D1FF : 0x2347B8, cut: UInt32 = dark ? 0xE4705C : 0xB3402F
         let casing: UInt32 = dark ? 0x101114 : 0xFFFFFF, plate: UInt32 = dark ? 0x2A2926 : 0xFFFEFB
@@ -1387,6 +1396,11 @@ final class DesignCanvas {
             ring(s.rect, width: s.on ? 2.5 : 1, ink: s.on ? bright : thread, alpha: s.on ? 1 : 0.4, radius: 7)
         }
         for s in m.screens { ring(s.rect, width: s.width, ink: s.bright ? bright : thread, alpha: s.bright ? 0.7 : 1, radius: s.bright ? 6 : 5) }
+        // A screen a thread was just tied to, ringing once: its glow, then the ring.
+        if let a = m.answer {
+            ring(a.rect.insetBy(dx: -3, dy: -3), width: a.width + 6, ink: thread, alpha: 0.16 * a.alpha, radius: a.radius + 3)
+            ring(a.rect, width: a.width, ink: bright, alpha: a.alpha, radius: a.radius)
+        }
         for t in m.threads {
             let width = t.bright ? 2.6 : 1.8
             let dash = t.dashed ? "2.8 2.2" : nil
