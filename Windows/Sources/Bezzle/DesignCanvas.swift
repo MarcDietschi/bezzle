@@ -492,6 +492,9 @@ final class DesignCanvas {
         root.loaded.addHandler { [weak self] _, _ in
             guard let self else { return }
             self.pixelScale = self.root.xamlRoot?.rasterizationScale ?? 1
+            // Fitted as the design opens; its tab coming back to the front shows it as it was left.
+            guard !self.fitted else { return }
+            self.fitted = true
             self.fit()
         }
         session.openCardChanged = { [weak self] in self?.drawAids() }
@@ -532,6 +535,24 @@ final class DesignCanvas {
     /// The keys come here again, from a field that was typed into.
     func takeKeys() {
         _ = try? root.focus(.programmatic)
+    }
+
+    /// Whether `panel` holds `child`, asked of the panel: WinUI's own `parent` can say nil for an
+    /// element in a panel while the canvas is out of the window (its tab behind another, or just
+    /// coming back), and adding it again then fails.
+    private func holds(_ panel: Panel, _ child: UIElement) -> Bool {
+        var at: UInt32 = 0
+        return (try? panel.children.indexOf(child, &at)) == true
+    }
+
+    /// Whether the view was fitted to the design once, as it first showed.
+    private var fitted = false
+
+    /// The design's tab goes behind another: what is typed is kept, and a drag going on is taken
+    /// back, as Escape takes it back, so nothing is left half done while another design is worked on.
+    func leaveFront() {
+        if let drag { cancelDrag(drag.grab, moved: drag.moved) }
+        finishTyping()
     }
 
     /// The whole design in view, as the Mac fits it: 64 points round it, never above 1×.
@@ -727,7 +748,7 @@ final class DesignCanvas {
     /// closer than 9 points on screen nor further apart than 45, every fifth line a stronger one,
     /// fixed to the canvas as it moves.
     private func drawPaper() {
-        if paper.parent == nil {
+        if !holds(stage, paper) {
             paper.isHitTestVisible = false
             try? stage.children.insertAt(0, paper)
         }
@@ -809,7 +830,7 @@ final class DesignCanvas {
     /// While a layer of a post is moved, resized or typed into, the same layer in every other
     /// post: faint dashes in pencil, as the Mac's DeckTool draws them.
     private func drawEchoes() {
-        if echoes.parent == nil {
+        if !holds(overlay, echoes) {
             echoes.isHitTestVisible = false
             echoes.stroke = Theme.brush(Theme.pencil, 0.45)
             echoes.strokeThickness = 1
@@ -856,7 +877,7 @@ final class DesignCanvas {
     /// highlighter would, the one picked out brighter and ringed, or for misspelt words a wavy
     /// line under each.
     func drawFound() {
-        if foundMarks.parent == nil {
+        if !holds(overlay, foundMarks) {
             foundMarks.isHitTestVisible = false
             overlay.children.insertAt(0, foundMarks)
         }
@@ -929,7 +950,7 @@ final class DesignCanvas {
     /// as they crowd together zooming out); brighter while the grid's card is open or something on
     /// its artboard is dragged. And the guides, in pencil, from edge to edge of their artboards.
     private func drawAids() {
-        if aidMarks.parent == nil {
+        if !holds(overlay, aidMarks) {
             aidMarks.isHitTestVisible = false
             overlay.children.insertAt(0, aidMarks)
         }
@@ -1158,7 +1179,7 @@ final class DesignCanvas {
     /// down each, over a pale one so it shows on dark slides and light ones; and each slide's
     /// number in the names' row at its right, once a slide leaves room for it beside the name.
     private func placeSlideMarks() {
-        if slideMarks.parent == nil {
+        if !holds(overlay, slideMarks) {
             slideMarks.isHitTestVisible = false
             overlay.children.insertAt(0, slideMarks)
         }
@@ -1305,7 +1326,8 @@ final class DesignCanvas {
     /// guide through the middle it caught on, and white crop marks at its corners on a dark edge;
     /// fading in as placing begins and out as it ends.
     private func drawPictures() {
-        if pictureMarks.parent == nil {
+        // Asked of the overlay: `parent` is nil while this tab is out of the window.
+        if !holds(overlay, pictureMarks) {
             pictureMarks.isHitTestVisible = false
             // Over the selection, under the measure.
             var at: UInt32 = 0
@@ -1451,7 +1473,7 @@ final class DesignCanvas {
 
     /// Shows the word offered, when there is one for what is picked, and nothing else is under way.
     private func placeOffer() {
-        if offerChip.parent == nil { overlay.children.append(offerChip) }
+        if !holds(overlay, offerChip) { overlay.children.append(offerChip) }
         let free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && drag == nil
         let offer = free ? WindowsCore.maskOffer(session.selection) : nil
         if offer != shownOffer, offerLit, let was = shownOffer {
@@ -1477,7 +1499,7 @@ final class DesignCanvas {
     /// each layer lighting up as it reaches it, the nearest first, then fading; a glow round the
     /// layer, not over it, so the change itself is what is seen.
     private func startWave(_ w: WindowsCore.StyleWave) {
-        if waveMarks.parent == nil {
+        if !holds(overlay, waveMarks) {
             waveMarks.isHitTestVisible = false
             overlay.children.append(waveMarks)
         }
@@ -1602,7 +1624,7 @@ final class DesignCanvas {
 
     /// Every layer that uses the style pointed at in the inspector, outlined in pencil.
     private func drawStyleUsers() {
-        if styleMarks.parent == nil {
+        if !holds(overlay, styleMarks) {
             styleMarks.isHitTestVisible = false
             overlay.children.append(styleMarks)
         }
@@ -1628,7 +1650,7 @@ final class DesignCanvas {
     }
 
     private func drawComponents() {
-        if componentMarks.parent == nil {
+        if !holds(overlay, componentMarks) {
             componentMarks.isHitTestVisible = false
             overlay.children.append(componentMarks)
         }
@@ -1684,7 +1706,7 @@ final class DesignCanvas {
     /// The offer beside the copy it is about, where it covers nothing of it; else under it. Only
     /// while that copy is what is picked, and nothing is being typed or dragged.
     private func placeCopyOffer() {
-        if copyChip.parent == nil {
+        if !holds(overlay, copyChip) {
             copyChip.height = 28
             copyChip.cornerRadius = Theme.corners(14)
             copyChip.background = Theme.brush(Theme.card)
@@ -1827,7 +1849,7 @@ final class DesignCanvas {
     /// A selected path's corner dots, while the pointer is on it, and a shape's edge lit with Alt
     /// over it, as the Mac's OutlineTool draws them.
     private func drawOutline() {
-        if outlineMarks.parent == nil {
+        if !holds(overlay, outlineMarks) {
             outlineMarks.isHitTestVisible = false
             overlay.children.append(outlineMarks)
         }
@@ -1870,7 +1892,7 @@ final class DesignCanvas {
     /// under the pointer, or those the drag has touched, tinted; every piece's edge, faint and
     /// dashed but for those; the way the drag has gone. Wiping away in red, joining in blue.
     private func drawBuild() {
-        if buildMarks.parent == nil {
+        if !holds(overlay, buildMarks) {
             buildMarks.isHitTestVisible = false
             overlay.children.append(buildMarks)
         }
@@ -1941,7 +1963,7 @@ final class DesignCanvas {
     /// the start flag, the layer a thread comes out of with its knob, and while a thread is pulled,
     /// the screens it could go to and the well to go back.
     private func drawFlow() {
-        if flowMarks.parent == nil {
+        if !holds(overlay, flowMarks) {
             flowMarks.isHitTestVisible = false
             overlay.children.append(flowMarks)
         }
@@ -2180,7 +2202,7 @@ final class DesignCanvas {
     /// A note written on a thread, where it hangs: a field there, Enter keeps what is typed and
     /// Escape lets it be.
     private func beginNote(on id: UUID, at p: CGPoint) {
-        if noteBox.parent == nil {
+        if !holds(overlay, noteBox) {
             noteBox.width = 220
             noteBox.fontFamily = FontFamily("Segoe Print")
             noteBox.fontSize = 13
@@ -2226,7 +2248,7 @@ final class DesignCanvas {
     /// What is inspected, measured as the Mac's InspectTool draws it: outlines in pencil, or the
     /// gaps' pink, lines over a casing of white, dashed reaches, hatched gaps, and numbers on pills.
     private func drawInspect() {
-        if inspectMarks.parent == nil {
+        if !holds(overlay, inspectMarks) {
             inspectMarks.isHitTestVisible = false
             overlay.children.append(inspectMarks)
         }
@@ -2331,7 +2353,7 @@ final class DesignCanvas {
     /// it: a ring, light and dark so it shows on any photo, and beside it a label with the colour,
     /// what it is, and while dragging, how much.
     private func drawDevelop() {
-        if developMarks.parent == nil {
+        if !holds(overlay, developMarks) {
             developMarks.isHitTestVisible = false
             overlay.children.append(developMarks)
         }
@@ -2399,7 +2421,7 @@ final class DesignCanvas {
     /// line running out along it, the glow of one just caught on or left, and a selected text's
     /// line with its beads. Drawn again each frame while something on them is on its way.
     private func drawCurves() {
-        if curveMarks.parent == nil {
+        if !holds(overlay, curveMarks) {
             curveMarks.isHitTestVisible = false
             overlay.children.append(curveMarks)
         }
@@ -2472,7 +2494,7 @@ final class DesignCanvas {
     /// A selected repeat grid as the Mac's GridTool draws it: the same layer in the other cells,
     /// each cell faintly dashed, the gaps under the pointer, the cells to come, and its handles.
     private func drawGrids() {
-        if gridMarks.parent == nil {
+        if !holds(overlay, gridMarks) {
             gridMarks.isHitTestVisible = false
             overlay.children.append(gridMarks)
         }
@@ -2559,7 +2581,7 @@ final class DesignCanvas {
     /// The knob a turned layer's face points with, on its stalk from the layer's middle, and the
     /// ring where the face is seen edge on, or the ball being turned, as the Mac draws them.
     private func drawDepth() {
-        if depthMarks.parent == nil {
+        if !holds(overlay, depthMarks) {
             depthMarks.isHitTestVisible = false
             overlay.children.append(depthMarks)
         }
@@ -2820,7 +2842,7 @@ final class DesignCanvas {
     /// point to add and the box dragged round points, all in pencil, as the Mac draws them.
     private func drawPen() {
         penMarks.children.clear()
-        if penMarks.parent == nil { overlay.children.append(penMarks) }
+        if !holds(overlay, penMarks) { overlay.children.append(penMarks) }
         syncView()
         if session.tool == .knife, let (line, anchors) = knife.blade() {
             // A pale rim, so the blade shows on anything, and the blade dashed in a warm red.
@@ -2932,6 +2954,14 @@ final class DesignCanvas {
                 text = try? await view.getTextAsync()?.get()
             }
             guard let self else { return }
+            // Designs, and files from other apps, open in tabs of their own, as the Mac opens what
+            // is dropped on Bezzle's Dock icon (Windows' taskbar takes no drops).
+            let designs = files.filter { $0.pathExtension.lowercased() == "bezzle" || WindowsCore.imports($0) }
+            if !designs.isEmpty {
+                DispatchQueue.main.async { MainActor.assumeIsolated { designs.forEach { Tabs.shared.open($0) } } }
+                files.removeAll { designs.contains($0) }
+                guard !files.isEmpty else { return }
+            }
             let target = WindowsCore.dropTarget(at: at, zoom: self.zoom)
             guard let made = WindowsCore.drop(files: files, text: text, at: at, on: target) else { return }
             self.session.select(made, on: made.first.flatMap(WindowsCore.board(of:)))
@@ -4655,7 +4685,8 @@ extension DesignCanvas {
         guard timeTicking == nil, WindowsCore.timeTable.moving || WindowsCore.versions.landing() != nil else { return }
         timeTicking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                // Behind another tab, the core has another design: the glide goes on once back.
+                guard let self, self.session.isFront else { return }
                 self.drawTime(WindowsCore.timeTable.frame(at: WindowsCore.now))
                 self.drawTimeMarks()
                 if !WindowsCore.timeTable.moving, WindowsCore.versions.landing() == nil {
@@ -4677,7 +4708,7 @@ extension DesignCanvas {
     /// bring back, a faint dotted outline where what was made since will be, and, for the layer
     /// pointed at, a thread to where it is now. Layers just brought back land with their corners.
     private func drawTimeMarks() {
-        if timeMarks.parent == nil {
+        if !holds(overlay, timeMarks) {
             timeMarks.isHitTestVisible = false
             overlay.children.append(timeMarks)
         }
@@ -5001,7 +5032,7 @@ extension DesignCanvas {
     }
 
     private func drawGhost() {
-        if resourceGhost.parent == nil {
+        if !holds(overlay, resourceGhost) {
             resourceGhost.isHitTestVisible = false
             overlay.children.append(resourceGhost)
         }
@@ -5031,7 +5062,7 @@ extension DesignCanvas {
         } else {
             image.clip = nil
         }
-        if image.parent == nil { resourceGhost.children.append(image) }
+        if !holds(resourceGhost, image) { resourceGhost.children.append(image) }
         // The same small pencil pill the picture drops use, under the ghost, kept on screen.
         let label = Theme.text(plan.label, size: 11.5, weight: 500)
         label.foreground = Theme.brush(0xFFFFFF)

@@ -76,7 +76,7 @@ extension WindowsCore {
 
     /// A shape just drawn, moved or resized over a picture, and the design as it was then: the
     /// word offering to mask the picture in it shows until anything else changes.
-    nonisolated(unsafe) private static var invited: (plan: MaskPlan, doc: BezzleDocument)?
+    nonisolated(unsafe) static var invited: (plan: MaskPlan, doc: BezzleDocument)?
 
     /// After a shape has been drawn, moved or resized: offers to mask the picture under it, when it
     /// lies mostly over one that reaches past it (the shared `maskInvitation`).

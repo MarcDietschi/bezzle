@@ -22,8 +22,8 @@ extension WindowsCore {
         }
     }
 
-    /// The versions of the open design.
-    public static let versions = Versions()
+    /// The versions of the design the core works on: each open design has its own (`Slot`).
+    public internal(set) static var versions = Versions()
 
     /// Whether the canvas shows a version, or a moment of the glide to or from one, in place of
     /// the design as it is (`previewBase`).
@@ -459,7 +459,7 @@ extension WindowsCore {
     /// The canvas showing what it is looking back at, as the Mac's TimeTable does: going from one
     /// version to another, the layers glide together to how they were, those not made yet fade
     /// away, and those taken away since come back.
-    public static let timeTable = TimeTable()
+    public internal(set) static var timeTable = TimeTable()
 
     @MainActor public final class TimeTable {
         private struct Glide {

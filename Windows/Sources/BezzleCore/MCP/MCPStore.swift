@@ -1,20 +1,32 @@
 import Foundation
 
-// The AI server on Windows works on the one design the window has open (`WindowsCore.design`),
-// as the Mac's works on the designs open in its tabs. The tools copied from Bezzle/MCP ask a
-// DocumentStore for it; this one answers from the core, and from the app (`MCPHost`) for what
-// only the window knows: what is selected, what is in view, and which design is open.
+// The AI server on Windows works on the designs open in the window's tabs, as the Mac's does.
+// The tools copied from Bezzle/MCP ask a DocumentStore for a design; here there is one for each
+// open design (its `WindowsCore.Slot`), which answers from the core, and from the app (`MCPHost`)
+// for what only the window knows: which designs are open, what is selected, what is in view. A
+// tool makes the design it works on the core's (`store(args)` activates it), whether its tab is in
+// front or not, and once the tool is done the design in front is the core's again (`settle`).
 
-/// What the app does for the AI server: it fills these in as it starts.
+/// What the app does for the AI server: it fills these in as it starts. Those that are about one
+/// design are about the design the core works on now (`WindowsCore.active`).
 @MainActor public final class MCPHost {
     public static let shared = MCPHost()
 
     /// Where designs are kept: the home screen's folder.
     public var designsFolder: () -> URL = { FileManager.default.temporaryDirectory }
-    /// Opens a design in the window, as home does; whether it is open now.
+    /// Opens a design in a tab of its own and brings it to the front, as home does, or brings its
+    /// tab to the front when it is open already; whether it is open now.
     public var open: (URL) -> Bool = { _ in false }
-    /// Shows the home screen, the design saved and let go.
-    public var close: () -> Void = {}
+    /// The open designs, the tab in front first, then as they were last looked at.
+    public var designs: () -> [WindowsCore.Slot] = { [] }
+    /// Brings an open design's tab to the front.
+    public var bringForward: (WindowsCore.Slot) -> Void = { _ in }
+    /// Closes an open design's tab, saving it; home comes to the front if it was in front.
+    public var close: (WindowsCore.Slot) -> Void = { _ in }
+    /// The design was given another name: its tab says so.
+    public var renamed: () -> Void = {}
+    /// A tool is done: the design in front is the one the core works on again.
+    public var settle: () -> Void = {}
     /// The layers selected, and selecting others (on the artboard they are on).
     public var selection: () -> [UUID] = { [] }
     public var select: ([UUID]) -> Void = { _ in }
@@ -35,23 +47,51 @@ import Foundation
     public var broughtIn: (WindowsCore.ImportSummary) -> Void = { _ in }
 }
 
-/// The Mac's DocumentStore as the tools ask it, over the open design.
+/// The Mac's DocumentStore as the tools ask it, over one open design. What it reads and changes
+/// it reads from the core with its design lent the core for that long (`lent`), so it answers for
+/// its own design whichever is the core's; the tools' own calls into the core work on the design
+/// `store(args)` made the core's.
 @MainActor final class DocumentStore {
-    static let open = DocumentStore()
+    let slot: WindowsCore.Slot
 
-    var doc: BezzleDocument { WindowsCore.design ?? BezzleDocument() }
-    var seenDoc: BezzleDocument { WindowsCore.seen ?? doc }
-    var url: URL { WindowsCore.designURL ?? URL(fileURLWithPath: "/") }
+    private init(_ slot: WindowsCore.Slot) {
+        self.slot = slot
+    }
+
+    /// One store for each open design, the same each time it is asked for.
+    private static var made: [DocumentStore] = []
+
+    static func of(_ slot: WindowsCore.Slot) -> DocumentStore {
+        made.removeAll { !$0.slot.isOpen }
+        if let store = made.first(where: { $0.slot === slot }) { return store }
+        let store = DocumentStore(slot)
+        made.append(store)
+        return store
+    }
+
+    /// Makes this design the one the core works on, for a tool.
+    func activate() {
+        if slot.isOpen { WindowsCore.activate(slot) }
+    }
+
+    /// What `read` gives with this design the core's, or `otherwise` once it is closed.
+    private func lent<T>(_ otherwise: T, _ read: () -> T) -> T {
+        slot.isOpen ? WindowsCore.using(slot, read) : otherwise
+    }
+
+    var doc: BezzleDocument { lent(BezzleDocument()) { WindowsCore.design ?? BezzleDocument() } }
+    var seenDoc: BezzleDocument { lent(doc) { WindowsCore.seen ?? WindowsCore.design ?? BezzleDocument() } }
+    var url: URL { slot.url ?? URL(fileURLWithPath: "/") }
     var name: String { url.deletingPathExtension().lastPathComponent }
-    var assets: Assets { WindowsCore.assets }
-    var isOpen: Bool { WindowsCore.design != nil }
+    var assets: Assets { lent(Assets(folder: nil)) { WindowsCore.assets } }
+    var isOpen: Bool { slot.isOpen }
     var selection: [UUID] {
-        get { MCPHost.shared.selection() }
-        set { MCPHost.shared.select(newValue) }
+        get { lent([]) { MCPHost.shared.selection() } }
+        set { if slot.isOpen { WindowsCore.using(slot) { MCPHost.shared.select(newValue) } } }
     }
     var fronts: [UUID: Int] {
-        get { WindowsCore.fronts }
-        set { WindowsCore.fronts = newValue }
+        get { lent([:]) { WindowsCore.fronts } }
+        set { if slot.isOpen { WindowsCore.using(slot) { WindowsCore.fronts = newValue } } }
     }
     /// Nothing is pointed at by a person while the assistant works.
     var hovered: UUID? {
@@ -61,23 +101,25 @@ import Foundation
     var layerCount: Int { doc.allNodes.count }
     /// The size new artboards are given: the Mac's standard one.
     var lastPreset: CGSize? { nil }
-    var visibleCanvasRect: CGRect { MCPHost.shared.visible() }
-    var zoom: Double { MCPHost.shared.zoom() }
+    var visibleCanvasRect: CGRect { lent(.zero) { MCPHost.shared.visible() } }
+    var zoom: Double { lent(1) { MCPHost.shared.zoom() } }
 
     var focusedArtboard: Node? {
-        guard let i = MCPHost.shared.focusedBoard(), doc.nodes.indices.contains(i), doc.nodes[i].isArtboard else { return nil }
-        return doc.nodes[i]
+        lent(nil) {
+            guard let i = MCPHost.shared.focusedBoard(), let doc = WindowsCore.design, doc.nodes.indices.contains(i), doc.nodes[i].isArtboard else { return nil }
+            return doc.nodes[i]
+        }
     }
 
-    var canUndo: Bool { !Editing.undos.isEmpty && Editing.gestureStart == nil }
-    var canRedo: Bool { !Editing.redos.isEmpty && Editing.gestureStart == nil }
+    var canUndo: Bool { lent(false) { !Editing.undos.isEmpty && Editing.gestureStart == nil } }
+    var canRedo: Bool { lent(false) { !Editing.redos.isEmpty && Editing.gestureStart == nil } }
 
     /// Whether this is the design at `url`. A package's address may or may not end in a slash.
     func isAt(_ url: URL) -> Bool {
-        isOpen && self.url.standardizedFileURL.path.lowercased() == url.standardizedFileURL.path.lowercased()
+        isOpen && Self.same(self.url, url)
     }
 
-    func zoomToFit() { MCPHost.shared.zoomToFit() }
+    func zoomToFit() { if slot.isOpen { WindowsCore.using(slot) { MCPHost.shared.zoomToFit() } } }
 
     /// Whether two addresses are the same design, told apart by path as Windows compares them.
     static func same(_ a: URL, _ b: URL) -> Bool {
@@ -88,7 +130,9 @@ import Foundation
     /// Windows opens no design to look at only.
     var isReadOnly: Bool { false }
     func node(_ id: UUID) -> Node? { doc.node(id) }
-    func save() { try? WindowsCore.save() }
+    func save() { if slot.isOpen { WindowsCore.using(slot) { try? WindowsCore.save() } } }
+    /// Whether it may be given another name: not someone else's design shared with this computer.
+    var mayRename: Bool { lent(false) { WindowsCore.mayRename } }
     static func finishSaving() {}
 
     func copiesInOrder(of master: UUID) -> [UUID] { doc.copiesInOrder(of: master) }
@@ -293,12 +337,17 @@ import Foundation
 
     var designs: [LibraryContent] { WindowsCore.shelfContents }
 
-    /// Every design in the designs folder read again, as it is now, but `except`.
+    /// Every design in the designs folder read again, as it is now, but `except`. While it waits,
+    /// the window goes on with the design in front, and the one a tool works on is the core's
+    /// again after.
     func refreshed(except: URL? = nil) async {
         let folder = MCPHost.shared.designsFolder()
         let urls = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension.lowercased() == "bezzle" && !Self.same($0, except) }
+        let working = WindowsCore.active
+        MCPHost.shared.settle()
         await WindowsCore.refreshLibraries(urls)
+        if let working, working.isOpen { WindowsCore.activate(working) }
     }
 
     func content(_ url: URL) -> LibraryContent? { WindowsCore.library(url) }

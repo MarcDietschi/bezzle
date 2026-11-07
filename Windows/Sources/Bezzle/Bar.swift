@@ -4,13 +4,18 @@ import UWP
 import BezzleCore
 
 /// The bar across the top of the window, as the Mac's (Views/TabBar.swift, Workspace.swift): the
-/// home tab, the design's tab and "+", room to drag the window by, then the zoom, Versions,
-/// Share…, the mode switch and Export…. Windows' own caption buttons sit at its right end.
+/// tabs (home, the open designs and "+", which the window puts in `tabsHolder` while this design
+/// is in front), room to drag the window by, then the zoom, Versions, Share…, the mode switch and
+/// Export…. Windows' own caption buttons sit at its right end.
 @MainActor
 final class Bar {
     let root = Grid()
     /// The empty middle, which drags the window (Window.setTitleBar).
     let dragArea = Border()
+    /// Where the tabs go (`TabStrip`).
+    let tabsHolder = Border()
+    /// What is to do with the design, at the right, which the tabs leave room for.
+    let right = StackPanel()
     private let session: DesignSession
     private let zoomLabel = Theme.text("50%", size: 12, ink: 1)
     private var segments: [(box: Border, label: TextBlock)] = []
@@ -28,7 +33,7 @@ final class Bar {
     var menus: MenuHost?
     var zoomEntries: (() -> [MenuHost.Entry])?
 
-    init(session: DesignSession, onClose: @escaping () -> Void) {
+    init(session: DesignSession) {
         self.session = session
         root.height = Theme.barHeight
         for width in [GridLength(value: 1, gridUnitType: .auto), GridLength(value: 1, gridUnitType: .star),
@@ -38,23 +43,16 @@ final class Bar {
             root.columnDefinitions.append(column)
         }
 
-        // Left: the home tab, the design's tab in front, "+".
-        let tabs = StackPanel()
-        tabs.orientation = .horizontal
-        tabs.spacing = 14
-        tabs.verticalAlignment = .center
-        tabs.margin = Theme.inset(16, 0, 0, 0)
-        tabs.children.append(appMenu())
-        tabs.children.append(frontTab(onClose: onClose))
-        tabs.children.append(plus())
-        root.children.append(tabs)
+        // Left: the tabs, home first, as on the Mac 14 points from what follows.
+        tabsHolder.verticalAlignment = .center
+        tabsHolder.margin = Theme.inset(16, 0, 14, 0)
+        root.children.append(tabsHolder)
 
         dragArea.background = Theme.clear
         try? Grid.setColumn(dragArea, 1)
         root.children.append(dragArea)
 
         // Right: zoom, Versions, Share…, the modes, Export….
-        let right = StackPanel()
         right.orientation = .horizontal
         right.spacing = 10
         right.verticalAlignment = .center
@@ -113,56 +111,20 @@ final class Bar {
         try? ToolTipService.setToolTip(action, Words.t(play ? "Play the prototype from where it starts, or from the picked screen  Ctrl+Enter" : "Export  Ctrl+E"))
     }
 
-    /// The front tab: 196 wide, 30 tall, on a card of radius 9, with its close cross.
-    private func frontTab(onClose: @escaping () -> Void) -> UIElement {
-        let card = Theme.card(radius: 9)
-        card.width = 196
-        card.height = 30
-        let row = Grid()
-        let name = Theme.text(session.name, size: 12.5, weight: 500)
-        name.margin = Theme.inset(12, 0, 26, 0)
-        row.children.append(name)
-        let close = Pressable(radius: 9) { onClose() }
-        close.box.width = 18
-        close.box.height = 18
-        close.box.horizontalAlignment = .right
-        close.box.margin = Theme.inset(0, 0, 6, 0)
-        close.box.child = Glyphs.view(Glyphs.cross(), size: 18, brush: Theme.ink(3))
-        row.children.append(close.box)
-        card.child = row
-        return card
-    }
-
-    private func plus() -> UIElement {
-        let button = Pressable(radius: 13) {}
-        button.box.width = 26
-        button.box.height = 26
-        button.box.child = Glyphs.view(Glyphs.plus(), size: 26, brush: Theme.ink(2))
-        return button.box
-    }
-
-    /// The Bezzle menu, as the Mac's app menu has it: whether AI assistants may work in the app,
-    /// and how to connect one to it.
-    private func appMenu() -> UIElement {
-        var holder: Border?
-        let button = Pressable(radius: 8) { [weak self] in
-            guard let self, let menus = self.menus, let holder else { return }
-            // A design here is a folder, which Open (Ctrl+O) picks, so files from other apps come in by their own entry.
-            let session = self.session
-            let bringIn: [MenuHost.Entry] = [.item(Words.t("Bring In a Design…")) { session.onBringIn?() }, .separator]
-            menus.show(below: holder, width: 260, entries: bringIn + Self.appEntries())
-        }
-        holder = button.box
-        let word = Theme.text("Bezzle", size: 15, weight: 600, serif: true)
-        word.margin = Theme.inset(10, 3, 10, 3)
-        button.box.child = word
-        return button.box
-    }
-
     /// Chooses another folder for designs (the app's).
     static var chooseDesignsFolder: (() -> Void)?
+    /// Asks for a file from Adobe XD, Figma, Sketch or Photoshop to bring in, each in a tab of its own.
+    static var bringIn: (() -> Void)?
 
-    static func appEntries() -> [MenuHost.Entry] {
+    /// The Bezzle menu, as the Mac's app menu and File menu have it, which on Windows hangs from
+    /// the home tab: bringing designs in from other apps, whether AI assistants may work in the
+    /// app and how to connect one, the designs folder, and the design in front in Explorer.
+    static func appEntries(front url: URL?) -> [MenuHost.Entry] {
+        // A design here is a folder, which Open (Ctrl+O) picks, so files from other apps come in by their own entry.
+        [.item(Words.t("Bring In a Design…"), shortcut: "Ctrl+Shift+I") { Bar.bringIn?() }, .separator] + appEntries(showing: url)
+    }
+
+    private static func appEntries(showing url: URL?) -> [MenuHost.Entry] {
         let server = MCPServer.shared
         let on = AIControl.allowed
         var entries: [MenuHost.Entry] = [.item(Words.t("Allow AI Control"), checked: on) { AIControl.allowed = !on }]
@@ -177,8 +139,8 @@ final class Bar {
         entries.append(.item(Words.t("Copy Server Address"), enabled: on) { Clipboard.copyText(address) })
         entries.append(.separator)
         entries.append(.item(Words.t("Designs Folder…")) { Bar.chooseDesignsFolder?() })
-        // The open design's file, picked out in Explorer.
-        if let url = WindowsCore.designURL {
+        // The design in front, picked out in Explorer.
+        if let url {
             entries.append(.separator)
             entries.append(.item(Words.t("Show in Explorer")) {
                 // Picked out in the folder it is in: a design is a folder itself.

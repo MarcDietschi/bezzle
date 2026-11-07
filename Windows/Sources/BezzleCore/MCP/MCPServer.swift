@@ -5,7 +5,7 @@ import WinSDK
 // From Bezzle/MCP/MCPServer.swift, for Windows: lets an AI assistant work in Bezzle through the
 // Model Context Protocol. It is a small web server on this PC only, at http://127.0.0.1:7412/mcp,
 // which the assistant sends JSON-RPC to (MCP's "Streamable HTTP" transport, answered in plain
-// JSON). What it asks for is done to the design open in the window, as if by hand: it shows
+// JSON). What it asks for is done to the designs open in the window's tabs, as if by hand: it shows
 // straight away, and undoes the same way. Each connection is read on a thread of its own; what
 // it asks is answered on the main thread, where the design is.
 //

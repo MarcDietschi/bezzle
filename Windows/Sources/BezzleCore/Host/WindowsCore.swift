@@ -262,7 +262,8 @@ extension WindowsCore {
     /// document.json (sorted keys), written whole; a package gone meanwhile is looked for (a shared
     /// design renamed by someone else) and otherwise made again, so nothing is lost.
     public static func save() throws {
-        follow()
+        // Renamed or moved while open: saved where it is now, not begun again where it was.
+        if !follow() { followFile(alsoIn: designsFolder()) }
         guard let url = designURL, let doc = previewBase ?? design else { return }
         if let sharing {
             var shared = doc

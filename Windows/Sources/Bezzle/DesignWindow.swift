@@ -41,9 +41,16 @@ final class DesignWindow {
         importReport.children.append(card.root)
     }
 
-    init(name: String, onClose: @escaping () -> Void) {
-        session = DesignSession(name: name)
-        bar = Bar(session: session, onClose: onClose)
+    /// Where the tabs go while this design is in front, the room to drag the window by, and what
+    /// the tabs leave room for at the bar's right.
+    var tabsHolder: Border { bar.tabsHolder }
+    var dragArea: Border { bar.dragArea }
+    var barRight: FrameworkElement { bar.right }
+
+    /// The design the core has just opened in `slot`, as the core works on it now.
+    init(slot: WindowsCore.Slot) {
+        session = DesignSession(slot: slot)
+        bar = Bar(session: session)
         rail = ToolRail(session: session)
         layers = LayersPanel(session: session)
         canvas = DesignCanvas(session: session)
@@ -79,7 +86,8 @@ final class DesignWindow {
             self?.news.refresh()
             if self?.find.isOpen == true { self?.find.refresh() }
         }
-        resources.libraryRead = { [weak self] in self?.news.refresh() }
+        // Read away from the main thread: what it says of this design is looked at in front only.
+        resources.libraryRead = { [weak self] in if self?.session.isFront == true { self?.news.refresh() } }
         session.listen { [weak self] in self?.news.refresh() }
         // Other designs, as libraries, read as this one opens.
         resources.readLibraries()
@@ -112,11 +120,10 @@ final class DesignWindow {
             self?.news.refresh()
         }
         find.returnFocus = { [weak canvas] in canvas?.takeKeys() }
+        // These are the design's own versions; behind another tab, they are shown once it is back.
         WindowsCore.versions.changed = { [weak self] in
-            guard let self else { return }
-            self.ruler.refresh()
-            self.canvas.versionsChanged()
-            self.bar.versionsChanged()
+            guard let self, self.session.isFront else { return }
+            self.versionsChanged()
         }
         WindowsCore.versions.edited = { [weak self] in self?.session.edited(board: nil) }
         bar.onVersions = { [weak self] in self?.toggleVersions() }
@@ -165,6 +172,13 @@ final class DesignWindow {
         bar.menus = menus
         bar.zoomEntries = { [weak self] in self?.zoomEntries() ?? [] }
         canvas.aidsMenu = { [weak self] in self?.aidsEntries() ?? [] }
+        // The tabs' keys (Ctrl+Tab and Ctrl+Shift+Tab, Ctrl+N, Ctrl+W, Ctrl+Shift+W, Ctrl+O), on
+        // their way to whatever has the focus, which might take Tab for itself; not over a menu,
+        // the Export sheet or a prototype playing.
+        root.previewKeyDown.addHandler { [weak self] _, args in
+            guard let self, let args, !args.handled, !self.menus.isOpen, self.playing == nil, !self.export.isOpen else { return }
+            _ = Tabs.shared.key(args)
+        }
         // The canvas's keys, wherever focus is, as on the Mac; but not while a field is typed into.
         root.keyDown.addHandler { [weak self] _, args in
             guard let self, let args, !args.handled else { return }
@@ -220,14 +234,13 @@ final class DesignWindow {
                 default: if versions.lookingBack, GetKeyState(Int32(VK_CONTROL)) >= 0 { return }
                 }
             }
-            // Ctrl+N and Ctrl+W go home, Ctrl+Shift+S saves a copy, as ⌘N, ⌘W and ⇧⌘S on the Mac.
-            if GetKeyState(Int32(VK_CONTROL)) < 0, args.key == .n || args.key == .w || (args.key == .s && GetKeyState(Int32(VK_SHIFT)) < 0) {
+            // Ctrl+Shift+S saves a copy, as ⇧⌘S on the Mac.
+            if GetKeyState(Int32(VK_CONTROL)) < 0, args.key == .s, GetKeyState(Int32(VK_SHIFT)) < 0 {
                 args.handled = true
-                let key = args.key
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         self.canvas.finishTyping()
-                        if key == .s { self.session.onSaveCopy?() } else { self.session.onHome?() }
+                        self.session.onSaveCopy?()
                     }
                 }
                 return
@@ -265,6 +278,41 @@ final class DesignWindow {
             if args.key == .menu { self.inspector.photoAltChanged() }
             self.canvas.keyUp(args)
         }
+    }
+
+    /// Another tab comes to the front, with this design still the core's: what is being typed is
+    /// kept, a drag is taken back, a change shown for a moment goes, menus close, the prototype
+    /// stops playing and so does the design's story, and a change waiting to be saved is saved.
+    /// What stays is the rest of how it was left: the selection, the view, the panels, the time
+    /// ruler, as each design keeps them on the Mac.
+    func leaveFront() {
+        canvas.leaveFront()
+        menus.close()
+        if let view = playing {
+            playing = nil
+            view.player.stop()
+            remove(view.layer)
+        }
+        WindowsCore.endPreview()
+        WindowsCore.versions.stop()
+        if session.savePending { session.save() }
+        session.wentBack()
+    }
+
+    private func versionsChanged() {
+        ruler.refresh()
+        canvas.versionsChanged()
+        bar.versionsChanged()
+    }
+
+    /// Its tab is in front again: what changed meanwhile shows, and the canvas takes the keys.
+    func cameToFront() {
+        session.cameToFront()
+        versionsChanged()
+        news.refresh()
+        if find.isOpen { find.refresh() }
+        let canvas = canvas
+        DispatchQueue.main.async { MainActor.assumeIsolated { canvas.takeKeys() } }
     }
 
     /// The ruler of time out, or away again.

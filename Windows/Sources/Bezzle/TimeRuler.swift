@@ -347,7 +347,8 @@ final class TimeRulerView {
         draw()
         ticking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                // Behind another tab, the core has another design: the ruler goes on once back.
+                guard let self, self.session.isFront else { return }
                 self.draw()
                 if Date() > self.awakeUntil, self.comb.settled, self.dragX == nil, self.hoverX == nil, !self.versions.playing { self.stopTicking() }
             }

@@ -194,7 +194,7 @@ extension WindowsCore {
     }
 
     /// The find bar's, while it is open.
-    public private(set) static var finder: Finder?
+    public internal(set) static var finder: Finder?
 
     /// Opens the find bar, or turns it to looking for misspelt words.
     @discardableResult public static func openFind(spelling: Bool = false) -> Finder {

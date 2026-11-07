@@ -151,7 +151,7 @@ extension WindowsCore {
         public var style = false
     }
 
-    nonisolated(unsafe) private static var offered: ComponentOffer?
+    nonisolated(unsafe) static var offered: ComponentOffer?
 
     /// What a style's offer is about (the Mac's StyleOffer.Kind).
     enum StyleOffered {

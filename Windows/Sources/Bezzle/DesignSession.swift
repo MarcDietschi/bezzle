@@ -3,10 +3,33 @@ import BezzleCore
 
 /// What the parts of a design window share: the tool, what is selected and on which artboard,
 /// the zoom. Each part listens and shows it again when it changes (as the Mac's DocumentStore is
-/// observed).
+/// observed). One for each design open in a tab, each with its own history in its `slot`.
 @MainActor
 final class DesignSession {
-    let name: String
+    /// The design in the core: the one it works on while this tab is in front.
+    let slot: WindowsCore.Slot
+    /// What the design was called as it opened, should it be closed meanwhile.
+    private let openedAs: String
+    /// The design's name, as its package is called now (renamed, or found renamed).
+    var name: String { slot.url?.deletingPathExtension().lastPathComponent ?? openedAs }
+    /// Whether its tab is in front. Behind, what changes is drawn once it comes back
+    /// (`cameToFront`), and its views ask nothing of the core, which works on another design.
+    private(set) var isFront = true
+    private var stale = false
+
+    /// The tab went behind another, or home.
+    func wentBack() { isFront = false }
+
+    /// The tab is in front again: what changed meanwhile, by an AI assistant or others sharing
+    /// the design, is shown.
+    func cameToFront() {
+        isFront = true
+        guard stale else { return }
+        stale = false
+        for f in editListeners { f(nil) }
+        changed()
+    }
+
     var tool: Glyphs.Tool = .select {
         didSet {
             // The pen works on the points being edited; any other drawing tool leaves them.
@@ -120,11 +143,14 @@ final class DesignSession {
     /// What wants to know that the design itself changed (an edit, an undo).
     private var editListeners: [(_ board: Int?) -> Void] = []
 
-    init(name: String) {
-        self.name = name
-        notes.opened(WindowsCore.designPath ?? name)
+    /// For the design the core has just opened in `slot`, the one it works on now.
+    init(slot: WindowsCore.Slot) {
+        self.slot = slot
+        openedAs = slot.url?.deletingPathExtension().lastPathComponent ?? ""
+        notes.opened(WindowsCore.designPath ?? openedAs)
         // A shared design: what the others did comes in as their files come into its folder.
-        // The Mac is told by the folder; here it is looked at every few seconds.
+        // The Mac is told by the folder; here it is looked at every few seconds, in front or not,
+        // as the Mac's FolderSync looks after every open design.
         shareTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.lookAtShare() }
         }
@@ -134,14 +160,25 @@ final class DesignSession {
 
     nonisolated(unsafe) private var shareTimer: Timer?
 
+    /// The tab is closed: nothing is looked at or saved for it any more.
+    func closed() {
+        shareTimer?.invalidate()
+        shareTimer = nil
+        saveTimer?.invalidate()
+        saveTimer = nil
+    }
+
     /// Shows what others sharing the design changed since the last look, if anything: what they
     /// took away is no longer selected, and the design is saved with their changes in it, as the
     /// Mac's showChangesFromOthers saves.
     func lookAtShare() {
-        guard WindowsCore.lookAtShare() else { return }
-        let kept = selection.filter { WindowsCore.has(layer: $0) }
-        if kept != selection { select(kept, on: board) }
-        edited(board: nil)
+        guard slot.isOpen else { return }
+        WindowsCore.using(slot) {
+            guard WindowsCore.lookAtShare() else { return }
+            let kept = selection.filter { WindowsCore.has(layer: $0) }
+            if kept != selection { select(kept, on: board) }
+            edited(board: nil)
+        }
     }
 
     func select(_ ids: [UUID], on board: Int?) {
@@ -160,26 +197,32 @@ final class DesignSession {
     func listen(_ f: @escaping () -> Void) { listeners.append(f) }
     func listenToEdits(_ f: @escaping (_ board: Int?) -> Void) { editListeners.append(f) }
 
-    func changed() { for f in listeners { f() } }
+    func changed() {
+        guard isFront else { stale = true; return }
+        for f in listeners { f() }
+    }
 
     /// The design changed on `board` (or anywhere, nil): what shows it draws it again, and it is
     /// saved a moment later, as the Mac saves (DocumentStore.scheduleSave: 600 ms after a change).
     func edited(board: Int?) {
-        for f in editListeners { f(board) }
-        changed()
+        if isFront {
+            for f in editListeners { f(board) }
+            changed()
+        } else {
+            stale = true
+        }
         scheduleSave()
     }
 
     /// A change is shown on `board` that is not made (a font pointed at in a menu): what shows
     /// the design draws it again, and nothing is saved.
     func previewed(board: Int?) {
+        guard isFront else { stale = true; return }
         for f in editListeners { f(board) }
     }
 
     /// Asks for a design to open (Ctrl+O).
     var onOpen: (() -> Void)?
-    /// Back to the home screen, the design saved (Ctrl+N, Ctrl+W: the Mac's New… and Close).
-    var onHome: (() -> Void)?
     /// A copy of the design saved beside the others and opened (Ctrl+Shift+S, the Mac's Save a Copy).
     var onSaveCopy: (() -> Void)?
     /// Asks for a file from Adobe XD, Figma, Sketch or Photoshop to bring in (the Bezzle menu).
@@ -197,17 +240,24 @@ final class DesignSession {
         }
     }
 
+    /// Whether a change waits to be saved.
+    var savePending: Bool { saveTimer != nil }
+
+    /// Saves the design, in front or not: the core works on it for that long.
     func save() {
         saveTimer?.invalidate()
         saveTimer = nil
-        do {
-            try WindowsCore.save()
-            if unsaved != nil { unsaved = nil; onUnsaved?(nil) }
-            // A version is taken by itself as the design is worked on.
-            WindowsCore.versions.saved()
-        } catch {
-            let why = "\(error)"
-            if unsaved != why { unsaved = why; onUnsaved?(why) }
+        guard slot.isOpen else { return }
+        WindowsCore.using(slot) {
+            do {
+                try WindowsCore.save()
+                if unsaved != nil { unsaved = nil; onUnsaved?(nil) }
+                // A version is taken by itself as the design is worked on.
+                WindowsCore.versions.saved()
+            } catch {
+                let why = "\(error)"
+                if unsaved != why { unsaved = why; onUnsaved?(why) }
+            }
         }
     }
 

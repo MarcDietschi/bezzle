@@ -2,8 +2,8 @@ import Foundation
 
 // From Bezzle/MCP/MCPTools.swift, for Windows: what an AI assistant can do in Bezzle, as tools
 // of the Model Context Protocol. Each change goes through the core as one made by hand does, so
-// it shows at once, is one step of the undo history, and is saved a moment later. Windows has one
-// design open at a time: a tool that names another opens it in the window.
+// it shows at once, is one step of the undo history, and is saved a moment later. A tool works on
+// the design it names, open in a tab whether in front or not, or opened in one, as on the Mac.
 
 @MainActor final class MCPTools {
     struct Definition {
@@ -59,6 +59,9 @@ import Foundation
 
     func call(_ name: String, _ arguments: [String: Any]) async -> JSONValue {
         guard let tool = definitions.first(where: { $0.name == name }) else { return Self.failed("There is no tool called \(name).") }
+        // The tool works on the design it names, in front or not; then the one in front is the
+        // core's again.
+        defer { MCPHost.shared.settle() }
         do {
             let content = try await tool.run(Arguments(arguments))
             return ["content": .array(content.map(\.json))]
@@ -82,42 +85,55 @@ import Foundation
         are points, y pointing down. An artboard's x and y are on the canvas; any other layer's \
         are measured from the top left of the artboard or group it lies in. Layers are listed \
         bottom first. Refer to designs by name and layers by id (or exact name). Start with \
-        get_design to see what is open; Bezzle on Windows has one design open at a time, and a \
-        tool that names another opens it. add_layers builds a whole screen in one call, nested; \
+        get_design to see what is open. add_layers builds a whole screen in one call, nested; \
         update_layers changes many layers at once. Look at what you made with render and fix \
         what looks wrong. Every change is one step the person can undo with Ctrl+Z, and designs \
         save themselves: there is no save.
         """
 
-    // MARK: The design open
+    // MARK: Designs open in tabs
 
-    /// The design `design` names, opened if it is not, or the one open.
+    /// The design `design` names, opened if it is not, or the one in front; it is the design the
+    /// core works on until the tool is done.
     func store(_ args: Arguments) async throws -> DocumentStore {
-        let store = DocumentStore.open
         if let ref = try args.string("design") {
-            if store.isOpen, store.name.caseInsensitiveCompare(ref) == .orderedSame || Self.fileURL(ref).map(store.isAt) == true { return store }
+            if let store = Self.openStore(ref) {
+                store.activate()
+                return store
+            }
             return try open(try locate(ref))
         }
-        guard store.isOpen else {
+        guard let front = Self.stores.first else {
             throw MCPError("No design is open. list_designs shows the designs; open one with open_design, or make one with create_design.")
         }
-        return store
+        front.activate()
+        return front
     }
 
-    /// The designs open: on Windows, the one in the window.
-    static var stores: [DocumentStore] { DocumentStore.open.isOpen ? [DocumentStore.open] : [] }
+    /// The open designs, the tab in front first, then as they were last looked at.
+    static var stores: [DocumentStore] { MCPHost.shared.designs().filter(\.isOpen).map(DocumentStore.of) }
+
+    private static func openStore(_ ref: String) -> DocumentStore? {
+        let url = fileURL(ref)
+        return stores.first { $0.name.caseInsensitiveCompare(ref) == .orderedSame || url.map($0.isAt) == true }
+    }
 
     /// What the Mac adds when a file is out of its sandbox's reach; Windows has none.
     static var unreachable: String { "" }
 
-    /// The designs on the home screen: those in the designs folder, the latest first.
+    /// The designs on the home screen: those in the designs folder, the latest first, and those
+    /// open in tabs from elsewhere after them, as the Mac's library lists designs opened from
+    /// outside its folder.
     private static func designs() -> [(name: String, url: URL, modified: Date)] {
         let folder = MCPHost.shared.designsFolder()
         let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        return urls.filter { $0.pathExtension.lowercased() == "bezzle" }.map { url in
+        func entry(_ url: URL) -> (name: String, url: URL, modified: Date) {
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             return (url.deletingPathExtension().lastPathComponent, url, modified)
-        }.sorted { $0.modified > $1.modified }
+        }
+        let inFolder = urls.filter { $0.pathExtension.lowercased() == "bezzle" }.map(entry).sorted { $0.modified > $1.modified }
+        let elsewhere = stores.map(\.url).filter { url in !inFolder.contains { DocumentStore.same($0.url, url) } }.map(entry)
+        return inFolder + elsewhere
     }
 
     /// A design's file: one on the home screen by name, or a path.
@@ -132,7 +148,7 @@ import Foundation
         return URL(fileURLWithPath: ref).standardizedFileURL
     }
 
-    /// Opens a design in the window, as the home screen does.
+    /// Opens a design in a tab, as the home screen does, and brings it to the front.
     /// A file from Adobe XD, Figma, Sketch or Photoshop becomes a new design in the designs
     /// folder, which is what opens, as on the Mac.
     private func open(_ url: URL) throws -> DocumentStore {
@@ -148,10 +164,15 @@ import Foundation
         guard url.pathExtension.lowercased() == "bezzle" else {
             throw MCPError("\(url.lastPathComponent) is not a design: Bezzle opens .bezzle designs, and brings in .xd, .fig, .sketch, .psd and .psb files.")
         }
-        let store = DocumentStore.open
-        if store.isAt(url) { return store }
+        if let store = Self.stores.first(where: { $0.isAt(url) }) {
+            store.activate()
+            return store
+        }
         MCPHost.shared.endEditing()
-        guard MCPHost.shared.open(url), store.isAt(url) else { throw MCPError("\(url.lastPathComponent) could not be opened.") }
+        guard MCPHost.shared.open(url), let store = Self.stores.first(where: { $0.isAt(url) }) else {
+            throw MCPError("\(url.lastPathComponent) could not be opened.")
+        }
+        store.activate()
         if let report { MCPHost.shared.broughtIn(report) }
         return store
     }
@@ -159,15 +180,15 @@ import Foundation
     // MARK: Designs
 
     func listDesigns(_ args: Arguments) throws -> [Content] {
-        let open = DocumentStore.open
+        let open = Self.stores
         let designs: [JSONValue] = Self.designs().map { entry in
-            let isOpen = open.isAt(entry.url)
+            let store = open.first { $0.isAt(entry.url) }
             return .compact([
                 ("name", .string(entry.name)),
                 ("path", .string(entry.url.path)),
                 ("modified", .string(ISO8601DateFormatter().string(from: entry.modified))),
-                ("open", isOpen ? true : nil),
-                ("front", isOpen ? true : nil),
+                ("open", store != nil ? true : nil),
+                ("front", store != nil && store === open.first ? true : nil),
             ])
         }
         return [.text(JSONValue.compact([("folder", .string(MCPHost.shared.designsFolder().path)), ("designs", .array(designs))]).text)]
@@ -211,42 +232,36 @@ import Foundation
 
     func openDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
+        MCPHost.shared.bringForward(store.slot)
+        store.activate()
         return [.text(summary(of: store).text)]
     }
 
     func closeDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         let name = store.name
-        MCPHost.shared.endEditing()
-        MCPHost.shared.close()
+        MCPHost.shared.close(store.slot)
         return [.text("Closed \(name). It was saved.")]
     }
 
+    /// Renames the design's package, its tab staying open, as the Mac's store renames it: a name
+    /// taken already gets a number after it.
     func renameDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
-        guard let name = try args.string("name")?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { throw MCPError("Give the new name.") }
-        let clean = String(name.map { "\\/:*?\"<>|".contains($0) ? "-" : $0 })
-        let old = store.url
-        let new = old.deletingLastPathComponent().appendingPathComponent("\(clean).bezzle")
-        guard !DocumentStore.same(new, old) else { return [.text(summary(of: store).text)] }
-        guard !FileManager.default.fileExists(atPath: new.path) else { throw MCPError("There is a design called \(clean) there already.") }
-        // Let go, renamed, and opened again under its new name.
+        guard let name = try args.string("name"), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw MCPError("Give the new name.") }
+        guard store.mayRename else { throw MCPError("\(store.name) was shared with you, so it keeps the name it was shared under.") }
         MCPHost.shared.endEditing()
-        MCPHost.shared.close()
-        do {
-            try FileManager.default.moveItem(at: old, to: new)
-        } catch {
-            _ = MCPHost.shared.open(old)
-            throw MCPError("\(old.lastPathComponent) could not be renamed: \(error)")
-        }
-        return [.text(summary(of: try open(new)).text)]
+        guard WindowsCore.renamedURL(store.url, to: name) != nil else { return [.text(summary(of: store).text)] }
+        guard WindowsCore.renameDesign(to: name) else { throw MCPError("\(store.url.lastPathComponent) could not be renamed.") }
+        MCPHost.shared.renamed()
+        return [.text(summary(of: store).text)]
     }
 
     func duplicateDesign(_ args: Arguments) async throws -> [Content] {
         guard let ref = try args.string("design") else { throw MCPError("Say which design to copy.") }
-        let open = DocumentStore.open
-        let url = open.isOpen && (open.name.caseInsensitiveCompare(ref) == .orderedSame || Self.fileURL(ref).map(open.isAt) == true) ? open.url : try locate(ref)
-        if open.isAt(url) { open.save() }
+        let open = Self.openStore(ref)
+        let url = try open?.url ?? locate(ref)
+        open?.save()
         let folder = url.deletingLastPathComponent(), base = url.deletingPathExtension().lastPathComponent + " copy"
         var copy = folder.appendingPathComponent("\(base).bezzle")
         var i = 2
@@ -264,12 +279,9 @@ import Foundation
 
     func deleteDesign(_ args: Arguments) async throws -> [Content] {
         guard let ref = try args.string("design") else { throw MCPError("Say which design to delete.") }
-        let open = DocumentStore.open
-        let url = open.isOpen && (open.name.caseInsensitiveCompare(ref) == .orderedSame || Self.fileURL(ref).map(open.isAt) == true) ? open.url : try locate(ref)
-        if open.isAt(url) {
-            MCPHost.shared.endEditing()
-            MCPHost.shared.close()
-        }
+        let open = Self.openStore(ref)
+        let url = try open?.url ?? locate(ref)
+        if let open { MCPHost.shared.close(open.slot) }
         guard WindowsCore.recycle(url) else { throw MCPError("\(url.lastPathComponent) could not be moved to the Recycle Bin.") }
         return [.text("Moved \(url.lastPathComponent) to the Recycle Bin.")]
     }

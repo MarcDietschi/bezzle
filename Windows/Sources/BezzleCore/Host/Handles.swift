@@ -93,6 +93,8 @@ extension WindowsCore {
         case shadow(id: UUID, slot: Int, start: CGPoint, original: CGPoint)
     }
     nonisolated(unsafe) private static var holding: Holding?
+    /// What is held, for an open design's own state to be put aside while another is in front.
+    static func visitHolding<V: SlotVisitor>(_ v: inout V) { v.visit(&holding) }
     /// What the drag measures now, and the part of the canvas it measures: shown under it.
     nonisolated(unsafe) public internal(set) static var measure: (text: String, box: CGRect)?
 

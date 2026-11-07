@@ -159,8 +159,14 @@ extension WindowsCore {
         if Editing.gestureStart != nil { endGesture() }
         beginGesture()
         let began = Date()
+        // Its design's own, should another tab come to the front meanwhile.
+        let slot = active
         func tick() {
             guard glide == glides else { return }
+            if let slot, slot !== active {
+                if slot.isOpen { using(slot) { tick() } }
+                return
+            }
             let t = min(Date().timeIntervalSince(began) / 0.42, 1)
             // Quick to start and gentle to land.
             let eased = 1 - pow(1 - t, 3)

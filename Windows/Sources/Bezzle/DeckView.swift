@@ -98,7 +98,8 @@ final class DeckView {
         guard ticking == nil, animating else { return }
         ticking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                // Behind another tab, the core has another design: the cards go on once back.
+                guard let self, self.session.isFront else { return }
                 self.draw()
                 if !self.animating {
                     self.ticking?.dispose()

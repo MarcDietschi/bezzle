@@ -14,8 +14,11 @@ import BezzleCore
 final class HomeView {
     let root = Grid()
     let dragArea = Border()
-    /// Bezzle's own menus, over the home screen: the Bezzle menu.
-    private let menus = MenuHost()
+    /// Where the tabs go while home is in front (`TabStrip`), and what is beside them at the right.
+    let tabsHolder = Border()
+    let right = StackPanel()
+    /// Bezzle's own menus, over the home screen: a design's menu.
+    let menus = MenuHost()
     /// What home's search looks for among the designs' names.
     private var query = ""
     /// The designs' pictures drawn so far, by design, size and when it was last changed.
@@ -75,30 +78,15 @@ final class HomeView {
             column.width = width
             bar.columnDefinitions.append(column)
         }
-        let home = Theme.card(radius: 9)
-        home.height = 30
-        home.verticalAlignment = .center
-        home.margin = Theme.inset(16, 0, 0, 0)
-        let word = Theme.text("Bezzle", size: 15, weight: 600, serif: true)
-        word.margin = Theme.inset(10, 0, 10, 0)
-        home.child = word
-        // The Bezzle menu, as on a design's bar.
-        home.pointerPressed.addHandler { _, args in args?.handled = true }
-        home.tapped.addHandler { [weak self] _, _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.menus.show(below: home, width: 260, entries: Bar.appEntries())
-                }
-            }
-        }
-        bar.children.append(home)
+        // The tabs, home first, which the window puts here while home is in front.
+        tabsHolder.verticalAlignment = .center
+        tabsHolder.margin = Theme.inset(16, 0, 14, 0)
+        bar.children.append(tabsHolder)
 
         dragArea.background = Theme.clear
         try? Grid.setColumn(dragArea, 1)
         bar.children.append(dragArea)
 
-        let right = StackPanel()
         right.orientation = .horizontal
         right.spacing = 10
         right.verticalAlignment = .center
@@ -156,8 +144,8 @@ final class HomeView {
     /// StandardDataFormats.StorageItems, which the bindings leave out: files, as Explorer drags them.
     private static let storageItems = "Shell IDList Array"
 
-    /// Designs and files from other apps dropped anywhere on home open, as on the Mac: the first
-    /// of them, as one design shows at a time here.
+    /// Designs and files from other apps dropped anywhere on home open, each in a tab of its own,
+    /// as on the Mac.
     private func takeDrops() {
         root.allowDrop = true
         root.dragOver.addHandler { _, args in
@@ -174,9 +162,10 @@ final class HomeView {
                 for k in 0..<items.size {
                     if let item = (try? items.getAt(k)) ?? nil, !item.path.isEmpty { urls.append(URL(fileURLWithPath: item.path)) }
                 }
-                guard let first = urls.first(where: { $0.pathExtension.lowercased() == "bezzle" || WindowsCore.imports($0) }) else { return }
-                // After the drop is over: opening replaces home, which the drop is still on.
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.open(first) } }
+                let designs = urls.filter { $0.pathExtension.lowercased() == "bezzle" || WindowsCore.imports($0) }
+                guard !designs.isEmpty else { return }
+                // After the drop is over: a design's tab comes in front of home, which the drop is still on.
+                DispatchQueue.main.async { MainActor.assumeIsolated { designs.forEach { self?.open($0) } } }
             }
         }
     }
@@ -494,8 +483,10 @@ final class HomeView {
                 explorer.arguments = ["/select," + url.path.replacingOccurrences(of: "/", with: "\\")]
                 try? explorer.run()
             },
-            .item(Words.t("Rename")) { rename() },
+            .item(Words.t("Rename"), enabled: Tabs.shared.mayRename(url)) { rename() },
             .item(Words.t("Duplicate")) { [weak self] in
+                // One open in a tab is copied as it is now.
+                Tabs.shared.tab(showing: url)?.save()
                 let folder = url.deletingLastPathComponent(), base = url.deletingPathExtension().lastPathComponent + " copy"
                 var copy = folder.appendingPathComponent("\(base).bezzle")
                 var i = 2
@@ -508,6 +499,8 @@ final class HomeView {
             },
             .separator,
             .item(Words.t("Move to Recycle Bin")) { [weak self] in
+                // One open in a tab is closed first, saved, as the Mac's library closes its tab.
+                if let tab = Tabs.shared.tab(showing: url) { Tabs.shared.close(tab) }
                 guard WindowsCore.recycle(url) else { MessageBeep(0); return }
                 self?.refresh()
             },
@@ -533,8 +526,14 @@ final class HomeView {
             let typed = field.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let clean = String(typed.map { "\\/:*?\"<>|".contains($0) ? "-" : $0 })
             let target = url.deletingLastPathComponent().appendingPathComponent("\(clean).bezzle")
-            if keep, !clean.isEmpty, clean != label.text, !FileManager.default.fileExists(atPath: target.path),
-               (try? FileManager.default.moveItem(at: url, to: target)) != nil {
+            // One open in a tab is renamed there, and goes on under its new name, as on the Mac.
+            if keep, !clean.isEmpty, clean != label.text, let tab = Tabs.shared.tab(showing: url) {
+                if tab.rename(to: clean) {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
+                    return
+                }
+            } else if keep, !clean.isEmpty, clean != label.text, !FileManager.default.fileExists(atPath: target.path),
+                      (try? FileManager.default.moveItem(at: url, to: target)) != nil {
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
                 return
             }
