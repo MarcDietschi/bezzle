@@ -130,3 +130,17 @@ public typealias CFArray = [Any]
 public typealias CFData = Data
 public typealias CFDictionary = [String: Any]
 public typealias CFTypeRef = AnyObject
+
+extension WindowsCore {
+    /// What the host does for the shared code that Foundation does on the Mac, set up at launch:
+    /// unpacking raw DEFLATE, which the icon library is packed with, through Skia's zlib.
+    public static func start() {
+        NSData.inflate = { data in
+            let count = data.withUnsafeBytes { bz_inflate($0.baseAddress, Int32($0.count)) }
+            guard count >= 0 else { return nil }
+            var out = Data(count: Int(count))
+            if count > 0 { out.withUnsafeMutableBytes { bz_host_take($0.baseAddress) } }
+            return out
+        }
+    }
+}

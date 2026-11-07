@@ -476,6 +476,37 @@ enum Glyphs {
         return [Part(data: p.d, mode: .fill)]
     }
 
+    /// A glass, for finding.
+    static func magnifier(size s: Double = 12) -> [Part] {
+        var p = PathData()
+        let c = s * 0.43, r = s * 0.27
+        p.move(c + r, c)
+        for k in 1...24 {
+            let a = Double(k) / 24 * 2 * Double.pi
+            p.line(c + r * cos(a), c + r * sin(a))
+        }
+        p.move(c + r * 0.72, c + r * 0.72); p.line(s * 0.86, s * 0.86)
+        return [Part(data: p.d, mode: .stroke, width: 1.3)]
+    }
+
+    /// The resources switch on the tool rail, as the Mac's ResourcesGlyph: a square, a circle, a
+    /// triangle and a plus, in the same hand as the tools.
+    static func resources(size s: Double = 18) -> [Part] {
+        var p = PathData()
+        p.rect(s * 0.13, s * 0.13, s * 0.30, s * 0.30, radius: 1.6)
+        let c = (s * 0.72, s * 0.28), r = s * 0.15
+        p.move(c.0 + r, c.1)
+        for k in 1...24 {
+            let a = Double(k) / 24 * 2 * Double.pi
+            p.line(c.0 + r * cos(a), c.1 + r * sin(a))
+        }
+        p.move(s * 0.28, s * 0.57); p.line(s * 0.44, s * 0.86); p.line(s * 0.12, s * 0.86); p.close()
+        let m = (s * 0.72, s * 0.72), q = s * 0.17
+        p.move(m.0, m.1 - q); p.line(m.0, m.1 + q)
+        p.move(m.0 - q, m.1); p.line(m.0 + q, m.1)
+        return [Part(data: p.d, mode: .stroke, width: 1.4)]
+    }
+
     /// A card in front of two behind it, as a stack of posts.
     static func stack(size s: Double = 14) -> [Part] {
         var p = PathData()

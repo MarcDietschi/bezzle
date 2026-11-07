@@ -35,6 +35,10 @@ try {
     # for the Mac's (Web/tools/openfonts.py makes them; git-ignored, so sync.sh brings them).
     # The Mac's words in other languages (Resources/make-strings.py makes them on the Mac).
     if (Test-Path 'Resources\Generated\strings.json') { Copy-Item 'Resources\Generated\strings.json' $app -Force }
+    # The icon library, where Foundation looks for an executable's resources on Windows
+    # (Bundle.main.resourceURL is Bezzle.resources beside it), as Icons.swift reads it from the Mac's bundle.
+    New-Item -ItemType Directory -Force "$app\Bezzle.resources" | Out-Null
+    Copy-Item 'Sources\BezzleCore\Shared\Model\Kits\Icons.deflate' "$app\Bezzle.resources" -Force
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $app -Force
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $products -Force
     if (Test-Path '..\Web\site\openfonts\manifest.json') {

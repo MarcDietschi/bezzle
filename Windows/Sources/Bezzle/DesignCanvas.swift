@@ -196,6 +196,13 @@ final class DesignCanvas {
     private let flowMarks = Canvas()
     /// What looking back through the versions marks on the canvas: what differs from now.
     private let timeMarks = Canvas()
+    /// A part or icon carried over the canvas from the resources panel: the real thing, where it
+    /// will land, and what letting go does.
+    private let resourceGhost = Canvas()
+    private var ghost: (key: String, image: Image)?
+    private var ghostShown: (x: DeckSpring, y: DeckSpring, w: DeckSpring, h: DeckSpring)?
+    private var ghostPlan: WindowsCore.PlanLook?
+    private var ghostTicking: EventCleanup?
     private var timeTicking: EventCleanup?
     /// The layer that differs under the pointer, while looking back.
     private var timeHovered: UUID?
@@ -4362,5 +4369,178 @@ extension DesignCanvas {
         let ids = WindowsCore.removePost(front, from: deckID, selection: session.selection)
         session.select(ids, on: session.board)
         session.edited(board: nil)
+    }
+}
+
+// MARK: - Resources carried in
+
+extension DesignCanvas {
+    /// What shows of the canvas, on the canvas.
+    private var visibleOnCanvas: CGRect {
+        let a = inDesign(CGPoint(x: 0, y: 0)), b = inDesign(CGPoint(x: stage.actualWidth, y: stage.actualHeight))
+        return CGRect(x: Double(a.x), y: Double(a.y), width: Double(b.x - a.x), height: Double(b.y - a.y))
+    }
+
+    /// Where the pointer is on the stage, if it is over it.
+    private func overStage(_ args: PointerRoutedEventArgs?) -> CGPoint? {
+        guard let args, let point = try? args.getCurrentPoint(stage) else { return nil }
+        let p = CGPoint(x: Double(point.position.x), y: Double(point.position.y))
+        guard Double(p.x) >= 0, Double(p.y) >= 0, Double(p.x) <= stage.actualWidth, Double(p.y) <= stage.actualHeight else { return nil }
+        return p
+    }
+
+    /// A thing from the resources panel carried over the canvas: shown where it will land.
+    func carryResource(_ thing: WindowsCore.Thing, _ args: PointerRoutedEventArgs?) {
+        guard session.mode == 0, let p = overStage(args) else { clearGhost(); return }
+        let c = inDesign(p)
+        let target = WindowsCore.pick(c, selection: [], zoom: zoom)
+        guard let plan = WindowsCore.plan(thing, at: c, over: target, focused: session.board, visible: visibleOnCanvas) else { clearGhost(); return }
+        let old = ghostPlan
+        ghostPlan = plan
+        // A change of how it fits, or of where, eases; otherwise it stays under the pointer.
+        let jumped = old.map { $0.fitted != plan.fitted || $0.board != plan.board || $0.swap != plan.swap } ?? false
+        if ghostShown == nil || !jumped && ghostTicking == nil {
+            ghostShown = (DeckSpring(Double(plan.frame.minX)), DeckSpring(Double(plan.frame.minY)), DeckSpring(Double(plan.frame.width)), DeckSpring(Double(plan.frame.height)))
+        } else {
+            ghostShown?.x.target = Double(plan.frame.minX)
+            ghostShown?.y.target = Double(plan.frame.minY)
+            ghostShown?.w.target = Double(plan.frame.width)
+            ghostShown?.h.target = Double(plan.frame.height)
+            startGhostEasing()
+        }
+        // Drawn again only when what it makes changes.
+        let key = "\(thing) \(Int(plan.frame.width))x\(Int(plan.frame.height)) \(plan.fitted) \(plan.board?.uuidString ?? "") \(Int(zoom * 1000))"
+        if ghost?.key != key {
+            let image = Inspector.rendered(CGSize(width: Double(plan.frame.width), height: Double(plan.frame.height))) { _, fill in
+                WindowsCore.planPicture(thing, at: c, over: target, focused: self.session.board, visible: self.visibleOnCanvas,
+                                        scale: max(self.zoom * self.pixelScale, 0.05), into: fill)
+            }
+            image.stretch = .fill
+            ghost = (key, image)
+        }
+        drawGhost()
+    }
+
+    func dropResource(_ thing: WindowsCore.Thing, _ args: PointerRoutedEventArgs?) {
+        defer { clearGhost() }
+        guard session.mode == 0, let p = overStage(args) else { return }
+        let c = inDesign(p)
+        let target = WindowsCore.pick(c, selection: [], zoom: zoom)
+        guard let made = WindowsCore.place(thing, at: c, over: target, focused: session.board, visible: visibleOnCanvas) else { return }
+        session.select([made], on: WindowsCore.board(of: made) ?? WindowsCore.boardIndex(of: made))
+        session.edited(board: nil)
+        takeKeys()
+    }
+
+    /// A click in the panel: the thing onto the artboard in view, in the middle of what shows of
+    /// it; an icon onto the icon selected, in its place.
+    func pickResource(_ thing: WindowsCore.Thing) {
+        guard session.mode == 0 else { return }
+        var target: UUID?
+        if case .icon = thing, session.selection.count == 1, WindowsCore.isIcon(session.selection[0]) { target = session.selection[0] }
+        guard let made = WindowsCore.place(thing, at: nil, over: target, focused: session.board, visible: visibleOnCanvas) else { return }
+        session.select([made], on: WindowsCore.board(of: made) ?? WindowsCore.boardIndex(of: made))
+        session.edited(board: nil)
+        takeKeys()
+    }
+
+    private func clearGhost() {
+        ghostPlan = nil
+        ghostShown = nil
+        ghost = nil
+        ghostTicking?.dispose()
+        ghostTicking = nil
+        resourceGhost.children.clear()
+    }
+
+    /// A spring a little short of still, so a bar settling on an edge lands with the faintest give.
+    private func startGhostEasing() {
+        guard ghostTicking == nil else { return }
+        var last = WindowsCore.now
+        ghostTicking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self, var s = self.ghostShown else { return }
+                let now = WindowsCore.now, dt = min(now - last, 1.0 / 30)
+                last = now
+                for k in 0..<4 {
+                    switch k {
+                    case 0: s.x.step(dt, stiffness: 520, damping: 38)
+                    case 1: s.y.step(dt, stiffness: 520, damping: 38)
+                    case 2: s.w.step(dt, stiffness: 520, damping: 38)
+                    default: s.h.step(dt, stiffness: 520, damping: 38)
+                    }
+                }
+                self.ghostShown = s
+                self.drawGhost()
+                if s.x.settled && s.y.settled && s.w.settled && s.h.settled {
+                    self.ghostTicking?.dispose()
+                    self.ghostTicking = nil
+                }
+            }
+        }
+    }
+
+    private func drawGhost() {
+        if resourceGhost.parent == nil {
+            resourceGhost.isHitTestVisible = false
+            overlay.children.append(resourceGhost)
+        }
+        resourceGhost.children.clear()
+        guard let plan = ghostPlan, let s = ghostShown, let ghost else { return }
+        // The artboard it goes onto, or the icon it replaces, outlined in pencil.
+        if let swap = plan.swapFrame {
+            let r = onStage(rect: swap).insetBy(dx: -3, dy: -3)
+            resourceGhost.children.append(outline(r, alpha: 1, width: 1.5))
+        } else if let board = plan.boardFrame {
+            let r = onStage(rect: board).insetBy(dx: -1, dy: -1)
+            resourceGhost.children.append(outline(r, alpha: plan.fitted ? 0.75 : 0.4, width: plan.fitted ? 2 : 1.5))
+        }
+        let r = onStage(rect: CGRect(x: s.x.value, y: s.y.value, width: s.w.value, height: s.h.value))
+        let image = ghost.image
+        image.width = Double(r.width)
+        image.height = Double(r.height)
+        image.opacity = plan.swap == nil ? 0.94 : 0.85
+        try? Canvas.setLeft(image, Double(r.minX))
+        try? Canvas.setTop(image, Double(r.minY))
+        // Docked or stretched, it stays on the artboard, as it will.
+        if plan.fitted, let board = plan.boardFrame {
+            let b = onStage(rect: board).intersection(r)
+            let clip = RectangleGeometry()
+            clip.rect = Rect(x: Float(Double(b.minX - r.minX)), y: Float(Double(b.minY - r.minY)), width: Float(max(Double(b.width), 0)), height: Float(max(Double(b.height), 0)))
+            image.clip = clip
+        } else {
+            image.clip = nil
+        }
+        if image.parent == nil { resourceGhost.children.append(image) }
+        // The same small pencil pill the picture drops use, under the ghost, kept on screen.
+        let label = Theme.text(plan.label, size: 11.5, weight: 500)
+        label.foreground = Theme.brush(0xFFFFFF)
+        label.verticalAlignment = .center
+        let pill = Border()
+        pill.height = 22
+        pill.cornerRadius = Theme.corners(7)
+        pill.padding = Theme.inset(9, 0, 9, 0)
+        pill.background = Theme.brush(Theme.selection)
+        pill.child = label
+        try? pill.measure(Size(width: 600, height: 40))
+        let w = Double(pill.desiredSize.width)
+        var x = (Double(r.midX) - w / 2).rounded(), y = (Double(r.maxY) + 12).rounded()
+        x = min(max(x, 8), stage.actualWidth - w - 8)
+        if y + 22 > stage.actualHeight - 8 { y = max(8, (Double(r.minY) - 34).rounded()) }
+        try? Canvas.setLeft(pill, x)
+        try? Canvas.setTop(pill, y)
+        resourceGhost.children.append(pill)
+    }
+
+    private func outline(_ r: CGRect, alpha: Double, width: Double) -> FrameworkElement {
+        let box = Rectangle()
+        box.width = max(Double(r.width), 1)
+        box.height = max(Double(r.height), 1)
+        box.stroke = Theme.brush(Theme.selection, alpha)
+        box.strokeThickness = width
+        try? Canvas.setLeft(box, Double(r.minX))
+        try? Canvas.setTop(box, Double(r.minY))
+        box.isHitTestVisible = false
+        return box
     }
 }

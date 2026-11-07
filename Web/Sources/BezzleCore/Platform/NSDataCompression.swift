@@ -2,14 +2,23 @@ import Foundation
 import LZFSE
 
 // Apple's Foundation compresses data; here LZFSE is Apple's own reference code (Sources/LZFSE),
-// which is what shared designs are packed with. zlib, which only the icon library uses, is not here yet.
+// which is what shared designs are packed with. zlib, which only the icon library uses, is the host's
+// where it has one (`inflate`).
 nonisolated public extension NSData {
     enum CompressionAlgorithm: Int, Sendable { case lzfse, lz4, lzma, zlib }
 
     struct Unsupported: Error {}
     struct Corrupt: Error {}
 
+    /// Raw DEFLATE unpacked by the host, where it has one (Windows, through its zlib): what the
+    /// icon library is packed with. The browser has none yet.
+    nonisolated(unsafe) static var inflate: ((Data) -> Data?)?
+
     func decompressed(using algorithm: CompressionAlgorithm) throws -> NSData {
+        if algorithm == .zlib, let inflate = Self.inflate {
+            guard let out = inflate(self as Data) else { throw Corrupt() }
+            return out as NSData
+        }
         guard algorithm == .lzfse else { throw Unsupported() }
         let input = [UInt8](self as Data)
         guard !input.isEmpty else { return NSData() }

@@ -1237,6 +1237,32 @@ extern "C" void bz_picture_forget(int32_t id) {
     made.erase(id);
 }
 
+// Skia's own zlib (Chromium's, its names mapped by chromeconf.h, as the library was built).
+#include "third_party/externals/zlib/zlib.h"
+
+extern "C" int32_t bz_inflate(const void* bytes, int32_t count) {
+    answer.clear();
+    z_stream z = {};
+    if (inflateInit2(&z, -15) != Z_OK) return -1;
+    z.next_in = (Bytef*)bytes;
+    z.avail_in = uInt(count);
+    std::vector<uint8_t> out(size_t(count) * 4 + 4096);
+    int result = Z_OK;
+    while (result == Z_OK) {
+        if (z.total_out >= out.size()) out.resize(out.size() * 2);
+        z.next_out = out.data() + z.total_out;
+        z.avail_out = uInt(out.size() - z.total_out);
+        result = inflate(&z, Z_NO_FLUSH);
+        if (result == Z_BUF_ERROR && z.avail_in > 0) result = Z_OK;
+    }
+    size_t made = z.total_out;
+    inflateEnd(&z);
+    if (result != Z_STREAM_END) return -1;
+    out.resize(made);
+    answer = std::move(out);
+    return int32_t(answer.size());
+}
+
 extern "C" int32_t bz_png_write(const char* path, int32_t width, int32_t height, const void* pixels) {
     SkFILEWStream file(path);
     if (!file.isValid()) return 1;

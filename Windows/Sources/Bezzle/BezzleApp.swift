@@ -81,6 +81,8 @@ final class BezzleApp: SwiftApplication {
         WindowsCore.say = { key, args in Words.t(key, arguments: args) }
         // The shared code's own words too, such as the names new layers are given.
         Localization.lookup = { key, args in Words.lookup(key, args) }
+        // What Foundation does on the Mac that the host does here (the icon library's unpacking).
+        MainActor.assumeIsolated { WindowsCore.start() }
         MainActor.assumeIsolated { Theme.readAppearance() }
         let window = Window()
         window.title = "Bezzle"

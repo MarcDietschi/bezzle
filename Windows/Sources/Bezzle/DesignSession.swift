@@ -66,6 +66,12 @@ final class DesignSession {
     /// Opens a card in the inspector, by its name, as the Mac's store.openAspect is set.
     var showCard: ((String) -> Void)?
     var showsLayers = true { didSet { changed() } }
+    /// The resources panel out, in the layers list's place.
+    var showsResources = false { didSet { changed() } }
+
+    /// Brings the resources panel out in the layers list's place, or puts it away and the layers
+    /// list back if it was out before (the Mac's toggleResources).
+    func toggleResources() { showsResources.toggle() }
 
     /// The layer under the pointer, on the canvas or in the layers list: the canvas outlines it
     /// and the list lights its row, as the Mac's store.hovered. It has listeners of its own, as

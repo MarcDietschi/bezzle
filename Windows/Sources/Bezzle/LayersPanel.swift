@@ -93,7 +93,8 @@ final class LayersPanel {
     private var revealed: [UUID] = []
 
     func show() {
-        root.visibility = session.showsLayers ? .visible : .collapsed
+        // The resources panel takes the list's place while it is out.
+        root.visibility = session.showsLayers && !session.showsResources ? .visible : .collapsed
         // The artboards and groups a newly selected layer is in open, so it shows in the list (the
         // Mac's reveal); one shut by hand while it stays selected stays shut.
         if session.selection != revealed {

@@ -98,6 +98,9 @@ int32_t bz_shadow(int32_t width, int32_t height, int32_t pad, double blur, doubl
 /// diagonal, and black at `shade` towards the bottom; into BGRA pixels. Returns 0 when done.
 int32_t bz_stage(int32_t width, int32_t height, double scale, uint32_t table, uint32_t light, double strength,
                  double x, double y, double reach, double shade, void *pixels);
+/// Unpacks raw DEFLATE (RFC 1951, as Apple's COMPRESSION_ZLIB writes it, the icon library's
+/// packing): keeps the bytes and returns their length, for bz_host_take; -1 if they cannot be.
+int32_t bz_inflate(const void *bytes, int32_t count);
 /// Writes pixels as bz_picture_read makes them to a PNG file at `path` (UTF-8). Returns 0 when done.
 int32_t bz_png_write(const char *path, int32_t width, int32_t height, const void *pixels);
 /// Writes premultiplied RGBA pixels as a picture file: `format` 0 PNG, 1 JPEG, 2 WebP (lossless at

@@ -22,6 +22,8 @@ final class DesignWindow {
     private var playing: PlayerView?
     /// The ruler of time, at the foot of the canvas while it is out.
     private lazy var ruler = TimeRulerView(session: session)
+    /// Ready-made parts and icons, in the layers list's place while it is out.
+    private lazy var resources = ResourcesPanel(session: session)
 
     init(name: String, onClose: @escaping () -> Void) {
         session = DesignSession(name: name)
@@ -51,6 +53,12 @@ final class DesignWindow {
         body.children.append(rail.root)
         try? Grid.setColumn(layers.root, 1)
         body.children.append(layers.root)
+        try? Grid.setColumn(resources.root, 1)
+        body.children.append(resources.root)
+        resources.carry = { [weak self] thing, args in self?.canvas.carryResource(thing, args) }
+        resources.drop = { [weak self] thing, args in self?.canvas.dropResource(thing, args) }
+        resources.pick = { [weak self] thing in self?.canvas.pickResource(thing) }
+        session.listenToEdits { [weak self] _ in self?.resources.edited() }
 
         // The canvas sits in the paper like a table top: radius 12, clipped, a hairline round it.
         let table = Border()
@@ -141,6 +149,12 @@ final class DesignWindow {
                 return
             }
             let focusedNow = try? FocusManager.getFocusedElement(self.root.xamlRoot)
+            // Ctrl+Shift+Y brings the resources out or puts them away, as ⇧⌘Y does on the Mac.
+            if args.key == .y, GetKeyState(Int32(VK_CONTROL)) < 0, GetKeyState(Int32(VK_SHIFT)) < 0 {
+                args.handled = true
+                self.session.toggleResources()
+                return
+            }
             // Ctrl+Alt+T brings the ruler of time out or puts it away, as ⌥⌘T does on the Mac.
             if args.key == .t, GetKeyState(Int32(VK_CONTROL)) < 0, GetKeyState(Int32(VK_MENU)) < 0 {
                 args.handled = true
