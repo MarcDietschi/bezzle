@@ -111,6 +111,14 @@ enum Words {
         return fill(template, args)
     }
 
+    /// The shared code's own words by the Mac's key (`Localization.lookup`, as `String(localized:)`
+    /// asks): in the language, or nil for English and for words it does not have, which stay as
+    /// the code writes them.
+    static func lookup(_ key: String, _ args: [Any]) -> String? {
+        guard language != "en", !key.isEmpty, table[key] != nil else { return nil }
+        return t(key, arguments: args)
+    }
+
     /// Words the shared model put together in English (`String(localized:)` finds no other
     /// language on Windows), such as "All 2 copies" or "Variant 3": found by the Mac's key they
     /// were made from, numbers and names taken out and put into the words in the language. As

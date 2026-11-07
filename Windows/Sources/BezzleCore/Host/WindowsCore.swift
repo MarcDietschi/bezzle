@@ -161,8 +161,11 @@ public enum WindowsCore {
             commands.withUnsafeBufferPointer { bz_picture_recording(id, w, h, $0.baseAddress, Int64($0.count)) }
         case .changed(let from, let changes):
             var crop: [Double] = [0, 0, 0, 0], blur = -1.0, clamp: Int32 = 0, perspective: [Double]?, ramp: [Double]?
+            var develop: (cube: [Float], size: Int, amounts: [Double])?
             for change in changes {
                 switch change {
+                case .develop(let cube, let size, let dehaze, let clarity, let texture, let sharpness):
+                    develop = (cube, size, [dehaze, clarity, texture, sharpness])
                 case .crop(let r): crop = [Double(r.minX), Double(r.minY), Double(r.width), Double(r.height)]
                 case .blur(let sigma, let c): blur = sigma; clamp = c ? 1 : 0
                 case .rampBlur(let sigma, let c, let a, let b):
@@ -172,7 +175,14 @@ public enum WindowsCore {
                 case .perspective(let m, _): perspective = m
                 }
             }
-            defer { if let ramp { ramp.withUnsafeBufferPointer { bz_picture_ramp(id, $0.baseAddress) } } }
+            defer {
+                if let ramp { ramp.withUnsafeBufferPointer { bz_picture_ramp(id, $0.baseAddress) } }
+                if let develop {
+                    develop.cube.withUnsafeBufferPointer { cube in
+                        develop.amounts.withUnsafeBufferPointer { bz_picture_develop(id, cube.isEmpty ? nil : cube.baseAddress, Int32(develop.size), $0.baseAddress) }
+                    }
+                }
+            }
             crop.withUnsafeBufferPointer { c in
                 if let m = perspective {
                     m.withUnsafeBufferPointer { bz_picture_changed(id, w, h, Int32(from.id), c.baseAddress, blur, clamp, $0.baseAddress) }

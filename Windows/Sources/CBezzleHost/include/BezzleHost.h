@@ -78,6 +78,11 @@ void bz_picture_pixels(int32_t id, int32_t width, int32_t height, int32_t bytesP
 /// The changed picture `id`'s blur grows along a ramp instead: none at `ends` 0, 1 growing to
 /// the whole blur at `ends` 2, 3, in the source's pixels from its top left.
 void bz_picture_ramp(int32_t id, const double *ends);
+/// A picture made by bz_picture_changed is a photo developed as the Mac develops it: haze away
+/// (above nought) or over, then each colour through `cube` (`size` steps a side, red fastest, three
+/// floats each; none when null), then clarity, texture and sharpness. `amounts`: dehaze, clarity,
+/// texture, sharpness, as the Mac's kernels take them.
+void bz_picture_develop(int32_t id, const float *cube, int32_t size, const double *amounts);
 
 /// Makes picture `id` and writes its premultiplied pixels, RGBA (or BGRA with `bgra`), rows top
 /// first, to `pixels`, which holds `width` × `height` × 4 bytes. Returns 0 when done.

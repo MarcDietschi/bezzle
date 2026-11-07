@@ -41,6 +41,9 @@ final class Inspector {
     var exportDone: (ids: [UUID], outcome: (shown: URL, written: Int, missed: Int))?
     /// Gives the keys back to the canvas, once a field has been typed into.
     var returnFocus: (() -> Void)?
+    /// The Photo card's tab (light, color, detail), and the colour whose rows show, as on the Mac.
+    var photoGroup = "light"
+    var photoBand: String?
 
     init(session: DesignSession) {
         self.session = session

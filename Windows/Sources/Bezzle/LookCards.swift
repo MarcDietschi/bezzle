@@ -53,6 +53,8 @@ extension Inspector {
                 fillCard(looks, slot: slot, ids: ids, board: board, change: change, preview: preview)
             }))
         }
+        // What the pictures have of light, colour and detail, when every layer shows one.
+        if let photo = photoCard(ids, board: board) { cards.append(photo) }
         let firstBorder = kinds.contains("line") || looks.borderOn != false
         if borders && (firstBorder || looks.borders.count > 1) {
             cards.append(pile(looks.borders.indices.filter { $0 > 0 || firstBorder }.reversed().map { slot in

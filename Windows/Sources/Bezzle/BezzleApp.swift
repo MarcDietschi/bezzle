@@ -79,6 +79,8 @@ final class BezzleApp: SwiftApplication {
         Trace.time("launched")
         // The core's own words (what a drag measures) in the user's language too.
         WindowsCore.say = { key, args in Words.t(key, arguments: args) }
+        // The shared code's own words too, such as the names new layers are given.
+        Localization.lookup = { key, args in Words.lookup(key, args) }
         MainActor.assumeIsolated { Theme.readAppearance() }
         let window = Window()
         window.title = "Bezzle"

@@ -16,5 +16,10 @@ extension WindowsCore {
         return out
     }
 
-    static func say(_ key: String, _ args: Any...) -> String { say(key, args) }
+    static func say(_ key: String, _ args: Any...) -> String {
+        // The hook by name: called as `say(key, args)`, with nothing to fill in, this would be
+        // taken for itself, and call itself for ever.
+        let words: (_ key: String, _ args: [Any]) -> String = say
+        return words(key, args)
+    }
 }

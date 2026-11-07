@@ -45,6 +45,7 @@
 #include "modules/skunicode/include/SkUnicode_icu.h"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <cmath>
 #include <cstdio>
@@ -222,6 +223,11 @@ struct Picture {
     double ramp[4] = {};
     int bytesPerRow = 0;
     std::vector<uint8_t> pixels;
+    /// A photo developed (bz_picture_develop): its colour cube, `cubeSize` a side, and the rest.
+    bool develops = false;
+    std::vector<float> cube;
+    int cubeSize = 0;
+    double dehaze = 0, clarity = 0, texture = 0, sharpness = 0;
 };
 std::map<int, Picture> pictures;
 std::map<int, sk_sp<SkImage>> made;
@@ -242,6 +248,268 @@ template <typename Draw> sk_sp<SkImage> raster(int w, int h, Draw draw) {
     return surface->makeImageSnapshot();
 }
 
+// MARK: Developing photos, as the Mac's Developer does with Core Image
+
+namespace develop {
+
+inline float encode(float x) {
+    const float a = std::fabs(x);
+    const float v = a <= 0.0031308f ? a * 12.92f : 1.055f * std::pow(a, 1.0f / 2.4f) - 0.055f;
+    return x < 0 ? -v : v;
+}
+inline float decode(float x) {
+    const float a = std::fabs(x);
+    const float v = a <= 0.04045f ? a / 12.92f : std::pow((a + 0.055f) / 1.055f, 2.4f);
+    return x < 0 ? -v : v;
+}
+inline float luma(const float* c) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; }
+
+SkImageInfo linear(int w, int h) {
+    return SkImageInfo::Make(w, h, kRGBA_F32_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGBLinear());
+}
+
+/// A picture as Core Image works on it: light itself, premultiplied, four floats a pixel.
+std::vector<float> read(const sk_sp<SkImage>& image, int w, int h) {
+    std::vector<float> px(size_t(w) * h * 4);
+    auto surface = SkSurfaces::Raster(linear(w, h));
+    if (!surface) return {};
+    surface->getCanvas()->clear(SK_ColorTRANSPARENT);
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    surface->getCanvas()->drawImageRect(image, SkRect::MakeWH(float(w), float(h)), SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear), &paint);
+    surface->readPixels(linear(w, h), px.data(), size_t(w) * 16, 0, 0);
+    return px;
+}
+
+/// The same pixels blurred by `sigma`, their edges carried on outward first, as Core Image's
+/// clamped Gaussian blur is: in light, as Core Image blurs.
+std::vector<float> blurred(const std::vector<float>& px, int w, int h, float sigma) {
+    SkPixmap source(linear(w, h), px.data(), size_t(w) * 16);
+    auto image = SkImages::RasterFromPixmapCopy(source);
+    auto surface = SkSurfaces::Raster(linear(w, h));
+    std::vector<float> out(px.size());
+    if (!image || !surface) return px;
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    paint.setImageFilter(SkImageFilters::Blur(sigma, sigma, SkTileMode::kClamp, nullptr));
+    surface->getCanvas()->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
+    surface->readPixels(linear(w, h), out.data(), size_t(w) * 16, 0, 0);
+    return out;
+}
+
+/// A pixel as the Mac's kernels see it: unpremultiplied, through the sRGB curve.
+inline void seen(const float* p, float* c) {
+    const float a = p[3];
+    for (int k = 0; k < 3; k++) c[k] = encode(a > 0.0001f ? p[k] / a : 0);
+}
+
+/// The colour of a picture's haze: that of its haziest part, where even its darkest colour is
+/// lightest, as a sky usually is (the Mac's Developer.air), from the picture read small.
+void air(const sk_sp<SkImage>& image, float out[3]) {
+    out[0] = out[1] = out[2] = 0.9f;
+    const int w0 = image->width(), h0 = image->height();
+    const double s = std::min(1.0, 96.0 / std::max(w0, h0));
+    const int w = std::max(1, int(std::lround(w0 * s))), h = std::max(1, int(std::lround(h0 * s)));
+    const SkImageInfo info = SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    auto surface = SkSurfaces::Raster(info);
+    if (!surface) return;
+    surface->getCanvas()->clear(SK_ColorTRANSPARENT);
+    surface->getCanvas()->drawImageRect(image, SkRect::MakeWH(float(w), float(h)), SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear), nullptr);
+    std::vector<uint8_t> px(size_t(w) * h * 4);
+    surface->readPixels(info, px.data(), size_t(w) * 4, 0, 0);
+    std::vector<std::pair<float, std::array<float, 3>>> darks;
+    for (size_t i = 0; i < size_t(w) * h; i++) {
+        const float a = px[i * 4 + 3] / 255.0f;
+        if (a <= 0.5f) continue;
+        const std::array<float, 3> c = {px[i * 4] / 255.0f / a, px[i * 4 + 1] / 255.0f / a, px[i * 4 + 2] / 255.0f / a};
+        darks.push_back({std::min({c[0], c[1], c[2]}), c});
+    }
+    std::sort(darks.begin(), darks.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+    const size_t top = std::max<size_t>(1, darks.size() / 100);
+    if (darks.empty()) return;
+    float sum[3] = {0, 0, 0};
+    for (size_t i = 0; i < top && i < darks.size(); i++) for (int k = 0; k < 3; k++) sum[k] += darks[i].second[k];
+    const size_t n = std::min(top, darks.size());
+    for (int k = 0; k < 3; k++) out[k] = std::clamp(sum[k] / float(n), 0.45f, 1.0f);
+}
+
+/// The haze taken away, or more laid over, after the dark channel prior (the Mac's
+/// Developer.dehazed and its bezzleDehaze kernel), worked out on a quarter of the picture.
+void dehaze(std::vector<float>& px, int w, int h, double amount, const float air[3]) {
+    const double longest = std::max(w, h);
+    const int qw = std::max(1, int(std::lround(w * 0.25))), qh = std::max(1, int(std::lround(h * 0.25)));
+    // A quarter of the picture, its darkest colour round about each pixel, softened.
+    std::vector<float> small(size_t(qw) * qh * 4);
+    for (int y = 0; y < qh; y++) {
+        for (int x = 0; x < qw; x++) {
+            // Box-sampled down, as a quarter scale averages what it covers.
+            float sum[4] = {0, 0, 0, 0};
+            int count = 0;
+            for (int dy = 0; dy < 4; dy++) for (int dx = 0; dx < 4; dx++) {
+                const int sx = std::min(w - 1, x * 4 + dx), sy = std::min(h - 1, y * 4 + dy);
+                const float* p = &px[(size_t(sy) * w + sx) * 4];
+                for (int k = 0; k < 4; k++) sum[k] += p[k];
+                count++;
+            }
+            float* o = &small[(size_t(y) * qw + x) * 4];
+            const float m = std::min({sum[0], sum[1], sum[2]}) / count;
+            o[0] = o[1] = o[2] = m;
+            o[3] = sum[3] / count;
+        }
+    }
+    const int reach = std::max(1, int(std::lround(longest * 0.25 * 0.01)));
+    // The darkest in a square `reach` each way: across, then down.
+    std::vector<float> across(small.size());
+    for (int y = 0; y < qh; y++) for (int x = 0; x < qw; x++) {
+        float m[4] = {1e9f, 1e9f, 1e9f, 1e9f};
+        for (int d = -reach; d <= reach; d++) {
+            const int sx = std::clamp(x + d, 0, qw - 1);
+            const float* p = &small[(size_t(y) * qw + sx) * 4];
+            for (int k = 0; k < 4; k++) m[k] = std::min(m[k], p[k]);
+        }
+        std::copy(m, m + 4, &across[(size_t(y) * qw + x) * 4]);
+    }
+    for (int y = 0; y < qh; y++) for (int x = 0; x < qw; x++) {
+        float m[4] = {1e9f, 1e9f, 1e9f, 1e9f};
+        for (int d = -reach; d <= reach; d++) {
+            const int sy = std::clamp(y + d, 0, qh - 1);
+            const float* p = &across[(size_t(sy) * qw + x) * 4];
+            for (int k = 0; k < 4; k++) m[k] = std::min(m[k], p[k]);
+        }
+        std::copy(m, m + 4, &small[(size_t(y) * qw + x) * 4]);
+    }
+    small = blurred(small, qw, qh, float(reach * 1.6));
+    const float a = std::max((air[0] + air[1] + air[2]) / 3.0f, 0.2f);
+    const float amt = float(amount);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            float* e = &px[(size_t(y) * w + x) * 4];
+            if (e[3] <= 0.0001f) continue;
+            // The dark round about, laid back over the whole picture, smoothly.
+            const float fx = std::clamp((x + 0.5f) / 4 - 0.5f, 0.0f, float(qw - 1)), fy = std::clamp((y + 0.5f) / 4 - 0.5f, 0.0f, float(qh - 1));
+            const int x0 = int(fx), y0 = int(fy), x1 = std::min(x0 + 1, qw - 1), y1 = std::min(y0 + 1, qh - 1);
+            const float tx = fx - x0, ty = fy - y0;
+            auto at = [&](int xx, int yy, int k) { return small[(size_t(yy) * qw + xx) * 4 + k]; };
+            float dark[2];
+            for (int k = 0; k < 2; k++) {
+                const int ch = k == 0 ? 0 : 3;
+                dark[k] = (at(x0, y0, ch) * (1 - tx) + at(x1, y0, ch) * tx) * (1 - ty) + (at(x0, y1, ch) * (1 - tx) + at(x1, y1, ch) * tx) * ty;
+            }
+            float c[3];
+            seen(e, c);
+            const float d = std::clamp(encode(dark[1] > 0.0001f ? dark[0] / dark[1] : 0) / a, 0.0f, 1.0f);
+            if (amt > 0) {
+                const float t = std::max(1 - amt * 0.92f * d, 0.22f);
+                for (int k = 0; k < 3; k++) c[k] = (c[k] - air[k]) / t + air[k] + (1 - t) * 0.18f * amt;
+            } else {
+                const float m = -amt * 0.62f * (0.3f + 0.7f * d);
+                for (int k = 0; k < 3; k++) c[k] = c[k] + (air[k] - c[k]) * m;
+            }
+            for (int k = 0; k < 3; k++) e[k] = decode(c[k]) * e[3];
+        }
+    }
+}
+
+/// Each colour, as it looks, through the cube, as Core Image's colour cube in sRGB takes it:
+/// unpremultiplied, the nearest eight of its steps mixed.
+void cube(std::vector<float>& px, const std::vector<float>& lut, int n) {
+    if (n < 2 || lut.size() < size_t(n) * n * n * 3) return;
+    const float top = float(n - 1);
+    for (size_t i = 0; i < px.size(); i += 4) {
+        float* p = &px[i];
+        const float a = p[3];
+        if (a <= 0.0001f) continue;
+        float c[3];
+        for (int k = 0; k < 3; k++) c[k] = std::clamp(encode(p[k] / a), 0.0f, 1.0f) * top;
+        const int r0 = std::min(int(c[0]), n - 2), g0 = std::min(int(c[1]), n - 2), b0 = std::min(int(c[2]), n - 2);
+        const float tr = c[0] - r0, tg = c[1] - g0, tb = c[2] - b0;
+        float out[3] = {0, 0, 0};
+        for (int db = 0; db < 2; db++) for (int dg = 0; dg < 2; dg++) for (int dr = 0; dr < 2; dr++) {
+            const float wgt = (dr ? tr : 1 - tr) * (dg ? tg : 1 - tg) * (db ? tb : 1 - tb);
+            const float* e = &lut[((size_t(b0 + db) * n + (g0 + dg)) * n + (r0 + dr)) * 3];
+            for (int k = 0; k < 3; k++) out[k] += e[k] * wgt;
+        }
+        for (int k = 0; k < 3; k++) p[k] = decode(out[k]) * a;
+    }
+}
+
+/// Clarity, texture and sharpness, as the Mac's bezzleDetail kernel: the difference from a wide
+/// blur in the middle tones, the band between a fine and a middling blur, and the difference
+/// from the finest blur in lightness only. Each blur is taken in turn, to keep only two at once.
+void detail(std::vector<float>& px, int w, int h, double clarity, double texture, double sharpness) {
+    const double longest = std::max(w, h);
+    const size_t count = size_t(w) * h;
+    // What each pixel becomes as it looks, from how it looks to begin with.
+    std::vector<float> o(count * 3), c(count * 3);
+    for (size_t i = 0; i < count; i++) seen(&px[i * 4], &o[i * 3]);
+    c = o;
+    auto sigma = [&](double part, double least) { return float(std::max(longest * part, least)); };
+    if (clarity != 0) {
+        const auto wide = blurred(px, w, h, sigma(0.014, 2));
+        for (size_t i = 0; i < count; i++) {
+            if (px[i * 4 + 3] <= 0.0001f) continue;
+            float s[3];
+            seen(&wide[i * 4], s);
+            const float l = std::clamp(luma(s), 0.0f, 1.0f);
+            const float m = 1 - std::pow(std::fabs(2 * l - 1), 2.2f);
+            for (int k = 0; k < 3; k++) c[i * 3 + k] += float(clarity) * m * (o[i * 3 + k] - s[k]);
+        }
+    }
+    if (texture != 0) {
+        const auto mid = blurred(px, w, h, sigma(0.0045, 1.5));
+        const auto fine = blurred(px, w, h, sigma(0.0011, 0.6));
+        for (size_t i = 0; i < count; i++) {
+            if (px[i * 4 + 3] <= 0.0001f) continue;
+            float f[3], md[3];
+            seen(&fine[i * 4], f);
+            seen(&mid[i * 4], md);
+            // Not where it would push deep shadows to black or bright skies to white.
+            const float m = 1 - std::pow(std::fabs(2 * std::clamp(luma(&o[i * 3]), 0.0f, 1.0f) - 1), 3.0f);
+            for (int k = 0; k < 3; k++) c[i * 3 + k] += float(texture) * m * (f[k] - md[k]);
+        }
+    }
+    if (sharpness != 0) {
+        const auto tiny = blurred(px, w, h, sigma(0.00045, 0.7));
+        for (size_t i = 0; i < count; i++) {
+            if (px[i * 4 + 3] <= 0.0001f) continue;
+            float t[3];
+            seen(&tiny[i * 4], t);
+            const float d = std::clamp(luma(&o[i * 3]) - luma(t), -0.25f, 0.25f);
+            for (int k = 0; k < 3; k++) c[i * 3 + k] += float(sharpness) * d;
+        }
+    }
+    for (size_t i = 0; i < count; i++) {
+        float* p = &px[i * 4];
+        if (p[3] <= 0.0001f) continue;
+        for (int k = 0; k < 3; k++) p[k] = decode(c[i * 3 + k]) * p[3];
+    }
+}
+
+}  // namespace develop
+
+/// A photo developed as the Mac's Developer develops it, from the picture as it is.
+sk_sp<SkImage> developed(const sk_sp<SkImage>& from, const Picture& d) {
+    const int w = from->width(), h = from->height();
+    auto px = develop::read(from, w, h);
+    if (px.empty()) return from;
+    if (d.dehaze != 0) {
+        float air[3];
+        develop::air(from, air);
+        develop::dehaze(px, w, h, d.dehaze, air);
+    }
+    if (!d.cube.empty()) develop::cube(px, d.cube, d.cubeSize);
+    if (d.clarity != 0 || d.texture != 0 || d.sharpness != 0) develop::detail(px, w, h, d.clarity, d.texture, d.sharpness);
+    // Back into sRGB, eight bits a channel, as the Mac's developed pictures are.
+    SkPixmap done(develop::linear(w, h), px.data(), size_t(w) * 16);
+    auto image = SkImages::RasterFromPixmapCopy(done);
+    if (!image) return from;
+    return raster(w, h, [&](SkCanvas* canvas) {
+        SkPaint paint;
+        paint.setBlendMode(SkBlendMode::kSrc);
+        canvas->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
+    });
+}
+
 sk_sp<SkImage> make(const Picture& d) {
     switch (d.kind) {
         case Picture::kAsset:
@@ -255,6 +523,7 @@ sk_sp<SkImage> make(const Picture& d) {
         case Picture::kChanged: {
             auto from = get(d.from);
             if (!from) return nullptr;
+            if (d.develops) return developed(from, d);
             const double crop[4] = {d.crop[2] > 0 ? d.crop[0] : 0, d.crop[2] > 0 ? d.crop[1] : 0, 0, 0};
             return raster(d.width, d.height, [&](SkCanvas* canvas) {
                 canvas->translate(float(-crop[0]), float(-crop[1]));
@@ -921,6 +1190,17 @@ extern "C" void bz_picture_changed(int32_t id, int32_t width, int32_t height, in
     p.clamp = clamp != 0;
     if (perspective) { p.hasPerspective = true; std::copy(perspective, perspective + 9, p.perspective); }
     pictures[id] = std::move(p);
+}
+
+extern "C" void bz_picture_develop(int32_t id, const float* cube, int32_t size, const double* amounts) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = pictures.find(id);
+    if (it == pictures.end()) return;
+    Picture& p = it->second;
+    p.develops = true;
+    p.cubeSize = std::max(size, 0);
+    if (cube && size > 1) p.cube.assign(cube, cube + size_t(size) * size * size * 3);
+    if (amounts) { p.dehaze = amounts[0]; p.clarity = amounts[1]; p.texture = amounts[2]; p.sharpness = amounts[3]; }
 }
 
 extern "C" void bz_picture_ramp(int32_t id, const double* ends) {
