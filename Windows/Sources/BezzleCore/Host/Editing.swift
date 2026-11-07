@@ -227,6 +227,8 @@ extension WindowsCore {
 
     public static func beginGesture() {
         beginChange()
+        // While typing, a drag in a card goes on from the words as they are, as one change of the typing.
+        if let t = typing { typingGestureBegins(t); return }
         if let doc = design { Editing.begin(doc) }
     }
 
@@ -262,11 +264,13 @@ extension WindowsCore {
     }
 
     public static func endGesture() {
+        if let t = typing { typingGestureEnds(t); return }
         if let doc = design { design = Editing.end(doc) }
     }
 
     /// The gesture taken back: the design as it was when it began, and no step made.
     public static func cancelGesture() {
+        if let t = typing { typingGestureCancelled(t); return }
         Editing.gestureBase = nil
         guard let start = Editing.gestureStart else { return }
         design = start
@@ -292,6 +296,9 @@ extension WindowsCore {
         guard !isReadOnly else { return }
         beginChange()
         guard let doc = design else { return }
+        // While typing, each change goes on from the words as they are, not from where the typing
+        // began, as the Mac's store edits; the typing is one step all the same.
+        if let t = typing, t.nested == 0 { Editing.gestureBase = doc }
         design = Editing.apply(to: doc, change)
     }
 }

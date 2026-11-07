@@ -34,6 +34,12 @@ extension Inspector {
             WindowsCore.preview(ids, c)
             session.previewed(board: board)
         }
+        // Underline, strikethrough and lists as the Format menu makes them: on the letters picked
+        // out while typing, on what is typed next where only the caret is, or on every letter.
+        @MainActor func format(_ f: WindowsCore.TextFormat) {
+            guard WindowsCore.format(f, ids) else { return }
+            edited()
+        }
         // Once a menu closes, whatever it showed goes, unless what was chosen took its place.
         let unpreview: () -> Void = { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { if WindowsCore.endPreview() { self?.session.previewed(board: board) } } }
@@ -48,8 +54,13 @@ extension Inspector {
         let mark = Theme.text("Aa", size: 12.5, weight: 500, ink: 2)
         if let family = t.family, family != "System", let font = Self.font(of: family) { mark.fontFamily = font }
 
-        return card("Text", summary, mark: mark, dial: dial, style: "text", body: { [self] in
+        // While letters are picked out, the type's named looks are not offered (as on the Mac).
+        return card("Text", summary, mark: mark, dial: dial, style: t.picked == nil ? "text" : nil, body: { [self] in
             var rows: [UIElement] = []
+            // While typing, what is about letters is about those picked out alone.
+            if let n = t.picked {
+                rows.append(Controls.caption(n == 1 ? Words.t("Changing the letter picked out.") : Words.t("Changing the %lld letters picked out.", n)))
+            }
             // The family, in the face of it most like the one the letters have.
             rows.append(Controls.menuButton(t.familyShown, width: Self.content, menus: menus, searchable: true, entries: {
                 WindowsCore.fontFamilies.map { f in
@@ -72,13 +83,13 @@ extension Inspector {
             }))
             let aligns = Controls.iconChoice(t.align, ["left", "center", "right", "justify"].map { ($0, Glyphs.textAlign($0)) }) { change(.align($0)) }
             let lines = Controls.iconToggles([
-                (Glyphs.underline(), t.underline, { change(.underline(!t.underline)) }),
-                (Glyphs.strikethrough(), t.strikethrough, { change(.strikethrough(!t.strikethrough)) }),
+                (Glyphs.underline(), t.underline, { format(.underline) }),
+                (Glyphs.strikethrough(), t.strikethrough, { format(.strikethrough) }),
             ], width: Self.endField)
             rows.append(Controls.line([aligns, lines]))
             let lists = Controls.iconToggles([
-                (Glyphs.list(numbered: false), t.list == "bullet", { change(.list(t.list == "bullet" ? nil : "bullet")) }),
-                (Glyphs.list(numbered: true), t.list == "number", { change(.list(t.list == "number" ? nil : "number")) }),
+                (Glyphs.list(numbered: false), t.list == "bullet", { format(.bulletList) }),
+                (Glyphs.list(numbered: true), t.list == "number", { format(.numberList) }),
             ], width: Self.column)
             rows.append(Controls.line([lists, caseMenu(t, change: change, preview: preview, closed: unpreview)]))
             // How the box finds its size, and, for a box of fixed size, where the lines lie in it.

@@ -77,6 +77,7 @@ public enum WindowsCore {
     /// images/, by their file names, as the core asks for them. Answers its artboards.
     public static func open(_ folder: URL) throws -> [Board] {
         let doc = try read(folder)
+        typing = nil
         versions.reset()
         timeTable.forget()
         previewBase = nil
@@ -93,6 +94,7 @@ public enum WindowsCore {
 
     /// Lets the open design go, once it is saved: a save that comes later has nothing to write.
     public static func close() {
+        typing = nil
         sharing?.close()
         sharing = nil
         fronts = [:]
@@ -150,6 +152,8 @@ public enum WindowsCore {
         // The text being typed into is shown by its editor, not drawn under it, as on the Mac, and
         // texts whose letters are on their way by the canvas, over the design.
         for id in hiding { doc.update(id) { $0.hidden = true } }
+        // A text on a curve is straight while it is typed into, as on the Mac.
+        if let id = typing?.id, doc.node(id)?.isCurved == true { doc.update(id) { $0 = LetterFlights.straight($0, frame: $0.frame).node } }
         let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
         // A deck as the post in front of it here.
         let board = seen(doc.nodes[index])

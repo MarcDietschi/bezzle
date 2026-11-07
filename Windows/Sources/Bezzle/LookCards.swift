@@ -199,6 +199,17 @@ extension Inspector {
                           change: @escaping @MainActor (WindowsCore.LookChange) -> Void,
                           preview: @escaping @MainActor (WindowsCore.LookChange?) -> Void) -> UIElement {
         let paint = l.fills[slot]
+        // Letters picked out while typing take a colour of their own, and only that, as on the
+        // Mac: one colour's field, its swatch opening the colours, nothing for the whole layer.
+        if l.lettersPicked, slot == 0 {
+            return card("Fill", paint.summary, id: Self.cardID("Fill", slot), mark: Colours.swatch(paint, size: 15, radius: 4), body: { [self] in
+                let used = WindowsCore.designColours.filter { $0.hex != paint.colour?.hex }
+                let open: @MainActor (FrameworkElement) -> Void = { [weak self] anchor in
+                    self?.openColourPanel(below: anchor, start: paint.first) { c in change(.fillColour(0, c)) }
+                }
+                return [Colours.field(paint.colour, suggestions: Array(used.prefix(12)), open: open, preview: { _ in }, apply: { change(.fillColour(0, $0)) })]
+            })
+        }
         let dial = paint.kind == "solid" ? Dial(fraction: paint.first.a, set: { WindowsCore.change(ids, .fillAlpha(slot, ($0 * 20).rounded() / 20)) },
                                                 summary: { "#\(paint.first.hex) · \(Int((($0 * 20).rounded() * 5)))%" }, stops: [1]) : nil
         // Text is all colour, so its first fill stays.

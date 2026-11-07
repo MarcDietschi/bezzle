@@ -46,6 +46,8 @@ final class MenuHost {
     /// What to do once it closes, however it closes: take a preview away, say.
     private var closed: (() -> Void)?
     var isOpen: Bool { card != nil }
+    /// How far from the window's top a menu opening upwards stays: below the bar.
+    static let clearAbove = 60.0
 
     init() {
         layer.isHitTestVisible = false
@@ -109,7 +111,9 @@ final class MenuHost {
         // Below the pointer when it fits there or there is more room below than above, as the Mac's.
         let room = (w: layer.actualWidth, h: layer.actualHeight), gap = 2.0
         let top = above ?? Double(point.y)
-        let roomBelow = room.h - 12 - Double(point.y) - gap, roomAbove = top - gap - 12
+        // Above, it ends under the bar: the bar's empty middle drags the window, and takes the
+        // clicks of any row lying over it.
+        let roomBelow = room.h - 12 - Double(point.y) - gap, roomAbove = top - gap - Self.clearAbove
         let below = height <= roomBelow || roomBelow >= roomAbove
         let shown = min(height, below ? roomBelow : roomAbove)
         let body: UIElement

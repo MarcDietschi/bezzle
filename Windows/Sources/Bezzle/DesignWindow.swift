@@ -181,6 +181,7 @@ final class DesignWindow {
             guard let self, let args, !args.handled, !self.menus.isOpen, self.playing == nil, !self.export.isOpen else { return }
             _ = Tabs.shared.key(args)
         }
+        canvas.checkSpelling = { [weak self] in self?.find.open(spelling: true) }
         // The canvas's keys, wherever focus is, as on the Mac; but not while a field is typed into.
         root.keyDown.addHandler { [weak self] _, args in
             guard let self, let args, !args.handled else { return }

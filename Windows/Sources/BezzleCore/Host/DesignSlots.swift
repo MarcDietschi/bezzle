@@ -70,6 +70,7 @@ extension WindowsCore {
         v.visit(&Editing.lastEcho)
         v.visit(&Editing.lastStep)
         v.visit(&Editing.lastSettled)
+        v.visit(&typing)
         v.visit(&moving)
         v.visit(&pulling)
         v.visit(&adapting)

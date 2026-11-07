@@ -36,6 +36,9 @@ extension WindowsCore {
         public let axes: [TextAxis]
         /// Whether a variable font's axes are set, which shows them open.
         public let axesSet: Bool
+        /// How many letters are picked out while typing, which the letters' controls change
+        /// alone; nil with none, when they change the whole layer.
+        public var picked: Int?
     }
 
     nonisolated public struct TextFeature: Sendable {
@@ -77,7 +80,9 @@ extension WindowsCore {
         guard let doc = design else { return nil }
         let nodes = ids.compactMap { doc.node($0) }
         guard !nodes.isEmpty, nodes.allSatisfy({ $0.kind == .text }) else { return nil }
-        let sum = TextSummary(nodes: nodes)
+        // While typing, the letters picked out, as the Mac's lettersShown.
+        let picked = typingInto(ids) ? pickedLetters : nil
+        let sum = TextSummary(nodes: nodes, letters: picked.map { nodes[0].letters(in: $0) })
         let family = sum.letter(\.family), first = sum.first
         let style = nodes[0].style ?? TextStyle()
         let offered = Fonts.features(of: style)
@@ -92,7 +97,7 @@ extension WindowsCore {
                      value: (sum.common { $0.axes?[a.tag] } ?? nil) ?? a.standard)
         }
         let letterCase = sum.common(\.letterCase).map { $0?.rawValue ?? "" }
-        return TextCard(
+        var card = TextCard(
             family: family, familyShown: family.map(Fonts.displayName) ?? "Several fonts", face: sum.letter(\.face),
             faces: Fonts.faces(of: family ?? first.family), size: sum.letter { Double($0.size) }, firstSize: Double(first.size),
             align: sum.common(\.align)?.rawValue, underline: sum.letter(\.underline) == true, strikethrough: sum.letter(\.strikethrough) == true,
@@ -102,6 +107,8 @@ extension WindowsCore {
             paragraphSpacing: sum.common { Double($0.paragraphSpacing ?? 0) },
             features: features, featuresChanged: TextFeatures.changed(in: style, offered: has),
             axes: axes, axesSet: sum.common { $0.axes != nil } != false)
+        card.picked = picked?.length
+        return card
     }
 
     /// The families the fonts menu offers, the system font first, and what each is called.
@@ -124,24 +131,48 @@ extension WindowsCore {
         return (url.lastPathComponent, own)
     }
 
-    /// Makes a change to the selected text layers, one step of the history.
+    /// Makes a change to the selected text layers, one step of the history. While typing, what
+    /// is about letters goes to the letters picked out alone, as one change of the typing.
     public static func change(_ ids: [UUID], _ change: TextChange) {
+        if let f = letterChange(change), typingInto(ids), restyleTyped(f, caret: false) { return }
         let apply = make(change, ids: ids)
         edit { d in for id in ids { d.update(id) { n in if n.kind == .text { apply(&n) } } } }
     }
 
     /// Shows a change on the canvas without making it, as the Mac's showPreview: a font pointed
-    /// at in the fonts menu. Nil takes it away.
+    /// at in the fonts menu. Nil takes it away. Letters picked out while typing show what is
+    /// chosen once it is, as on the Mac.
     public static func preview(_ ids: [UUID], _ change: TextChange?) {
         guard let change else { endPreview(); return }
+        if letterChange(change) != nil, typingInto(ids), pickedLetters != nil { return }
         let apply = make(change, ids: ids)
         preview { d in for id in ids { d.update(id) { n in if n.kind == .text { apply(&n) } } } }
+    }
+
+    /// What a change about letters does to them: their family, face, size, letter spacing,
+    /// lines under and through them and lists; nil for a change to the whole layer's style.
+    private static func letterChange(_ change: TextChange) -> ((inout Letters) -> Void)? {
+        switch change {
+        case .family(let family):
+            // The family, in the face of it most like the one the letters have.
+            return { l in
+                l.face = Fonts.face(like: l.face, of: l.family, in: family)
+                l.family = family
+            }
+        case .face(let face): return { $0.face = face }
+        case .size(let size): return { $0.size = CGFloat(max(1, size)) }
+        case .tracking(let t): return { $0.tracking = CGFloat(t) }
+        case .underline(let on): return { $0.underline = on }
+        case .strikethrough(let on): return { $0.strikethrough = on }
+        case .list(let kind): return { $0.list = kind.flatMap(TextList.init) }
+        default: return nil
+        }
     }
 
     /// What a change does to one layer. Letters' own looks (family, face, size, letter spacing,
     /// lines under and through, lists) change in every run; the rest in the layer's style.
     private static func make(_ change: TextChange, ids: [UUID]) -> (inout Node) -> Void {
-        func letters(_ f: @escaping (inout Letters) -> Void) -> (inout Node) -> Void { { n in n.restyleLetters(in: nil, f); n.refit() } }
+        if let f = letterChange(change) { return { n in n.restyleLetters(in: nil, f); n.refit() } }
         func style(_ f: @escaping (inout TextStyle) -> Void) -> (inout Node) -> Void {
             { n in
                 var s = n.style ?? TextStyle()
@@ -151,18 +182,7 @@ extension WindowsCore {
             }
         }
         switch change {
-        case .family(let family):
-            // The family, in the face of it most like the one the letters have.
-            return letters { l in
-                l.face = Fonts.face(like: l.face, of: l.family, in: family)
-                l.family = family
-            }
-        case .face(let face): return letters { $0.face = face }
-        case .size(let size): return letters { $0.size = CGFloat(max(1, size)) }
-        case .tracking(let t): return letters { $0.tracking = CGFloat(t) }
-        case .underline(let on): return letters { $0.underline = on }
-        case .strikethrough(let on): return letters { $0.strikethrough = on }
-        case .list(let kind): return letters { $0.list = kind.flatMap(TextList.init) }
+        case .family, .face, .size, .tracking, .underline, .strikethrough, .list: return { _ in }
         case .align(let a): return style { s in if let a = TextAlign(rawValue: a) { s.align = a } }
         case .letterCase(let c): return style { $0.letterCase = c.flatMap(LetterCase.init) }
         case .sizing(let raw):

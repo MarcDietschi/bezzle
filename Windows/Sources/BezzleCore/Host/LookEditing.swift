@@ -94,6 +94,9 @@ extension WindowsCore {
         public let blendSeveral: Bool
         /// Text's letters are painted by the first fill: a colour, a gradient or a picture, one alone.
         public let isText: Bool
+        /// Letters picked out while typing, which take a colour of their own alone (as on the
+        /// Mac): the first fill then shows theirs.
+        public var lettersPicked = false
         public let isLine: Bool
         /// Whether a picture fills the first fill of every layer.
         public let pictures: Bool
@@ -281,12 +284,14 @@ extension WindowsCore {
         var fills = (0...top(.fill)).map { slot in
             paint(holding(nodes, .fill, slot), Node.fillPath(slot), blend: !isText && slot == 0 ? (blend ?? nil)?.title : nil)
         }
-        // Text's fill is its letters' colour, as the Mac's Text card shows it.
-        if isText, let first = fills.first, first.kind == "solid" {
-            let shown = TextSummary(nodes: nodes).letter(\.color)
+        // Text's fill is its letters' colour, as the Mac's Text card shows it: while typing, the
+        // colour of the letters picked out, whatever paints the rest.
+        let picked = typingInto(ids) ? pickedLetters : nil
+        if isText, let first = fills.first, first.kind == "solid" || picked != nil {
+            let shown = TextSummary(nodes: nodes, letters: picked.map { nodes[0].letters(in: $0) }).letter(\.color)
             let c = shown ?? nodes[0].fill.color
             let said = shown == nil ? "Several" : "#\(c.hex)" + (c.a < 0.995 ? " · \(Int((c.a * 100).rounded()))%" : "")
-            fills[0] = PaintLook(kind: first.kind, colour: shown.map(Colour.init), first: Colour(c), stops: [], start: .zero, end: CGPoint(x: 0, y: 1), summary: said)
+            fills[0] = PaintLook(kind: "solid", colour: shown.map(Colour.init), first: Colour(c), stops: [], start: .zero, end: CGPoint(x: 0, y: 1), summary: said)
         }
         let borders = (0...top(.border)).map { slot -> BorderLook in
             let path = Node.borderPath(slot), those = holding(nodes, .border, slot)
@@ -329,7 +334,7 @@ extension WindowsCore {
                               first: (Double(first.x), Double(first.y), Double(first.blur)), colour: alike(those) { $0[keyPath: path].color }.map(Colour.init),
                               inset: inset, elevation: Presets.elevation(of: first), summary: summary, preset: preset)
         }
-        return Looks(opacity: alike(nodes) { $0.opacity }, firstOpacity: n0.opacity,
+        var looks = Looks(opacity: alike(nodes) { $0.opacity }, firstOpacity: n0.opacity,
                      radius: mixed ? nil : Double(n0.cornerRadius), firstRadius: min(Double(n0.cornerRadius), pill), pill: pill,
                      smooth: nodes.allSatisfy { ($0.cornerSmoothing ?? 0) > 0 },
                      smoothing: alike(nodes) { Double(($0.cornerSmoothing ?? 0) * 100) }, cornerPreset: cornerPreset,
@@ -341,6 +346,8 @@ extension WindowsCore {
                      pictures: nodes.allSatisfy { $0.fill.on && $0.fill.image != nil && $0.kind != .text },
                      blur: blurLook(nodes), blurOn: alike(nodes) { $0.blur?.on == true },
                      depth: depthLook(nodes), depthOn: alike(nodes) { $0.transform3D != nil })
+        looks.lettersPicked = picked != nil
+        return looks
     }
 
     /// A change a look card makes; `slot` is which of the fills, borders or shadows, the first 0.
@@ -365,12 +372,16 @@ extension WindowsCore {
     }
 
     public static func change(_ ids: [UUID], _ c: LookChange) {
+        // Letters picked out while typing take a colour of their own, as one change of the typing.
+        if case .fillColour(0, let colour) = c, typingInto(ids), restyleTyped({ $0.color = rgba(colour) }, caret: false) { return }
         let apply = make(c)
         edit { d in for id in ids { d.update(id, apply) } }
     }
 
     public static func preview(_ ids: [UUID], _ c: LookChange?) {
         guard let c else { endPreview(); return }
+        // Letters picked out while typing show their colour once it is chosen, as on the Mac.
+        if case .fillColour(0, _) = c, typingInto(ids), pickedLetters != nil { return }
         let apply = make(c)
         preview { d in for id in ids { d.update(id, apply) } }
     }

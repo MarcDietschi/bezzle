@@ -23,6 +23,24 @@ final class DesignCanvas {
     private let editorLayer = Canvas()
     private var editor: TextBox?
     private var editing: (id: UUID, board: Int)?
+    /// Over the text typed into: the caret, the letters picked out, the misspelt words.
+    private let typingMarks = Canvas()
+    private var caretPath: WinUI.Path?
+    private var caretOn = true
+    private var blink: Timer?
+    /// Where the letters picked out were picked from, and where the caret is (the other end):
+    /// Shift and the keys that go by lines move this end.
+    private var typingAnchor = 0, typingActive = 0
+    /// How far along the lines Up and Down keep to, as they go.
+    private var typingGoal: Double?
+    /// A press on the words typed into, picking letters out as it is dragged: by letters, by
+    /// words after two clicks, by paragraphs after three, from what the press picked.
+    private var typingPress: (clicks: Int, from: NSRange)?
+    /// Words or a selection given to the field from the text, not typed.
+    private var settingField = false
+    private var cardsPending = false
+    /// Opens the find bar to check the design's spelling (the window's).
+    var checkSpelling: (() -> Void)?
     private let session: DesignSession
 
     /// Where the design's origin is on the stage, in its pixels (DIPs).
@@ -665,11 +683,10 @@ final class DesignCanvas {
     }
 
     /// What is left out of the picture of `board` (by its place among the design's layers): the
-    /// text typed into, shown by its editor, and those whose letters are on their way.
+    /// texts whose letters are on their way. The text typed into is drawn as it is, with its
+    /// caret over it.
     private func hiding(on board: Int) -> Set<UUID> {
-        var ids = letters.hidden
-        if let editing, editing.board == board { ids.insert(editing.id) }
-        return ids
+        letters.hidden
     }
 
     /// The pictures of the artboards (or layers on the canvas) these texts are on drawn again,
@@ -697,6 +714,7 @@ final class DesignCanvas {
     private func lettersTurned(_ texts: Set<UUID>) {
         redrawTexts(texts)
         placeEditor()
+        if editing != nil { drawTyping() }
     }
 
     /// Artboard `k` drawn again by the core at the zoom's pixels, with its shadow.
@@ -1240,6 +1258,7 @@ final class DesignCanvas {
         }
         if session.pointedStyle != nil || !session.litLayers.isEmpty { drawStyleUsers() }
         drawEchoes()
+        if editing != nil { drawTyping() }
         for (k, board) in boards.enumerated() {
             let lit = session.board == board.index
             sheets[k]?.name.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)
@@ -3010,7 +3029,11 @@ final class DesignCanvas {
     }
 
     private func pressed(_ args: PointerRoutedEventArgs?) {
-        if editing != nil { endEditing() }
+        // On the words typed into, the press puts the caret; anywhere else it ends the typing.
+        if editing != nil {
+            if pressOnTyped(args) { return }
+            endEditing()
+        }
         _ = try? root.focus(.pointer)
         let p = point(args), c = inDesign(p)
         // A second press soon after the first, where it was, is a double click, as Windows counts them.
@@ -3308,6 +3331,10 @@ final class DesignCanvas {
         let p = point(args)
         lastPoint = p
         liveCanvas.pointerMoved(to: inDesign(p), stage: p)
+        if typingPress != nil {
+            dragOnTyped(to: p)
+            return
+        }
         if case .deck? = drag?.grab {
             decks.drag(to: p)
             return
@@ -3565,6 +3592,11 @@ final class DesignCanvas {
     }
 
     private func released(_ args: PointerRoutedEventArgs?) {
+        if typingPress != nil {
+            typingPress = nil
+            try? stage.releasePointerCapture(args?.pointer)
+            return
+        }
         if guideHand.pressed {
             try? stage.releasePointerCapture(args?.pointer)
             syncGuides()
@@ -3750,6 +3782,8 @@ final class DesignCanvas {
     private func pointer(at p: CGPoint) -> Pointer {
         if case .pan? = drag?.grab { return .grab }
         if spaceDown { return .grab }
+        // Over the words typed into, the I-beam that puts the caret.
+        if editing != nil, typingPress != nil || WindowsCore.typingCovers(inDesign(p), slack: 4 / zoom) { return .iBeam }
         syncGuides()
         switch guideHand.pointer(at: p) {
         case .across?: return .across
@@ -3919,6 +3953,8 @@ final class DesignCanvas {
         }
         guard let q = try? args?.getPosition(stage) else { return }
         let p = CGPoint(x: Double(q.x), y: Double(q.y))
+        // On the words typed into, two clicks pick out a word (`pressOnTyped`).
+        if editing != nil, WindowsCore.typingCovers(inDesign(p), slack: 4 / zoom) { return }
         guard let id = pick(p), let board = WindowsCore.board(of: id) else { return }
         // A double click on a path edits its points, as on the Mac.
         if WindowsCore.isPath(id), session.tool == .select, pen.editingPath == nil {
@@ -3937,18 +3973,29 @@ final class DesignCanvas {
         beginEditing(id, board: board)
     }
 
-    /// Typing into a text, in a field over it, one step for all of it; the canvas draws the
-    /// design without it meanwhile, so what is seen is the field's.
+    /// Typing into a text, as the Mac's editor: one step for all of it. The canvas draws the
+    /// words as they are, each letter in its own look (straight, for words on a curve), and over
+    /// them the caret, the letters picked out and the misspelt words; a field no one sees takes
+    /// the keys, and each change it hears is made to the text's runs (`WindowsCore.typed`).
+    /// Presses on the words put the caret and pick letters out; Up, Down, Home and End and the
+    /// picking with Shift go by the lines the core lays.
     private func beginEditing(_ id: UUID, board: Int) {
         guard !WindowsCore.isReadOnly, let layer = WindowsCore.layers(board: board).first(where: { $0.id == id }), layer.isText else { return }
         endEditing()
+        guard let words = WindowsCore.beginTyping(id) else { return }
         editing = (id, board)
-        WindowsCore.beginGesture()
         let field = TextBox()
-        field.text = layer.text ?? ""
+        field.text = words
+        // Unseen, and out of the pointer's way (clipped to nothing), yet hit-testable: WinUI
+        // changes a text box's words, but tells no one (TextChanged), while it is not.
+        field.opacity = 0.01
+        let nothing = RectangleGeometry()
+        nothing.rect = Rect(x: 0, y: 0, width: 0, height: 0)
+        field.clip = nothing
+        field.isSpellCheckEnabled = false
+        field.isTextPredictionEnabled = false
         field.fontFamily = Theme.ui
         field.fontSize = max(1, (layer.fontSize ?? 12) * zoom)
-        field.foreground = Theme.brush(UInt32(layer.fill.hex, radix: 16) ?? Theme.ink, max(layer.fill.alpha, 0.4))
         field.background = Theme.clear
         field.borderThickness = Theme.inset(0)
         field.padding = Theme.inset(0)
@@ -3956,45 +4003,41 @@ final class DesignCanvas {
         field.minHeight = 0
         field.acceptsReturn = true
         field.textWrapping = .wrap
-        field.textChanged.addHandler { [weak self] sender, _ in
-            guard let self, let words = (sender as? TextBox)?.text, let editing = self.editing else { return }
-            WindowsCore.setText(editing.id, words)
-            self.session.edited(board: editing.board)
-            self.placeEditor()
-        }
-        // Before the field, which keeps Esc for itself.
-        field.previewKeyDown.addHandler { [weak self] _, args in
-            if args?.key == .escape { args?.handled = true; self?.endEditing() }
-        }
-        // No field to be seen: the words are the layer's own, as on the Mac.
-        for key in ["TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused",
-                    "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused"] {
-            _ = field.resources?.insert(key, Theme.clear)
-        }
-        // Focus once it is on screen: before, WinUI gives it none.
-        field.loaded.addHandler { sender, _ in
+        field.textChanged.addHandler { [weak self] _, _ in self?.fieldTyped() }
+        field.selectionChanged.addHandler { [weak self] _, _ in self?.fieldPicked() }
+        // Before the field: Esc, the editor's own Undo, the Format keys and the keys that go by lines.
+        field.previewKeyDown.addHandler { [weak self] _, args in self?.typingKey(args) }
+        // Focus once it is on screen: before, WinUI gives it none. Every letter picked out, as on the Mac.
+        field.loaded.addHandler { [weak self] sender, _ in
             guard let field = sender as? TextBox else { return }
             _ = try? field.focus(.programmatic)
-            try? field.selectAll()
+            self?.pickLetters(anchor: 0, active: (words as NSString).length)
         }
         // The field keeps the keys while it is typed into: WinUI moves the focus on (to a panel's
-        // scroller) once the double click that began the typing lets go. Another field may take
-        // them, and a press on the canvas ends the typing before the canvas takes them.
+        // scroller) once the double click that began the typing lets go. Another field taking
+        // them ends the typing, as leaving the text for a field does on the Mac; a press on the
+        // canvas away from the words ends it before the canvas takes them.
         field.losingFocus.addHandler { [weak self] _, args in
-            guard let self, self.editing != nil, let args, !(args.newFocusedElement is TextBox) else { return }
+            guard let self, self.editing != nil, let args else { return }
+            if args.newFocusedElement is TextBox {
+                DispatchQueue.main.async { MainActor.assumeIsolated { if self.editing?.id == id { self.endEditing(focusing: false) } } }
+                return
+            }
             _ = try? args.tryCancel()
         }
         editorLayer.children.append(field)
         editor = field
+        typingAnchor = 0
+        typingActive = (words as NSString).length
         placeEditor()
         redraw(board: board)
+        caretMoved()
+        session.changed()
     }
 
+    /// Keeps the field near the words, where Windows shows what an input method is composing.
     private func placeEditor() {
         guard let editing, let field = editor else { return }
-        // Words on a curve are typed into straight, where their letters spring to (as on the Mac,
-        // CurvedText.straight), turned as the curve runs there; the field shows once they land.
-        field.opacity = letters.hidden.contains(editing.id) ? 0 : 1
         if let typed = WindowsCore.typingPlace(of: editing.id) {
             let o = onStage(typed.frame.origin)
             let w = Double(typed.frame.width) * zoom, h = Double(typed.frame.height) * zoom
@@ -4015,22 +4058,410 @@ final class DesignCanvas {
         field.width = max(Double(box.width) + 24, 24)
     }
 
-    /// Typing is done: one step; an empty text is not kept.
-    private func endEditing() {
+    /// The field's words, as the text keeps them (WinUI's text box breaks lines with \r).
+    private var fieldWords: String { editor.map { $0.text.replacingOccurrences(of: "\r", with: "\n") } ?? "" }
+
+    /// The words changed in the field: the change made to the text's runs, the caret after it.
+    private func fieldTyped() {
+        guard let field = editor, let editing else { return }
+        let words = fieldWords
+        // The field shown words it was given (undoing, a spelling chosen): nothing typed.
+        guard words != WindowsCore.typingWords else { return }
+        let caret = NSRange(location: Int(field.selectionStart), length: Int(field.selectionLength))
+        WindowsCore.typed(words, caret: caret)
+        typingAnchor = caret.location
+        typingActive = NSMaxRange(caret)
+        typingGoal = nil
+        session.edited(board: editing.board)
+        placeEditor()
+        caretMoved()
+    }
+
+    /// The field's caret moved, or letters were picked out in it.
+    private func fieldPicked() {
+        guard !settingField, let field = editor, editing != nil else { return }
+        // The words are changing: the caret comes with them (`fieldTyped`).
+        guard fieldWords == WindowsCore.typingWords else { return }
+        let start = Int(field.selectionStart), length = Int(field.selectionLength)
+        let shown = NSRange(location: min(typingAnchor, typingActive), length: abs(typingActive - typingAnchor))
+        guard NSRange(location: start, length: length) != shown else { return }
+        // Picked out from the end it was picked out from, when only the other end moved.
+        if length > 0, typingAnchor == start || typingAnchor == start + length {
+            typingActive = typingAnchor == start ? start + length : start
+        } else {
+            typingAnchor = start
+            typingActive = start + length
+        }
+        typingGoal = nil
+        lettersPicked(NSRange(location: start, length: length))
+    }
+
+    /// Picks letters out from `anchor` to `active` (the caret, when they are the same), in the
+    /// field and in the text.
+    private func pickLetters(anchor: Int, active: Int) {
+        guard let field = editor else { return }
+        typingAnchor = anchor
+        typingActive = active
+        let r = NSRange(location: min(anchor, active), length: abs(active - anchor))
+        settingField = true
+        try? field.select(Int32(r.location), Int32(r.length))
+        settingField = false
+        lettersPicked(r)
+    }
+
+    private func lettersPicked(_ r: NSRange) {
+        if WindowsCore.pick(r) { cardsFollow() }
+        caretMoved()
+    }
+
+    /// The cards show the letters picked out, a moment after they change (not at every step of a drag).
+    private func cardsFollow() {
+        guard !cardsPending else { return }
+        cardsPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.cardsPending = false
+                self.session.changed()
+            }
+        }
+    }
+
+    /// Words and what is picked out given to the field, from the text (the editor's Undo, a
+    /// spelling chosen), not as typed.
+    private func putInField(_ words: String, picked r: NSRange) {
+        guard let field = editor else { return }
+        settingField = true
+        field.text = words
+        try? field.select(Int32(r.location), Int32(r.length))
+        settingField = false
+        typingAnchor = r.location
+        typingActive = NSMaxRange(r)
+        typingGoal = nil
+        cardsFollow()
+        caretMoved()
+    }
+
+    /// The caret shows again where it is now, and blinks on from there.
+    private func caretMoved() {
+        caretOn = true
+        drawTyping()
+        blink?.invalidate()
+        blink = Timer.scheduledTimer(withTimeInterval: 0.53, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.editing != nil else { return }
+                self.caretOn.toggle()
+                self.caretPath?.visibility = self.caretOn ? .visible : .collapsed
+            }
+        }
+    }
+
+    /// The caret, the letters picked out (washed in pencil, as the Mac's editor picks them out)
+    /// and the misspelt words (a red wave under each, words said twice a green dotted line).
+    private func drawTyping() {
+        if typingMarks.parent == nil {
+            typingMarks.isHitTestVisible = false
+            overlay.children.append(typingMarks)
+        }
+        typingMarks.children.clear()
+        caretPath = nil
+        guard let editing, session.mode == 0, !letters.hidden.contains(editing.id), let marks = WindowsCore.typingMarks(zoom: zoom) else { return }
+        func n(_ v: Double) -> String { String(format: "%.2f", v) }
+        func shape(_ quad: [CGPoint]) -> String {
+            guard quad.count == 4 else { return "" }
+            let points = quad.map(onStage)
+            return "M" + points.map { n(Double($0.x)) + "," + n(Double($0.y)) }.joined(separator: " L") + " Z "
+        }
+        @discardableResult func path(_ data: String, fill: Brush? = nil, stroke: Brush? = nil, width: Double = 1, dashes: [Double] = []) -> WinUI.Path? {
+            guard !data.isEmpty, let p = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='F1 \(data)'/>")) as? WinUI.Path else { return nil }
+            p.fill = fill
+            p.stroke = stroke
+            p.strokeThickness = width
+            p.strokeStartLineCap = .round
+            p.strokeEndLineCap = .round
+            p.strokeLineJoin = .round
+            if !dashes.isEmpty {
+                let d = DoubleCollection()
+                for v in dashes { d.append(v) }
+                p.strokeDashArray = d
+            }
+            typingMarks.children.append(p)
+            return p
+        }
+        path(marks.picked.map(shape).joined(), fill: Theme.brush(Theme.selection, 0.22))
+        path(marks.misspelt.map { Self.squiggle(under: $0.map(onStage)) }.joined(), stroke: Theme.brush(0xE02929, 0.8), width: 1.2)
+        let dotted = marks.repeated.map { q -> String in
+            let a = onStage(q[3]), b = onStage(q[2])
+            return "M\(n(Double(a.x))),\(n(Double(a.y) + 1)) L\(n(Double(b.x))),\(n(Double(b.y) + 1)) "
+        }.joined()
+        path(dotted, stroke: Theme.brush(0x2E9E4F, 0.9), width: 1.6, dashes: [0.1, 2])
+        if let caret = marks.caret, let p = path(shape(caret), fill: Theme.brush(Theme.selection)) {
+            p.visibility = caretOn ? .visible : .collapsed
+            caretPath = p
+        }
+    }
+
+    /// Typing is done: one step; an empty text is not kept, unless it is a cell's or a post's
+    /// words. The keys go back to the canvas, unless another field took them.
+    private func endEditing(focusing: Bool = true) {
         guard let done = editing else { return }
         editing = nil
+        typingPress = nil
+        blink?.invalidate()
+        blink = nil
+        typingMarks.children.clear()
+        caretPath = nil
         if let field = editor {
             var k: UInt32 = 0
             if (try? editorLayer.children.indexOf(field, &k)) == true { editorLayer.children.removeAt(k) }
         }
         editor = nil
-        if (WindowsCore.text(of: done.id) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if (WindowsCore.text(of: done.id) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !WindowsCore.keepsWhenEmpty(done.id) {
             WindowsCore.delete([done.id])
             session.select([], on: done.board)
         }
-        WindowsCore.endGesture()
+        WindowsCore.endTyping()
         session.edited(board: done.board)
-        _ = try? root.focus(.programmatic)
+        if focusing { _ = try? root.focus(.programmatic) }
+    }
+
+    // MARK: Keys while typing
+
+    /// The keys the field is not to have: Esc, the editor's Undo and Redo, the Format menu's
+    /// keys (Ctrl for the Mac's ⌘), the keys that go by the lines the core lays (Up, Down, Home,
+    /// End, and picking out with Shift), Return on an empty item of a list and Backspace at the
+    /// start of one, which end the list there, and Tab in a deck, which goes on to the next post.
+    private func typingKey(_ args: KeyRoutedEventArgs?) {
+        guard let args, let editing else { return }
+        let ctrl = control, shift = self.shift, alt = option
+        // AltGr is Ctrl and Alt together: what it types is the field's.
+        if ctrl && alt { return }
+        func format(_ f: WindowsCore.TextFormat) {
+            args.handled = true
+            formatText(f)
+        }
+        let length = (fieldWords as NSString).length
+        func go(to i: Int) {
+            args.handled = true
+            let at = min(max(i, 0), length)
+            pickLetters(anchor: shift ? typingAnchor : at, active: at)
+        }
+        switch args.key {
+        case .escape:
+            args.handled = true
+            endEditing()
+        case .z where ctrl: args.handled = true; stepTyping(back: !shift)
+        case .y where ctrl: args.handled = true; stepTyping(back: false)
+        case .b where ctrl: format(.bold)
+        case .i where ctrl: format(.italic)
+        case .u where ctrl: format(.underline)
+        case .x where ctrl && shift: format(.strikethrough)
+        case .number8 where ctrl && shift: format(.bulletList)
+        case .number7 where ctrl && shift: format(.numberList)
+        case .up, .down:
+            let goal = typingGoal
+            let to = WindowsCore.typingLine(from: typingActive, by: args.key == .up ? -1 : 1, x: goal)
+            go(to: to.index)
+            typingGoal = to.x
+        case .home where ctrl: go(to: 0)
+        case .end where ctrl: go(to: length)
+        case .home: go(to: WindowsCore.typingLineEdge(from: typingActive, end: false))
+        case .end: go(to: WindowsCore.typingLineEdge(from: typingActive, end: true))
+        case .left where shift: go(to: ctrl ? WindowsCore.typingWordStep(from: typingActive, forward: false) : WindowsCore.typingLetterStep(from: typingActive, forward: false))
+        case .right where shift: go(to: ctrl ? WindowsCore.typingWordStep(from: typingActive, forward: true) : WindowsCore.typingLetterStep(from: typingActive, forward: true))
+        case .enter where !shift, .back:
+            if WindowsCore.typingEndsList(onReturn: args.key == .enter) {
+                args.handled = true
+                session.edited(board: editing.board)
+                caretMoved()
+            }
+        case .tab:
+            args.handled = true
+            // Outside a deck, a tab, as the Mac's text view types one.
+            if WindowsCore.typingInPost {
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.typeOnInDeck(forward: !shift) } }
+            } else if !shift {
+                insertTyped("\t")
+            }
+        default:
+            // Bigger and smaller: Ctrl+Shift with the full stop and the comma, as ⇧⌘. and ⇧⌘, on the Mac.
+            let raw = args.key.rawValue
+            if ctrl, shift, raw == 190 { format(.bigger) }
+            if ctrl, shift, raw == 188 { format(.smaller) }
+        }
+    }
+
+    /// Letters typed by the canvas rather than the field (a tab, which the field would take for
+    /// going to the next control): in place of what is picked out, the caret after them.
+    private func insertTyped(_ letters: String) {
+        guard let editing, let t = WindowsCore.typing else { return }
+        let ns = fieldWords as NSString
+        let at = min(t.picked.location, ns.length)
+        let r = NSRange(location: at, length: min(t.picked.length, ns.length - at))
+        let words = ns.replacingCharacters(in: r, with: letters)
+        let caret = NSRange(location: r.location + (letters as NSString).length, length: 0)
+        WindowsCore.typed(words, caret: caret)
+        putInField(words, picked: caret)
+        session.edited(board: editing.board)
+        placeEditor()
+    }
+
+    /// A command of the Format menu, on what is typed into or on the selected texts; a beep
+    /// where there is no text.
+    func formatText(_ f: WindowsCore.TextFormat) {
+        let ids = editing.map { [$0.id] } ?? session.selection
+        guard WindowsCore.format(f, ids) else { MessageBeep(0); return }
+        session.edited(board: editing?.board ?? session.board)
+        if editing != nil { caretMoved() }
+    }
+
+    /// The editor's own Undo and Redo while typing: each change taken back, words and looks.
+    private func stepTyping(back: Bool) {
+        guard let editing else { return }
+        guard let now = back ? WindowsCore.undoTyping() : WindowsCore.redoTyping() else { MessageBeep(0); return }
+        putInField(now.words, picked: now.picked)
+        session.edited(board: editing.board)
+    }
+
+    /// In a deck, Tab goes on to the same words in the next post, as in a table, and Shift+Tab
+    /// back; past the first or the last, nothing (the Mac's typeOn).
+    private func typeOnInDeck(forward: Bool) {
+        guard editing != nil, let next = WindowsCore.typingNextPost(forward: forward) else { return }
+        endEditing()
+        _ = WindowsCore.turn(next.deck, to: next.post, selection: [])
+        guard let board = WindowsCore.board(of: next.id) else { return }
+        session.select([next.id], on: board)
+        session.previewed(board: nil)
+        beginEditing(next.id, board: board)
+    }
+
+    // MARK: Pointer while typing
+
+    /// A press on the words typed into: the caret there, with Shift as far as there, two clicks
+    /// a word and three a paragraph; a drag picks letters out. The right button leaves what is
+    /// picked out for the menu. Answers whether the press was on the words.
+    private func pressOnTyped(_ args: PointerRoutedEventArgs?) -> Bool {
+        let p = point(args)
+        guard editing != nil, let i = WindowsCore.typingIndex(at: inDesign(p), slack: 4 / zoom) else { return false }
+        let now = GetTickCount()
+        let clicks: Int
+        if let last = lastPress, now - last.time <= GetDoubleClickTime(), abs(Double(last.at.x - p.x)) <= 4, abs(Double(last.at.y - p.y)) <= 4 {
+            clicks = last.clicks + 1
+        } else {
+            clicks = 1
+        }
+        lastPress = (p, now, clicks)
+        if (try? args?.getCurrentPoint(stage))?.properties?.isRightButtonPressed == true { return true }
+        _ = try? stage.capturePointer(args?.pointer)
+        switch clicks {
+        case 1:
+            if shift { pickLetters(anchor: typingAnchor, active: i) } else { pickLetters(anchor: i, active: i) }
+            typingPress = (1, NSRange(location: typingAnchor, length: 0))
+        case 2:
+            let word = WindowsCore.typingWord(at: i)
+            pickLetters(anchor: word.location, active: NSMaxRange(word))
+            typingPress = (2, word)
+        default:
+            let paragraph = WindowsCore.typingParagraph(at: i)
+            pickLetters(anchor: paragraph.location, active: NSMaxRange(paragraph))
+            typingPress = (3, paragraph)
+        }
+        return true
+    }
+
+    /// The press on the words dragged: the letters picked out as far as the pointer, by words
+    /// or paragraphs after two or three clicks.
+    private func dragOnTyped(to p: CGPoint) {
+        guard let press = typingPress, let i = WindowsCore.typingIndex(at: inDesign(p), slack: -1) else { return }
+        let from = press.from
+        switch press.clicks {
+        case 1:
+            pickLetters(anchor: typingAnchor, active: i)
+        default:
+            let at = press.clicks == 2 ? WindowsCore.typingWord(at: i) : WindowsCore.typingParagraph(at: i)
+            if at.location < from.location {
+                pickLetters(anchor: NSMaxRange(from), active: at.location)
+            } else {
+                pickLetters(anchor: from.location, active: max(NSMaxRange(at), NSMaxRange(from)))
+            }
+        }
+    }
+
+    /// The right-click menu on the words typed into, as the Mac's text view has it: how a
+    /// misspelt word under the pointer might be spelt, and leaving it or learning it; cutting,
+    /// copying and pasting; the Format menu's commands; and the spelling's.
+    private func typingMenu(at w: CGPoint, index i: Int) {
+        guard let menus, let editing, let field = editor else { return }
+        var entries: [MenuHost.Entry] = []
+        let board = editing.board
+        if let found = WindowsCore.typingMisspelt(at: i) {
+            pickLetters(anchor: found.range.location, active: NSMaxRange(found.range))
+            @MainActor func put(_ words: String) {
+                guard let now = WindowsCore.replaceTyped(found.range, with: words) else { return }
+                putInField(now.words, picked: now.picked)
+                session.edited(board: board)
+            }
+            if found.repeated {
+                entries.append(.item(Words.t("Delete Repeated Word")) { put("") })
+            } else {
+                if found.guesses.isEmpty { entries.append(.note("Windows has no spellings to offer for this word.")) }
+                for guess in found.guesses.prefix(6) { entries.append(.item(guess) { put(guess) }) }
+                entries.append(.separator)
+                entries.append(.item(Words.t("Ignore Spelling")) { [weak self] in WindowsCore.ignoreTyped(found.word); self?.drawTyping() })
+                entries.append(.item(Words.t("Learn Spelling")) { [weak self] in WindowsCore.learnTyped(found.word); self?.drawTyping() })
+            }
+            entries.append(.separator)
+        } else if let picked = WindowsCore.typing?.picked, i < picked.location || i > NSMaxRange(picked) {
+            pickLetters(anchor: i, active: i)
+        }
+        let picked = (WindowsCore.typing?.picked.length ?? 0) > 0
+        entries += [
+            .item("Cut", shortcut: "Ctrl+X", enabled: picked) { _ = try? field.cutSelectionToClipboard() },
+            .item("Copy", shortcut: "Ctrl+C", enabled: picked) { _ = try? field.copySelectionToClipboard() },
+            .item("Paste", shortcut: "Ctrl+V") { _ = try? field.pasteFromClipboard() },
+            .item("Select All", shortcut: "Ctrl+A") { [weak self] in self?.pickLetters(anchor: 0, active: ((self?.fieldWords ?? "") as NSString).length) },
+            .separator,
+        ]
+        entries += formatEntries()
+        entries.append(.separator)
+        entries += spellingEntries()
+        menus.show(at: w, entries: entries)
+    }
+
+    /// The Mac's Format menu, as entries of a right-click menu.
+    func formatEntries() -> [MenuHost.Entry] {
+        [
+            .item("Bold", shortcut: "Ctrl+B") { [weak self] in self?.formatText(.bold) },
+            .item("Italic", shortcut: "Ctrl+I") { [weak self] in self?.formatText(.italic) },
+            .item("Underline", shortcut: "Ctrl+U") { [weak self] in self?.formatText(.underline) },
+            .item("Strikethrough", shortcut: "Ctrl+Shift+X") { [weak self] in self?.formatText(.strikethrough) },
+            .separator,
+            .item("Bigger", shortcut: "Ctrl+Shift+.") { [weak self] in self?.formatText(.bigger) },
+            .item("Smaller", shortcut: "Ctrl+Shift+,") { [weak self] in self?.formatText(.smaller) },
+            .separator,
+            .item("Bulleted List", shortcut: "Ctrl+Shift+8") { [weak self] in self?.formatText(.bulletList) },
+            .item("Numbered List", shortcut: "Ctrl+Shift+7") { [weak self] in self?.formatText(.numberList) },
+        ]
+    }
+
+    /// The Mac's Spelling and Grammar menu: checking the design's words one by one, and
+    /// whether misspelt words are marked while typing, and words said twice with them.
+    func spellingEntries() -> [MenuHost.Entry] {
+        let spelling = WindowsCore.checksSpelling, grammar = WindowsCore.checksGrammar
+        return [
+            .item("Check Spelling…", shortcut: "F7") { [weak self] in
+                self?.endEditing()
+                self?.checkSpelling?()
+            },
+            .item("Check Spelling While Typing", checked: spelling) { [weak self] in
+                WindowsCore.checksSpelling = !spelling
+                self?.drawTyping()
+            },
+            .item("Check Grammar With Spelling", checked: grammar) { [weak self] in
+                WindowsCore.checksGrammar = !grammar
+                self?.drawTyping()
+            },
+        ]
     }
 
     private func wheel(_ args: PointerRoutedEventArgs?) {
@@ -4197,8 +4628,15 @@ final class DesignCanvas {
     /// pointer is picked first, unless it is picked already), else paste, select all and zoom.
     private func rightTapped(_ args: RightTappedRoutedEventArgs?) {
         guard let menus, let q = try? args?.getPosition(stage), let w = try? args?.getPosition(menus.layer) else { return }
-        if editing != nil { endEditing() }
         let p = CGPoint(x: Double(q.x), y: Double(q.y))
+        // On the words typed into, the text view's own menu; anywhere else the typing ends.
+        if editing != nil {
+            if let i = WindowsCore.typingIndex(at: inDesign(p), slack: 4 / zoom) {
+                typingMenu(at: CGPoint(x: Double(w.x), y: Double(w.y)), index: i)
+                return
+            }
+            endEditing()
+        }
         // On a guide: taking it away, or all of its artboard's, and locking them, as on the Mac.
         syncGuides()
         if session.tool == .select, let guide = guideHand.menu(at: p) {
@@ -4303,6 +4741,11 @@ final class DesignCanvas {
                 })
             }
             if canGroup || canUngroup || canMask || mask != nil || ridable || straightens { entries.append(.separator) }
+            // Texts: the Mac's Format menu.
+            if session.selectedLayers.contains(where: \.isText), WindowsCore.canFormat(selection) {
+                entries += formatEntries()
+                entries.append(.separator)
+            }
             // Borders as shapes of their own, as the Mac's Object menu has it.
             if WindowsCore.canOutlineBorders(selection) {
                 entries += [.item(selection.count == 1 ? "Outline Border" : "Outline Borders", shortcut: "Ctrl+Alt+O") { [weak self] in self?.outlineBorders() }, .separator]
@@ -4468,6 +4911,13 @@ final class DesignCanvas {
             }
             return
         }
+        // Return on one selected text types into it, every letter picked out, as on the Mac.
+        if args.key == .enter, session.mode == 0, session.tool == .select, drag == nil, session.selection.count == 1,
+           let id = session.selection.first, WindowsCore.isText(id), let board = WindowsCore.board(of: id) {
+            args.handled = true
+            beginEditing(id, board: board)
+            return
+        }
         // The pen's keys, and those for the points of a path being edited, first; Enter on a
         // selected path edits its points.
         let penKey: String? = switch args.key {
@@ -4599,6 +5049,13 @@ final class DesignCanvas {
         case .right: WindowsCore.move(selection, dx: step, dy: 0)
         case .up: WindowsCore.move(selection, dx: 0, dy: -step)
         case .down: WindowsCore.move(selection, dx: 0, dy: step)
+        // The Mac's Format menu, on the selected texts: Ctrl+B, I and U, Ctrl+Shift+X, 8 and 7.
+        case .b where control && !option && !shift && WindowsCore.canFormat(selection): formatText(.bold); args.handled = true; return
+        case .i where control && !option && !shift && WindowsCore.canFormat(selection): formatText(.italic); args.handled = true; return
+        case .u where control && !option && !shift && WindowsCore.canFormat(selection): formatText(.underline); args.handled = true; return
+        case .x where control && shift && !option && WindowsCore.canFormat(selection): formatText(.strikethrough); args.handled = true; return
+        case .number8 where control && shift && WindowsCore.canFormat(selection): formatText(.bulletList); args.handled = true; return
+        case .number7 where control && shift && WindowsCore.canFormat(selection): formatText(.numberList); args.handled = true; return
         // The Mac's Edit and Object menus, Ctrl for Command and Alt for Option.
         case .b where control && option: toggleBuild(); args.handled = true; return
         case .k where control && option: makeComponent(); args.handled = true; return
@@ -4639,6 +5096,12 @@ final class DesignCanvas {
         case .number2 where control: fitSelection(); args.handled = true; return
         default:
             let raw = args.key.rawValue
+            // Bigger and smaller, Ctrl+Shift with the full stop and the comma (⇧⌘. and ⇧⌘, on the Mac).
+            if control, shift, raw == 190 || raw == 188, WindowsCore.canFormat(selection) {
+                formatText(raw == 190 ? .bigger : .smaller)
+                args.handled = true
+                return
+            }
             if control, raw == 187 || raw == 107 { self.step(in: true); args.handled = true; return }   // = and the keypad's +
             if control, raw == 189 || raw == 109 { self.step(in: false); args.handled = true; return }  // − and the keypad's −
             // Ctrl+] and Ctrl+[ bring forward and send backward, with Shift to the front and back

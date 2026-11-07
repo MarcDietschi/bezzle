@@ -249,6 +249,18 @@ enum Spelling {
         return best ?? (nil, [])
     }
 
+    /// The words said twice in a row (the second of each), as Windows' checker for `language` finds them.
+    static func repeats(_ words: String, in language: String?) -> [NSRange] {
+        guard let language = language ?? languages.first else { return [] }
+        let units = Array(words.utf16)
+        guard !units.isEmpty else { return [] }
+        var ranges = [Int32](repeating: 0, count: 2 * 256)
+        let n = Int(language.withCString { tag in
+            units.withUnsafeBufferPointer { bz_spell_repeats(tag, $0.baseAddress, Int32($0.count), &ranges, 256) }
+        })
+        return (0..<min(max(n, 0), 256)).map { NSRange(location: Int(ranges[$0 * 2]), length: Int(ranges[$0 * 2 + 1])) }
+    }
+
     static func guesses(_ word: String, in language: String?) -> [String] {
         guard let language = language ?? languages.first else { return [] }
         let units = Array(word.utf16)

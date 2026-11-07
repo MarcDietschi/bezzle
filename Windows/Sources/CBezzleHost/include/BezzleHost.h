@@ -89,6 +89,10 @@ int32_t bz_spell_check(const char *language, const uint16_t *text, int32_t count
 int32_t bz_spell_guesses(const char *language, const uint16_t *word, int32_t count, char *out, int32_t capacity);
 /// Adds a word to the dictionary of the person signed in.
 void bz_spell_learn(const char *language, const uint16_t *word, int32_t count);
+/// The words of `count` UTF-16 units of `text` said twice in a row, as Windows' spell checker
+/// for `language` finds them (the second of each): for up to `capacity`, where each begins and
+/// how long it is, to `ranges`. Returns how many there are, or -1 for a language it cannot check.
+int32_t bz_spell_repeats(const char *language, const uint16_t *text, int32_t count, int32_t *ranges, int32_t capacity);
 
 // MARK: Pictures
 

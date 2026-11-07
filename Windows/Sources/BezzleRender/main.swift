@@ -70,6 +70,12 @@ do {
         try WindowsCore.save()
         boards = WindowsCore.boards()
     }
+    // With BEZZLE_TYPING (steps separated by |, TypingScript.swift), a text is typed into first,
+    // as the canvas types; what happens is said, and the artboards drawn as it leaves them.
+    if let script = ProcessInfo.processInfo.environment["BEZZLE_TYPING"] {
+        print(WindowsCore.typingScript(script))
+        boards = WindowsCore.boards()
+    }
     let out = URL(fileURLWithPath: arguments[3])
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     // With BEZZLE_CUT (x1,y1,x2,y2 on the canvas), the knife's line is drawn there first, and

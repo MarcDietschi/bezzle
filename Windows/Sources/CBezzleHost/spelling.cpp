@@ -138,6 +138,36 @@ extern "C" int32_t bz_spell_guesses(const char* language, const uint16_t* word, 
     return copy(list, out, capacity);
 }
 
+extern "C" int32_t bz_spell_repeats(const char* language, const uint16_t* text, int32_t count, int32_t* ranges, int32_t capacity) {
+    std::lock_guard<std::mutex> guard(lock);
+    ISpellChecker* c = checker(language);
+    if (!c) return -1;
+    const std::wstring w = words(text, count);
+    IEnumSpellingError* errors = nullptr;
+    if (FAILED(c->Check(w.c_str(), &errors)) || !errors) return 0;
+    int32_t found = 0;
+    ISpellingError* error = nullptr;
+    while (errors->Next(&error) == S_OK && error) {
+        ULONG start = 0, length = 0;
+        CORRECTIVE_ACTION action = CORRECTIVE_ACTION_NONE;
+        error->get_StartIndex(&start);
+        error->get_Length(&length);
+        error->get_CorrectiveAction(&action);
+        // What Windows says to delete is a word said twice.
+        if (length > 0 && action == CORRECTIVE_ACTION_DELETE) {
+            if (found < capacity) {
+                ranges[found * 2] = int32_t(start);
+                ranges[found * 2 + 1] = int32_t(length);
+            }
+            found++;
+        }
+        error->Release();
+        error = nullptr;
+    }
+    errors->Release();
+    return found;
+}
+
 extern "C" void bz_spell_learn(const char* language, const uint16_t* word, int32_t count) {
     std::lock_guard<std::mutex> guard(lock);
     if (ISpellChecker* c = checker(language)) c->Add(words(word, count).c_str());

@@ -332,7 +332,8 @@ final class TabStrip {
 
     private func openBezzleMenu() {
         guard let menus = menus() else { return }
-        menus.show(below: home, width: 260, entries: Bar.appEntries(front: Tabs.shared.selected?.slot?.url))
+        let spelling = Tabs.shared.selected?.view?.canvas.spellingEntries() ?? []
+        menus.show(below: home, width: 260, entries: Bar.appEntries(front: Tabs.shared.selected?.slot?.url, spelling: spelling))
     }
 
     /// Where a point of the strip is in what is in front, for a menu to open there.

@@ -123,9 +123,11 @@ final class Bar {
     /// The Bezzle menu, as the Mac's app menu and File menu have it, which on Windows hangs from
     /// the home tab: bringing designs in from other apps, whether AI assistants may work in the
     /// app and how to connect one, the designs folder, and the design in front in Explorer.
-    static func appEntries(front url: URL?) -> [MenuHost.Entry] {
+    /// With a design in front, its spelling's entries too (the Mac's Edit › Spelling and Grammar).
+    static func appEntries(front url: URL?, spelling: [MenuHost.Entry] = []) -> [MenuHost.Entry] {
         // A design here is a folder, which Open (Ctrl+O) picks, so files from other apps come in by their own entry.
-        [.item(Words.t("Bring In a Design…"), shortcut: "Ctrl+Shift+I") { Bar.bringIn?() }, .separator] + appEntries(showing: url)
+        [.item(Words.t("Bring In a Design…"), shortcut: "Ctrl+Shift+I") { Bar.bringIn?() }, .separator]
+            + (spelling.isEmpty ? [] : spelling + [.separator]) + appEntries(showing: url)
     }
 
     private static func appEntries(showing url: URL?) -> [MenuHost.Entry] {
