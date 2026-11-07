@@ -205,7 +205,7 @@ extension WindowsCore {
     }
 
     public static func beginGesture() {
-        endPreview()
+        beginChange()
         if let doc = design { Editing.begin(doc) }
     }
 
@@ -253,21 +253,21 @@ extension WindowsCore {
     }
 
     @discardableResult public static func undo() -> Bool {
-        endPreview()
+        beginChange()
         guard let doc = design, let back = Editing.undo(doc) else { return false }
         design = back
         return true
     }
 
     @discardableResult public static func redo() -> Bool {
-        endPreview()
+        beginChange()
         guard let doc = design, let again = Editing.redo(doc) else { return false }
         design = again
         return true
     }
 
     static func edit(_ change: (inout BezzleDocument) -> Void) {
-        endPreview()
+        beginChange()
         guard let doc = design else { return }
         design = Editing.apply(to: doc, change)
     }

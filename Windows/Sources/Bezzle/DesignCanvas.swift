@@ -190,6 +190,11 @@ final class DesignCanvas {
     var flow: WindowsCore.FlowHand { session.flow }
     private var prototyping: Bool { session.mode == 1 }
     private let flowMarks = Canvas()
+    /// What looking back through the versions marks on the canvas: what differs from now.
+    private let timeMarks = Canvas()
+    private var timeTicking: EventCleanup?
+    /// The layer that differs under the pointer, while looking back.
+    private var timeHovered: UUID?
     private var flowTicking = false
     private let noteBox = TextBox()
     /// The layer whose thread's note is being written.
@@ -2580,6 +2585,12 @@ final class DesignCanvas {
             showPointer(.grab)
             return
         }
+        // Looking back, a press picks a layer that differs from now, to bring back; the view
+        // moves as ever.
+        if WindowsCore.versions.lookingBack {
+            WindowsCore.versions.pick(at: c)
+            return
+        }
         // The design as a prototype: threads, flags and screens take the press.
         if prototyping {
             syncFlow()
@@ -2806,6 +2817,11 @@ final class DesignCanvas {
     private func moved(_ args: PointerRoutedEventArgs?) {
         let p = point(args)
         lastPoint = p
+        if WindowsCore.versions.lookingBack, drag == nil {
+            hoverTime(WindowsCore.versions.layer(at: inDesign(p)))
+            showPointer(timeHovered != nil ? .pointingHand : .arrow)
+            return
+        }
         if case .pan(let start)? = drag?.grab, let from = drag?.from {
             pan = CGPoint(x: Double(start.x) + Double(p.x) - Double(from.x), y: Double(start.y) + Double(p.y) - Double(from.y))
             place()
@@ -4000,5 +4016,233 @@ final class DesignCanvas {
             session.select(kept, on: kept.first.flatMap(WindowsCore.board(of:)) ?? session.board)
         }
         if edited { session.edited(board: undoing ? nil : session.board) }
+    }
+}
+
+// MARK: - Looking back
+
+extension DesignCanvas {
+    private static let sepia: UInt32 = 0xA86E38
+
+    /// The versions changed: what the canvas shows, what it marks, and the notes, away while
+    /// looking back, as they are of now.
+    func versionsChanged() {
+        let back = WindowsCore.versions.lookingBack
+        margin.layer.visibility = back ? .collapsed : .visible
+        if !back { timeHovered = nil }
+        drawTime(WindowsCore.timeTable.changes())
+        drawTimeMarks()
+        tickTime()
+    }
+
+    private func hoverTime(_ id: UUID?) {
+        guard id != timeHovered else { return }
+        timeHovered = id
+        drawTimeMarks()
+    }
+
+    /// The artboards a moment of the glide changed drawn again: those by index, or all.
+    private func drawTime(_ changed: [Int]?) {
+        guard let changed else { return }
+        let known = Set(boards.map(\.index))
+        if changed.isEmpty || changed.contains(where: { !known.contains($0) }) || WindowsCore.boards().count != boards.count {
+            drawAll()
+        } else {
+            for k in changed { redraw(board: k) }
+        }
+    }
+
+    /// Frame by frame while the layers glide, the marks are inked or layers brought back land.
+    private func tickTime() {
+        guard timeTicking == nil, WindowsCore.timeTable.moving || WindowsCore.versions.landing() != nil else { return }
+        timeTicking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.drawTime(WindowsCore.timeTable.frame(at: WindowsCore.now))
+                self.drawTimeMarks()
+                if !WindowsCore.timeTable.moving, WindowsCore.versions.landing() == nil {
+                    self.timeTicking?.dispose()
+                    self.timeTicking = nil
+                    self.drawTimeMarks()
+                }
+            }
+        }
+    }
+
+    private func onStage(rect r: CGRect) -> CGRect {
+        let a = onStage(r.origin)
+        return CGRect(x: Double(a.x), y: Double(a.y), width: Double(r.width) * zoom, height: Double(r.height) * zoom)
+    }
+
+    /// What differs from now, as the Mac's TimeTable marks it: pencil crop marks at the corners
+    /// of what changed, sepia for what has gone since, a wash and a tick on what is picked to
+    /// bring back, a faint dotted outline where what was made since will be, and, for the layer
+    /// pointed at, a thread to where it is now. Layers just brought back land with their corners.
+    private func drawTimeMarks() {
+        if timeMarks.parent == nil {
+            timeMarks.isHitTestVisible = false
+            overlay.children.append(timeMarks)
+        }
+        timeMarks.children.clear()
+        let versions = WindowsCore.versions
+        if let landing = versions.landing() {
+            let p = landing.age / 1.1
+            for f in landing.frames {
+                let r = onStage(rect: f).insetBy(dx: -4 - 6 * p, dy: -4 - 6 * p)
+                timeMarks.children.append(cropMarks(r, arm: 9 + 4 * p, brush: Theme.brush(Theme.selection, 1 - p), width: 1.6))
+            }
+        }
+        guard versions.lookingBack else { return }
+        let inked = WindowsCore.timeTable.inked
+        let sight = CGRect(x: 0, y: 0, width: stage.actualWidth, height: stage.actualHeight)
+        if inked > 0 {
+            for f in versions.madeSince() {
+                let r = onStage(rect: f)
+                guard r.intersects(sight), r.width > 4 || r.height > 4 else { continue }
+                let box = Rectangle()
+                box.width = max(Double(r.width) - 1, 1)
+                box.height = max(Double(r.height) - 1, 1)
+                box.stroke = Theme.brush(Theme.ink, 0.22 * inked)
+                box.strokeThickness = 1
+                let dashes = DoubleCollection()
+                dashes.append(1.5)
+                dashes.append(3)
+                box.strokeDashArray = dashes
+                try? Canvas.setLeft(box, Double(r.minX) + 0.5)
+                try? Canvas.setTop(box, Double(r.minY) + 0.5)
+                timeMarks.children.append(box)
+            }
+        }
+        for m in versions.marks() {
+            let r = onStage(rect: m.frame)
+            guard r.insetBy(dx: -12, dy: -12).intersects(sight), r.width > 2 || r.height > 2 else { continue }
+            let ink: UInt32 = m.gone ? Self.sepia : Theme.selection
+            let pointed = timeHovered == m.id
+            if m.picked {
+                let wash = Rectangle()
+                wash.width = Double(r.width) + 1.5
+                wash.height = Double(r.height) + 1.5
+                wash.fill = Theme.brush(ink, 0.12)
+                wash.stroke = Theme.brush(ink)
+                wash.strokeThickness = 1.5
+                try? Canvas.setLeft(wash, Double(r.minX) - 0.75)
+                try? Canvas.setTop(wash, Double(r.minY) - 0.75)
+                timeMarks.children.append(wash)
+                timeMarks.children.append(tick(at: CGPoint(x: r.maxX, y: r.minY), ink: ink))
+            } else if inked > 0 {
+                timeMarks.children.append(cropMarks(r.insetBy(dx: -4, dy: -4), arm: 9 * inked, brush: Theme.brush(ink, pointed ? 1 : 0.85),
+                                                    width: pointed ? 1.6 : 1.25))
+            }
+            if pointed, !m.gone, let now = m.now { whereItIsNow(then: r, now: onStage(rect: now)) }
+        }
+    }
+
+    /// Crop marks at a rectangle's corners, their arms `arm` long.
+    private func cropMarks(_ r: CGRect, arm: Double, brush: Brush, width: Double) -> WinUI.Path {
+        let path = WinUI.Path()
+        path.stroke = brush
+        path.strokeThickness = width
+        path.strokeStartLineCap = .round
+        path.strokeEndLineCap = .round
+        path.strokeLineJoin = .round
+        let geometry = PathGeometry()
+        let a = min(arm, Double(r.width) / 2, Double(r.height) / 2)
+        if a > 0.2 {
+            for (c, sx, sy) in [(CGPoint(x: r.minX, y: r.minY), 1.0, 1.0), (CGPoint(x: r.maxX, y: r.minY), -1.0, 1.0),
+                                (CGPoint(x: r.maxX, y: r.maxY), -1.0, -1.0), (CGPoint(x: r.minX, y: r.maxY), 1.0, -1.0)] {
+                let figure = PathFigure()
+                figure.startPoint = Point(x: Float(Double(c.x)), y: Float(Double(c.y) + a * sy))
+                for q in [(Double(c.x), Double(c.y)), (Double(c.x) + a * sx, Double(c.y))] {
+                    let segment = LineSegment()
+                    segment.point = Point(x: Float(q.0), y: Float(q.1))
+                    figure.segments.append(segment)
+                }
+                geometry.figures.append(figure)
+            }
+        }
+        path.data = geometry
+        path.isHitTestVisible = false
+        return path
+    }
+
+    /// An open line through points on the stage.
+    private func line(through points: [(Double, Double)]) -> WinUI.Path {
+        let path = WinUI.Path()
+        let geometry = PathGeometry()
+        if let first = points.first {
+            let figure = PathFigure()
+            figure.startPoint = Point(x: Float(first.0), y: Float(first.1))
+            for q in points.dropFirst() {
+                let segment = LineSegment()
+                segment.point = Point(x: Float(q.0), y: Float(q.1))
+                figure.segments.append(segment)
+            }
+            geometry.figures.append(figure)
+        }
+        path.data = geometry
+        path.isHitTestVisible = false
+        return path
+    }
+
+    /// A small round tick at a picked layer's corner.
+    private func tick(at c: CGPoint, ink: UInt32) -> FrameworkElement {
+        let holder = Canvas()
+        let r = 7.5
+        let disc = Ellipse()
+        disc.width = r * 2
+        disc.height = r * 2
+        disc.fill = Theme.brush(ink)
+        try? Canvas.setLeft(disc, Double(c.x) - r)
+        try? Canvas.setTop(disc, Double(c.y) - r)
+        holder.children.append(disc)
+        let mark = line(through: [(-3.2, 0.2), (-0.9, 2.6), (3.4, -2.4)].map { (Double(c.x) + $0.0, Double(c.y) + $0.1) })
+        mark.stroke = Theme.brush(0xFFFFFF)
+        mark.strokeThickness = 1.6
+        mark.strokeStartLineCap = .round
+        mark.strokeEndLineCap = .round
+        mark.strokeLineJoin = .round
+        holder.children.append(mark)
+        holder.isHitTestVisible = false
+        return holder
+    }
+
+    /// A layer that has changed since, pointed at: where it is now, faintly, and a pencil thread
+    /// from where it was to there.
+    private func whereItIsNow(then: CGRect, now: CGRect) {
+        guard then != now else { return }
+        let box = Rectangle()
+        box.width = max(Double(now.width) - 1, 1)
+        box.height = max(Double(now.height) - 1, 1)
+        box.stroke = Theme.brush(Theme.selection, 0.55)
+        box.strokeThickness = 1
+        let dashes = DoubleCollection()
+        dashes.append(3)
+        dashes.append(3)
+        box.strokeDashArray = dashes
+        try? Canvas.setLeft(box, Double(now.minX) + 0.5)
+        try? Canvas.setTop(box, Double(now.minY) + 0.5)
+        timeMarks.children.append(box)
+        let a = (Double(then.midX), Double(then.midY)), b = (Double(now.midX), Double(now.midY))
+        guard ((b.0 - a.0) * (b.0 - a.0) + (b.1 - a.1) * (b.1 - a.1)).squareRoot() > 12 else { return }
+        // A thread that bows a little, as one held loosely does.
+        let mid = ((a.0 + b.0) / 2 - (b.1 - a.1) * 0.18, (a.1 + b.1) / 2 + (b.0 - a.0) * 0.18)
+        let thread = line(through: (0...24).map { k in
+            let t = Double(k) / 24, u = 1 - t
+            return (u * u * a.0 + 2 * u * t * mid.0 + t * t * b.0, u * u * a.1 + 2 * u * t * mid.1 + t * t * b.1)
+        })
+        thread.stroke = Theme.brush(Theme.selection, 0.8)
+        thread.strokeThickness = 1.25
+        thread.strokeStartLineCap = .round
+        thread.strokeEndLineCap = .round
+        timeMarks.children.append(thread)
+        for (c, r, alpha) in [(b, 3.0, 1.0), (a, 2.0, 0.35)] {
+            let dot = Ellipse()
+            dot.width = r * 2
+            dot.height = r * 2
+            dot.fill = Theme.brush(Theme.selection, alpha)
+            try? Canvas.setLeft(dot, c.0 - r)
+            try? Canvas.setTop(dot, c.1 - r)
+            timeMarks.children.append(dot)
+        }
     }
 }

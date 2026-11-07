@@ -62,7 +62,7 @@ final class Bar {
         right.verticalAlignment = .center
         right.margin = Theme.inset(0, 0, 8, 0)
         right.children.append(zoomMenu())
-        right.children.append(iconButton(Glyphs.history()))
+        right.children.append(versionsButton())
         right.children.append(cardButton("Share…", glyph: Glyphs.share()))
         right.children.append(modeSwitch())
         right.children.append(actionButton())
@@ -158,6 +158,34 @@ final class Bar {
         row.children.append(Glyphs.view(Glyphs.chevron(open: true, size: 9), size: 9, brush: Theme.ink(3)))
         button.box.child = row
         return button.box
+    }
+
+    /// Brings the ruler of time out or puts it away.
+    var onVersions: (() -> Void)?
+    private let versionsBox = Border()
+
+    /// The time ruler's switch: the pencil's, on its wash, while the ruler is out.
+    private func versionsButton() -> UIElement {
+        let button = Pressable(radius: 8) { [weak self] in self?.onVersions?() }
+        button.box.width = 30
+        button.box.height = 28
+        versionsBox.cornerRadius = Theme.corners(8)
+        versionsBox.child = centred(Glyphs.view(Glyphs.history(), size: 16, brush: Theme.ink(2)))
+        button.box.child = versionsBox
+        try? ToolTipService.setToolTip(button.box, Words.t("Versions  ⌥⌘T"))
+        return button.box
+    }
+
+    func versionsChanged() {
+        let out = WindowsCore.versions.browsing
+        versionsBox.background = out ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.clear
+        versionsBox.child = centred(Glyphs.view(Glyphs.history(), size: 16, brush: out ? Theme.brush(Theme.pencil) : Theme.ink(2)))
+    }
+
+    private func centred(_ e: FrameworkElement) -> FrameworkElement {
+        e.horizontalAlignment = .center
+        e.verticalAlignment = .center
+        return e
     }
 
     private func iconButton(_ parts: [Glyphs.Part]) -> UIElement {

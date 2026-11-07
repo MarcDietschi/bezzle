@@ -36,7 +36,7 @@ extension WindowsCore {
     }
 
     /// Makes a design kept as a single file a package, its document inside, so it can hold pictures.
-    private static func makePackage() throws {
+    static func makePackage() throws {
         guard let url = designURL else { return }
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), !isFolder.boolValue else { return }

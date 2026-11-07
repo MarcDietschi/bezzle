@@ -131,6 +131,8 @@ final class DesignSession {
         do {
             try WindowsCore.save()
             if unsaved != nil { unsaved = nil; onUnsaved?(nil) }
+            // A version is taken by itself as the design is worked on.
+            WindowsCore.versions.saved()
         } catch {
             let why = "\(error)"
             if unsaved != why { unsaved = why; onUnsaved?(why) }

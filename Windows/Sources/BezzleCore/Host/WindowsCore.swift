@@ -67,7 +67,10 @@ public enum WindowsCore {
     /// images/, by their file names, as the core asks for them. Answers its artboards.
     public static func open(_ folder: URL) throws -> [Board] {
         let doc = try read(folder)
+        versions.reset()
+        timeTable.forget()
         previewBase = nil
+        showingVersion = false
         design = doc
         designURL = folder
         Editing.undos = []
@@ -78,7 +81,10 @@ public enum WindowsCore {
 
     /// Lets the open design go, once it is saved: a save that comes later has nothing to write.
     public static func close() {
+        versions.reset()
+        timeTable.forget()
         previewBase = nil
+        showingVersion = false
         design = nil
         designURL = nil
         Editing.undos = []

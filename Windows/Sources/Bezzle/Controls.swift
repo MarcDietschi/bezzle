@@ -136,14 +136,28 @@ enum Controls {
 
     /// The Mac's CardButton: a word or two on a card, radius 0.28 of its height, half its
     /// height either side; lifted under the pointer.
-    static func cardButton(_ title: String, height h: Double = 32, _ action: @escaping @MainActor () -> Void) -> FrameworkElement {
+    static func cardButton(_ title: String, glyph: [Glyphs.Part]? = nil, height h: Double = 32, _ action: @escaping @MainActor () -> Void) -> FrameworkElement {
         let card = Theme.card(radius: h * 0.28)
         card.height = h
         card.horizontalAlignment = .left
         let label = Theme.text(title, size: h >= 32 ? 13 : 12.5, weight: 500)
-        label.margin = Theme.inset(h / 2, 0, h / 2, 0)
         label.verticalAlignment = .center
-        card.child = label
+        if let glyph {
+            // A symbol before the words, as the Mac's CardButton has one.
+            let row = StackPanel()
+            row.orientation = .horizontal
+            row.spacing = 5
+            row.verticalAlignment = .center
+            row.margin = Theme.inset(h / 2 - 2, 0, h / 2, 0)
+            let g = Glyphs.view(glyph, size: 12, brush: Theme.ink(1))
+            g.verticalAlignment = .center
+            row.children.append(g)
+            row.children.append(label)
+            card.child = row
+        } else {
+            label.margin = Theme.inset(h / 2, 0, h / 2, 0)
+            card.child = label
+        }
         let rest = card.borderBrush
         card.pointerEntered.addHandler { _, _ in card.borderBrush = Theme.brush(Theme.shadow, 0.2) }
         card.pointerExited.addHandler { _, _ in card.borderBrush = rest }

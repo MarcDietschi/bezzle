@@ -20,6 +20,8 @@ final class DesignWindow {
     private lazy var export = ExportSheet(session: session)
     /// The prototype being played, over the panels and the canvas.
     private var playing: PlayerView?
+    /// The ruler of time, at the foot of the canvas while it is out.
+    private lazy var ruler = TimeRulerView(session: session)
 
     init(name: String, onClose: @escaping () -> Void) {
         session = DesignSession(name: name)
@@ -59,6 +61,18 @@ final class DesignWindow {
         table.child = canvas.root
         try? Grid.setColumn(table, 2)
         body.children.append(table)
+
+        // The ruler of time, floating at the canvas's foot.
+        try? Grid.setColumn(ruler.root, 2)
+        body.children.append(ruler.root)
+        WindowsCore.versions.changed = { [weak self] in
+            guard let self else { return }
+            self.ruler.refresh()
+            self.canvas.versionsChanged()
+            self.bar.versionsChanged()
+        }
+        WindowsCore.versions.edited = { [weak self] in self?.session.edited(board: nil) }
+        bar.onVersions = { [weak self] in self?.toggleVersions() }
 
         // Why the design is not being saved, over the canvas's top, quietly.
         let notice = InfoBar()
@@ -126,6 +140,27 @@ final class DesignWindow {
                 if args.key == .escape { args.handled = true; self.export.close() }
                 return
             }
+            let focusedNow = try? FocusManager.getFocusedElement(self.root.xamlRoot)
+            // Ctrl+Alt+T brings the ruler of time out or puts it away, as ⌥⌘T does on the Mac.
+            if args.key == .t, GetKeyState(Int32(VK_CONTROL)) < 0, GetKeyState(Int32(VK_MENU)) < 0 {
+                args.handled = true
+                self.toggleVersions()
+                return
+            }
+            // With the ruler out: Escape puts it away, and the arrows step through the versions,
+            // unless at now they have something selected to move. Looking back, the canvas's other
+            // keys rest.
+            let versions = WindowsCore.versions
+            if versions.browsing, !(focusedNow is TextBox) {
+                let stepping = versions.lookingBack || self.session.selection.isEmpty
+                switch args.key {
+                case .escape: args.handled = true; versions.leave(); return
+                case .left where stepping: args.handled = true; versions.step(-1); return
+                case .right where stepping: args.handled = true; versions.step(1); return
+                // Commands (Ctrl and a key) still work, as the Mac's menus do.
+                default: if versions.lookingBack, GetKeyState(Int32(VK_CONTROL)) >= 0 { return }
+                }
+            }
             // Ctrl+E exports, as ⌘E does on the Mac.
             if args.key == .e, GetKeyState(Int32(VK_CONTROL)) < 0 {
                 args.handled = true
@@ -141,6 +176,12 @@ final class DesignWindow {
             if args.key == .menu { self.inspector.photoAltChanged() }
             self.canvas.keyUp(args)
         }
+    }
+
+    /// The ruler of time out, or away again.
+    func toggleVersions() {
+        let versions = WindowsCore.versions
+        if versions.browsing { versions.leave() } else { versions.browse() }
     }
 
     /// Plays the prototype from a screen, or from the one a picked layer lies on, or from where

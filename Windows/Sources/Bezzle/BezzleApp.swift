@@ -104,7 +104,13 @@ final class BezzleApp: SwiftApplication {
                 }
             }
         }
-        window.closed.addHandler { [weak self] _, _ in MainActor.assumeIsolated { self?.design?.session.save() } }
+        window.closed.addHandler { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self, let design = self.design else { return }
+                design.session.save()
+                WindowsCore.versions.saved(closing: true)
+            }
+        }
         // WinUI calls this on the main thread, where the core lives.
         MainActor.assumeIsolated {
             let fonts = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("fonts")
@@ -126,6 +132,8 @@ final class BezzleApp: SwiftApplication {
         guard let window else { return }
         Theme.readAppearance()
         design?.session.save()
+        // Closed after a change, it is kept as a version at once.
+        if design != nil { WindowsCore.versions.saved(closing: true) }
         design = nil
         WindowsCore.close()
         let home = HomeView(folder: Self.designsFolder) { [weak self] url in self?.openDesign(url) }

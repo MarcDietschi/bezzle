@@ -42,7 +42,7 @@ extension WindowsCore {
 
     /// Artboards at a new size, each design laid out again for it, as one step.
     public static func resizeArtboards(_ ids: [UUID], to size: CGSize) {
-        endPreview()
+        beginChange()
         guard let doc = design else { return }
         var laid: [UUID: Node] = [:]
         let next = Editing.apply(to: doc) { laid = Adapting.resize(&$0, ids, to: { _ in size }) }

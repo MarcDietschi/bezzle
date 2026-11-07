@@ -198,14 +198,18 @@ extension WindowsCore {
     static func preview(_ change: (inout BezzleDocument) -> Void) {
         guard let base = previewBase ?? design else { return }
         previewBase = base
+        // Shown on the design as it is, even while looking back.
+        showingVersion = false
         design = Editing.edited(base, start: nil, change)
     }
 
-    /// Takes a change shown away again; whether one was shown.
+    /// Takes a change shown away again; whether one was shown. A version looked back at is no
+    /// such change: it stays, and shows again once a change pointed at meanwhile is taken away.
     @discardableResult public static func endPreview() -> Bool {
-        guard let base = previewBase else { return false }
+        guard let base = previewBase, !showingVersion else { return false }
         design = base
         previewBase = nil
+        if versions.lookingBack { timeTable.reshow() }
         return true
     }
 }

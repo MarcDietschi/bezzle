@@ -476,6 +476,37 @@ enum Glyphs {
         return [Part(data: p.d, mode: .fill)]
     }
 
+    /// Two bars, for stopping what plays.
+    static func pause(size s: Double = 12) -> [Part] {
+        var p = PathData()
+        for x in [0.28, 0.56] {
+            p.move(s * x, s * 0.22); p.line(s * (x + 0.16), s * 0.22); p.line(s * (x + 0.16), s * 0.78); p.line(s * x, s * 0.78); p.close()
+        }
+        return [Part(data: p.d, mode: .fill)]
+    }
+
+    /// A flag on its pole, for naming a moment.
+    static func nameFlag(size s: Double = 12) -> [Part] {
+        var p = PathData()
+        // The pole, and the cloth waving from it.
+        p.move(s * 0.26, s * 0.88); p.line(s * 0.26, s * 0.12)
+        p.move(s * 0.26, s * 0.18)
+        p.cubic(s * 0.42, s * 0.08, s * 0.6, s * 0.3, s * 0.8, s * 0.18)
+        p.line(s * 0.8, s * 0.54)
+        p.cubic(s * 0.6, s * 0.66, s * 0.42, s * 0.44, s * 0.26, s * 0.54)
+        return [Part(data: p.d, mode: .stroke, width: 1.2)]
+    }
+
+    /// A turn back up: down the left, round the foot and up the right to an arrow.
+    static func uturn(size s: Double = 12) -> [Part] {
+        var p = PathData()
+        p.move(s * 0.28, s * 0.2); p.line(s * 0.28, s * 0.56)
+        p.cubic(s * 0.28, s * 0.86, s * 0.72, s * 0.86, s * 0.72, s * 0.56)
+        p.line(s * 0.72, s * 0.2)
+        p.move(s * 0.56, s * 0.36); p.line(s * 0.72, s * 0.2); p.line(s * 0.88, s * 0.36)
+        return [Part(data: p.d, mode: .stroke, width: 1.3)]
+    }
+
     static func chevron(open: Bool, size s: Double = 9) -> [Part] {
         var p = PathData()
         if open { p.move(s * 0.2, s * 0.35); p.line(s * 0.5, s * 0.65); p.line(s * 0.8, s * 0.35) }
