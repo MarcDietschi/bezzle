@@ -467,7 +467,7 @@ extension WindowsCore {
             pixels += Double(part.width * part.height) * scale * scale
             // Too much to draw at once; the wave alone shows the change.
             guard pixels < 24_000_000 else { return nil }
-            let shown = was.shownAlone
+            let shown = seen(was)
             let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
             guard let image = Renderer.image(of: shown, part: part, scale: CGFloat(scale), assets: assets) else { continue }
             // Kept by the wash, and so in Skia, until it is let go of.

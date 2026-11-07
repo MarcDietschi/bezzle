@@ -196,6 +196,8 @@ final class Inspector {
         // Words along a curve: bent ones, or ones riding a shape, but not both at once.
         if kinds == ["text"], let curve = curveCard(ids, board: board) { cards.children.append(curve) }
         if kinds == ["artboard"], ids.count == 1, let artboard = artboardCard(ids[0], board: board) { cards.children.append(artboard) }
+        if kinds == ["artboard"], let deck = deckCard(ids, board: board) { cards.children.append(deck) }
+        if let own = postLayerCard(ids, board: board) { cards.children.append(own) }
         if let component = componentCard(ids, board: board) { cards.children.append(component) }
         if let own = copyLayerCard(ids, board: board) { cards.children.append(own) }
         if ids.count == 1, WindowsCore.isGrid(ids[0]) {

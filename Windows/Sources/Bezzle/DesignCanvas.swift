@@ -76,6 +76,8 @@ final class DesignCanvas {
     var menus: MenuHost? { didSet { margin.menus = menus } }
     /// The notes in the margin, beside the sheets.
     private(set) lazy var margin = MarginView(notes: session.notes)
+    /// Decks as stacks of cards: their feet, the row under a selected one, turning, the spread.
+    private(set) lazy var decks = DeckView(session: session)
     private var overlaysAdded = false
     private static let handleSize = 8.0
 
@@ -111,6 +113,8 @@ final class DesignCanvas {
         case flow
         /// The note tool: a click starts a note about what is there, a drag draws a loop round a part.
         case note(start: CGPoint)
+        /// Decks: scrubbing along the row under a stack, or a post taken up in the spread.
+        case deck
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -221,7 +225,9 @@ final class DesignCanvas {
         self.session = session
         root.background = Theme.brush(Theme.table)
         root.children.append(stage)
+        stage.children.append(decks.feet)
         root.children.append(overlay)
+        root.children.append(decks.layer)
         root.children.append(margin.layer)
         root.children.append(rulers.root)
         root.children.append(editorLayer)
@@ -231,6 +237,17 @@ final class DesignCanvas {
         margin.edited = { [weak self] in self?.session.edited(board: nil) }
         margin.reveal = { [weak self] p in self?.reveal(CGRect(x: p.x - 40, y: p.y - 40, width: 80, height: 80)) }
         margin.returnFocus = { [weak self] in self?.takeKeys() }
+        decks.toView = { [weak self] r in self?.onStage(rect: r) ?? r }
+        decks.stageSize = { [weak self] in (self?.stage.actualWidth ?? 0, self?.stage.actualHeight ?? 0) }
+        decks.pixelScale = { [weak self] in self?.pixelScale ?? 1 }
+        decks.zoom = { [weak self] in self?.zoom ?? 1 }
+        decks.hideSheet = { [weak self] id, hide in self?.hideSheet(id, hide) }
+        decks.rowAllowed = { [weak self] in
+            guard let self else { return false }
+            return self.session.tool == .select && self.editing == nil && self.pen.editingPath == nil && self.session.mode == 0
+                && !WindowsCore.versions.lookingBack
+        }
+        decks.turned = { [weak self] in self?.session.previewed(board: nil) }
         root.sizeChanged.addHandler { [weak self] _, _ in self?.place() }
         stage.background = Theme.clear
         root.isTabStop = true
@@ -378,6 +395,7 @@ final class DesignCanvas {
                 self?.develop.hover(nil)
                 self?.inspect.hover(nil)
                 self?.flow.hover(nil)
+                self?.decks.hover(nil, onCanvas: nil)
             }
         }
         stage.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args) }
@@ -397,6 +415,8 @@ final class DesignCanvas {
         session.openCardChanged = { [weak self] in self?.drawAids() }
         session.listen { [weak self] in
             self?.placeOverlays()
+            // The row under a stack follows the selection.
+            self?.decks.update()
             self?.drawPen()
             // Into or out of Inspect: the paper and the measures come or go.
             self?.drawPaper()
@@ -409,6 +429,7 @@ final class DesignCanvas {
             guard let self else { return }
             self.redraw(board: board)
             self.margin.draw()
+            self.decks.edited()
             self.place()
             // A step made at once to a copy offers what can be made of it; any other step takes
             // what was offered away.
@@ -637,6 +658,7 @@ final class DesignCanvas {
         }
         placeSlideMarks()
         drawAids()
+        decks.update()
         for item in loose {
             guard let sheet = looseSheets[item.index] else { continue }
             let at = onStage(item.reach.origin)
@@ -2591,6 +2613,12 @@ final class DesignCanvas {
             WindowsCore.versions.pick(at: c)
             return
         }
+        // Decks: the row under a stack, the feet of the cards behind it, every post spread out.
+        if session.mode == 0, session.tool == .select || decks.spreading, decks.down(at: p) {
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, -1, false, .deck)
+            return
+        }
         // The design as a prototype: threads, flags and screens take the press.
         if prototyping {
             syncFlow()
@@ -2817,6 +2845,15 @@ final class DesignCanvas {
     private func moved(_ args: PointerRoutedEventArgs?) {
         let p = point(args)
         lastPoint = p
+        if case .deck? = drag?.grab {
+            decks.drag(to: p)
+            return
+        }
+        if drag == nil, session.mode == 0 {
+            decks.hover(p, onCanvas: inDesign(p))
+            if decks.spreading { showPointer(.arrow); return }
+            if decks.points(at: p) { showPointer(.pointingHand); return }
+        }
         if WindowsCore.versions.lookingBack, drag == nil {
             hoverTime(WindowsCore.versions.layer(at: inDesign(p)))
             showPointer(timeHovered != nil ? .pointingHand : .arrow)
@@ -3039,7 +3076,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note, .deck:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -3151,6 +3188,8 @@ final class DesignCanvas {
             flow.up(at: point(args))
             session.edited(board: nil)
             updatePointer(at: point(args))
+        case .deck:
+            decks.up(at: point(args))
         case .note(let start):
             let c = inDesign(point(args))
             if d.moved, let circle = margin.notes.circle, circle.width > 0 || circle.height > 0 {
@@ -3350,6 +3389,8 @@ final class DesignCanvas {
             _ = flow.cancel()
         case .note:
             margin.notes.circle = nil
+        case .deck:
+            _ = decks.cancel()
         }
         showGuides([])
         session.edited(board: nil)
@@ -3761,6 +3802,29 @@ final class DesignCanvas {
                 entries.append(.item("Unlink Copy") { [weak self] in WindowsCore.unlink(selection); self?.session.edited(board: nil) })
                 entries.append(.separator)
             }
+            // Decks, as the Mac's menu has them.
+            if let board = WindowsCore.postableBoard(selection, focused: session.board) {
+                entries.append(.item("Add Post", shortcut: "Ctrl+Shift+P") { [weak self] in self?.addPost() })
+                if let deck = WindowsCore.deck(board) {
+                    entries.append(.item("Show All Posts", shortcut: "Ctrl+Alt+P") { [weak self] in self?.decks.openSpread(board) })
+                    if selection.count == 1, WindowsCore.inPost(selection[0]) {
+                        if WindowsCore.holdsWordsOrPicture(selection[0]) {
+                            entries.append(.item("Same in Every Post") { [weak self] in WindowsCore.giveEveryPost(selection); self?.session.edited(board: nil) })
+                        }
+                        if WindowsCore.ownWords(selection[0]) != nil {
+                            entries.append(.item("Follow the Other Posts") { [weak self] in WindowsCore.followDesign(selection); self?.session.edited(board: nil) })
+                        }
+                    }
+                    entries.append(.item("Remove This Post", enabled: deck.count > 1) { [weak self] in self?.removeFrontPost(board) })
+                    entries.append(.item("Unstack", detail: "Each post an artboard") { [weak self] in
+                        guard let self else { return }
+                        let made = WindowsCore.spreadOut(board)
+                        self.session.select(made, on: nil)
+                        self.session.edited(board: nil)
+                    })
+                }
+                entries.append(.separator)
+            }
             let layers = session.selectedLayers
             let locked = !layers.isEmpty && layers.allSatisfy(\.locked)
             entries.append(.item(locked ? "Unlock" : "Lock", shortcut: "Ctrl+L") { [weak self] in self?.toggleLock() })
@@ -3791,6 +3855,11 @@ final class DesignCanvas {
         // Keys typed into a text are the text's.
         guard let args, editing == nil else { return }
         // Escape puts an open note away, or lets go of one being written.
+        // Escape puts every post spread out back in the stack.
+        if args.key == .escape, drag == nil, decks.cancel() {
+            args.handled = true
+            return
+        }
         if args.key == .escape, margin.notes.openThread != nil || margin.notes.draftID != nil {
             args.handled = true
             if margin.notes.draftID != nil { margin.notes.dropDraft() } else { margin.notes.openThread = nil }
@@ -3952,6 +4021,14 @@ final class DesignCanvas {
             delete()
             args.handled = true
             return
+        // Decks, as the Mac's Object menu has them: Ctrl+Alt+arrows and Page Up and Down turn,
+        // Ctrl+Shift+P adds a post, Ctrl+Alt+P spreads every post out.
+        case .left where control && option: turnPage(-1); args.handled = true; return
+        case .right where control && option: turnPage(1); args.handled = true; return
+        case .pageUp: turnPage(-1); args.handled = true; return
+        case .pageDown: turnPage(1); args.handled = true; return
+        case .p where control && shift: addPost(); args.handled = true; return
+        case .p where control && option: showAllPosts(); args.handled = true; return
         case .left: WindowsCore.move(selection, dx: -step, dy: 0)
         case .right: WindowsCore.move(selection, dx: step, dy: 0)
         case .up: WindowsCore.move(selection, dx: 0, dy: -step)
@@ -4244,5 +4321,46 @@ extension DesignCanvas {
             try? Canvas.setTop(dot, c.1 - r)
             timeMarks.children.append(dot)
         }
+    }
+}
+
+// MARK: - Decks
+
+extension DesignCanvas {
+    /// Leaves a deck's artboard to the cards the deck layer draws over it, or shows it again.
+    fileprivate func hideSheet(_ id: UUID, _ hide: Bool) {
+        guard let k = boards.firstIndex(where: { $0.id == id }), let sheet = sheets[k] else { return }
+        sheet.image.opacity = hide ? 0 : 1
+        sheet.shadow.opacity = hide ? 0 : 1
+    }
+}
+
+extension DesignCanvas {
+    /// Adds a post to the deck being worked on, or makes the artboard selected a deck.
+    fileprivate func addPost() {
+        guard let board = WindowsCore.postableBoard(session.selection, focused: session.board) else { MessageBeep(0); return }
+        let ids = WindowsCore.addPost(to: board, selection: session.selection)
+        session.select(ids, on: WindowsCore.boardIndex(of: board) ?? session.board)
+        session.edited(board: nil)
+    }
+
+    /// Turns the deck being worked on `by` posts on, or back.
+    fileprivate func turnPage(_ by: Int) {
+        guard let deck = WindowsCore.turnableDeck(session.selection, focused: session.board),
+              let ids = WindowsCore.turnPage(by: by, deck: deck, selection: session.selection) else { return }
+        session.select(ids, on: session.board)
+        session.previewed(board: nil)
+    }
+
+    fileprivate func showAllPosts() {
+        guard let deck = WindowsCore.turnableDeck(session.selection, focused: session.board) else { MessageBeep(0); return }
+        decks.openSpread(deck)
+    }
+
+    fileprivate func removeFrontPost(_ deckID: UUID) {
+        guard let deck = WindowsCore.deck(deckID), let front = deck.front else { return }
+        let ids = WindowsCore.removePost(front, from: deckID, selection: session.selection)
+        session.select(ids, on: session.board)
+        session.edited(board: nil)
     }
 }

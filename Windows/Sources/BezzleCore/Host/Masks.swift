@@ -121,7 +121,7 @@ extension WindowsCore {
     /// The shape, or the mask, layers being moved are held over at `p` on the canvas (the shared
     /// `maskTarget`).
     public static func dipTarget(at p: CGPoint, moving ids: [UUID]) -> UUID? {
-        design?.maskTarget(at: p, moving: ids) { $0.seenLayers(fronts: [:]) }
+        design?.maskTarget(at: p, moving: ids) { $0.seenLayers(fronts: fronts) }
     }
 
     /// Whether resting over the shape would put them into it: it holds things, and would cut

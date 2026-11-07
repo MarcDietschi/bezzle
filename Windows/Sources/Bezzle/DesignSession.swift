@@ -84,7 +84,11 @@ final class DesignSession {
     }
 
     func select(_ ids: [UUID], on board: Int?) {
+        // A layer of a deck's post behind brings that post to the front, as on the Mac.
+        let fronts = WindowsCore.fronts
+        let ids = WindowsCore.selecting(ids)
         selection = ids
+        if WindowsCore.fronts != fronts { previewed(board: nil) }
         pen.selection = ids
         if let editing = pen.editingPath, ids != [editing] { pen.editingPath = nil }
         self.board = board

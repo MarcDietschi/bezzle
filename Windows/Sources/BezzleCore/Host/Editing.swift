@@ -13,13 +13,14 @@ enum Editing {
     /// design as it began with something done to it partway, which stays as the gesture goes on
     /// (a shape opened under a drag, holding what is moved). Its undo still goes back to the start.
     static var gestureBase: BezzleDocument?
-    static var undos: [(before: BezzleDocument, after: BezzleDocument)] = []
+    /// Each step, and the posts in front of its decks as it was made, which undoing it shows again.
+    static var undos: [(before: BezzleDocument, after: BezzleDocument, fronts: [UUID: Int])] = []
     /// What the last change made through `edited` did to copies of components.
     static var lastEcho: ComponentEcho?
     /// The last step made at once (not a gesture), and what it did to copies: what the canvas may
     /// offer to make of it, as the Mac's store does after such a step (considerComponentOffer).
     static var lastStep: (before: BezzleDocument, echo: ComponentEcho?)?
-    static var redos: [(before: BezzleDocument, after: BezzleDocument)] = []
+    static var redos: [(before: BezzleDocument, after: BezzleDocument, fronts: [UUID: Int])] = []
     /// The design before the last step settled, whether that step was dragged in, and whether it
     /// was made from the design's list of styles: for the wave a change to a style runs.
     static var lastSettled: (before: BezzleDocument, dragged: Bool, fromList: Bool)?
@@ -29,7 +30,7 @@ enum Editing {
         var next = doc
         change(&next)
         next.syncGrids(since: doc, start: start)
-        next.syncDecks(since: doc)
+        next.syncDecks(since: doc, fronts: WindowsCore.fronts)
         lastEcho = next.syncComponents(since: doc, start: start)
         next.syncStyles(since: doc)
         next.keepMasks(since: doc)
@@ -72,7 +73,7 @@ enum Editing {
     }
 
     private static func record(before: BezzleDocument, after: BezzleDocument) {
-        undos.append((before, after))
+        undos.append((before, after, WindowsCore.fronts))
         if undos.count > 200 { undos.removeFirst() }
         redos = []
     }
@@ -82,7 +83,10 @@ enum Editing {
         guard gestureStart == nil, let step = undos.popLast() else { return nil }
         lastStep = nil
         let back = now == step.after ? step.before : FlatDesign.apply(from: step.after, to: step.before, onto: now)
-        redos.append((before: back, after: now))
+        redos.append((before: back, after: now, fronts: WindowsCore.fronts))
+        // A deck the step changed shows the post it showed then: undoing a post added or taken
+        // away shows the one that was in front, as on the Mac.
+        for id in decks(changedFrom: step.before, to: step.after) { WindowsCore.fronts[id] = step.fronts[id] }
         return back
     }
 
@@ -90,8 +94,24 @@ enum Editing {
         guard gestureStart == nil, let step = redos.popLast() else { return nil }
         lastStep = nil
         let again = now == step.before ? step.after : FlatDesign.apply(from: step.before, to: step.after, onto: now)
-        undos.append((now, again))
+        undos.append((now, again, WindowsCore.fronts))
+        for id in decks(changedFrom: step.before, to: step.after) { WindowsCore.fronts[id] = step.fronts[id] }
         return again
+    }
+
+    /// The decks that are not the same in two designs, or are a deck in only one of them.
+    static func decks(changedFrom a: BezzleDocument, to b: BezzleDocument) -> [UUID] {
+        var was: [UUID: Node] = [:]
+        for n in a.nodes where n.isDeck { was[n.id] = n }
+        var changed: [UUID] = []
+        for n in b.nodes {
+            if let then = was.removeValue(forKey: n.id) {
+                if then != n { changed.append(n.id) }
+            } else if n.isDeck {
+                changed.append(n.id)
+            }
+        }
+        return changed + was.keys
     }
 }
 
@@ -154,7 +174,8 @@ extension WindowsCore {
             }
         }
         // A layer on the canvas is listed itself, before what it holds, its frame on the canvas.
-        if doc.nodes[index].isArtboard { walk(doc.nodes[index].children, parent: nil, origin: .zero, depth: 0) } else { walk([doc.nodes[index]], parent: nil, origin: .zero, depth: 0) }
+        // A deck, as it is seen: the post in front.
+        if doc.nodes[index].isArtboard { walk(doc.nodes[index].seenLayers(fronts: fronts), parent: nil, origin: .zero, depth: 0) } else { walk([doc.nodes[index]], parent: nil, origin: .zero, depth: 0) }
         return out
     }
 
@@ -194,7 +215,7 @@ extension WindowsCore {
             var board = Board(index: $0.offset, name: $0.element.name, frame: $0.element.frame)
             board.id = $0.element.id
             board.hidden = $0.element.hidden
-            board.drawn = drawn($0.element)
+            board.drawn = drawn(seen($0.element))
             if $0.element.isCarousel {
                 board.slide = $0.element.slideSize
                 board.slides = $0.element.slideCount

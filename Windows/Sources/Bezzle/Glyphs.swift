@@ -476,6 +476,26 @@ enum Glyphs {
         return [Part(data: p.d, mode: .fill)]
     }
 
+    /// A card in front of two behind it, as a stack of posts.
+    static func stack(size s: Double = 14) -> [Part] {
+        var p = PathData()
+        p.move(s * 0.22, s * 0.38); p.line(s * 0.78, s * 0.38); p.line(s * 0.78, s * 0.84); p.line(s * 0.22, s * 0.84); p.close()
+        p.move(s * 0.28, s * 0.28); p.line(s * 0.72, s * 0.28)
+        p.move(s * 0.34, s * 0.18); p.line(s * 0.66, s * 0.18)
+        return [Part(data: p.d, mode: .stroke, width: 1.2)]
+    }
+
+    /// A bin with its lid, for throwing a post away.
+    static func trash(size s: Double = 14) -> [Part] {
+        var p = PathData()
+        p.move(s * 0.2, s * 0.28); p.line(s * 0.8, s * 0.28)
+        p.move(s * 0.4, s * 0.28); p.line(s * 0.42, s * 0.18); p.line(s * 0.58, s * 0.18); p.line(s * 0.6, s * 0.28)
+        p.move(s * 0.28, s * 0.28); p.line(s * 0.32, s * 0.84); p.line(s * 0.68, s * 0.84); p.line(s * 0.72, s * 0.28)
+        p.move(s * 0.44, s * 0.42); p.line(s * 0.45, s * 0.72)
+        p.move(s * 0.56, s * 0.42); p.line(s * 0.55, s * 0.72)
+        return [Part(data: p.d, mode: .stroke, width: 1.3)]
+    }
+
     /// Two bars, for stopping what plays.
     static func pause(size s: Double = 12) -> [Part] {
         var p = PathData()

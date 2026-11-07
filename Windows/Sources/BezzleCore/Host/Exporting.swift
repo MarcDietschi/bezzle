@@ -95,7 +95,8 @@ extension WindowsCore {
     private static func choices(_ selection: [UUID]) -> ExportChoices? {
         guard let doc = design else { return nil }
         let name = designURL?.deletingPathExtension().lastPathComponent ?? "Design"
-        return ExportChoices(doc: doc, seen: doc, selection: selection, front: { $0.posts.first }, name: name)
+        // A deck by the post in front of it here, as the Mac's seenDoc and fronts.
+        return ExportChoices(doc: doc, seen: seen ?? doc, selection: selection, front: { $0.front(in: fronts) }, name: name)
     }
 
     private static func scope(_ key: String) -> ExportChoices.Scope {

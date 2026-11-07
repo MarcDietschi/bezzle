@@ -457,7 +457,7 @@ extension WindowsCore {
             for top in doc.nodes.reversed() where found == nil && !top.hidden {
                 if top.isArtboard {
                     guard top.frame.insetBy(dx: -band, dy: -band).contains(p) else { continue }
-                    look(top.seenLayers(fronts: [:]), origin: top.frame.origin)
+                    look(top.seenLayers(fronts: WindowsCore.fronts), origin: top.frame.origin)
                     if found == nil, top.frame.contains(p) { break }
                 } else {
                     look([top], origin: .zero)

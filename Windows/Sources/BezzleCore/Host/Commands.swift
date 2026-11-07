@@ -10,13 +10,13 @@ extension WindowsCore {
     /// the group it lies in is looked in first.
     public static func pick(_ p: CGPoint, selection: [UUID], zoom: Double) -> UUID? {
         guard let doc = design else { return nil }
-        return Picking(doc: doc, selection: selection, zoom: CGFloat(zoom)).pick(p)
+        return Picking(doc: doc, selection: selection, fronts: fronts, zoom: CGFloat(zoom)).pick(p)
     }
 
     /// What a double click on a group picks inside it, one level down.
     public static func pick(_ p: CGPoint, inGroup id: UUID, zoom: Double) -> UUID? {
         guard let doc = design, let group = doc.node(id), group.isGroup else { return nil }
-        return Picking(doc: doc, zoom: CGFloat(zoom)).hit(p, in: group)
+        return Picking(doc: doc, fronts: fronts, zoom: CGFloat(zoom)).hit(p, in: group)
     }
 
     /// What a box dragged on the canvas picks: on the artboard at `index`, what it touches there;
@@ -24,7 +24,7 @@ extension WindowsCore {
     public static func marquee(_ rect: CGRect, onBoard index: Int?, zoom: Double) -> [UUID] {
         guard let doc = design else { return [] }
         let inside = index.flatMap { $0 < doc.nodes.count ? doc.nodes[$0].id : nil }
-        return Picking(doc: doc, zoom: CGFloat(zoom)).marquee(rect, inside: inside)
+        return Picking(doc: doc, fronts: fronts, zoom: CGFloat(zoom)).marquee(rect, inside: inside)
     }
 
     /// What Select All picks, as on the Mac: what lies with the selection, or on the artboard at
@@ -32,7 +32,7 @@ extension WindowsCore {
     public static func selectAll(_ selection: [UUID], board: Int?) -> [UUID] {
         guard let doc = design else { return [] }
         let focused = board.flatMap { $0 < doc.nodes.count ? doc.nodes[$0] : nil }
-        return Picking(doc: doc, selection: selection).all(focused: focused)
+        return Picking(doc: doc, selection: selection, fronts: fronts).all(focused: focused)
     }
 
     /// The artboard under a canvas point, by its place in the design.
@@ -277,11 +277,11 @@ extension WindowsCore {
         func add(_ nodes: [Node], depth: Int, parent: UUID?) {
             for node in nodes.reversed() {
                 out.append(ListedLayer(node: node, depth: depth, parent: parent))
-                if node.isContainer, !isShut(node.id, node.isGroup) { add(node.listed(fronts: [:]), depth: depth + 1, parent: node.id) }
+                if node.isContainer, !isShut(node.id, node.isGroup) { add(node.listed(fronts: fronts), depth: depth + 1, parent: node.id) }
             }
         }
         // A layer on the canvas is listed itself, before what it holds.
-        if doc.nodes[board].isArtboard { add(doc.nodes[board].listed(fronts: [:]), depth: 0, parent: doc.nodes[board].id) } else { add([doc.nodes[board]], depth: 0, parent: nil) }
+        if doc.nodes[board].isArtboard { add(doc.nodes[board].listed(fronts: fronts), depth: 0, parent: doc.nodes[board].id) } else { add([doc.nodes[board]], depth: 0, parent: nil) }
         return out
     }
 

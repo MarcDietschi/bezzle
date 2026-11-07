@@ -85,7 +85,7 @@ extension WindowsCore {
     /// The layer a drop at a canvas point lands on: the one under it, however deep in groups.
     public static func dropTarget(at p: CGPoint, zoom: Double) -> UUID? {
         guard let doc = design else { return nil }
-        return Picking(doc: doc, zoom: CGFloat(zoom)).dropTarget(p)
+        return Picking(doc: doc, fronts: fronts, zoom: CGFloat(zoom)).dropTarget(p)
     }
 
     public static func canDrop(files: [URL], text: String?, at p: CGPoint, on target: UUID?) -> Bool {

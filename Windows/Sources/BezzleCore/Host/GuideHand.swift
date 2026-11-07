@@ -47,7 +47,7 @@ extension WindowsCore {
         }
         var selectsGuides: Bool { selecting }
         var isReadOnly: Bool { false }
-        func seenLayers(of board: Node) -> [Node] { board.seenLayers(fronts: [:]) }
+        func seenLayers(of board: Node) -> [Node] { board.seenLayers(fronts: WindowsCore.fronts) }
         func beginGesture() { WindowsCore.beginGesture() }
         func endGesture(_ action: LocalizedStringResource) { WindowsCore.endGesture() }
         func cancelGesture() { WindowsCore.cancelGesture() }

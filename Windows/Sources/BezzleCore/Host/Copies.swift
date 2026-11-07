@@ -163,6 +163,8 @@ extension WindowsCore {
         case lightTwin(UUID)
     }
     nonisolated(unsafe) static var styleOffered: StyleOffered?
+    /// A deck's offer to keep a change in the post in front alone (the Mac's DeckOffer).
+    nonisolated(unsafe) static var deckOffered: DeckOffer?
     /// An offer made by a step itself (a look named), shown once the step has been looked at.
     nonisolated(unsafe) static var pendingStyleOffer: CopyOffer?
     /// Set while the design's styles are changed from their list, where no offer is made.
@@ -182,7 +184,15 @@ extension WindowsCore {
         Editing.lastStep = nil
         offered = doc.componentOffer(after: step.before, echo: step.echo)
         styleOffered = nil
-        guard let offer = offered else { return .some(styleOffer(after: step.before, selection: selection)) }
+        deckOffered = nil
+        guard let offer = offered else {
+            // A change in the post in front that every post followed: offered to keep it there alone.
+            if let deck = deckOffer(after: step.before) {
+                deckOffered = deck
+                return CopyOffer(anchor: deck.anchor, words: deck.words, buttons: [deck.button], token: deck.token, style: true)
+            }
+            return .some(styleOffer(after: step.before, selection: selection))
+        }
         return CopyOffer(anchor: offer.anchor, words: offer.words, buttons: offer.buttons.map(\.title), token: offer.token)
     }
 
@@ -217,6 +227,12 @@ extension WindowsCore {
 
     /// Does what the offer's button `index` offers, as one step; what is picked then, if that changes.
     @discardableResult public static func takeCopyOffer(_ index: Int) -> [UUID]? {
+        if let deck = deckOffered, offered == nil {
+            deckOffered = nil
+            guard case .justHere(let changes, let before) = deck.kind else { return nil }
+            edit { $0.keepInPost(changes, post: deck.post, deck: deck.deck, before: before) }
+            return nil
+        }
         if let kind = styleOffered, offered == nil {
             styleOffered = nil
             switch kind {

@@ -71,6 +71,7 @@ public enum WindowsCore {
         timeTable.forget()
         previewBase = nil
         showingVersion = false
+        fronts = [:]
         design = doc
         designURL = folder
         Editing.undos = []
@@ -81,6 +82,7 @@ public enum WindowsCore {
 
     /// Lets the open design go, once it is saved: a save that comes later has nothing to write.
     public static func close() {
+        fronts = [:]
         versions.reset()
         timeTable.forget()
         previewBase = nil
@@ -116,7 +118,8 @@ public enum WindowsCore {
     public static func render(board index: Int, scale: Double) -> (width: Int, height: Int, pixels: [UInt8])? {
         guard let doc = design, index < doc.nodes.count else { return nil }
         let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
-        guard let image = Renderer.image(of: doc.nodes[index], scale: CGFloat(scale), assets: assets) else { return nil }
+        // A deck as the post in front of it here.
+        guard let image = Renderer.image(of: seen(doc.nodes[index]), scale: CGFloat(scale), assets: assets) else { return nil }
         for picture in Images.shared.list where picture.id >= first { send(picture) }
         var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
         let done = pixels.withUnsafeMutableBytes { bz_picture_read(Int32(image.id), Int32(image.width), Int32(image.height), 0, $0.baseAddress) }
@@ -132,7 +135,8 @@ public enum WindowsCore {
         // The text being typed into is shown by its editor, not drawn under it, as on the Mac.
         if let hiding { doc.update(hiding) { $0.hidden = true } }
         let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
-        let board = doc.nodes[index], part = drawn(board)
+        // A deck as the post in front of it here.
+        let board = seen(doc.nodes[index]), part = drawn(board)
         guard let image = Renderer.image(of: board, part: part == board.frame ? nil : part, scale: CGFloat(scale), assets: assets) else { return false }
         for picture in Images.shared.list where picture.id >= first { send(picture) }
         defer { forget(before: first) }
