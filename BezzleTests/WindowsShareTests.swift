@@ -198,4 +198,207 @@ struct WindowsShareTests {
             try "3".write(to: stageFile, atomically: true, encoding: .utf8)
         }
     }
+
+    // MARK: By link, through the relay
+
+    nonisolated private static let linkFolder = ProcessInfo.processInfo.environment["BEZZLE_WINDOWS_LINK"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    nonisolated private static let relay = ProcessInfo.processInfo.environment["BEZZLE_RELAY_TEST"].flatMap(URL.init(string:))
+
+    /// A Mac's session in a design of its own, its room looked at through the relay.
+    private func session(_ url: URL, _ replica: String) throws -> Collaboration {
+        let session = try #require(Collaboration.open(url, replica: replica, claiming: false))
+        session.cloud?.start(for: session)
+        return session
+    }
+
+    /// A design shared by link, through the relay itself running on this Mac (`cd Relay && npx
+    /// wrangler dev --port 8790 --ip 0.0.0.0`), worked on by two Macs and by Bezzle for Windows
+    /// at once (bezzle-share's `link`), the stages as above. Off unless `TEST_RUNNER_BEZZLE_RELAY_TEST`
+    /// is the relay and `TEST_RUNNER_BEZZLE_WINDOWS_LINK` names a folder:
+    ///
+    /// 0. Anna shares Poster.bezzle, with a picture; Ben opens the link; both change it. The link,
+    ///    and keys and something sealed to check Windows against, go to link.json.
+    /// 1. Windows opened the link and changed it, and named a version: Anna takes that in and
+    ///    changes it again, as Ben does.
+    /// 2. Windows took that in and changed it again: everything anyone did is on every copy, the
+    ///    same design as Windows'; Windows wrote only records of its own. Anna stops sharing.
+    /// 3. Windows keeps it as it last was, read only.
+    @Test(.enabled(if: linkFolder != nil && relay != nil))
+    func aLinkSharedWithWindows() async throws {
+        let folder = try #require(Self.linkFolder), address = try #require(Self.relay)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let server = RelayServer(base: address)
+        Sharing.shared.server = server
+        defer { Sharing.shared.server = nil }
+        let stageFile = folder.appendingPathComponent("stage.txt")
+        let stage = (try? String(contentsOf: stageFile, encoding: .utf8)).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+        let annaURL = folder.appendingPathComponent("anna/Poster.bezzle"), benURL = folder.appendingPathComponent("ben/Poster.bezzle")
+        let linkFile = folder.appendingPathComponent("link.json")
+
+        switch stage {
+        case 0:
+            let secret = ShareKeys.newSecret()
+            let keys = try #require(ShareKeys(secret: secret))
+            let owner = ShareKeys.newSecret().base64URL
+            try await server.create(keys.room, hashes: ["read": Sharing.hash(keys.readToken), "write": Sharing.hash(keys.writeToken), "owner": Sharing.hash(owner)])
+            Sharing.shared.own(keys.room, with: owner)
+            var board = Node(kind: .artboard, name: "Poster", frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+            var p = CanvasTests.rect("P", CGRect(x: 280, y: 180, width: 96, height: 72))
+            p.fill.image = ImageFill(asset: "photo.png", size: CGSize(width: 64, height: 48))
+            board.children = [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50)),
+                              CanvasTests.rect("S", CGRect(x: 100, y: 10, width: 50, height: 50)),
+                              CanvasTests.rect("T", CGRect(x: 200, y: 10, width: 50, height: 50)),
+                              AdaptTests.text("Shared with Windows", 24, at: CGPoint(x: 20, y: 120)), p]
+            var doc = BezzleDocument()
+            doc.nodes = [board]
+            try FileManager.default.createDirectory(at: annaURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try DesignFile.write(doc, to: annaURL)
+            let images = annaURL.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+            try picture().write(to: images.appendingPathComponent("photo.png"))
+            let link = ShareLink(secret: secret.base64URL, title: "Poster", ownerName: "Anna")
+            try SharingFiles.write(link, to: annaURL)
+            let anna = try session(annaURL, "anna")
+            try await anna.cloud?.sendMeta(ShareMeta(title: "Poster", owner: "Anna", made: Collaboration.now))
+            anna.cloud?.offer(["photo.png"])
+            await anna.cloud?.syncForTesting()
+
+            // Ben opens the link, as Sharing.accept makes the design.
+            Sharing.shared.disownForTesting(keys.room)
+            let arrived = try await CloudShare.download(keys, from: server) { _ in }
+            Sharing.shared.own(keys.room, with: owner)
+            try FileManager.default.createDirectory(at: benURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try DesignFile.write(arrived.state.flatDesign().document(), to: benURL)
+            try SharingFiles.write(ShareLink(secret: link.secret, title: arrived.meta?.title, ownerName: arrived.meta?.owner), to: benURL)
+            _ = FolderSync.open(benURL, replica: "ben", seed: arrived.state)
+            CloudShare.keep(arrived.progress, of: benURL, replica: "ben")
+            DocumentStore.finishSaving()
+            let ben = try session(benURL, "ben")
+            edit(anna, "R") { $0.frame.origin.x = 300 }
+            edit(ben, "R") { $0.fill.color = .black }
+            edit(ben, "S") { $0.name = "S, renamed" }
+            Sharing.shared.disownForTesting(keys.room)
+            await ben.cloud?.syncForTesting()
+            Sharing.shared.own(keys.room, with: owner)
+            await anna.cloud?.syncForTesting()
+            Sharing.shared.disownForTesting(keys.room)
+            await ben.cloud?.syncForTesting()
+            Sharing.shared.own(keys.room, with: owner)
+            #expect(anna.state == ben.state)
+            let probe = try #require(keys.seal(Data("Sealed on a Mac".utf8), about: "probe"))
+            let vector = ["secret": secret.base64URL, "room": keys.room, "read": keys.readToken, "write": keys.writeToken,
+                          "picture": keys.pictureName("photo.png"), "hash": Sharing.hash(keys.writeToken),
+                          "sealed": probe.base64EncodedString(), "about": "probe"]
+            try JSONSerialization.data(withJSONObject: ["link": try #require(link.page).absoluteString, "vector": vector, "owner": owner,
+                                                        "design": try json(anna.state.flatDesign().document()), "picture": Data(SHA256.hash(data: try picture())).hex])
+                .write(to: linkFile)
+            anna.close()
+            ben.close()
+            DocumentStore.finishSaving()
+            try "1".write(to: stageFile, atomically: true, encoding: .utf8)
+
+        case 1:
+            let given = try read(linkFile)
+            let vector = try #require(given["vector"] as? [String: String])
+            let secret = try #require(vector["secret"])
+            let keys = try #require(ShareKeys(link: secret))
+            let owner = try #require(given["owner"] as? String)
+            let windows = try read(folder.appendingPathComponent("windows/keys.json"))
+            // Windows makes the same keys from the link, opens what a Mac sealed, and seals what a Mac opens.
+            for name in ["room", "read", "write", "picture", "hash", "secretFromLink", "isLink"] { #expect(windows[name] as? Bool == true, "\(name)") }
+            #expect(windows["opened"] as? String == "Sealed on a Mac")
+            let theirs = try #require((windows["sealed"] as? String).flatMap { Data(base64Encoded: $0) })
+            #expect(keys.open(theirs, about: "probe") == Data("Sealed on Windows".utf8))
+            #expect(keys.open(theirs, about: "something else") == nil)
+            Sharing.shared.own(keys.room, with: owner)
+            let anna = try session(annaURL, "anna")
+            await anna.cloud?.syncForTesting()
+            // Windows' first changes came through the relay.
+            #expect(layer(anna, "R")?.opacity == 0.5)
+            #expect(layer(anna, "S, from Windows") != nil)
+            #expect(layer(anna, "W") != nil)
+            edit(anna, "R") { $0.frame.origin.y = 222 }
+            edit(anna, "T") { $0.name = "T, later on the Mac" }
+            await anna.cloud?.syncForTesting()
+            Sharing.shared.disownForTesting(keys.room)
+            let ben = try session(benURL, "ben")
+            await ben.cloud?.syncForTesting()
+            #expect(ben.state == anna.state)
+            Sharing.shared.own(keys.room, with: owner)
+            anna.close()
+            ben.close()
+            DocumentStore.finishSaving()
+            try "2".write(to: stageFile, atomically: true, encoding: .utf8)
+
+        case 2:
+            let given = try read(linkFile)
+            let vector = try #require(given["vector"] as? [String: String])
+            let secret = try #require(vector["secret"])
+            let keys = try #require(ShareKeys(link: secret))
+            let owner = try #require(given["owner"] as? String)
+            let windows = folder.appendingPathComponent("windows", isDirectory: true)
+            let opened = try read(windows.appendingPathComponent("opened.json"))
+            let looked = try read(windows.appendingPathComponent("look.json"))
+            let final = try read(windows.appendingPathComponent("final.json"))
+            let replica = try #require(opened["replica"] as? String)
+            // Windows opened it as the Macs had it, marked as Anna's, with the picture.
+            #expect(try design(in: opened) == (try design(in: given)))
+            #expect(opened["mark"] as? String == "sharedBy(Optional(\"Anna\"))")
+            #expect((opened["pictures"] as? [[String: Any]] ?? []).contains { $0["name"] as? String == "photo.png" && $0["sha256"] as? String == given["picture"] as? String })
+            #expect(looked["changed"] as? Bool == true)
+            #expect(try design(in: looked).allNodes.first { $0.name == "R" }?.frame.minY == 222)
+
+            Sharing.shared.own(keys.room, with: owner)
+            let anna = try session(annaURL, "anna")
+            await anna.cloud?.syncForTesting()
+            Sharing.shared.disownForTesting(keys.room)
+            let ben = try session(benURL, "ben")
+            await ben.cloud?.syncForTesting()
+            let arrived = try await CloudShare.download(keys, from: server) { _ in }
+            Sharing.shared.own(keys.room, with: owner)
+            for state in [anna.state, ben.state, arrived.state] {
+                let doc = state.flatDesign().document()
+                func named(_ name: String) -> Node? { doc.allNodes.first { $0.name == name } }
+                let r = try #require(named("R"))
+                #expect(r.frame.minX == 300 && r.frame.minY == 222 && r.fill.color == .black && r.opacity == 0.5)
+                #expect(named("S, from Windows") != nil && named("T, later on the Mac") != nil)
+                #expect(named("W")?.frame.minX == 60)
+                #expect(named("P")?.fill.image?.asset == "photo.png")
+                #expect(named("Shared with Windows") == (try design(in: given)).allNodes.first { $0.name == "Shared with Windows" })
+            }
+            #expect(anna.state == ben.state && ben.state == arrived.state)
+            // The same design on Windows.
+            let macDesign = anna.state.flatDesign().document()
+            #expect(try design(in: final) == macDesign)
+            print("Windows' design written the same, to the byte: \((final["design"] as? String) == (try json(macDesign)))")
+            // In the room, Windows wrote records of its own alone, said who it is, and named a version.
+            let fetched = try await CloudShare.fetch(keys, from: server, progress: CloudShare.Progress(), fully: true, replica: "zed")
+            #expect(fetched.people[replica]?.app == "windows")
+            let fromWindows = try #require(fetched.versions.first { $0.name == "From Windows" })
+            #expect(fromWindows.replica == replica)
+            let key = ShareRecord.versionDesign(fromWindows.id).key
+            let packed = try #require(try await server.get(keys.room, key, read: keys.readToken).flatMap { keys.open($0, about: key) })
+            #expect(VersionFiles.unpack(packed) != nil)
+            let listing = try await server.list(keys.room, since: 0, read: keys.readToken)
+            let parts = listing.records.compactMap { FolderShare.Part.record($0.key) }
+            #expect(Set(parts.map(\.replica)) == ["anna", "ben", replica])
+            #expect(parts.contains { $0.replica == replica && $0.part.kind == .changes })
+            // Anna stops sharing it; the others keep it as it last was.
+            try await server.unshare(keys.room, write: keys.writeToken, owner: owner)
+            Sharing.shared.disownForTesting(keys.room)
+            await ben.cloud?.syncForTesting()
+            #expect(ben.isReadOnly)
+            anna.close()
+            ben.close()
+            DocumentStore.finishSaving()
+            try "3".write(to: stageFile, atomically: true, encoding: .utf8)
+
+        default:
+            let ended = try read(folder.appendingPathComponent("windows/ended.json"))
+            #expect(ended["readOnly"] as? Bool == true)
+            #expect(ended["mark"] as? String == "ended")
+            #expect(ended["linkEnded"] as? Bool == true)
+            #expect(ended["unchanged"] as? Bool == true)
+            try "4".write(to: stageFile, atomically: true, encoding: .utf8)
+        }
+    }
 }
