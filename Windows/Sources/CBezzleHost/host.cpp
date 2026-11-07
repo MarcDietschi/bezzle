@@ -222,7 +222,11 @@ extern "C" int64_t bz_png_encode(int32_t width, int32_t height, const void* pixe
     const SkImageInfo info = SkImageInfo::Make(std::max(1, width), std::max(1, height), kRGBA_8888_SkColorType,
                                                straight ? kUnpremul_SkAlphaType : kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
     SkDynamicMemoryWStream stream;
-    if (!SkPngEncoder::Encode(&stream, SkPixmap(info, pixels, size_t(width) * 4), {})) return -1;
+    // Packed less tightly than Skia would (its 6), as the Mac's Image I/O packs them: a mockup's
+    // full-size layers are written in about half the time, and still no larger than the Mac's.
+    SkPngEncoder::Options options;
+    options.fZLibLevel = 3;
+    if (!SkPngEncoder::Encode(&stream, SkPixmap(info, pixels, size_t(width) * 4), options)) return -1;
     const int64_t size = int64_t(stream.bytesWritten());
     if (size > capacity) return -size;
     stream.copyTo(out);

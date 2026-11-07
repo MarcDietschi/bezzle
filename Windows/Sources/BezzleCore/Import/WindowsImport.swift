@@ -44,7 +44,18 @@ extension WindowsCore {
         }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         Library.shared.folder = folder
-        let (url, report) = try Importer.importFile(file, into: folder)
+        if ImportPictures.tracing, PhotoshopImporter.fileExtensions.contains(file.pathExtension.lowercased()) {
+            // Read once more first, to say how long the layers take and how long their PNGs.
+            let start = Date()
+            // The layers say how far they have got, below 0.9; the PNGs after.
+            nonisolated(unsafe) var encoding: Date?
+            _ = try? PhotoshopImporter.reading(file) { done, _ in if done < 0.9 { encoding = Date() } }
+            let end = Date()
+            print("layers \(Int(((encoding ?? end).timeIntervalSince(start)) * 1000)) ms, PNGs \(Int(end.timeIntervalSince(encoding ?? end) * 1000)) ms")
+            ImportPictures.end()
+            ImportPictures.begin()
+        }
+        let (url, report) = try ImportPictures.timed("all") { try Importer.importFile(file, into: folder) }
         let notes = report.notes.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map { (text: $0.key, count: $0.value) }
         return (url, ImportSummary(source: report.source, artboards: report.artboards, layers: report.layers, notes: notes,
                                    missingFonts: report.missingFonts.sorted()))
@@ -57,6 +68,15 @@ extension WindowsCore {
 /// needed, with what they draw (`CGImage.uses`).
 nonisolated enum ImportPictures {
     private static let lock = NSLock()
+    /// With BEZZLE_IMPORT_TRACE, how long each part took, said at the end (seconds, by part).
+    nonisolated(unsafe) static var spent: [String: Double] = [:]
+    static let tracing = ProcessInfo.processInfo.environment["BEZZLE_IMPORT_TRACE"] != nil
+    static func timed<T>(_ part: String, _ work: () throws -> T) rethrows -> T {
+        guard tracing else { return try work() }
+        let start = Date()
+        defer { let t = Date().timeIntervalSince(start); lock.withLock { spent[part, default: 0] += t } }
+        return try work()
+    }
     nonisolated(unsafe) private static var sent: Set<Int> = []
     /// Pictures Skia made and read back, by number, for the PNGs written from other threads.
     nonisolated(unsafe) private static var read: [Int: [UInt8]] = [:]
@@ -70,6 +90,8 @@ nonisolated enum ImportPictures {
         lock.withLock {
             sent = []
             read = [:]
+            if tracing { print(spent.sorted { $0.key < $1.key }.map { "\($0.key) \(Int($0.value * 1000)) ms" }.joined(separator: ", ")) }
+            spent = [:]
         }
     }
 
@@ -97,12 +119,12 @@ nonisolated enum ImportPictures {
         if let known = lock.withLock({ read[image.id] }) { return (known, false) }
         // Skia is asked on the main thread only, where the core gives it its pictures.
         guard Thread.isMainThread else { return nil }
-        let made: [UInt8]? = MainActor.assumeIsolated {
+        let made: [UInt8]? = timed("read back") { MainActor.assumeIsolated {
             give(image)
             var out = [UInt8](repeating: 0, count: w * h * 4)
             let done = out.withUnsafeMutableBytes { bz_picture_read(Int32(image.id), Int32(w), Int32(h), 0, $0.baseAddress) }
             return done == 0 ? out : nil
-        }
+        } }
         if let made { lock.withLock { read[image.id] = made } }
         return made.map { ($0, false) }
     }
@@ -122,7 +144,7 @@ nonisolated enum ImportPictures {
     static func draw(_ context: CGContext, into bitmap: CGContext.Bitmap) {
         guard Thread.isMainThread, !context.commands.isEmpty else { return }
         let w = context.width, h = context.height
-        let pixels: [UInt8]? = MainActor.assumeIsolated {
+        let pixels: [UInt8]? = timed("bitmaps drawn") { MainActor.assumeIsolated {
             let picture = CGImage(width: w, height: h, source: .picture(context.commands))
             picture.uses = context.drawn
             defer { Images.shared.list.removeAll { $0 === picture } }
@@ -130,7 +152,7 @@ nonisolated enum ImportPictures {
             var out = [UInt8](repeating: 0, count: w * h * 4)
             let done = out.withUnsafeMutableBytes { bz_picture_read(Int32(picture.id), Int32(w), Int32(h), 0, $0.baseAddress) }
             return done == 0 ? out : nil
-        }
+        } }
         guard let pixels else { return }
         let to = bitmap.data.assumingMemoryBound(to: UInt8.self)
         pixels.withUnsafeBufferPointer { p in

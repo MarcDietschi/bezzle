@@ -248,7 +248,8 @@ final class BezzleApp: SwiftApplication {
         Theme.readAppearance()
         design?.session.save()
         window.content = message(Words.t("Bringing in %@…", file.lastPathComponent), detail: "")
-        DispatchQueue.main.async { [weak self] in
+        // A moment for the words to be drawn before the reading holds the window up.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 do {

@@ -166,6 +166,10 @@ nonisolated func CGImageDestinationAddImage(_ destination: CGImageDestination, _
 }
 
 nonisolated func CGImageDestinationFinalize(_ destination: CGImageDestination) -> Bool {
+    ImportPictures.timed("png, all threads") { finalize(destination) }
+}
+
+nonisolated private func finalize(_ destination: CGImageDestination) -> Bool {
     guard let image = destination.images.first, let pixels = ImportPictures.pixels(of: image) else { return false }
     let w = image.width, h = image.height
     var capacity = w * h * 4 + h + 65_536
@@ -188,8 +192,10 @@ nonisolated extension CGImage {
     /// The picture's pixels, as Core Graphics hands them over: as they were given for pixels made
     /// here, otherwise as Skia makes them, premultiplied RGBA.
     var dataProvider: CGDataProvider? {
-        guard let pixels = ImportPictures.pixels(of: self) else { return nil }
-        return CGDataProvider(data: Data(pixels.bytes))
+        ImportPictures.timed("pixels handed over") {
+            guard let pixels = ImportPictures.pixels(of: self) else { return nil }
+            return CGDataProvider(data: Data(pixels.bytes))
+        }
     }
 }
 
@@ -323,6 +329,14 @@ nonisolated final class NSFont: @unchecked Sendable {
         pointSize = size
     }
 
+    /// A font named in a file that is not here, which keeps its name (KeyedArchives.swift).
+    init(postscriptName name: String, size: CGFloat) {
+        familyName = nil
+        face = "Regular"
+        fontName = name
+        pointSize = size
+    }
+
     var fontDescriptor: NSFontDescriptor { NSFontDescriptor(postscriptName: fontName, pointSize: pointSize) }
 
     /// The PostScript name the Mac's font of this family and face has, as most are made:
@@ -405,12 +419,6 @@ nonisolated extension NSColor {
         func held(_ v: Double) -> CGFloat { CGFloat(min(max(curved(min(max(v, 0), 1)), 0), 1)) }
         self.init(srgbRed: held(sr), green: held(sg), blue: held(sb), alpha: a)
     }
-}
-
-/// Texts Sketch 43 to 47 kept as archived attributed strings, which Foundation cannot read here:
-/// they come in from their layers' names, as the report says.
-final class NSKeyedUnarchiver {
-    static func unarchivedObject(ofClasses classes: [AnyClass], from data: Data) throws -> Any? { nil }
 }
 
 // Core Text's names for a font's features (CTFontCopyFeatures), which Sketch keeps them by.
