@@ -221,6 +221,8 @@ final class DesignCanvas {
     private let aidMarks = Canvas()
     /// What the find bar finds.
     private let foundMarks = Canvas()
+    /// The layer moved, resized or typed into, where it is in a deck's other posts.
+    private let echoes = WinUI.Path()
     /// The last press, for telling a double click from two: when, and where on the stage.
     private var lastPress: (at: CGPoint, time: UInt32, clicks: Int)?
     private var hovered: UUID? { session.hovered }
@@ -680,6 +682,46 @@ final class DesignCanvas {
         placeOverlays()
     }
 
+    /// While a layer of a post is moved, resized or typed into, the same layer in every other
+    /// post: faint dashes in pencil, as the Mac's DeckTool draws them.
+    private func drawEchoes() {
+        if echoes.parent == nil {
+            echoes.isHitTestVisible = false
+            echoes.stroke = Theme.brush(Theme.pencil, 0.45)
+            echoes.strokeThickness = 1
+            let dashes = DoubleCollection()
+            dashes.append(3)
+            dashes.append(3)
+            echoes.strokeDashArray = dashes
+            overlay.children.append(echoes)
+        }
+        let id = editing?.id ?? (session.selection.count == 1 ? session.selection.first : nil)
+        let quads = decks.spreading ? [] : WindowsCore.echoes(of: id)
+        guard !quads.isEmpty else {
+            echoes.visibility = .collapsed
+            return
+        }
+        let geometry = PathGeometry()
+        for quad in quads where quad.count == 4 {
+            let figure = PathFigure()
+            func at(_ p: CGPoint) -> Point {
+                let q = onStage(p)
+                return Point(x: Float(Double(q.x).rounded() + 0.5), y: Float(Double(q.y).rounded() + 0.5))
+            }
+            figure.startPoint = at(quad[0])
+            figure.isClosed = true
+            figure.isFilled = false
+            for p in quad.dropFirst() {
+                let segment = LineSegment()
+                segment.point = at(p)
+                figure.segments.append(segment)
+            }
+            geometry.figures.append(figure)
+        }
+        echoes.data = geometry
+        echoes.visibility = .visible
+    }
+
     /// The letters picked out in the text being typed into, if any.
     var typedSelection: String? {
         guard let editor, editor.selectionLength > 0 else { return nil }
@@ -1043,6 +1085,7 @@ final class DesignCanvas {
             overlaysAdded = true
         }
         if session.pointedStyle != nil || !session.litLayers.isEmpty { drawStyleUsers() }
+        drawEchoes()
         for (k, board) in boards.enumerated() {
             let lit = session.board == board.index
             sheets[k]?.name.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)

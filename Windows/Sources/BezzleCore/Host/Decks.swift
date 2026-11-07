@@ -100,6 +100,24 @@ extension WindowsCore {
         return found.flatMap { $0.locked ? nil : $0.id }
     }
 
+    /// While a layer of a post is moved, resized or typed into (`id`), the same layer in every
+    /// other post where it lies or reaches elsewhere, as four corners on the canvas each: for faint
+    /// dashes, so the longest words show from any post (the Mac's DeckTool.drawEchoes).
+    public static func echoes(of id: UUID?) -> [[CGPoint]] {
+        guard Editing.gestureStart != nil, let id, let doc = design, let (deck, post) = doc.post(of: id), let post,
+              deck.posts.count > 1, deck.posts.count <= 400, let mine = doc.absoluteFrame(of: id) else { return [] }
+        var seen = Set<[Int]>()
+        func key(_ r: CGRect) -> [Int] { [r.minX, r.minY, r.width, r.height].map { Int((Double($0) * 2).rounded()) } }
+        seen.insert(key(mine))
+        var out: [[CGPoint]] = []
+        for q in deck.posts where q != post {
+            let other = id.mixed(Deck.key(from: post, to: q))
+            guard let n = doc.node(other), let frame = doc.absoluteFrame(of: other), seen.insert(key(frame)).inserted else { continue }
+            out.append(Geometry.corners(of: frame, rotation: n.rotation))
+        }
+        return out
+    }
+
     /// The selection as it is picked, as the Mac's selectionChanged keeps it: a layer of a post
     /// not in front brings that post to the front; one of the design behind the posts is the same
     /// layer in the post in front.
