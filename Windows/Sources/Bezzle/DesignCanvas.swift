@@ -289,6 +289,7 @@ final class DesignCanvas {
             self.session.select(ids, on: ids.first.flatMap(WindowsCore.board(of:)) ?? ids.first.flatMap(WindowsCore.boardIndex(of:)))
         }
         flow.writeNote = { [weak self] id, at in self?.beginNote(on: id, at: at) }
+        flow.play = { [weak self] id in self?.session.play?(id) }
         inspect.titleHit = { [weak self] p in self?.titleHit(p) }
         curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
         offerChip.height = 28
@@ -2117,6 +2118,26 @@ final class DesignCanvas {
 
     private func onStage(_ p: CGPoint) -> CGPoint {
         CGPoint(x: Double(pan.x) + Double(p.x) * zoom, y: Double(pan.y) + Double(p.y) * zoom)
+    }
+
+    /// Where a part of the canvas lies in `element`'s points, when any of it is in sight.
+    func rect(onCanvas r: CGRect, in element: UIElement) -> CGRect? {
+        let a = onStage(r.origin)
+        let shown = CGRect(x: a.x, y: a.y, width: Double(r.width) * zoom, height: Double(r.height) * zoom)
+        guard shown.intersects(CGRect(x: 0, y: 0, width: stage.actualWidth, height: stage.actualHeight)),
+              let t = try? stage.transformToVisual(element),
+              let o = try? t.transformPoint(Point(x: Float(shown.minX), y: Float(shown.minY))) else { return nil }
+        return CGRect(x: Double(o.x), y: Double(o.y), width: Double(shown.width), height: Double(shown.height))
+    }
+
+    /// A part of the canvas brought into sight, its middle to the middle, when none of it shows.
+    func reveal(_ r: CGRect) {
+        let a = onStage(r.origin)
+        let shown = CGRect(x: a.x, y: a.y, width: Double(r.width) * zoom, height: Double(r.height) * zoom)
+        let w = stage.actualWidth, h = stage.actualHeight
+        guard w > 0, h > 0, !shown.intersects(CGRect(x: 0, y: 0, width: w, height: h)) else { return }
+        pan = CGPoint(x: w / 2 - Double(r.midX) * zoom, y: h / 2 - Double(r.midY) * zoom)
+        place()
     }
 
     private func inDesign(_ p: CGPoint) -> CGPoint {

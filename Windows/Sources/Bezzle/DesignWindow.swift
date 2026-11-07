@@ -18,6 +18,8 @@ final class DesignWindow {
     let inspector: Inspector
     let menus = MenuHost()
     private lazy var export = ExportSheet(session: session)
+    /// The prototype being played, over the panels and the canvas.
+    private var playing: PlayerView?
 
     init(name: String, onClose: @escaping () -> Void) {
         session = DesignSession(name: name)
@@ -81,6 +83,15 @@ final class DesignWindow {
         try? Grid.setRowSpan(export.layer, 2)
         root.children.append(export.layer)
         bar.onExport = { [weak self] in self?.export.open() }
+        bar.onPlay = { [weak self] in self?.play(from: nil) }
+        session.play = { [weak self] board in self?.play(from: board) }
+        // Seen as layers again, the playing stops at once.
+        session.listen { [weak self] in
+            guard let self, self.session.mode != 1, let view = self.playing else { return }
+            self.playing = nil
+            view.player.stop()
+            self.remove(view.layer)
+        }
         try? Grid.setRowSpan(menus.layer, 2)
         root.children.append(menus.layer)
         canvas.menus = menus
@@ -95,6 +106,16 @@ final class DesignWindow {
             if args.key == .menu { self.inspector.photoAltChanged() }
             if self.menus.isOpen {
                 if args.key == .escape { args.handled = true; self.menus.close() }
+                return
+            }
+            if let playing = self.playing {
+                playing.key(args)
+                return
+            }
+            // Ctrl+Enter plays the prototype, as ⌘↩ does on the Mac.
+            if args.key == .enter, GetKeyState(Int32(VK_CONTROL)) < 0, self.session.mode == 1 {
+                args.handled = true
+                self.play(from: nil)
                 return
             }
             if self.export.isOpen {
@@ -116,6 +137,40 @@ final class DesignWindow {
             if args.key == .menu { self.inspector.photoAltChanged() }
             self.canvas.keyUp(args)
         }
+    }
+
+    /// Plays the prototype from a screen, or from the one a picked layer lies on, or from where
+    /// it starts: over the panels and the canvas, under the bar.
+    func play(from board: UUID?) {
+        guard playing == nil, session.mode == 1,
+              let start = WindowsCore.playStart(from: board, selection: session.selection),
+              let player = WindowsCore.Player(start: start) else { return }
+        let view = PlayerView(player: player)
+        view.canvasRect = { [weak self, weak view] r in
+            guard let self, let view else { return nil }
+            return self.canvas.rect(onCanvas: r, in: view.layer)
+        }
+        view.landing = { [weak self] id in
+            guard let self else { return }
+            if let r = player.canvasFrame(of: id) { self.canvas.reveal(r) }
+            self.session.select([id], on: WindowsCore.boardIndex(of: id))
+        }
+        view.closed = { [weak self, weak view] in
+            guard let self, let view, self.playing === view else { return }
+            self.playing = nil
+            self.remove(view.layer)
+            self.canvas.takeKeys()
+        }
+        try? Grid.setRow(view.layer, 1)
+        var at: UInt32 = 0
+        if (try? root.children.indexOf(export.layer, &at)) == true { try? root.children.insertAt(at, view.layer) } else { root.children.append(view.layer) }
+        playing = view
+        view.takeKeys()
+    }
+
+    private func remove(_ element: UIElement) {
+        var k: UInt32 = 0
+        if (try? root.children.indexOf(element, &k)) == true { root.children.removeAt(k) }
     }
 
     /// The zoom menu, as the Mac's: the steps and zooms, then the drawing aids and what goes with them.

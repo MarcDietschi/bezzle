@@ -89,24 +89,126 @@ extension Inspector {
                     self?.edited()
                 })
             }
+            rows.append(Controls.cardButton(Words.t("Play from Here"), height: 28) { [weak self] in self?.session.play?(board) })
             return rows
         })
     }
 
-    /// With nothing picked: the screen the prototype starts on, and the ways through it.
+    /// With nothing picked: the screen the prototype starts on, standing in its device on a small
+    /// stage, lit as on the canvas: a click plays it. Under it the flag names it and offers the
+    /// other screens to start on; then the ways through it.
     private func startCard(_ screens: [(id: UUID, name: String, starts: Bool)]) -> UIElement {
         let start = screens.first { $0.starts } ?? screens.first
         let stack = StackPanel()
-        stack.spacing = 8
-        if let start {
-            let head = StackPanel()
-            head.orientation = .horizontal
-            head.spacing = 8
-            head.children.append(Glyphs.view(Glyphs.flag(), size: 14, brush: Theme.brush(Theme.pencil)))
-            head.children.append(Theme.text(start.name, size: 12.5, weight: 600))
-            stack.children.append(head)
-            if let picture = screenPicture(start.id, width: Theme.cardWidth - 24) { stack.children.append(picture) }
+        let width = Theme.cardWidth
+        let top = Grid()
+        top.height = 206
+        top.cornerRadius = CornerRadius(topLeft: 12, topRight: 12, bottomRight: 0, bottomLeft: 0)
+        top.background = Theme.brush(Theme.table)
+        let paper = Self.rendered(CGSize(width: width, height: 206)) { scale, fill in
+            WindowsCore.playerStage(width: Int((width * scale).rounded()), height: Int((206 * scale).rounded()), scale: scale, table: Theme.table,
+                                    dark: Theme.dark, step: 7, fade: (0.5, 30, 190, 0.4), lit: false, into: fill)
         }
+        paper.stretch = .fill
+        top.children.append(paper)
+        if let start, let device = startDevice(start.id) {
+            let lift = CompositeTransform()
+            device.renderTransform = lift
+            device.horizontalAlignment = .center
+            device.verticalAlignment = .center
+            top.children.append(device)
+            let disc = Grid()
+            disc.width = 46
+            disc.height = 46
+            disc.horizontalAlignment = .center
+            disc.verticalAlignment = .center
+            disc.isHitTestVisible = false
+            let round = Ellipse()
+            round.fill = Theme.brush(Theme.pencil)
+            disc.children.append(round)
+            let triangle = Glyphs.view(Glyphs.play(size: 18), size: 18, brush: Theme.brush(0xFFFFFF))
+            triangle.horizontalAlignment = .center
+            triangle.verticalAlignment = .center
+            triangle.margin = Theme.inset(3, 0, 0, 0)
+            disc.children.append(triangle)
+            let swell = CompositeTransform()
+            swell.centerX = 23
+            swell.centerY = 23
+            disc.renderTransform = swell
+            func look(hovering: Bool, pressed: Bool) {
+                swell.scaleX = hovering ? 1.1 : 0.92
+                swell.scaleY = swell.scaleX
+                disc.opacity = hovering ? 1 : 0.88
+                lift.translateY = hovering ? -3 : 0
+                lift.centerX = device.width / 2
+                lift.centerY = device.height / 2
+                lift.scaleX = pressed ? 0.97 : 1
+                lift.scaleY = lift.scaleX
+            }
+            look(hovering: false, pressed: false)
+            top.children.append(disc)
+            top.pointerEntered.addHandler { _, _ in look(hovering: true, pressed: false) }
+            top.pointerExited.addHandler { _, _ in look(hovering: false, pressed: false) }
+            top.pointerPressed.addHandler { _, args in
+                args?.handled = true
+                look(hovering: true, pressed: true)
+            }
+            top.pointerReleased.addHandler { [weak self] _, _ in
+                look(hovering: true, pressed: false)
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.session.play?(nil) } }
+            }
+            try? ToolTipService.setToolTip(top, Words.t("Play from %@", start.name) + "  Ctrl+Enter")
+        } else {
+            // No screen yet: a phone's outline, waiting.
+            let outline = Rectangle()
+            outline.width = 74
+            outline.height = 150
+            outline.radiusX = 16
+            outline.radiusY = 16
+            outline.stroke = Theme.ink(4)
+            outline.strokeThickness = 1.2
+            let dash = DoubleCollection()
+            dash.append(4 / 1.2)
+            dash.append(3 / 1.2)
+            outline.strokeDashArray = dash
+            outline.horizontalAlignment = .center
+            outline.verticalAlignment = .center
+            top.children.append(outline)
+        }
+        stack.children.append(top)
+
+        let foot = Grid()
+        foot.height = 40
+        foot.margin = Theme.inset(12, 0, 12, 0)
+        let head = StackPanel()
+        head.orientation = .horizontal
+        head.spacing = 7
+        head.verticalAlignment = .center
+        head.children.append(Glyphs.view(Glyphs.flag(), size: 14, brush: Theme.brush(Theme.pencil)))
+        head.children.append(Theme.text(start?.name ?? "", size: 12.5, weight: 500))
+        foot.children.append(head)
+        if screens.count > 1, let start {
+            let menu = Controls.menuButton(Words.t("Start"), width: 86, menus: menus, menuWidth: 220) { [weak self] in
+                screens.map { s in
+                    MenuHost.Entry.item(s.name, checked: s.id == start.id) {
+                        WindowsCore.setStart(s.id)
+                        self?.edited()
+                    }
+                }
+            }
+            menu.horizontalAlignment = .right
+            menu.verticalAlignment = .center
+            try? ToolTipService.setToolTip(menu, Words.t("Where the prototype starts. On the canvas, drag the flag onto another screen."))
+            foot.children.append(menu)
+        }
+        stack.children.append(foot)
+        let card = Theme.card(radius: 12)
+        card.width = width
+        card.child = stack
+
+        let all = StackPanel()
+        all.spacing = 10
+        all.children.append(card)
         let story = WindowsCore.flowStory()
         if !story.isEmpty {
             let list = StackPanel()
@@ -116,21 +218,66 @@ extension Inspector {
                 line.textTrimming = .characterEllipsis
                 list.children.append(line)
             }
-            stack.children.append(list)
+            let storyCard = Theme.card(radius: 12)
+            storyCard.width = width
+            storyCard.padding = Theme.inset(12, 10, 12, 10)
+            storyCard.child = list
+            all.children.append(storyCard)
         }
-        stack.children.append(Controls.caption("Pull a thread out of a layer onto a screen to link it, or onto the well beside its screen to go back."))
-        let card = Theme.card(radius: 12)
-        card.width = Theme.cardWidth
-        card.padding = Theme.inset(12, 10, 12, 10)
-        card.child = stack
-        return card
+        all.children.append(Controls.caption("Pull a thread out of a layer onto a screen to link it, or onto the well beside its screen to go back."))
+        return all
+    }
+
+    /// The screen the prototype starts on, in its device, as tall as 150 and as wide as 210, its
+    /// shadow under it.
+    private func startDevice(_ board: UUID) -> FrameworkElement? {
+        guard let d = WindowsCore.playDevice(for: board) else { return nil }
+        let form = Devices.form(group: d.group, name: d.name, width: Double(d.screen.width), height: Double(d.screen.height))
+        let raw = Devices.metrics(form, d.screen)
+        let k = min(150 / max(Double(raw.size.height), 1), 210 / max(Double(raw.size.width), 1))
+        let (figure, m) = Devices.view(form, screen: CGSize(width: Double(d.screen.width) * k, height: Double(d.screen.height) * k))
+        let holder = Grid()
+        holder.width = Double(m.size.width)
+        holder.height = Double(m.size.height)
+        holder.isHitTestVisible = false
+        // Standing on the small stage, lit from above.
+        let scale = 2.0, inset = min(Double(m.size.width), Double(m.size.height)) * 0.1, pad = 26.0
+        let shadow = Self.rendered(CGSize(width: Double(m.size.width) - inset * 2 + pad * 2, height: Double(m.size.height) - inset * 2 + pad * 2)) { _, fill in
+            WindowsCore.softShadow(width: Int(((Double(m.size.width) - inset * 2) * scale).rounded()), height: Int(((Double(m.size.height) - inset * 2) * scale).rounded()),
+                                   pad: Int(pad * scale), blur: 12 * scale, dy: 0, colour: Theme.shadow, alpha: 0.24, into: fill)
+        }
+        shadow.stretch = .fill
+        shadow.horizontalAlignment = .left
+        shadow.verticalAlignment = .top
+        shadow.margin = Theme.inset(inset - pad, inset - pad + 8, inset - pad, inset - pad - 8)
+        holder.children.append(shadow)
+        holder.children.append(figure)
+        if let picture = screenPicture(board, width: Double(m.screen.width), height: Double(m.screen.height), radius: m.radius) {
+            picture.horizontalAlignment = .left
+            picture.verticalAlignment = .top
+            picture.margin = Theme.inset(Double(m.screen.minX), Double(m.screen.minY), 0, 0)
+            holder.children.append(picture)
+        }
+        if case .phone(true) = form {
+            let w = Double(m.screen.width)
+            let island = Border()
+            island.background = Theme.brush(0x000000)
+            island.width = w * 0.3
+            island.height = max(1.5, w * 0.085)
+            island.cornerRadius = Theme.corners(island.height / 2)
+            island.horizontalAlignment = .left
+            island.verticalAlignment = .top
+            island.margin = Theme.inset(Double(m.screen.midX) - w * 0.15, Double(m.screen.minY) + max(1.2, w * 0.035), 0, 0)
+            holder.children.append(island)
+        }
+        return holder
     }
 
     /// A screen in small, the top of it as much as a device shows, `width` points wide.
-    private func screenPicture(_ board: UUID, width: Double) -> FrameworkElement? {
+    private func screenPicture(_ board: UUID, width: Double, height: Double? = nil, radius: Double = 5) -> FrameworkElement? {
         guard let index = WindowsCore.boardIndex(of: board), let frame = WindowsCore.boards().first(where: { $0.index == index })?.frame else { return nil }
         let f = (w: Double(frame.width), h: Double(frame.height))
-        let h = min(f.h, f.w * 2.17) / max(f.w, 1) * width
+        let h = height ?? min(f.h, f.w * 2.17) / max(f.w, 1) * width
         let image = Self.rendered(CGSize(width: width, height: h)) { scale, fill in
             WindowsCore.render(board: index, scale: scale * width / max(f.w, 1), into: fill)
         }
@@ -139,9 +286,11 @@ extension Inspector {
         let holder = Border()
         holder.width = width
         holder.height = h
-        holder.cornerRadius = Theme.corners(5)
-        holder.borderBrush = Theme.hairline
-        holder.borderThickness = Theme.inset(0.5)
+        holder.cornerRadius = Theme.corners(radius)
+        if height == nil {
+            holder.borderBrush = Theme.hairline
+            holder.borderThickness = Theme.inset(0.5)
+        }
         holder.child = image
         return holder
     }

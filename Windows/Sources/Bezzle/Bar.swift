@@ -18,8 +18,12 @@ final class Bar {
     /// How much room Windows' caption buttons take at the right.
     static let captionRoom = 140.0
 
-    /// What Export… does: the window opens its Export sheet.
+    /// What Export… does: the window opens its Export sheet. Seen as a prototype, the button
+    /// turns into Play, as the Mac's ModeAction.
     var onExport: (() -> Void)?
+    var onPlay: (() -> Void)?
+    private let action = Border()
+    private var actionMode = -1
     /// Bezzle's own menus, and what the zoom menu holds.
     var menus: MenuHost?
     var zoomEntries: (() -> [MenuHost.Entry])?
@@ -61,7 +65,7 @@ final class Bar {
         right.children.append(iconButton(Glyphs.history()))
         right.children.append(cardButton("Share…", glyph: Glyphs.share()))
         right.children.append(modeSwitch())
-        right.children.append(cardButton("Export…", glyph: nil) { [weak self] in self?.onExport?() })
+        right.children.append(actionButton())
         try? Grid.setColumn(right, 2)
         root.children.append(right)
 
@@ -71,6 +75,44 @@ final class Bar {
 
     private func show() {
         zoomLabel.text = "\(Int((session.zoom * 100).rounded()))%"
+        if actionMode != session.mode { paintAction() }
+        paintModes()
+    }
+
+    /// Export…, or seen as a prototype, Play: one button turning from a card into the pencil's blue.
+    private func actionButton() -> UIElement {
+        action.height = 28
+        action.cornerRadius = Theme.corners(8)
+        action.pointerPressed.addHandler { _, args in args?.handled = true }
+        action.tapped.addHandler { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if self.session.mode == 1 { self.onPlay?() } else { self.onExport?() }
+                }
+            }
+        }
+        paintAction()
+        return action
+    }
+
+    private func paintAction() {
+        actionMode = session.mode
+        let play = session.mode == 1
+        action.background = Theme.brush(play ? Theme.pencil : Theme.card)
+        action.borderBrush = play ? Theme.clear : Theme.hairline
+        action.borderThickness = Theme.inset(play ? 0 : 0.5)
+        let row = StackPanel()
+        row.orientation = .horizontal
+        row.spacing = 6
+        row.margin = Theme.inset(play ? 11 : 14, 0, play ? 13 : 14, 0)
+        row.verticalAlignment = .center
+        if play { row.children.append(Glyphs.view(Glyphs.play(size: 12), size: 12, brush: Theme.brush(Theme.onInk))) }
+        let title = Theme.text(Words.t(play ? "Play" : "Export…"), size: play ? 12.5 : 12, weight: play ? 600 : 500)
+        if play { title.foreground = Theme.brush(Theme.onInk) }
+        row.children.append(title)
+        action.child = row
+        try? ToolTipService.setToolTip(action, Words.t(play ? "Play the prototype from where it starts, or from the picked screen  Ctrl+Enter" : "Export  Ctrl+E"))
     }
 
     /// The front tab: 196 wide, 30 tall, on a card of radius 9, with its close cross.

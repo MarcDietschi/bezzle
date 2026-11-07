@@ -37,6 +37,8 @@ final class DesignSession {
             changed()
         }
     }
+    /// Plays the prototype from a screen, or from where it starts (the window's player).
+    var play: ((UUID?) -> Void)?
     /// The Photo card's colour whose rows show, as a press on the photo picks it.
     var pickPhotoBand: ((String) -> Void)?
     /// The selected layers, all on the artboard at `board` (its index among the design's layers);

@@ -448,6 +448,34 @@ enum Glyphs {
         return [Part(data: p.d, mode: .stroke, width: 1.3)]
     }
 
+    /// From the start again: a ring open at its top left, running round to an arrow there.
+    static func restart(size s: Double = 32) -> [Part] {
+        var p = PathData()
+        let cx = s * 0.5, cy = s * 0.52, r = s * 0.17
+        var first = true
+        var a = 180.0
+        while a >= -110 {
+            let x = cx + r * cos(a * .pi / 180), y = cy + r * sin(a * .pi / 180)
+            if first { p.move(x, y); first = false } else { p.line(x, y) }
+            a -= 10
+        }
+        let end = -110.0 * .pi / 180
+        let ex = cx + r * cos(end), ey = cy + r * sin(end)
+        let dx = sin(end), dy = -cos(end), head = s * 0.09
+        for turn in [0.7, -0.7] {
+            let bx = -(dx * cos(turn) - dy * sin(turn)), by = -(dx * sin(turn) + dy * cos(turn))
+            p.move(ex, ey); p.line(ex + bx * head, ey + by * head)
+        }
+        return [Part(data: p.d, mode: .stroke, width: 1.6)]
+    }
+
+    /// The triangle of play.
+    static func play(size s: Double = 12) -> [Part] {
+        var p = PathData()
+        p.move(s * 0.3, s * 0.2); p.line(s * 0.3, s * 0.8); p.line(s * 0.8, s * 0.5); p.close()
+        return [Part(data: p.d, mode: .fill)]
+    }
+
     static func chevron(open: Bool, size s: Double = 9) -> [Part] {
         var p = PathData()
         if open { p.move(s * 0.2, s * 0.35); p.line(s * 0.5, s * 0.65); p.line(s * 0.8, s * 0.35) }
