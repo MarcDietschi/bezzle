@@ -39,7 +39,7 @@ extension WindowsCore {
 
     /// The formats a layer can be taken as from Inspect, as Windows writes them.
     public static var assetFormats: [(key: String, title: String)] {
-        [ExportFormat.png, .pdf].map { ($0.rawValue, $0.title) }
+        [ExportFormat.png, .svg, .pdf].map { ($0.rawValue, $0.title) }
     }
 
     /// A layer written as a file of `format` into a folder of its own, named as an export names
@@ -69,7 +69,7 @@ extension WindowsCore {
         guard let seen = design else { return [] }
         return ExportItem.marked(in: previewBase ?? seen, seen: seen).filter { !$0.node.isArtboard }.prefix(24).map { item in
             let preset = item.node.exports?.first ?? ExportPreset()
-            let format = preset.format == .png || preset.format == .pdf ? preset.format : .png
+            let format = [.png, .svg, .pdf].contains(preset.format) ? preset.format : .png
             return (item.node.id, item.node.name, format.rawValue, preset.size.plainScale ?? 1)
         }
     }
