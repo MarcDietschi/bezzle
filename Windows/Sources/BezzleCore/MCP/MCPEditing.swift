@@ -20,6 +20,17 @@ extension MCPTools {
         return true
     }
 
+    /// Does to a copy of the design what the menus do to a selection, then makes the same change
+    /// to the design, selecting what it leaves selected. Returns whether anything changed.
+    func onSelection(_ store: DocumentStore, _ ids: [UUID], _ action: LocalizedStringResource, _ body: (DesignCopy) -> Void) throws -> Bool {
+        let copy = DesignCopy(store.doc, selection: ids, fronts: store.fronts)
+        body(copy)
+        let changed = try change(store, action) { $0 = copy.doc }
+        store.fronts = copy.fronts
+        store.selection = copy.selection.filter { store.doc.node($0) != nil }
+        return changed
+    }
+
     /// One of the core's commands on the open design, as one step; whether it changed anything.
     func command(_ store: DocumentStore, _ run: () -> Void) throws -> Bool {
         MCPHost.shared.endEditing()
@@ -374,6 +385,19 @@ extension MCPTools {
         }
         let changed = try command(store) { WindowsCore.flip(ids, horizontally: across) }
         return described(ids, in: store, warnings: changed ? [] : ["Nothing changed: artboards, locked layers, and text on its own do not flip."])
+    }
+
+    func combineShapes(_ args: Arguments) async throws -> [Content] {
+        let store = try await store(args)
+        let ids = try Self.layers(args, in: store)
+        let operation = try args.string("operation")?.lowercased() ?? ""
+        guard ["union", "subtract", "intersect", "exclude"].contains(operation) else { throw MCPError("operation is union, subtract, intersect or exclude.") }
+        guard WindowsCore.canCombine(ids) else { throw MCPError("Combining takes two or more rectangles, ellipses and paths, none locked.") }
+        MCPHost.shared.endEditing()
+        guard let made = WindowsCore.combine(ids, operation) else { throw MCPError("Nothing would be left of them, so nothing changed.") }
+        MCPHost.shared.edited()
+        store.selection = [made]
+        return described([made], in: store, full: true)
     }
 
     func selectLayers(_ args: Arguments) async throws -> [Content] {

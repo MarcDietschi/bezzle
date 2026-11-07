@@ -24,7 +24,7 @@ extension WindowsCore {
         public let news: Bool
     }
 
-    private static func same(_ a: URL, _ b: URL?) -> Bool {
+    static func same(_ a: URL, _ b: URL?) -> Bool {
         guard let b else { return false }
         return a.standardizedFileURL.path.lowercased() == b.standardizedFileURL.path.lowercased()
     }
@@ -58,6 +58,15 @@ extension WindowsCore {
                 done()
             }
         }
+    }
+
+    /// Every design read, all but the open one, in the home screen's order (the AI server's).
+    static var shelfContents: [LibraryContent] { shelfOrder.compactMap { shelf[$0] } }
+
+    /// Reads them as `readLibraries` does, once a reading going on is done.
+    static func refreshLibraries(_ urls: [URL]) async {
+        while reading { try? await Task.sleep(for: .milliseconds(50)) }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in readLibraries(urls) { done.resume() } }
     }
 
     /// The designs that have components or styles of their own, in the home screen's order.

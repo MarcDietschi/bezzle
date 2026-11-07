@@ -59,6 +59,14 @@ extension MCPTools {
         return [.png(png), .text(note.text)]
     }
 
+    /// A picture the core drew, as a PNG file: drawn by Skia with the pictures made for it.
+    static func png(_ image: CGImage) -> Data? {
+        let first = Images.shared.list.first.map(\.id) ?? 0
+        WindowsCore.picturesFrom = first
+        defer { WindowsCore.picturesFrom = nil }
+        return SVGWriter.png(image)
+    }
+
     /// Premultiplied RGBA pixels as a PNG file.
     static func png(_ pixels: [UInt8], width: Int, height: Int) -> Data? {
         let count = pixels.withUnsafeBytes { bz_image_encode(Int32(width), Int32(height), $0.baseAddress, 0, 1) }

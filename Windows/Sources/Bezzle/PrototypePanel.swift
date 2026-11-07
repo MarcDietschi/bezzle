@@ -400,6 +400,7 @@ extension Inspector {
         chips.opacity = count == 0 ? 0.45 : 1
         try? ToolTipService.setToolTip(chips, Words.t(count == 0 ? "Give colours, type, shadows or corners a name in the design, and they come out here as tokens." : "Copy the design's named looks as tokens"))
         stack.children.append(chips)
+        stack.children.append(buildItButton(name))
         if showsInspect {
             let inspect = Controls.cardButton(Words.t("Inspect"), height: 30) { [weak self] in self?.session.mode = 2 }
             inspect.horizontalAlignment = .stretch
@@ -411,6 +412,52 @@ extension Inspector {
         card.padding = Theme.inset(12)
         card.child = stack
         return card
+    }
+
+    /// Build It with Claude, as on the Mac: copies what to tell Claude, which, with Bezzle
+    /// connected, gets every screen, flow, state and token through the AI server in one go.
+    private func buildItButton(_ design: String) -> FrameworkElement {
+        let button = Border()
+        button.height = 30
+        button.cornerRadius = Theme.corners(8)
+        button.background = Theme.brush(Theme.ink)
+        let row = StackPanel()
+        row.orientation = .horizontal
+        row.spacing = 7
+        row.horizontalAlignment = .center
+        row.verticalAlignment = .center
+        let mark = Glyphs.view(Glyphs.sparkle(size: 12), size: 12, brush: Theme.brush(Theme.onInk))
+        mark.verticalAlignment = .center
+        row.children.append(mark)
+        let words = Theme.text(Words.t("Build It with Claude"), size: 12.5, weight: 600)
+        words.foreground = Theme.brush(Theme.onInk)
+        words.verticalAlignment = .center
+        row.children.append(words)
+        button.child = row
+        button.pointerEntered.addHandler { _, _ in button.opacity = 0.9 }
+        button.pointerExited.addHandler { _, _ in button.opacity = 1 }
+        button.pointerPressed.addHandler { _, args in args?.handled = true }
+        button.tapped.addHandler { _, _ in
+            Clipboard.copyText(Self.buildPrompt(for: design))
+            words.text = "✓ " + Words.t("Copied")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                MainActor.assumeIsolated { words.text = Words.t("Build It with Claude") }
+            }
+        }
+        try? ToolTipService.setToolTip(button, Words.t("Copies what to tell Claude. With Bezzle connected, Claude gets every screen, flow, state and token in one go, and can write what changes in the code back into the design."))
+        return button
+    }
+
+    /// What to tell Claude to build the prototype: the server's prompt does the rest (the Mac's
+    /// HandOffCard.prompt, opened from File Explorer here).
+    static func buildPrompt(for design: String) -> String {
+        """
+        Build a working prototype of my Bezzle design "\(design)". Use the Bezzle MCP server: run its build_prototype prompt \
+        (or call get_prototype) for the screens, flows, component states, design tokens and assets. Make it one self-contained \
+        HTML file with its pictures beside it, that opens straight from File Explorer: no server, no build step, nothing to \
+        install. Keep every element tagged with its Bezzle layer id, and when the prototype changes, write the change back \
+        into the design with Bezzle's tools.
+        """
     }
 
     /// What a copy of a component shows as it is used: each variant whose name says a state plays

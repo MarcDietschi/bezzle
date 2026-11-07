@@ -104,6 +104,12 @@ import Foundation
         return store
     }
 
+    /// The designs open: on Windows, the one in the window.
+    static var stores: [DocumentStore] { DocumentStore.open.isOpen ? [DocumentStore.open] : [] }
+
+    /// What the Mac adds when a file is out of its sandbox's reach; Windows has none.
+    static var unreachable: String { "" }
+
     /// The designs on the home screen: those in the designs folder, the latest first.
     private static func designs() -> [(name: String, url: URL, modified: Date)] {
         let folder = MCPHost.shared.designsFolder()

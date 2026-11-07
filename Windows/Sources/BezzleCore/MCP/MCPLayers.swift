@@ -559,7 +559,7 @@ extension MCPTools {
         func value(_ k: String) -> Any? { o[k].flatMap { $0 is NSNull ? nil : $0 } }
         if let family = try Read.string(value("family"), "\(key).family") {
             let match = ["system", "sf pro"].contains(family.lowercased()) ? TextStyle.system : Fonts.families.first { $0.caseInsensitiveCompare(family) == .orderedSame }
-            guard let match else { throw MCPError("There is no font family \"\(family)\" on this Mac. list_fonts lists them.") }
+            guard let match else { throw MCPError("There is no font family \"\(family)\" in Bezzle. list_fonts lists them.") }
             letters.face = Fonts.face(like: letters.face, of: letters.family, in: match)
             letters.family = match
         }
@@ -599,7 +599,7 @@ extension MCPTools {
         func value(_ key: String) -> Any? { o[key].flatMap { $0 is NSNull ? nil : $0 } }
         if let family = try Read.string(value("family"), "font.family") {
             let match = ["system", "sf pro"].contains(family.lowercased()) ? TextStyle.system : Fonts.families.first { $0.caseInsensitiveCompare(family) == .orderedSame }
-            guard let match else { throw MCPError("There is no font family \"\(family)\" on this Mac. list_fonts lists them.") }
+            guard let match else { throw MCPError("There is no font family \"\(family)\" in Bezzle. list_fonts lists them.") }
             style.family = match
             let faces = Fonts.faces(of: match)
             if !faces.contains(style.face) { style.face = faces.contains("Regular") ? "Regular" : faces.first ?? "Regular" }

@@ -765,6 +765,23 @@ extension Glyphs {
         return [Part(data: p.d, mode: .stroke, width: 1.1), Part(data: dots.d, mode: .fill)]
     }
 
+    /// A spark of four points and a small one beside it, as the Mac's sparkles, filled.
+    static func sparkle(size s: Double = 12) -> [Part] {
+        var p = PathData()
+        func star(_ cx: Double, _ cy: Double, _ r: Double) {
+            let k = r * 0.28
+            p.move(cx, cy - r)
+            p.quad(cx + k, cy - k, cx + r, cy)
+            p.quad(cx + k, cy + k, cx, cy + r)
+            p.quad(cx - k, cy + k, cx - r, cy)
+            p.quad(cx - k, cy - k, cx, cy - r)
+            p.close()
+        }
+        star(s * 0.42, s * 0.56, s * 0.40)
+        star(s * 0.80, s * 0.20, s * 0.17)
+        return [Part(data: p.d, mode: .fill)]
+    }
+
     /// Match case, as the Mac's textformat: a capital A and a small a, 14 square.
     static func matchCase(size s: Double = 14) -> [Part] {
         var p = PathData()

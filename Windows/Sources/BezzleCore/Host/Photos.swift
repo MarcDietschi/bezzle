@@ -210,7 +210,7 @@ extension WindowsCore {
     nonisolated(unsafe) private static var looksKept: [String: PhotoTones] = [:]
 
     /// What would suit a layer's picture best, worked out once for each picture.
-    private static func autoDevelop(_ n: Node) -> Develop {
+    static func autoDevelop(_ n: Node) -> Develop {
         guard let image = n.fill.image else { return Develop() }
         if let known = autoKept[image.asset] { return known }
         let d = pixels(of: { assets.image(image.asset, pixels: 256) }, longest: 160).map(Develop.auto(pixels:)) ?? Develop()
