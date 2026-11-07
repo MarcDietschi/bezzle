@@ -3,25 +3,6 @@ import Observation
 
 // MARK: - Versions
 
-/// A design as it was at one moment, kept to look back at and to go back to. Some are taken by
-/// themselves as a design is worked on; some are given a name, and those are kept for good and,
-/// in a shared design, shared with everyone.
-nonisolated struct DesignVersion: Codable, Identifiable, Hashable, Sendable {
-    var id = UUID()
-    var date: Date
-    /// A name given it; a version with one is kept for good.
-    var name: String?
-    /// Who took or named it.
-    var by: String?
-    var replica: String?
-    /// How many layers the design had.
-    var layers = 0
-    /// Named in a shared design, and so kept by everyone it is shared with.
-    var shared: Bool?
-
-    var isNamed: Bool { name != nil }
-}
-
 /// Where a design keeps its versions: a folder in its package, with a list of them and each
 /// one packed small. Pictures never change once in a design, so a version only needs the design
 /// itself to be whole.
@@ -72,15 +53,11 @@ nonisolated enum VersionFiles {
 
     static func list(at file: URL) -> [DesignVersion] {
         guard let data = try? Data(contentsOf: file) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .millisecondsSince1970
-        return ((try? decoder.decode([DesignVersion].self, from: data)) ?? []).sorted { $0.date < $1.date }
+        return VersionKeeping.list(from: data)
     }
 
     static func writeIndex(_ list: [DesignVersion], to design: URL, replica: String) throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .millisecondsSince1970
-        let data = try encoder.encode(list)
+        let data = try VersionKeeping.data(of: list)
         if FolderSync.isShared(design) {
             let file = ownIndexFile(design, replica)
             try DesignFile.makeFolder(file.deletingLastPathComponent(), in: design)
@@ -91,20 +68,10 @@ nonisolated enum VersionFiles {
         try data.write(to: indexFile(design), options: .atomic)
     }
 
-    /// The design packed as a version keeps it: without where it was looked at.
-    static func pack(_ doc: BezzleDocument) -> Data? {
-        var doc = doc
-        doc.viewport = nil
-        guard let json = try? JSONEncoder().encode(doc) else { return nil }
-        return try? (json as NSData).compressed(using: .lzfse) as Data
-    }
+    /// The design packed as a version keeps it (`VersionKeeping.pack`).
+    static func pack(_ doc: BezzleDocument) -> Data? { VersionKeeping.pack(doc) }
 
-    static func unpack(_ data: Data) -> BezzleDocument? {
-        guard let json = try? (data as NSData).decompressed(using: .lzfse) as Data,
-              var doc = try? JSONDecoder().decode(BezzleDocument.self, from: json) else { return nil }
-        doc.repairStyles()
-        return doc
-    }
+    static func unpack(_ data: Data) -> BezzleDocument? { VersionKeeping.unpack(data) }
 
     static func read(_ id: UUID, of design: URL) -> BezzleDocument? {
         (try? Data(contentsOf: file(id, of: design))).flatMap(unpack)
@@ -119,23 +86,9 @@ nonisolated enum VersionFiles {
         for id in ids { try? FileManager.default.removeItem(at: file(id, of: design)) }
     }
 
-    /// Of the versions taken by themselves, those worth keeping, as Time Machine keeps backups:
-    /// every one of the last hour, one each half hour of the last day, one a day for a month, and
-    /// one a week before that. Named versions are always kept, and the newest is.
+    /// Of the versions taken by themselves, those worth keeping (`VersionKeeping.kept`).
     static func kept(_ list: [DesignVersion], now: Date = Date()) -> [DesignVersion] {
-        var out: [DesignVersion] = []
-        var buckets = Set<String>()
-        for v in list.sorted(by: { $0.date > $1.date }) {
-            let age = now.timeIntervalSince(v.date)
-            // The newest needs no exception: its bucket is always still free, and it claims it.
-            if v.isNamed || age < 3600 { out.append(v); continue }
-            let bucket: String
-            if age < 86_400 { bucket = "h\(Int(v.date.timeIntervalSince1970 / 1800))" }
-            else if age < 30 * 86_400 { bucket = "d\(Int(v.date.timeIntervalSince1970 / 86_400))" }
-            else { bucket = "w\(Int(v.date.timeIntervalSince1970 / (7 * 86_400)))" }
-            if buckets.insert(bucket).inserted { out.append(v) }
-        }
-        return out.sorted { $0.date < $1.date }
+        VersionKeeping.kept(list, now: now)
     }
 }
 
@@ -158,16 +111,7 @@ final class VersionShelf {
     /// The layers last brought back, and when, for the canvas to mark them landing.
     @ObservationIgnored private(set) var broughtBack: (ids: [UUID], at: Date)?
 
-    struct TimeTravel: Equatable {
-        var at: UUID
-        var doc: BezzleDocument
-        /// Layers that differ from the design now: changed since, gone since, and made since.
-        var changed: Set<UUID>
-        var gone: Set<UUID>
-        var added: Set<UUID> = []
-        /// Layers picked on the canvas, to bring back alone.
-        var picked: Set<UUID> = []
-    }
+    typealias TimeTravel = VersionTravel
 
     @ObservationIgnored private weak var store: DocumentStore?
     @ObservationIgnored private var loaded = false
@@ -353,8 +297,7 @@ final class VersionShelf {
         guard let store, let past = document(id) else { return }
         if travel?.at == id { return }
         browsing = true
-        let d = Self.differences(past, store.sharedDoc)
-        travel = TimeTravel(at: id, doc: past, changed: d.changed, gone: d.gone, added: d.added)
+        travel = TimeTravel(at: id, doc: past, now: store.sharedDoc)
         store.preview = DocumentStore.Preview(key: Self.previewKey, ids: [], change: { _ in }, reshape: { doc in
             let viewport = doc.viewport
             doc = past
@@ -362,22 +305,9 @@ final class VersionShelf {
         })
     }
 
-    /// What differs between a design then and now: layers changed since, not counting what they
-    /// hold; gone since; and made since.
+    /// What differs between a design then and now (`VersionKeeping.differences`).
     static func differences(_ past: BezzleDocument, _ now: BezzleDocument) -> (changed: Set<UUID>, gone: Set<UUID>, added: Set<UUID>) {
-        var gone = Set<UUID>(), changed = Set<UUID>()
-        var mine: [UUID: Node] = [:]
-        for n in now.allNodes { mine[n.id] = n }
-        var seen = Set<UUID>()
-        for n in past.allNodes {
-            seen.insert(n.id)
-            guard let m = mine[n.id] else { gone.insert(n.id); continue }
-            var a = n, b = m
-            a.children = []
-            b.children = []
-            if a != b { changed.insert(n.id) }
-        }
-        return (changed, gone, Set(mine.keys).subtracting(seen))
+        VersionKeeping.differences(past, now)
     }
 
     static let previewKey = "versions"
@@ -416,11 +346,7 @@ final class VersionShelf {
             guard let self else { return }
             self.refreshing = nil
             guard var t = self.travel, let store = self.store else { return }
-            let d = Self.differences(t.doc, store.sharedDoc)
-            t.changed = d.changed
-            t.gone = d.gone
-            t.added = d.added
-            t.picked = t.picked.filter { d.changed.contains($0) || d.gone.contains($0) }
+            t.compare(with: store.sharedDoc)
             if t != self.travel { self.travel = t }
         }
     }
@@ -477,15 +403,9 @@ final class VersionShelf {
         if playing { playing = false }
     }
 
-    /// The versions a story is told by: all of them while they are few, else the named ones and
-    /// enough of the others, evenly spread, to tell it in some thirty steps.
+    /// The versions a story is told by (`VersionKeeping.story`).
     static func story(of list: [DesignVersion]) -> [UUID] {
-        let most = 30
-        guard list.count > most else { return list.map(\.id) }
-        let named = list.indices.filter { list[$0].isNamed }
-        let room = max(most - named.count, 2)
-        let spread = (0..<room).map { Int((Double($0) / Double(room - 1) * Double(list.count - 1)).rounded()) }
-        return Set(named + spread).sorted().map { list[$0].id }
+        VersionKeeping.story(of: list)
     }
 
     // MARK: Going back
@@ -493,19 +413,14 @@ final class VersionShelf {
     /// A click on the canvas while looking back picks a layer that differs, to bring back alone.
     func pick(at p: CGPoint) {
         guard var t = travel else { return }
-        guard let hit = layer(at: p) else { return }
-        if t.picked.contains(hit) { t.picked.remove(hit) } else { t.picked.insert(hit) }
-        travel = t
+        t.pick(at: p)
+        if t != travel { travel = t }
     }
 
     /// The layer that differs from now under a canvas point, as the design was then: the
     /// smallest, as it is the one most likely meant.
     func layer(at p: CGPoint) -> UUID? {
-        guard let t = travel else { return nil }
-        return t.changed.union(t.gone).compactMap { id -> (UUID, CGFloat)? in
-            guard let f = t.doc.absoluteFrame(of: id), f.contains(p) else { return nil }
-            return (id, f.width * f.height)
-        }.min { $0.1 < $1.1 }?.0
+        travel?.layer(at: p)
     }
 
     /// Goes back to the version shown: the design becomes what it was then, its notes staying as
@@ -519,20 +434,10 @@ final class VersionShelf {
         guard let store, !store.isReadOnly, let version = list.first(where: { $0.id == id }), let past = document(id) else { return }
         showNow()
         // Already as it was then: nothing to go back to, and nothing to keep.
-        var then = past, now = store.sharedDoc
-        then.viewport = nil
-        now.viewport = nil
-        then.notes = nil
-        now.notes = nil
-        guard then != now else { return }
+        guard !past.sameDesign(as: store.sharedDoc) else { return }
         let when = version.name ?? version.date.formatted(date: .abbreviated, time: .shortened)
         take(store.sharedDoc, name: String(localized: "Before going back to \(when)"))
-        store.edit("Go Back to Version") { doc in
-            let viewport = doc.viewport, notes = doc.notes
-            doc = past
-            doc.viewport = viewport
-            doc.notes = notes
-        }
+        store.edit("Go Back to Version") { $0.goBack(to: past) }
     }
 
     /// Brings the picked layers back as they were, into the design as it is now: each where it
@@ -542,26 +447,7 @@ final class VersionShelf {
         let past = t.doc
         let ids = t.picked
         showNow()
-        store.edit(ids.count == 1 ? "Bring Back Layer" : "Bring Back Layers") { doc in
-            // Those inside something else brought back come with it; the outer ones first, so
-            // what they go into is there before them.
-            let outer = ids.filter { id in !past.ancestors(of: id).contains { ids.contains($0.id) } }
-                .sorted { (past.path(of: $0)?.indices ?? []).lexicographicallyPrecedes(past.path(of: $1)?.indices ?? []) }
-            for id in outer {
-                guard let old = past.node(id) else { continue }
-                if doc.node(id) != nil {
-                    doc.update(id) { $0 = old }
-                } else if let parent = past.parent(of: id), let there = doc.path(of: parent.id) {
-                    let index = past.path(of: id)?.indices.last ?? 0
-                    let count = doc.node(parent.id)?.children.count ?? 0
-                    doc.insert(old, at: NodePath(indices: there.indices + [min(index, count)]))
-                } else {
-                    var loose = old
-                    if let frame = past.absoluteFrame(of: id) { loose.frame = frame }
-                    doc.nodes.append(loose)
-                }
-            }
-        }
+        store.edit(ids.count == 1 ? "Bring Back Layer" : "Bring Back Layers") { $0.bringBack(ids, from: past) }
         store.selection = ids.filter { store.doc.node($0) != nil }.sorted { $0.uuidString < $1.uuidString }
         broughtBack = (store.selection, Date())
     }

@@ -56,35 +56,8 @@ final class DeckTool {
         return 1 + (c + 1) * x * x * x + c * x * x
     }
 
-    /// A number that follows where it is meant to be as a spring does, slightly past it and back.
-    struct Spring {
-        var value: Double
-        var target: Double
-        var velocity: Double = 0
-
-        init(_ v: Double) {
-            value = v
-            target = v
-        }
-
-        var settled: Bool { abs(value - target) < 0.001 && abs(velocity) < 0.01 }
-        var isMoving: Bool { !settled }
-
-        mutating func step(_ dt: Double, stiffness: Double = 260, damping: Double = 24) {
-            guard !settled else {
-                value = target
-                velocity = 0
-                return
-            }
-            // A few small steps, so a long frame never makes it fly off.
-            let n = max(1, Int((dt / 0.004).rounded(.up)))
-            let h = dt / Double(n)
-            for _ in 0..<n {
-                velocity += (-stiffness * (value - target) - damping * velocity) * h
-                value += velocity * h
-            }
-        }
-    }
+    /// A number that follows where it is meant to be as a spring does (the shared `MotionSpring`).
+    typealias Spring = MotionSpring
 
     /// Springs by key, all stepped together.
     struct Springs<Key: Hashable> {

@@ -262,24 +262,13 @@ struct TimeRuler: View {
         return true
     }
 
-    /// Where each version stands along a comb this wide, and now after the last: each a step
-    /// apart, a little more between one day and the next, the first at the left, now at the right.
+    /// Where each version stands along a comb this wide (`VersionKeeping.slots`).
     static func slots(_ dates: [Date], width: CGFloat, now: Date = Date()) -> [CGFloat] {
-        let lead: CGFloat = 4, tail: CGFloat = 6
-        let calendar = Calendar.current
-        let all = dates + [now]
-        var units: [CGFloat] = [0]
-        for i in all.indices.dropFirst() {
-            let apart: CGFloat = calendar.isDate(all[i - 1], inSameDayAs: all[i]) ? 1 : 1.8
-            units.append(units[i - 1] + apart)
-        }
-        guard let span = units.last, span > 0 else { return [width - tail] }
-        let scale = (width - lead - tail) / span
-        return units.map { lead + $0 * scale }
+        VersionKeeping.slots(dates, width: width, now: now)
     }
 
     static func nearest(_ x: CGFloat, in xs: [CGFloat]) -> Int {
-        xs.indices.min { abs(xs[$0] - x) < abs(xs[$1] - x) } ?? max(xs.count - 1, 0)
+        VersionKeeping.nearest(x, in: xs)
     }
 
     /// The colour of a stroke: the sky then, kept legible on the card.
@@ -405,153 +394,6 @@ struct TimeRuler: View {
     static func time(_ date: Date) -> String { date.formatted(.dateTime.hour().minute()) }
 }
 
-/// The comb's motion: each stroke's height on a spring, swelling under the pointer and plucked
-/// as the pencil line passes it; the line itself, and the label gliding with the pointer.
-@MainActor
-final class RulerMotion {
-    private(set) var heights: [DeckTool.Spring] = []
-    private(set) var glow: [Double] = []
-    private(set) var head = DeckTool.Spring(0)
-    private(set) var lift = DeckTool.Spring(0)
-    private(set) var lens = DeckTool.Spring(0)
-    private(set) var lensShown = DeckTool.Spring(0)
-    private var last: Date?
-    private var born: Date?
-    private var placed = false
-
-    /// A string along the comb, sampled every `spacing`: how far each point of it stands out,
-    /// and how fast it moves, as a ripple runs along it from where a stroke was plucked.
-    private(set) var wave: [Double] = []
-    private var speed: [Double] = []
-    static let spacing: CGFloat = 5
-    private var pointer: CGFloat?
-    private var swellShown = DeckTool.Spring(0)
-
-    /// How much the comb swells at `x` under the pointer, 0 to 1.
-    func swell(at x: CGFloat) -> CGFloat {
-        guard let p = pointer else { return 0 }
-        let d = Double(x - p) / 26
-        return CGFloat(exp(-d * d) * swellShown.value)
-    }
-
-    /// The ripple running along the comb at `x`.
-    func ripple(at x: CGFloat) -> Double {
-        guard !wave.isEmpty else { return 0 }
-        let u = Double(x / Self.spacing - 0.5)
-        let i = min(max(Int(u.rounded(.down)), 0), wave.count - 1), j = min(i + 1, wave.count - 1)
-        let f = min(max(u - Double(i), 0), 1)
-        return wave[i] * (1 - f) + wave[j] * f
-    }
-
-    /// Moves everything on to `now`: the strokes towards `bases`, swollen near `pointer`, and
-    /// the line towards `target`, closely while `held`.
-    func step(at now: Date, xs: [CGFloat], bases: [CGFloat], pointer: CGFloat?, head target: CGFloat, held: Bool, width: CGFloat = 600) {
-        let dt = min(max(now.timeIntervalSince(last ?? now), 0), 1.0 / 20)
-        last = now
-        if born == nil { born = now }
-        let samples = max(Int(width / Self.spacing), 1)
-        if wave.count != samples {
-            wave = Array(repeating: 0, count: samples)
-            speed = wave
-        }
-        if let pointer { self.pointer = pointer }
-        swellShown.target = pointer == nil ? 0 : 1
-        swellShown.step(dt, stiffness: 300, damping: 30)
-        ring(dt)
-        if heights.count != xs.count {
-            heights = xs.indices.map { i in i < heights.count ? heights[i] : DeckTool.Spring(0) }
-            glow = xs.indices.map { i in i < glow.count ? glow[i] : 0 }
-        }
-        if !placed {
-            head = DeckTool.Spring(Double(target))
-            placed = true
-        }
-        let from = head.value
-        head.target = Double(target)
-        if held { head.step(dt, stiffness: 1600, damping: 80) } else { head.step(dt, stiffness: 230, damping: 23) }
-        let passed = Self.crossed(from: CGFloat(from), to: CGFloat(head.value), xs: xs)
-        lastXs = xs
-
-        let age = now.timeIntervalSince(born ?? now)
-        for i in xs.indices {
-            // Printed in from now back to the first as the card comes out.
-            let delay = Double(xs.count - 1 - i) / Double(max(xs.count, 1)) * 0.35
-            var goal = age < delay ? 0 : Double(bases[i])
-            if let p = pointer, goal > 0 {
-                let d = Double(p - xs[i]) / 24
-                goal *= 1 + 0.9 * exp(-d * d)
-            }
-            heights[i].target = goal
-            heights[i].step(dt, stiffness: 420, damping: 19)
-            glow[i] *= exp(-dt * 3.2)
-        }
-        for i in passed where i < heights.count { pluck(i) }
-        lift.target = held ? 1 : 0
-        lift.step(dt, stiffness: 520, damping: 30)
-        if let p = pointer {
-            let snapped = Double(xs[RulerMotion.nearest(p, in: xs)])
-            if lensShown.value < 0.05 { lens = DeckTool.Spring(snapped) }
-            lens.target = snapped
-        }
-        lens.step(dt, stiffness: 360, damping: 30)
-        lensShown.target = pointer == nil ? 0 : 1
-        lensShown.step(dt, stiffness: 420, damping: 32)
-    }
-
-    /// The strokes a line moving from one place to another passes over or lands on: not the
-    /// one it leaves, nor now's end.
-    static func crossed(from a: CGFloat, to b: CGFloat, xs: [CGFloat]) -> [Int] {
-        guard abs(b - a) > 0.001 else { return [] }
-        return xs.indices.dropLast().filter { i in
-            b < a ? xs[i] >= b - 0.01 && xs[i] < a - 0.01 : xs[i] > a + 0.01 && xs[i] <= b + 0.01
-        }
-    }
-
-    static func nearest(_ x: CGFloat, in xs: [CGFloat]) -> Int {
-        xs.indices.min { abs(xs[$0] - x) < abs(xs[$1] - x) } ?? max(xs.count - 1, 0)
-    }
-
-    private var plucked: [CGFloat] = []
-
-    private func pluck(_ i: Int) {
-        heights[i].velocity += 150
-        glow[i] = 1
-        plucked.append(lastXs.indices.contains(i) ? lastXs[i] : 0)
-    }
-
-    private var lastXs: [CGFloat] = []
-
-    /// The string, stepped on: each point pulled towards its neighbours and back to rest, slowly
-    /// stilled; a stroke plucked sets it going where it stands.
-    private func ring(_ dt: Double) {
-        for x in plucked {
-            let c = Double(x / Self.spacing - 0.5)
-            for k in max(Int(c) - 3, 0)...min(Int(c) + 3, wave.count - 1) {
-                let d = Double(k) - c
-                speed[k] += 70 * exp(-d * d / 2)
-            }
-        }
-        plucked = []
-        let n = max(1, Int((dt / 0.004).rounded(.up)))
-        let h = dt / Double(n)
-        let tension = 2600.0, rest = 70.0, still = 5.0
-        for _ in 0..<n {
-            for k in wave.indices {
-                let left = k > 0 ? wave[k - 1] : 0, right = k < wave.count - 1 ? wave[k + 1] : 0
-                speed[k] += (tension * (left - 2 * wave[k] + right) - rest * wave[k] - still * speed[k]) * h
-            }
-            for k in wave.indices { wave[k] += speed[k] * h }
-        }
-    }
-
-    private var ringing: Bool { wave.contains { abs($0) > 0.05 } || speed.contains { abs($0) > 0.5 } }
-
-    var settled: Bool {
-        heights.allSatisfy(\.settled) && head.settled && lift.settled && lens.settled && lensShown.settled && swellShown.settled
-            && glow.allSatisfy { $0 < 0.02 } && !ringing
-    }
-}
-
 /// The time ruler's switch in the top bar.
 struct VersionsButton: View {
     let store: DocumentStore
@@ -575,71 +417,5 @@ struct VersionsButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("Versions  ⌥⌘T")
-    }
-}
-
-// MARK: - The sky
-
-/// The sky of a moment, for the ruler of time: where the sun stands, how warm its light is, how
-/// dark it is. The days are as long as they are at this latitude through the year, and noon moves
-/// with summer time.
-nonisolated struct Sky: Equatable {
-    /// Where the light falls from, across the table: 0 at the left, 1 at the right.
-    var x: Double
-    /// How high the sun stands: 0 at the horizon or below, 1 at its highest in summer.
-    var sun: Double
-    /// How warm the light is: 0 the pale light of noon, 1 the gold of a low sun or a lamp.
-    var warmth: Double
-    /// How dark it is outside: 0 by day, 1 by night, between at dusk and dawn.
-    var night: Double
-    /// How near the sun is to the horizon, at dusk and dawn.
-    var dusk: Double
-
-    static let latitude = 47.0
-
-    static func at(_ date: Date, calendar: Calendar = .current) -> Sky {
-        let parts = calendar.dateComponents([.hour, .minute, .second], from: date)
-        let hour = Double(parts.hour ?? 12) + Double(parts.minute ?? 0) / 60 + Double(parts.second ?? 0) / 3600
-        let day = Double(calendar.ordinality(of: .day, in: .year, for: date) ?? 172)
-        let noon = 12.5 + (calendar.timeZone.isDaylightSavingTime(for: date) ? 1 : 0)
-        let rad = Double.pi / 180
-        let declination = 23.44 * rad * sin(2 * .pi * (day - 80) / 365.25)
-        let angle = (hour - noon) * 15 * rad
-        let lat = latitude * rad
-        // The sine of how high the sun stands.
-        let e = sin(lat) * sin(declination) + cos(lat) * cos(declination) * cos(angle)
-        let night = smooth(from: 0.04, to: -0.18, e)
-        let golden = min(max(1 - e / 0.36, 0), 1)
-        let dayX = 0.5 + 0.38 * sin(angle)
-        return Sky(x: dayX + (0.78 - dayX) * night,
-                   sun: min(max(e / 0.92, 0), 1),
-                   warmth: golden + (1 - golden) * night,
-                   night: night,
-                   dusk: min(max(1 - abs(e + 0.03) / 0.13, 0), 1))
-    }
-
-    /// Steps from 0 to 1 as `v` goes from `a` to `b`, gently at both ends.
-    private static func smooth(from a: Double, to b: Double, _ v: Double) -> Double {
-        let t = min(max((v - a) / (b - a), 0), 1)
-        return t * t * (3 - 2 * t)
-    }
-
-    /// The light itself: pale by day, gold low down, a lamp's at night.
-    var light: (r: Double, g: Double, b: Double) {
-        let cool = (0.93, 0.96, 1.0), gold = (1.0, 0.74, 0.45)
-        let t = warmth
-        return (cool.0 + (gold.0 - cool.0) * t, cool.1 + (gold.1 - cool.1) * t, cool.2 + (gold.2 - cool.2) * t)
-    }
-
-    /// The colour of the sky then, for the ruler of time: blue by day, gold and rose as the sun
-    /// goes down, indigo by night.
-    var sky: (r: Double, g: Double, b: Double) {
-        func mix(_ a: (Double, Double, Double), _ b: (Double, Double, Double), _ t: Double) -> (Double, Double, Double) {
-            (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t)
-        }
-        let blue = (0.56, 0.74, 0.95), gold = (0.98, 0.72, 0.40), rose = (0.80, 0.48, 0.62), indigo = (0.17, 0.19, 0.38)
-        let day = mix(blue, gold, (1 - night) * min(max(1 - sun / 0.4, 0), 1))
-        let c = mix(mix(day, rose, dusk * 0.75), indigo, night)
-        return (c.0, c.1, c.2)
     }
 }

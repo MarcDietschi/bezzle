@@ -636,6 +636,135 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: Versions
+
+    /// Looking back at a version, picking, bringing back and going back; and what is worked out
+    /// about versions: thinning, the story, the ruler's slots, its motion, the sky, the springs.
+    @Test func versionKeeping() throws {
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50)),
+                                  CanvasTests.rect("S", CGRect(x: 100, y: 10, width: 50, height: 50))])
+        try DesignFile.write(bench.store.doc, to: bench.store.url)
+        bench.store.becamePackage()
+        let store = bench.store, shelf = store.versions
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        shelf.clock = { base }
+        defer {
+            shelf.stop()
+            DocumentStore.finishSaving()
+            try? FileManager.default.removeItem(at: store.url)
+        }
+        func names(_ ids: Set<UUID>?) -> String {
+            (ids ?? []).compactMap { id in store.doc.node(id)?.name ?? shelf.travel?.doc.node(id)?.name }.sorted().joined(separator: ",")
+        }
+        func layers(_ what: String) {
+            Self.log("versions", what + ": " + store.doc.allNodes.map { "\($0.name) \(Self.r(store.doc.absoluteFrame(of: $0.id)))" }.joined(separator: " ; "))
+        }
+        let first = try #require(shelf.take(store.sharedDoc, name: "Start"))
+        let r = bench.node("R")!.id, s = bench.node("S")!.id
+        bench.step { store.update([r], "Move") { $0.frame.origin.x = 200 } }
+        store.selection = [s]
+        bench.step { store.deleteSelection() }
+        bench.step { store.edit("Add") { $0.nodes[0].children.append(CanvasTests.rect("T", CGRect(x: 20, y: 200, width: 80, height: 30))) } }
+        layers("now")
+        shelf.browse()
+        shelf.show(first.id)
+        Self.log("versions", "then: changed \(names(shelf.travel?.changed)) gone \(names(shelf.travel?.gone)) added \(names(shelf.travel?.added))")
+        for p in [CGPoint(x: 135, y: 135), CGPoint(x: 225, y: 135), CGPoint(x: 400, y: 400)] {
+            Self.log("versions", "under \(Self.n(p.x)),\(Self.n(p.y)): \(shelf.layer(at: p).map { names([$0]) } ?? "-")")
+        }
+        shelf.pick(at: CGPoint(x: 225, y: 135))
+        shelf.pick(at: CGPoint(x: 135, y: 135))
+        shelf.pick(at: CGPoint(x: 135, y: 135))
+        Self.log("versions", "picked \(names(shelf.travel?.picked))")
+        bench.step { shelf.bringBack() }
+        layers("brought back")
+        Self.log("versions", "selected \(names(Set(store.selection))) travel \(shelf.travel == nil ? "none" : "still")")
+        bench.step { store.update([r], "Move") { $0.frame.origin.y = 300 } }
+        bench.step { shelf.restore(first.id) }
+        layers("gone back")
+        Self.log("versions", "list: " + shelf.list.map { "\($0.name ?? "auto") \($0.layers)" }.joined(separator: ", "))
+        let count = shelf.list.count
+        bench.step { shelf.restore(first.id) }
+        Self.log("versions", "again: \(shelf.list.count - count) more")
+
+        let packed = try #require(VersionFiles.pack(store.doc))
+        var unpacked = try #require(VersionFiles.unpack(packed))
+        unpacked.viewport = store.doc.viewport
+        // Its layers' ids are new each run, so how small it packs differs a little from run to run.
+        var bare = store.doc
+        bare.viewport = nil
+        let json = try JSONEncoder().encode(bare)
+        Self.log("versions", "json \(json.count) bytes, packed smaller \(packed.count < json.count / 2), back whole \(unpacked == store.doc), damaged \(VersionFiles.unpack(Data("no".utf8)) == nil)")
+        var fixed = DesignVersion(date: Date(timeIntervalSince1970: 1_800_000_000.123), name: "Named", by: "anna", replica: "r1", layers: 7, shared: true)
+        fixed.id = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+        var plain = DesignVersion(date: Date(timeIntervalSince1970: 1_799_000_000))
+        plain.id = UUID(uuidString: "66666666-7777-8888-9999-000000000000")!
+        let index = store.url.appendingPathComponent("parity-index")
+        try FileManager.default.createDirectory(at: index, withIntermediateDirectories: true)
+        try VersionFiles.writeIndex([fixed, plain], to: index, replica: "r1")
+        let written = try Data(contentsOf: VersionFiles.folder(of: index).appendingPathComponent("index.json"))
+        let sorted = (try? JSONSerialization.jsonObject(with: written)).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) } ?? Data()
+        Self.log("versions", "index " + (String(data: sorted, encoding: .utf8) ?? "-"))
+        Self.log("versions", "index read " + VersionFiles.index(of: index, replica: "r1").map { "\($0.id.uuidString.prefix(4)) \($0.date.timeIntervalSince1970) \($0.name ?? "-")" }.joined(separator: ", "))
+
+        var list: [DesignVersion] = []
+        for k in 0..<400 {
+            var v = DesignVersion(date: base.addingTimeInterval(-Double(k) * 1300))
+            if k % 37 == 0 { v.name = "N\(k)" }
+            list.append(v)
+        }
+        for k in 0..<40 { list.append(DesignVersion(date: base.addingTimeInterval(-Double(k) * 4.3 * 86_400 - 30 * 86_400))) }
+        let kept = VersionFiles.kept(list, now: base)
+        Self.log("versions", "kept \(kept.count): " + kept.map { String(Int(base.timeIntervalSince($0.date) / 60)) }.joined(separator: ","))
+        let story = VersionShelf.story(of: kept)
+        Self.log("versions", "story: " + story.compactMap { id in kept.firstIndex { $0.id == id } }.map(String.init).joined(separator: ","))
+        Self.log("versions", "short story: \(VersionShelf.story(of: Array(kept.prefix(12))).count)")
+
+        let dates = (0..<12).map { base.addingTimeInterval(Double($0 * $0) * 1800) }
+        let xs = TimeRuler.slots(dates, width: 560, now: base.addingTimeInterval(86_400 * 3))
+        Self.log("versions", "slots: " + xs.map { Self.n($0) }.joined(separator: ","))
+        Self.log("versions", "one slot: " + TimeRuler.slots([], width: 300, now: base).map { Self.n($0) }.joined(separator: ","))
+        Self.log("versions", "nearest: " + [0, 77, 300, 555, 700].map { String(TimeRuler.nearest(CGFloat($0), in: xs)) }.joined(separator: ","))
+        let motion = RulerMotion()
+        let bases = dates.enumerated().map { $0.offset % 4 == 0 ? 15 : 11 as CGFloat } + [0]
+        var t = base
+        for f in 0..<90 {
+            t = t.addingTimeInterval(1.0 / 60)
+            let pointer: CGFloat? = f < 30 ? nil : xs[3] + CGFloat(f - 30)
+            let head = f < 45 ? xs[xs.count - 1] : xs[2]
+            motion.step(at: t, xs: xs, bases: bases, pointer: pointer, head: head, held: f > 70, width: 560)
+            if f % 15 == 14 {
+                Self.log("versions", "motion \(f): heights " + motion.heights.map { Self.n(CGFloat($0.value)) }.joined(separator: ",")
+                    + " glow " + motion.glow.map { String(format: "%.3f", $0) }.joined(separator: ",")
+                    + " head \(Self.n(CGFloat(motion.head.value))) lift \(Self.n(CGFloat(motion.lift.value))) lens \(Self.n(CGFloat(motion.lens.value)))"
+                    + " shown \(Self.n(CGFloat(motion.lensShown.value))) wave \(String(format: "%.4f", motion.wave.reduce(0) { $0 + abs($1) }))"
+                    + " swell \(Self.n(motion.swell(at: xs[4]))) ripple \(String(format: "%.4f", motion.ripple(at: xs[2]))) settled \(motion.settled)")
+            }
+        }
+        Self.log("versions", "crossed: \(RulerMotion.crossed(from: 90, to: 10, xs: xs)) \(RulerMotion.crossed(from: 10, to: 300, xs: xs)) \(RulerMotion.crossed(from: 50, to: 50, xs: xs))")
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Zurich")!
+        func f(_ v: Double) -> String { String(format: "%.4f", v) }
+        for (month, day) in [(1, 15), (6, 21), (10, 27)] {
+            for hour in stride(from: 0, to: 24, by: 3) {
+                let date = calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: 20))!
+                let sky = Sky.at(date, calendar: calendar)
+                Self.log("versions", "sky \(month)/\(day) \(hour)h: x \(f(sky.x)) sun \(f(sky.sun)) warmth \(f(sky.warmth)) night \(f(sky.night)) dusk \(f(sky.dusk))"
+                    + " sky \(f(sky.sky.r)),\(f(sky.sky.g)),\(f(sky.sky.b)) light \(f(sky.light.r)),\(f(sky.light.g)),\(f(sky.light.b))")
+            }
+        }
+        var spring = DeckTool.Spring(0)
+        spring.target = 100
+        var trail: [String] = []
+        for k in 0..<30 {
+            if k < 20 { spring.step(1.0 / 60) } else { spring.step(1.0 / 30, stiffness: 900, damping: 10) }
+            trail.append(Self.n(CGFloat(spring.value)))
+        }
+        Self.log("versions", "spring: " + trail.joined(separator: ",") + " settled \(spring.settled) moving \(spring.isMoving)")
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.
