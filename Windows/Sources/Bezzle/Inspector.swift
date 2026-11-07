@@ -16,7 +16,7 @@ import WinSDK
 final class Inspector {
     let root = Grid()
     let session: DesignSession
-    private let cards = StackPanel()
+    let cards = StackPanel()
     /// The card that is open, one at a time as on the Mac (store.openAspect): Frame to begin with.
     var opened: String? = "Frame" {
         // The shadow whose card is open is the one a drag on the canvas moves, as on the Mac.
@@ -52,6 +52,8 @@ final class Inspector {
     var photoPointed: (tone: String?, band: String?)?
     var photoIsolated: String?
     var photoPointing: (ids: [UUID], board: Int)?
+    /// What the Inspect panel writes code for.
+    var inspectPlatform: WindowsCore.InspectPlatform = .css
 
     init(session: DesignSession) {
         self.session = session
@@ -109,6 +111,8 @@ final class Inspector {
 
     func show() {
         cards.children.clear()
+        // Inspecting: the specs of what is picked, read and copied, never changed.
+        if session.mode == 2 { showInspect(); return }
         let layers = session.selectedLayers
         guard let layer = layers.first, let board = session.board else {
             cards.children.append(toolsCard())

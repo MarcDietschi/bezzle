@@ -23,6 +23,17 @@ final class DesignSession {
     /// The photo as the control, while the Photo card is open with its target on (the Mac's
     /// DevelopTool): the card turns it on, the canvas works it.
     let develop = WindowsCore.DevelopHand()
+    /// The design inspected (the Mac's InspectTool): read, never changed.
+    let inspect = WindowsCore.InspectHand()
+    /// Design, Prototype or Inspect (0, 1, 2), as the bar's switch says.
+    var mode = 0 {
+        didSet {
+            guard mode != oldValue else { return }
+            inspect.on = mode == 2
+            if mode == 2 { develop.on = false }
+            changed()
+        }
+    }
     /// The Photo card's colour whose rows show, as a press on the photo picks it.
     var pickPhotoBand: ((String) -> Void)?
     /// The selected layers, all on the artboard at `board` (its index among the design's layers);

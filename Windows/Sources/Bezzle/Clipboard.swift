@@ -23,6 +23,15 @@ enum Clipboard {
         }
     }
 
+    /// Words put on the clipboard, as a value copied from what is inspected.
+    static func copyText(_ words: String) {
+        guard OpenClipboard(nil) else { return }
+        defer { CloseClipboard() }
+        EmptyClipboard()
+        let wide = Array(words.utf16) + [0]
+        wide.withUnsafeBytes { put(Array($0), as: UINT(CF_UNICODETEXT)) }
+    }
+
     /// The layers pasted (where they were copied from when that is in `visible`, else in its
     /// middle), or a text made of the words there; nil when there is nothing to paste.
     static func paste(visible: CGRect, board: Int?) -> [UUID]? {

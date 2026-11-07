@@ -103,6 +103,8 @@ final class DesignCanvas {
         case curve
         /// A selected photo, the control while the Photo card's target is on.
         case develop
+        /// Inspecting: a click picks what is under the pointer, a drag moves the view.
+        case inspect(start: CGPoint, target: UUID?)
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -161,6 +163,10 @@ final class DesignCanvas {
     /// The photo as the control (the Mac's DevelopTool, ported), with what it shows.
     var develop: WindowsCore.DevelopHand { session.develop }
     private let developMarks = Canvas()
+    /// The design inspected (the Mac's InspectTool, ported): its measures.
+    var inspect: WindowsCore.InspectHand { session.inspect }
+    private let inspectMarks = Canvas()
+    private var inspecting: Bool { session.mode == 2 }
     private var curveTicking = false
     /// The drawing aids' menu, for a click on the rulers' corner.
     var aidsMenu: (() -> [MenuHost.Entry])?
@@ -262,6 +268,8 @@ final class DesignCanvas {
         outlineHand.redraw = { [weak self] in self?.drawOutline() }
         curveHand.redraw = { [weak self] in self?.drawCurves() }
         develop.redraw = { [weak self] in self?.drawDevelop() }
+        inspect.redraw = { [weak self] in self?.drawInspect() }
+        inspect.titleHit = { [weak self] p in self?.titleHit(p) }
         curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
         offerChip.height = 28
         offerChip.cornerRadius = Theme.corners(14)
@@ -321,6 +329,7 @@ final class DesignCanvas {
                 self?.layoutHand.hover(nil)
                 self?.curveHand.hover(nil)
                 self?.develop.hover(nil)
+                self?.inspect.hover(nil)
             }
         }
         stage.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args) }
@@ -827,7 +836,7 @@ final class DesignCanvas {
             let lit = session.board == board.index
             sheets[k]?.name.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)
         }
-        if let id = hovered, !session.selection.contains(id), drag == nil,
+        if let id = hovered, !session.selection.contains(id), drag == nil, !inspecting,
            let line = WindowsCore.shown([id], zoom: zoom)?.outlines.first {
             trace(hover, line.points, closed: line.closed)
             hover.stroke = Theme.brush(line.copy ? Theme.linked : Theme.selection)
@@ -839,7 +848,7 @@ final class DesignCanvas {
         // A path whose points show has them in place of its frame and handles.
         let pointsShown = session.selection.count == 1 && session.selection.first == pen.shownPath
         // Shapes being built with show their pieces instead.
-        let shown = session.selection.isEmpty || pointsShown || builder.active ? nil : WindowsCore.shown(session.selection, zoom: zoom)
+        let shown = session.selection.isEmpty || pointsShown || builder.active || inspecting ? nil : WindowsCore.shown(session.selection, zoom: zoom)
         let lines = shown?.outlines ?? []
         while outlines.count < lines.count {
             let path = WinUI.Path()
@@ -890,6 +899,7 @@ final class DesignCanvas {
         drawOutline()
         drawCurves()
         drawDevelop()
+        drawInspect()
         drawBuild()
         placeOffer()
         placeCopyOffer()
@@ -900,7 +910,7 @@ final class DesignCanvas {
     /// The depth tool sees the canvas as it is now.
     private func syncDepth() {
         depth.selection = session.selection
-        depth.free = session.tool == .select && editing == nil && pen.editingPath == nil
+        depth.free = session.tool == .select && editing == nil && pen.editingPath == nil && !inspecting
         depth.zoom = CGFloat(zoom)
         depth.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -908,7 +918,7 @@ final class DesignCanvas {
     /// The layout grid's handles see the canvas as it is now.
     private func syncLayout() {
         layoutHand.selection = session.selection
-        layoutHand.free = session.tool == .select && editing == nil && pen.editingPath == nil
+        layoutHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !inspecting
         layoutHand.cardOpen = session.openCard == "Layout Grid"
         layoutHand.zoom = CGFloat(zoom)
         layoutHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
@@ -956,7 +966,7 @@ final class DesignCanvas {
             overlay.children.append(componentMarks)
         }
         componentMarks.children.clear()
-        guard session.tool == .select, !builder.active else { return }
+        guard session.tool == .select, !builder.active, !inspecting else { return }
         var lines = PathData()
         for corners in WindowsCore.otherCopies(session.selection) {
             guard let first = corners.first else { continue }
@@ -1145,7 +1155,7 @@ final class DesignCanvas {
     /// The outline's dots and edge see the canvas as it is now.
     private func syncOutline() {
         outlineHand.selection = session.selection
-        outlineHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active
+        outlineHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && !inspecting
         outlineHand.zoom = CGFloat(zoom)
         outlineHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -1255,10 +1265,113 @@ final class DesignCanvas {
         }
     }
 
+    /// The inspecting hand sees the canvas as it is now.
+    private func syncInspect() {
+        inspect.selection = session.selection
+        inspect.zoom = CGFloat(zoom)
+        inspect.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// What is inspected, measured as the Mac's InspectTool draws it: outlines in pencil, or the
+    /// gaps' pink, lines over a casing of white, dashed reaches, hatched gaps, and numbers on pills.
+    private func drawInspect() {
+        if inspectMarks.parent == nil {
+            inspectMarks.isHitTestVisible = false
+            overlay.children.append(inspectMarks)
+        }
+        inspectMarks.children.clear()
+        guard inspecting else { return }
+        syncInspect()
+        let m = inspect.marks()
+        let pencil: UInt32 = 0x3A63D8, pink: UInt32 = 0xE0457B
+        func px(_ v: BezzleCore.CGFloat) -> Double { Double(v).rounded() + 0.5 }
+        func path(_ d: PathData, width: Double, ink: UInt32, alpha: Double = 1, dash: String? = nil) {
+            guard let p = markPath(d, thickness: width, dash: dash) else { return }
+            p.stroke = Theme.brush(ink, alpha)
+            p.strokeStartLineCap = .round
+            p.strokeEndLineCap = .round
+            inspectMarks.children.append(p)
+        }
+        for r in m.hatches where r.width > 0.5 && r.height > 0.5 {
+            let field = Rectangle()
+            field.width = Double(r.width)
+            field.height = Double(r.height)
+            field.fill = Theme.brush(pink, 0.07)
+            try? Canvas.setLeft(field, Double(r.minX))
+            try? Canvas.setTop(field, Double(r.minY))
+            inspectMarks.children.append(field)
+            var d = PathData()
+            var x = Double(r.minX) - Double(r.height)
+            while x < Double(r.maxX) {
+                // Each stroke cut to the gap, as the Mac clips the hatch to it.
+                let x0 = max(x, Double(r.minX)), y0 = Double(r.maxY) - (x0 - x)
+                let x1 = min(x + Double(r.height), Double(r.maxX)), y1 = Double(r.maxY) - (x1 - x)
+                if x1 > x0 { d.move(x0, y0); d.line(x1, y1) }
+                x += 4
+            }
+            path(d, width: 1, ink: pink, alpha: 0.4)
+        }
+        for o in m.outlines {
+            var d = PathData()
+            d.rect(px(o.rect.minX), px(o.rect.minY), Double(o.rect.width).rounded(), Double(o.rect.height).rounded())
+            path(d, width: o.width, ink: o.gap ? pink : pencil, dash: o.dashed ? "4 3" : nil)
+        }
+        for dash in m.dashes {
+            var d = PathData()
+            d.move(px(dash.from.x), px(dash.from.y))
+            d.line(px(dash.to.x), px(dash.to.y))
+            path(d, width: 1, ink: pink, alpha: 0.8, dash: "3 3")
+        }
+        // The lines over a casing of white, so they read on any layer.
+        for gap in [false, true] {
+            var d = PathData()
+            for l in m.lines where l.gap == gap {
+                d.move(px(l.from.x), px(l.from.y))
+                d.line(px(l.to.x), px(l.to.y))
+            }
+            path(d, width: 3, ink: 0xFFFFFF, alpha: 0.7)
+            path(d, width: 1, ink: gap ? pink : pencil, alpha: gap ? 1 : 0.9)
+        }
+        for l in m.labels {
+            let ink = l.gap ? pink : pencil
+            let pill = Border()
+            pill.height = 17
+            pill.cornerRadius = Theme.corners(8.5)
+            pill.padding = Theme.inset(5, 0, 5, 0)
+            pill.background = Theme.brush(l.solid ? ink : 0xFFFFFF)
+            pill.borderBrush = l.solid ? Theme.brush(0xFFFFFF, 0.9) : Theme.brush(ink)
+            pill.borderThickness = Theme.inset(l.solid ? 1.5 : 1)
+            let text = Theme.text(l.text, size: 10.5, weight: 600)
+            text.foreground = l.solid ? Theme.brush(0xFFFFFF) : Theme.brush(ink)
+            text.verticalAlignment = .center
+            pill.child = text
+            try? pill.measure(Size(width: 300, height: 17))
+            let w = Double(pill.desiredSize.width)
+            try? Canvas.setLeft(pill, (Double(l.at.x) - w / 2).rounded())
+            try? Canvas.setTop(pill, (Double(l.at.y) - 8.5).rounded())
+            inspectMarks.children.append(pill)
+        }
+        if let tag = m.nameTag {
+            let plate = Border()
+            plate.cornerRadius = Theme.corners(4)
+            plate.background = Theme.brush(0xFFFFFF, 0.92)
+            plate.padding = Theme.inset(4, 2, 4, 2)
+            plate.maxWidth = tag.width
+            let text = Theme.text(tag.text, size: 10.5, weight: 500)
+            text.foreground = Theme.brush(pencil)
+            text.textTrimming = .characterEllipsis
+            plate.child = text
+            try? plate.measure(Size(width: 400, height: 30))
+            try? Canvas.setLeft(plate, Double(tag.at.x))
+            try? Canvas.setTop(plate, Double(tag.at.y) - Double(plate.desiredSize.height) - 2)
+            inspectMarks.children.append(plate)
+        }
+    }
+
     /// The photo as the control sees the canvas as it is now.
     private func syncDevelop() {
         develop.selection = session.selection
-        develop.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active
+        develop.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && !inspecting
         develop.zoom = CGFloat(zoom)
         develop.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -1326,7 +1439,7 @@ final class DesignCanvas {
     /// The curve hand sees the canvas as it is now.
     private func syncCurve() {
         curveHand.selection = session.selection
-        curveHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active
+        curveHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && !inspecting
         curveHand.zoom = CGFloat(zoom)
         curveHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -1392,7 +1505,7 @@ final class DesignCanvas {
     /// The grid tool sees the canvas as it is now.
     private func syncGrid() {
         gridHand.selection = session.selection
-        gridHand.free = session.tool == .select && editing == nil && pen.editingPath == nil
+        gridHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !inspecting
         gridHand.zoom = CGFloat(zoom)
         gridHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -1906,6 +2019,13 @@ final class DesignCanvas {
             showPointer(.grab)
             return
         }
+        // Inspecting: a click picks what is under the pointer, a drag moves the view, and nothing changes.
+        if inspecting {
+            syncInspect()
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, -1, false, .inspect(start: pan, target: inspect.deepest(at: p)))
+            return
+        }
         // A word offered after a change is taken before anything else.
         if let hit = copyButtons.first(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) {
             copyOffer = nil
@@ -2113,6 +2233,22 @@ final class DesignCanvas {
             place()
             return
         }
+        if case .inspect(let start, _)? = drag?.grab, let from = drag?.from {
+            let dx = Double(p.x) - Double(from.x), dy = Double(p.y) - Double(from.y)
+            guard drag?.moved == true || (dx * dx + dy * dy).squareRoot() >= 3 else { return }
+            drag?.moved = true
+            pan = CGPoint(x: Double(start.x) + dx, y: Double(start.y) + dy)
+            showPointer(.grab)
+            place()
+            return
+        }
+        // Inspecting, the pointer measures what it is on.
+        if inspecting, drag == nil {
+            syncInspect()
+            inspect.hover(p)
+            showPointer(.arrow)
+            return
+        }
         if guideHand.pressed {
             syncGuides()
             guideHand.drag(to: p, shift: shift, option: option, command: control)
@@ -2282,7 +2418,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -2389,6 +2525,15 @@ final class DesignCanvas {
             curveHand.up()
             session.edited(board: nil)
             updatePointer(at: point(args))
+        case .inspect(_, let target):
+            showPointer(.arrow)
+            guard !d.moved else { return }
+            syncInspect()
+            let picked = target.map { [inspect.pick(for: $0)] } ?? []
+            session.select(picked, on: picked.first.flatMap(WindowsCore.board(of:)) ?? WindowsCore.boardIndex(of: picked.first ?? UUID()))
+            syncInspect()
+            inspect.hover(point(args))
+            drawInspect()
         case .develop:
             syncDevelop()
             develop.up(at: point(args))
@@ -2556,6 +2701,8 @@ final class DesignCanvas {
             curveHand.cancel()
         case .develop:
             _ = develop.cancel()
+        case .inspect:
+            break
         }
         showGuides([])
         session.edited(board: nil)
@@ -2957,6 +3104,26 @@ final class DesignCanvas {
     func key(_ args: KeyRoutedEventArgs?) {
         // Keys typed into a text are the text's.
         guard let args, editing == nil else { return }
+        // Inspecting, nothing changes: Escape takes the next thing out, and the keys that would
+        // change the design do nothing. Zooming, copying and undoing still work.
+        if inspecting {
+            switch args.key {
+            case .escape:
+                args.handled = true
+                syncInspect()
+                let up = inspect.climb()
+                session.select(up, on: up.first.flatMap(WindowsCore.board(of:)) ?? up.first.flatMap(WindowsCore.boardIndex(of:)))
+                drawInspect()
+                return
+            case .delete, .back, .left, .right, .up, .down, .enter:
+                args.handled = true
+                return
+            case .x, .v, .d, .g, .r, .m, .l, .b, .k, .u, .i, .s:
+                if control { args.handled = true; return }
+            default:
+                break
+            }
+        }
         // Space held: a press moves the canvas round.
         if args.key == .space {
             args.handled = true

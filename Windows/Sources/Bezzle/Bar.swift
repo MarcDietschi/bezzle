@@ -13,7 +13,6 @@ final class Bar {
     let dragArea = Border()
     private let session: DesignSession
     private let zoomLabel = Theme.text("50%", size: 12, ink: 1)
-    private var mode = 0
     private var segments: [(box: Border, label: TextBlock)] = []
 
     /// How much room Windows' caption buttons take at the right.
@@ -162,7 +161,10 @@ final class Bar {
             let label = Theme.text(title, size: 12, weight: 500, ink: 2)
             label.margin = Theme.inset(10, 0, 10, 0)
             segment.child = label
-            segment.tapped.addHandler { [weak self] _, _ in self?.mode = k; self?.paintModes() }
+            segment.tapped.addHandler { [weak self] _, _ in
+                self?.session.mode = k
+                self?.paintModes()
+            }
             row.children.append(segment)
             segments.append((segment, label))
         }
@@ -173,7 +175,7 @@ final class Bar {
 
     private func paintModes() {
         for (k, s) in segments.enumerated() {
-            let on = k == mode
+            let on = k == session.mode
             s.box.background = on ? Theme.brush(Theme.card) : Theme.clear
             s.box.borderBrush = on ? Theme.hairline : Theme.clear
             s.box.borderThickness = Theme.inset(on ? 0.5 : 0)
