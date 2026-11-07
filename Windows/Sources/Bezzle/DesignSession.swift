@@ -20,6 +20,11 @@ final class DesignSession {
     /// Building with the pieces the selected shapes cut each other into (the shared
     /// PieceBuilding): the Arrange card's Build button starts it, the canvas works it.
     let builder = WindowsCore.BuildHand()
+    /// The photo as the control, while the Photo card is open with its target on (the Mac's
+    /// DevelopTool): the card turns it on, the canvas works it.
+    let develop = WindowsCore.DevelopHand()
+    /// The Photo card's colour whose rows show, as a press on the photo picks it.
+    var pickPhotoBand: ((String) -> Void)?
     /// The selected layers, all on the artboard at `board` (its index among the design's layers);
     /// with none selected, `board` is the artboard whose page the layers list shows, if any.
     private(set) var selection: [UUID] = []

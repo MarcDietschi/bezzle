@@ -91,6 +91,8 @@ final class DesignWindow {
         // The canvas's keys, wherever focus is, as on the Mac; but not while a field is typed into.
         root.keyDown.addHandler { [weak self] _, args in
             guard let self, let args, !args.handled else { return }
+            // Alt held on a tone or colour of the Photo card shows only that part of the photo.
+            if args.key == .menu { self.inspector.photoAltChanged() }
             if self.menus.isOpen {
                 if args.key == .escape { args.handled = true; self.menus.close() }
                 return
@@ -111,6 +113,7 @@ final class DesignWindow {
         }
         root.keyUp.addHandler { [weak self] _, args in
             guard let self, let args, !args.handled else { return }
+            if args.key == .menu { self.inspector.photoAltChanged() }
             self.canvas.keyUp(args)
         }
     }

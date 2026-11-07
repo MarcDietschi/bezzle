@@ -142,6 +142,68 @@ extension WindowsCore {
         }
     }
 
+    /// Each picture glides to what suits it best over a moment, the canvas drawn again at each
+    /// step (`step`), all one step of the history, as the Mac's Auto glides.
+    public static func glideAutoPhoto(_ ids: [UUID], step: @escaping @MainActor () -> Void) {
+        guard let doc = design else { return }
+        var from: [UUID: Develop] = [:], to: [UUID: Develop] = [:]
+        for id in ids {
+            guard let n = doc.node(id), develops(n) else { continue }
+            from[id] = n.fill.image?.develop ?? Develop()
+            to[id] = autoDevelop(n)
+        }
+        guard from.contains(where: { to[$0.key] != $0.value }) else { return }
+        glides += 1
+        let glide = glides
+        // A glide cut short by another still ends as one step.
+        if Editing.gestureStart != nil { endGesture() }
+        beginGesture()
+        let began = Date()
+        func tick() {
+            guard glide == glides else { return }
+            let t = min(Date().timeIntervalSince(began) / 0.42, 1)
+            // Quick to start and gentle to land.
+            let eased = 1 - pow(1 - t, 3)
+            edit { doc in
+                for (id, a) in from {
+                    guard let b = to[id] else { continue }
+                    doc.update(id) { $0.fill.image?.develop = (t >= 1 ? b : Develop.mix(a, b, eased)).kept }
+                }
+            }
+            if t >= 1 { endGesture() }
+            step()
+            if t < 1 { DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60) { MainActor.assumeIsolated { tick() } } }
+        }
+        tick()
+    }
+    nonisolated(unsafe) private static var glides = 0
+
+    /// The pictures shown as they were taken while `on` (the card's compare button held).
+    public static func previewPhotoOriginal(_ ids: [UUID], _ on: Bool) {
+        endPreview()
+        guard on else { return }
+        preview { doc in for id in ids { doc.update(id) { $0.fill.image?.develop = nil } } }
+    }
+
+    /// Only the part of the pictures a tone (by its setting's name) or a colour (by its band's
+    /// name) works on, the rest grey, while Alt is held on it; nil for all of them again.
+    public static func previewPhotoIsolated(_ ids: [UUID], tone: String? = nil, band: String? = nil) {
+        endPreview()
+        let isolation: Develop.Isolation? = if let tone, let s = Develop.Setting(rawValue: tone), s.isTone { .tone(s) }
+            else if let band, let b = Develop.Band(rawValue: band) { .band(b) } else { nil }
+        guard let isolation else { return }
+        preview { doc in
+            for id in ids {
+                doc.update(id) { n in
+                    guard n.fill.image != nil else { return }
+                    var d = n.fill.image?.develop ?? Develop()
+                    d.isolate = isolation
+                    n.fill.image?.develop = d
+                }
+            }
+        }
+    }
+
     // MARK: Reading pictures
 
     nonisolated(unsafe) private static var autoKept: [String: Develop] = [:]

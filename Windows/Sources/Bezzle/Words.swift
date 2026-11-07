@@ -56,11 +56,16 @@ enum Words {
         return out
     }()
 
-    /// The Mac's key symbols as Windows names its keys.
+    /// The Mac's key symbols as Windows names its keys, and the Option key's name, in each
+    /// language, as Windows' Alt.
     private static func keysAsWords(_ s: String) -> String {
-        s.replacingOccurrences(of: "⌘", with: "Ctrl").replacingOccurrences(of: "⌥", with: "Alt")
+        var s = s.replacingOccurrences(of: "⌘", with: "Ctrl").replacingOccurrences(of: "⌥", with: "Alt")
             .replacingOccurrences(of: "⇧", with: "Shift").replacingOccurrences(of: "⌃", with: "Ctrl")
             .replacingOccurrences(of: "↩", with: "Enter")
+        for (mac, windows) in [("Wahltaste", "Alt-Taste"), ("Opzione", "Alt"), ("Option", "Alt")] {
+            s = s.replacingOccurrences(of: mac, with: windows)
+        }
+        return s
     }
 
     /// Words the Mac keeps under a name of their own rather than their English.

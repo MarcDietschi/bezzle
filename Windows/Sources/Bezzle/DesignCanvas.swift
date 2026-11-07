@@ -101,6 +101,8 @@ final class DesignCanvas {
         case outline
         /// A selected text's bead, swung round the middle of its words to bend them.
         case curve
+        /// A selected photo, the control while the Photo card's target is on.
+        case develop
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -156,6 +158,9 @@ final class DesignCanvas {
     /// text held on a shape's edge catches on it and slides along it.
     let curveHand = WindowsCore.CurveHand()
     private let curveMarks = Canvas()
+    /// The photo as the control (the Mac's DevelopTool, ported), with what it shows.
+    var develop: WindowsCore.DevelopHand { session.develop }
+    private let developMarks = Canvas()
     private var curveTicking = false
     /// The drawing aids' menu, for a click on the rulers' corner.
     var aidsMenu: (() -> [MenuHost.Entry])?
@@ -256,6 +261,7 @@ final class DesignCanvas {
         builder.redraw = { [weak self] in self?.drawBuild() }
         outlineHand.redraw = { [weak self] in self?.drawOutline() }
         curveHand.redraw = { [weak self] in self?.drawCurves() }
+        develop.redraw = { [weak self] in self?.drawDevelop() }
         curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
         offerChip.height = 28
         offerChip.cornerRadius = Theme.corners(14)
@@ -314,6 +320,7 @@ final class DesignCanvas {
                 self?.gridHand.hover(nil)
                 self?.layoutHand.hover(nil)
                 self?.curveHand.hover(nil)
+                self?.develop.hover(nil)
             }
         }
         stage.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args) }
@@ -882,6 +889,7 @@ final class DesignCanvas {
         drawGrids()
         drawOutline()
         drawCurves()
+        drawDevelop()
         drawBuild()
         placeOffer()
         placeCopyOffer()
@@ -1245,6 +1253,74 @@ final class DesignCanvas {
         } else {
             MessageBeep(0)
         }
+    }
+
+    /// The photo as the control sees the canvas as it is now.
+    private func syncDevelop() {
+        develop.selection = session.selection
+        develop.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active
+        develop.zoom = CGFloat(zoom)
+        develop.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// Where the photo's colour is read while it is the control, as the Mac's DevelopTool draws
+    /// it: a ring, light and dark so it shows on any photo, and beside it a label with the colour,
+    /// what it is, and while dragging, how much.
+    private func drawDevelop() {
+        if developMarks.parent == nil {
+            developMarks.isHitTestVisible = false
+            overlay.children.append(developMarks)
+        }
+        developMarks.children.clear()
+        syncDevelop()
+        guard let m = develop.mark() else { return }
+        let x = Double(m.at.x), y = Double(m.at.y)
+        for (width, brush) in [(3.0, Theme.brush(0, 0.35)), (1.5, Theme.brush(0xFFFFFF))] {
+            let ring = Ellipse()
+            ring.width = 14
+            ring.height = 14
+            ring.stroke = brush
+            ring.strokeThickness = width
+            try? Canvas.setLeft(ring, x - 7)
+            try? Canvas.setTop(ring, y - 7)
+            developMarks.children.append(ring)
+        }
+        let pill = Border()
+        pill.height = 24
+        pill.cornerRadius = Theme.corners(12)
+        pill.background = Theme.brush(Theme.dark ? 0x2A2926 : 0xFCFBF8)
+        pill.borderBrush = Theme.brush(Theme.ink, 0.12)
+        pill.borderThickness = Theme.inset(0.5)
+        pill.padding = Theme.inset(8, 0, 10, 0)
+        let line = StackPanel()
+        line.orientation = .horizontal
+        line.spacing = 7
+        line.verticalAlignment = .center
+        let swatch = Ellipse()
+        swatch.width = 12
+        swatch.height = 12
+        swatch.fill = Theme.brush(m.colour)
+        swatch.stroke = Theme.brush(0, 0.15)
+        swatch.strokeThickness = 0.75
+        swatch.verticalAlignment = .center
+        line.children.append(swatch)
+        let words = Theme.text(m.words, size: 11.5, weight: 500)
+        words.verticalAlignment = .center
+        line.children.append(words)
+        if let amount = m.amount {
+            let number = Theme.text(amount, size: 11.5, weight: 600)
+            number.foreground = Theme.brush(Theme.pencil)
+            number.verticalAlignment = .center
+            line.children.append(number)
+        }
+        pill.child = line
+        try? pill.measure(Size(width: 400, height: 24))
+        let w = Double(pill.desiredSize.width)
+        // Beside the ring, or on its other side near the stage's right edge.
+        let left = x + 14 + w > Double(stage.actualWidth) - 8 ? x - 14 - w : x + 14
+        try? Canvas.setLeft(pill, left)
+        try? Canvas.setTop(pill, y + 12)
+        developMarks.children.append(pill)
     }
 
     /// The curve hand sees the canvas as it is now.
@@ -1951,6 +2027,15 @@ final class DesignCanvas {
             if lineEnds { WindowsCore.beginGesture() } else { WindowsCore.beginPull(session.selection) }
             return
         }
+        // With the Photo card open and its target on, the photo is the control.
+        if session.tool == .select {
+            syncDevelop()
+            if develop.down(at: p, clicks: lastPress?.clicks ?? 1) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.board ?? -1, false, .develop)
+                return
+            }
+        }
         // Just outside a corner, a corner's dot, the layer's shadow, as the Mac's handleHit has them.
         if session.tool == .select, let board = session.board,
            let hit = WindowsCore.hit(at: p, selection: session.selection, zoom: zoom, pan: pan, selecting: true) {
@@ -2070,6 +2155,8 @@ final class DesignCanvas {
                 outlineHand.hover(p, shift: shift, option: option)
                 syncCurve()
                 curveHand.hover(p)
+                syncDevelop()
+                develop.hover(p)
                 // The word offered shows what it would do while it is pointed at.
                 let lit = onOffer(p)
                 if lit != offerLit, let offer = shownOffer {
@@ -2107,6 +2194,14 @@ final class DesignCanvas {
         if case .build = d.grab {
             syncBuild()
             builder.drag(to: p, option: option)
+            showPointer(pointer(at: p))
+            return
+        }
+        if case .develop = d.grab {
+            syncDevelop()
+            develop.drag(to: p, slow: option)
+            drag?.moved = true
+            session.edited(board: nil)
             showPointer(pointer(at: p))
             return
         }
@@ -2187,7 +2282,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -2294,6 +2389,13 @@ final class DesignCanvas {
             curveHand.up()
             session.edited(board: nil)
             updatePointer(at: point(args))
+        case .develop:
+            syncDevelop()
+            develop.up(at: point(args))
+            // A colour pressed on shows its rows in the card.
+            if let band = develop.pressedBand { session.pickPhotoBand?(band) }
+            session.edited(board: nil)
+            updatePointer(at: point(args))
         case .layout:
             layoutHand.up()
             session.edited(board: d.board >= 0 ? d.board : nil)
@@ -2360,6 +2462,13 @@ final class DesignCanvas {
         if let across = layoutHand.pointer(at: p) { return across ? .across : .upDown }
         if drag == nil, onOffer(p) || copyButtons.contains(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) { return .pointingHand }
         if session.tool == .pen { return .pen(Self.penMark(pen.mark)) }
+        syncDevelop()
+        switch develop.pointer(at: p) {
+        case .cross?: return .cross
+        case .across?: return .across
+        case .upDown?: return .upDown
+        case nil: break
+        }
         if session.tool == .select, pen.editingPath != nil { return pen.mark == "add" ? .pen(1) : .arrow }
         syncDepth()
         if depth.turnsPointer { return .turn }
@@ -2445,6 +2554,8 @@ final class DesignCanvas {
             outlineHand.cancel()
         case .curve:
             curveHand.cancel()
+        case .develop:
+            _ = develop.cancel()
         }
         showGuides([])
         session.edited(board: nil)
@@ -2902,6 +3013,14 @@ final class DesignCanvas {
                 let board = drag?.board ?? -1
                 drag = nil
                 session.edited(board: board >= 0 ? board : nil)
+                return
+            }
+            // Escape: a drag on the photo taken back, or the photo given back.
+            if penKey == "escape", develop.cancel() {
+                args.handled = true
+                drag = nil
+                session.edited(board: nil)
+                session.changed()
                 return
             }
             // Escape while a bead is swung: back as it was.

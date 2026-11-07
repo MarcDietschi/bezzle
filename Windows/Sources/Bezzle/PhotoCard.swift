@@ -45,6 +45,33 @@ extension Glyphs {
         return [Part(data: ring.d, mode: .stroke, width: 1.3), Part(data: land.d, mode: .fill)]
     }
 
+    /// A ring with ticks at its four sides and a dot in its middle, as scope: the target.
+    static func scope(size s: Double = 14) -> [Part] {
+        var p = PathData()
+        p.ellipse(s * 0.18, s * 0.18, s * 0.64, s * 0.64)
+        for (a, b) in [((0.5, 0.04), (0.5, 0.26)), ((0.5, 0.74), (0.5, 0.96)), ((0.04, 0.5), (0.26, 0.5)), ((0.74, 0.5), (0.96, 0.5))] {
+            p.move(s * a.0, s * a.1); p.line(s * b.0, s * b.1)
+        }
+        var dot = PathData()
+        dot.ellipse(s * 0.42, s * 0.42, s * 0.16, s * 0.16)
+        return [Part(data: p.d, mode: .stroke, width: 1.3), Part(data: dot.d, mode: .fill)]
+    }
+
+    /// A circle half filled, as circle.lefthalf.filled: the photo as it was against as it is.
+    static func halfDisc(size s: Double = 14) -> [Part] {
+        var ring = PathData()
+        ring.ellipse(s * 0.12, s * 0.12, s * 0.76, s * 0.76)
+        var half = PathData()
+        let r = s * 0.38, c = s / 2
+        half.move(c, c - r)
+        for k in 0...16 {
+            let a = Double.pi * Double(k) / 16
+            half.line(c - sin(a) * r, c - cos(a) * r)
+        }
+        half.close()
+        return [Part(data: ring.d, mode: .stroke, width: 1.3), Part(data: half.d, mode: .fill)]
+    }
+
     /// A wand with a spark at its tip, as wand.and.sparkles: Auto.
     static func wand(size s: Double = 14) -> [Part] {
         var stick = PathData()
@@ -73,7 +100,13 @@ extension Inspector {
         let mark = Glyphs.view(Glyphs.tones(tones?.tones), size: 16, brush: Theme.ink(2))
         var remove: (@MainActor () -> Void)?
         if !p.neutral { remove = { WindowsCore.resetPhoto(ids); edited() } }
-        let auto = Controls.iconButton(Glyphs.wand(), size: 22) { WindowsCore.autoPhoto(ids); edited() }
+        let auto = Controls.iconButton(Glyphs.wand(), size: 22) { [weak self] in
+            // Gliding there, the canvas and the card's landscape following each step.
+            WindowsCore.glideAutoPhoto(ids) {
+                self?.session.edited(board: board)
+                self?.photoTerrainRefresh?()
+            }
+        }
         try? ToolTipService.setToolTip(auto, Words.t("Develop the photo as suits it best"))
         // Its press is its own, not the card's line's, which would fold the card.
         auto.pointerPressed.addHandler { _, args in args?.handled = true }
@@ -87,16 +120,24 @@ extension Inspector {
         var rows: [UIElement] = []
         let width = Theme.cardWidth - 24
         rows.append(toneTerrain(ids, board: board))
-        rows.append(Controls.segmented(photoGroup, WindowsCore.photoGroups.map { ($0.name, $0.title) }, width: width) { [weak self] g in
+        let tabs = StackPanel()
+        tabs.orientation = .horizontal
+        tabs.spacing = 8
+        tabs.children.append(Controls.segmented(photoGroup, WindowsCore.photoGroups.map { ($0.name, $0.title) }, width: width - 16 - 60) { [weak self] g in
             self?.photoGroup = g
+            self?.photoPointed = nil
             self?.show()
         })
+        tabs.children.append(targetButton(board: board))
+        tabs.children.append(compareButton(ids, board: board))
+        rows.append(tabs)
         let list = StackPanel()
         list.spacing = 2
         for s in WindowsCore.photoSettings where s.group == photoGroup {
             let name = s.name
             list.children.append(developRow(s.title, value: p.amounts[name] ?? 0, range: s.low...s.high, decimals: s.decimals,
                                             track: Self.photoTrack(name), mixed: p.mixed.contains(name), board: board,
+                                            isolates: s.isTone ? (name, nil) : nil, ids: ids,
                                             change: { [weak self] in WindowsCore.setPhoto(ids, name, $0); self?.photoTerrainRefresh?() }))
         }
         rows.append(list)
@@ -109,15 +150,113 @@ extension Inspector {
                 for (part, title, value) in shown {
                     parts.children.append(developRow(Words.t(title), value: value, range: -100...100, decimals: 0,
                                                      track: Self.bandTrack(part, hue: hue), mixed: p.mixedBands.contains(band), board: board,
+                                                     isolates: (nil, band), ids: ids,
                                                      change: { [weak self] in WindowsCore.setPhotoBand(ids, band, part, $0); self?.photoTerrainRefresh?() }))
                 }
                 rows.append(parts)
             }
         }
+        let on = session.develop.on
         let caption = photoGroup == "detail" ? "Detail is best judged close up: zoom in on the photo."
-            : "Drag a row sideways to change it, and double click it to put it back."
+            : photoGroup == "light" && on ? "Drag up or down on the photo to lighten or darken the tones under the pointer."
+            : photoGroup == "color" && on ? "Drag up or down on the photo for more or less of the colour under the pointer, sideways to turn it. Click something white or grey to make it neutral."
+            : "Hold Alt on a tone or colour to see only where it is in the photo. With the target on, drag on the photo itself."
         rows.append(Controls.caption(caption))
         return rows
+    }
+
+    /// The pointer on a tone or a colour in the card, or off them (nil): with Alt held, only that
+    /// part of the photo shows on the canvas, the rest grey, as on the Mac.
+    func photoPoint(_ part: (tone: String?, band: String?)?, ids: [UUID], board: Int) {
+        photoPointed = part
+        photoPointing = (ids, board)
+        let shown = altHeld ? part : nil
+        let key = shown.map { "\($0.tone ?? "")/\($0.band ?? "")" }
+        guard key != photoIsolated else { return }
+        photoIsolated = key
+        WindowsCore.previewPhotoIsolated(ids, tone: shown?.tone, band: shown?.band)
+        session.previewed(board: board)
+        // Windows does not always pass on Alt let go: while a part shows alone, it is looked at.
+        if shown != nil { watchAlt() }
+    }
+
+    private func watchAlt() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.photoIsolated != nil else { return }
+                if altHeld { self.watchAlt() } else { self.photoAltChanged() }
+            }
+        }
+    }
+
+    /// Alt pressed or let go where the pointer is.
+    func photoAltChanged() {
+        guard let (ids, board) = photoPointing else { return }
+        photoPoint(photoPointed, ids: ids, board: board)
+    }
+
+    /// The target: the photo itself the control, and given back, as the Mac's target button.
+    /// Not for Detail, which depends on what lies round each pixel rather than on one colour.
+    private func targetButton(board: Int) -> FrameworkElement {
+        let hand = session.develop
+        let enabled = photoGroup != "detail"
+        let on = hand.on && enabled
+        let box = Border()
+        box.width = 30
+        box.height = 28
+        box.cornerRadius = Theme.corners(7)
+        box.background = on ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.clear
+        box.opacity = enabled ? 1 : 0.35
+        let glyph = Glyphs.view(Glyphs.scope(), size: 14, brush: on ? Theme.brush(Theme.pencil) : Theme.ink(2))
+        glyph.horizontalAlignment = .center
+        glyph.verticalAlignment = .center
+        box.child = glyph
+        guard enabled else { return box }
+        box.pointerEntered.addHandler { _, _ in if !hand.on { box.background = Theme.brush(Theme.ink, 0.05) } }
+        box.pointerExited.addHandler { _, _ in if !hand.on { box.background = Theme.clear } }
+        box.pointerPressed.addHandler { _, args in args?.handled = true }
+        box.pointerReleased.addHandler { [weak self] _, _ in
+            hand.on.toggle()
+            self?.show()
+        }
+        try? ToolTipService.setToolTip(box, Words.t(on ? "Give the photo back" : "Drag on the photo itself"))
+        return box
+    }
+
+    /// Hold to see the photo as it was taken, as the Mac's compare button.
+    private func compareButton(_ ids: [UUID], board: Int) -> FrameworkElement {
+        let box = Border()
+        box.width = 30
+        box.height = 28
+        box.cornerRadius = Theme.corners(7)
+        box.background = Theme.clear
+        let glyph = Glyphs.view(Glyphs.halfDisc(), size: 14, brush: Theme.ink(2))
+        glyph.horizontalAlignment = .center
+        glyph.verticalAlignment = .center
+        box.child = glyph
+        var held = false
+        func show(_ on: Bool) {
+            guard on != held else { return }
+            held = on
+            box.background = on ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.clear
+            Glyphs.paint(glyph, on ? Theme.brush(Theme.pencil) : Theme.ink(2))
+            WindowsCore.previewPhotoOriginal(ids, on)
+            session.previewed(board: board)
+        }
+        box.pointerEntered.addHandler { _, _ in if !held { box.background = Theme.brush(Theme.ink, 0.05) } }
+        box.pointerExited.addHandler { _, _ in if !held { box.background = Theme.clear } }
+        box.pointerPressed.addHandler { sender, args in
+            _ = try? (sender as? UIElement)?.capturePointer(args?.pointer)
+            args?.handled = true
+            show(true)
+        }
+        box.pointerReleased.addHandler { sender, args in
+            try? (sender as? UIElement)?.releasePointerCapture(args?.pointer)
+            show(false)
+        }
+        box.pointerCaptureLost.addHandler { _, _ in show(false) }
+        try? ToolTipService.setToolTip(box, Words.t("Hold to see the original"))
+        return box
     }
 
     /// The picture's tones as a landscape, dark at the left and light at the right, with red,
@@ -259,6 +398,7 @@ extension Inspector {
             guard var d = dragging else {
                 let z = zone(at: x).setting
                 if z != hovered { hovered = z; redraw() }
+                self.photoPoint((z, nil), ids: ids, board: board)
                 return
             }
             let slow = altHeld
@@ -271,10 +411,11 @@ extension Inspector {
             redraw()
             self.session.edited(board: board)
         }
-        canvas.pointerExited.addHandler { _, _ in
+        canvas.pointerExited.addHandler { [weak self] _, _ in
             guard dragging == nil else { return }
             hovered = nil
             redraw()
+            self?.photoPoint(nil, ids: ids, board: board)
         }
         canvas.pointerPressed.addHandler { [weak self] sender, args in
             guard let self, let pt = try? args?.getCurrentPoint(canvas)?.position else { return }
@@ -283,6 +424,7 @@ extension Inspector {
             hovered = z
             _ = try? (sender as? UIElement)?.capturePointer(args?.pointer)
             args?.handled = true
+            self.photoIsolated = nil
             WindowsCore.beginGesture()
             self.dialing = true
             redraw()
@@ -421,6 +563,7 @@ extension Inspector {
             guard var d = drag else {
                 let now = bead(at: x, y)
                 if now != hovered { hovered = now; redraw() }
+                self.photoPoint(now.map { (nil, $0) }, ids: ids, board: board)
                 return
             }
             let lighter = altHeld
@@ -461,6 +604,7 @@ extension Inspector {
             drag = (band, (s.hue, s.saturation, s.luminance), (Double(pt.x), Double(pt.y)), altHeld, nil, false)
             _ = try? (sender as? UIElement)?.capturePointer(args?.pointer)
             args?.handled = true
+            self.photoIsolated = nil
             WindowsCore.beginGesture()
             self.dialing = true
         }
@@ -479,10 +623,11 @@ extension Inspector {
             self.session.edited(board: board)
             self.show()
         }
-        beads.pointerExited.addHandler { _, _ in
+        beads.pointerExited.addHandler { [weak self] _, _ in
             guard drag == nil, hovered != nil else { return }
             hovered = nil
             redraw()
+            self?.photoPoint(nil, ids: ids, board: board)
         }
         return holder
     }
@@ -525,7 +670,8 @@ extension Inspector {
     /// as far along the line as the pointer goes (a quarter as fast with Alt), catching at
     /// nothing; a double click puts it back to nothing.
     func developRow(_ title: String, value: Double, range: ClosedRange<Double>, decimals: Int, track: [UInt32]?, mixed: Bool,
-                    board: Int, change: @escaping @MainActor (Double) -> Void) -> FrameworkElement {
+                    board: Int, isolates: (tone: String?, band: String?)? = nil, ids: [UUID] = [],
+                    change: @escaping @MainActor (Double) -> Void) -> FrameworkElement {
         let width = Theme.cardWidth - 24, length = width - 14
         let span = range.upperBound - range.lowerBound
         let origin = min(max(0, range.lowerBound), range.upperBound)
@@ -609,18 +755,28 @@ extension Inspector {
             shade.background = from != nil ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.brush(Theme.ink, hovering ? 0.045 : 0)
         }
         row.background = Theme.clear
-        row.pointerEntered.addHandler { _, _ in hovering = true; lit() }
-        row.pointerExited.addHandler { _, _ in hovering = false; lit() }
+        row.pointerEntered.addHandler { [weak self] _, _ in
+            hovering = true
+            lit()
+            if let isolates { self?.photoPoint(isolates, ids: ids, board: board) }
+        }
+        row.pointerExited.addHandler { [weak self] _, _ in
+            hovering = false
+            lit()
+            if isolates != nil, from == nil { self?.photoPoint(nil, ids: ids, board: board) }
+        }
         row.pointerPressed.addHandler { [weak self] sender, args in
             guard let self, let p = try? args?.getCurrentPoint(row)?.position else { return }
             from = (shown, Double(p.x), altHeld)
             _ = try? (sender as? UIElement)?.capturePointer(args?.pointer)
             args?.handled = true
+            self.photoIsolated = nil
             WindowsCore.beginGesture()
             self.dialing = true
             lit()
         }
         row.pointerMoved.addHandler { [weak self] _, args in
+            if from == nil, let isolates { self?.photoPoint(isolates, ids: ids, board: board) }
             guard let self, var f = from, let p = try? args?.getCurrentPoint(row)?.position else { return }
             let slow = altHeld
             // Alt pressed or let go: counted again from where it is, so nothing jumps.

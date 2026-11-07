@@ -22,6 +22,8 @@ final class Inspector {
         // The shadow whose card is open is the one a drag on the canvas moves, as on the Mac.
         didSet {
             session.openCard = opened
+            // The photo stops being the control once its card shuts.
+            if opened != "Photo", session.develop.on { session.develop.on = false }
             guard let opened, opened == "Shadow" || opened.hasPrefix("Shadow ") else { WindowsCore.openShadow = nil; return }
             WindowsCore.openShadow = Int(opened.dropFirst("Shadow".count).trimmingCharacters(in: .whitespaces)) ?? 0
         }
@@ -42,14 +44,24 @@ final class Inspector {
     /// Gives the keys back to the canvas, once a field has been typed into.
     var returnFocus: (() -> Void)?
     /// The Photo card's tab (light, color, detail), and the colour whose rows show, as on the Mac.
-    var photoGroup = "light"
+    var photoGroup = "light" { didSet { session.develop.group = photoGroup } }
     var photoBand: String?
     /// Draws the open Photo card's landscape again, as a row changes the picture.
     var photoTerrainRefresh: (() -> Void)?
+    /// The tone or colour the pointer is on in the Photo card, and the one shown alone with Alt.
+    var photoPointed: (tone: String?, band: String?)?
+    var photoIsolated: String?
+    var photoPointing: (ids: [UUID], board: Int)?
 
     init(session: DesignSession) {
         self.session = session
         session.showCard = { [weak self] key in self?.opened = key }
+        // A colour pressed on in the photo shows its rows.
+        session.pickPhotoBand = { [weak self] band in
+            guard let self, self.photoBand != band else { return }
+            self.photoBand = band
+            self.show()
+        }
         root.width = Theme.inspectorWidth
         cards.spacing = 8
         cards.margin = Theme.inset(16, 14, 16, 28)
