@@ -64,7 +64,7 @@ final class WebImporting {
     func present(_ address: String? = nil) {
         if let address {
             self.address = address
-        } else if !running, let copied = Clipboard.text()?.trimmingCharacters(in: .whitespacesAndNewlines),
+        } else if !running, let copied = Clipboard.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   copied.lowercased().hasPrefix("http"), WindowsCore.webAddress(copied) != nil {
             self.address = copied
         }
@@ -540,17 +540,6 @@ final class WebImportSheet {
         } else {
             primaryFill.visibility = .collapsed
         }
-    }
-}
-
-extension Clipboard {
-    /// The words on the clipboard, as the Mac's sheet reads a copied address from it.
-    static func text() -> String? {
-        guard IsClipboardFormatAvailable(UINT(CF_UNICODETEXT)), OpenClipboard(nil) else { return nil }
-        defer { CloseClipboard() }
-        guard let h = GetClipboardData(UINT(CF_UNICODETEXT)), let p = GlobalLock(h) else { return nil }
-        defer { GlobalUnlock(h) }
-        return String(decodingCString: p.assumingMemoryBound(to: UInt16.self), as: UTF16.self)
     }
 }
 

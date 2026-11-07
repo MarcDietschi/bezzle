@@ -255,10 +255,8 @@ import Foundation
         } catch {
             throw MCPError("\(address) could not be brought in: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
         }
-        // Opened in the window, as the Mac opens it in a tab, with what came across at the canvas's foot.
-        MCPHost.shared.endEditing()
-        let store = DocumentStore.open
-        guard MCPHost.shared.open(design), store.isAt(design) else { throw MCPError("\(design.lastPathComponent) could not be opened.") }
+        // Opened in a tab, as the Mac opens it, with what came across at the canvas's foot.
+        let store = try open(design)
         MCPHost.shared.broughtIn(WindowsCore.summary(of: report))
         store.zoomToFit()
         var text = summary(of: store).text
