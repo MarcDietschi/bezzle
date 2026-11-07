@@ -401,4 +401,155 @@ struct WindowsShareTests {
             try "4".write(to: stageFile, atomically: true, encoding: .utf8)
         }
     }
+
+    // MARK: Live, through the relay
+
+    nonisolated private static let liveFolder = ProcessInfo.processInfo.environment["BEZZLE_WINDOWS_LIVE"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+
+    /// What a Mac hears in the live room.
+    private final class Heard {
+        var others: [UInt32: LiveHello] = [:]
+        var presence: [UInt32: LivePresence] = [:]
+        var changes: [SharedDesign] = []
+        var records = 0
+    }
+
+    /// The live room of a design shared by link, through the relay itself (as aLinkSharedWithWindows):
+    /// Anna's Mac, here with its own LiveSocket and LiveKey, and Windows (bezzle-share's `live`) in
+    /// it at once. Off unless `TEST_RUNNER_BEZZLE_RELAY_TEST` and `TEST_RUNNER_BEZZLE_WINDOWS_LIVE`:
+    ///
+    /// 0. Anna shares Poster.bezzle; the link goes to link.json.
+    /// 1. Windows is in the room: each hears who the other is and where they point; Anna winks and
+    ///    renames R, sent live and to the room's records; Windows answers live with a change of its
+    ///    own, merged here.
+    /// 2. What Windows heard: Anna, her pointer, her wink, her change, the records moving on, and
+    ///    the pencil every computer gives her.
+    @Test(.enabled(if: liveFolder != nil && relay != nil))
+    func aLiveRoomWithWindows() async throws {
+        let folder = try #require(Self.liveFolder), address = try #require(Self.relay)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let server = RelayServer(base: address)
+        Sharing.shared.server = server
+        defer { Sharing.shared.server = nil }
+        let stageFile = folder.appendingPathComponent("stage.txt")
+        let stage = (try? String(contentsOf: stageFile, encoding: .utf8)).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+        let annaURL = folder.appendingPathComponent("anna/Poster.bezzle"), linkFile = folder.appendingPathComponent("link.json")
+
+        switch stage {
+        case 0:
+            let secret = ShareKeys.newSecret()
+            let keys = try #require(ShareKeys(secret: secret))
+            let owner = ShareKeys.newSecret().base64URL
+            try await server.create(keys.room, hashes: ["read": Sharing.hash(keys.readToken), "write": Sharing.hash(keys.writeToken), "owner": Sharing.hash(owner)])
+            Sharing.shared.own(keys.room, with: owner)
+            var board = Node(kind: .artboard, name: "Poster", frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+            board.children = [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50)), CanvasTests.rect("S", CGRect(x: 100, y: 10, width: 50, height: 50))]
+            var doc = BezzleDocument()
+            doc.nodes = [board]
+            try FileManager.default.createDirectory(at: annaURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try DesignFile.write(doc, to: annaURL)
+            let link = ShareLink(secret: secret.base64URL, title: "Poster", ownerName: "Anna")
+            try SharingFiles.write(link, to: annaURL)
+            let anna = try session(annaURL, "anna")
+            try await anna.cloud?.sendMeta(ShareMeta(title: "Poster", owner: "Anna", made: Collaboration.now))
+            await anna.cloud?.syncForTesting()
+            anna.close()
+            DocumentStore.finishSaving()
+            try JSONSerialization.data(withJSONObject: ["link": try #require(link.page).absoluteString, "secret": secret.base64URL, "owner": owner]).write(to: linkFile)
+            try "1".write(to: stageFile, atomically: true, encoding: .utf8)
+
+        case 1:
+            let given = try read(linkFile)
+            let secret = try #require(given["secret"] as? String)
+            let keys = try #require(ShareKeys(link: secret))
+            Sharing.shared.own(keys.room, with: try #require(given["owner"] as? String))
+            let anna = try session(annaURL, "anna")
+            defer { anna.close(); DocumentStore.finishSaving() }
+            let key = LiveKey(keys), heard = Heard()
+            let hello = LiveHello(replica: "anna", name: "Anna", timeZone: "Europe/Zurich")
+            let here = LivePresence(pointer: CGPoint(x: 200, y: 150), view: CGRect(x: 0, y: 0, width: 400, height: 300), selection: [], tool: "select")
+            var parts = URLComponents(url: address, resolvingAgainstBaseURL: false)!
+            parts.scheme = parts.scheme == "https" ? "wss" : "ws"
+            let socket = LiveSocket(room: keys.room, read: keys.readToken, relay: try #require(parts.url))
+            defer { socket.stop() }
+            func send(_ message: LiveMessage, to peer: UInt32? = nil) {
+                guard let sealed = key.seal(message) else { return }
+                socket.send(peer.map { LiveFrame.to($0, sealed) } ?? LiveFrame.toAll(sealed), droppable: false)
+            }
+            socket.onFrame = { frame in
+                switch frame {
+                case .welcome(_, let others) where !others.isEmpty:
+                    send(.hello(hello))
+                    send(.presence(here))
+                case .joined(let peer):
+                    send(.hello(hello), to: peer)
+                    send(.presence(here), to: peer)
+                case .records:
+                    heard.records += 1
+                case .message(let from, let sealed):
+                    switch key.open(sealed) {
+                    case .hello(let h)?:
+                        heard.others[from] = h
+                        if h.ask == true { send(.hello(hello), to: from) }
+                    case .presence(let p)?: heard.presence[from] = p
+                    case .changes(let c)?: heard.changes.append(c)
+                    default: break
+                    }
+                default: break
+                }
+            }
+            socket.start()
+            func until(_ seconds: Double, _ done: () -> Bool) async throws {
+                let start = Date()
+                while !done(), Date().timeIntervalSince(start) < seconds { try await Task.sleep(for: .milliseconds(100)) }
+            }
+            // Who Windows is, and where it points.
+            try await until(60) { heard.others.values.contains { $0.replica != "anna" } && heard.presence.values.contains { $0.pointer == CGPoint(x: 123, y: 45) } }
+            let windows = try #require(heard.others.first { $0.value.replica != "anna" })
+            #expect(FolderShare.isReplica(windows.value.replica))
+            #expect(!windows.value.name.isEmpty && windows.value.timeZone != nil)
+            #expect(heard.presence[windows.key]?.tool == "select")
+            // A wink, and a change made a moment ago, live; then the same change in the room's records.
+            send(.wink(CGPoint(x: 77, y: 88)))
+            var doc = anna.state.flatDesign().document()
+            let r = try #require(doc.allNodes.first { $0.name == "R" }?.id)
+            doc.update(r) { $0.name = "R, renamed live" }
+            let before = anna.state.clock.time
+            anna.takeIn(doc)
+            send(.changes(anna.state.changes(by: "anna", after: before)))
+            await anna.cloud?.syncForTesting()
+            // Windows answers live.
+            try await until(60) {
+                var merged = anna.state
+                for c in heard.changes { merged.merge(c) }
+                return merged.flatDesign().document().allNodes.contains { $0.name == "S, from Windows live" }
+            }
+            anna.receive(heard.changes, from: .relay)
+            #expect(layer(anna, "S, from Windows live") != nil)
+            #expect(layer(anna, "R, renamed live") != nil)
+            try JSONSerialization.data(withJSONObject: ["windows": windows.value.replica, "design": try json(anna.state.flatDesign().document())])
+                .write(to: folder.appendingPathComponent("mac-live.json"))
+            try "2".write(to: stageFile, atomically: true, encoding: .utf8)
+
+        default:
+            let mac = try read(folder.appendingPathComponent("mac-live.json"))
+            let live = try read(folder.appendingPathComponent("windows/live.json"))
+            let windows = try #require(mac["windows"] as? String)
+            #expect(Set(live["events"] as? [String] ?? []).isSuperset(of: ["hello", "presence", "wink", "changes", "answered", "records"]))
+            let anna = try #require(live["anna"] as? [String: Any])
+            #expect(anna["replica"] as? String == "anna" && anna["name"] as? String == "Anna")
+            #expect(anna["pointer"] as? [Double] == [200, 150])
+            #expect(anna["tool"] as? String == "select")
+            #expect(anna["link"] as? String == "live")
+            // The pencil every computer in the room gives Anna.
+            let pencil = try #require(Pencil.hand(to: ["anna", windows])["anna"])
+            let hex = String(format: "%06x", UInt32(pencil.rgb.r * 255) << 16 | UInt32(pencil.rgb.g * 255) << 8 | UInt32(pencil.rgb.b * 255))
+            #expect(anna["pencil"] as? String == hex)
+            // Once she left, she is gone from the room here too.
+            #expect((live["peopleAtTheEnd"] as? [String])?.contains("anna") == false)
+            // Windows has the design as Anna has it.
+            #expect(try design(in: live).allNodes.map(\.name) == (try design(in: mac)).allNodes.map(\.name))
+            try "3".write(to: stageFile, atomically: true, encoding: .utf8)
+        }
+    }
 }
