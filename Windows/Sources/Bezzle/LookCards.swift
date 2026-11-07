@@ -139,7 +139,7 @@ extension Inspector {
                                    summary: { f in let r = (f * pill).rounded(); return r >= pill - 0.5 ? "Pill" : self.said(r) },
                                    stops: [0, 4, 12, 24, pill].map { $0 / pill }) : nil
         let glyph = Glyphs.corner(pill > 0 && l.firstRadius >= pill - 0.5 ? nil : l.firstRadius)
-        return card("Corners", summary, glyph: glyph, dial: dial, body: { [self] in
+        return card("Corners", summary, glyph: glyph, dial: dial, style: "corners", body: { [self] in
             let strip = Controls.presetStrip(presets.enumerated().map { k, p in
                 (Glyphs.view(Glyphs.corner(p.radius), size: 16, brush: Theme.ink(l.cornerPreset == k ? 1 : 2)), l.cornerPreset == k)
             }, point: { k in preview(k.map { .cornerPreset($0) }) }, choose: { change(.cornerPreset($0)) })
@@ -178,7 +178,7 @@ extension Inspector {
                                 change: @escaping @MainActor (WindowsCore.LookChange) -> Void,
                                 preview: @escaping @MainActor (WindowsCore.LookChange?) -> Void) -> UIElement {
         let paint = l.fills[0]
-        return card("Background", paint.summary, mark: Colours.swatch(paint, size: 15, radius: 4), body: { [self] in
+        return card("Background", paint.summary, mark: Colours.swatch(paint, size: 15, radius: 4), style: "fill:0", body: { [self] in
             [paintField(paint, target: .fill(0), ids: ids, board: board, suggest: false, change: change, preview: preview),
              blendRow(l, change: change, preview: preview)]
         })
@@ -200,7 +200,7 @@ extension Inspector {
             more = ("Add another fill", { on in preview(on ? .moreFill : nil) }, { [self] in self.opened = next; change(.moreFill) })
         }
         return card("Fill", paint.summary, id: Self.cardID("Fill", slot), mark: Colours.swatch(paint, size: 15, radius: 4), dial: dial,
-                    remove: remove, removal: l.isText ? "Remove colour" : "Remove fill", more: more, body: { [self] in
+                    remove: remove, removal: l.isText ? "Remove colour" : "Remove fill", more: more, style: "fill:\(slot)", body: { [self] in
             var rows: [UIElement] = [paintField(paint, target: .fill(slot), ids: ids, board: board, suggest: true, change: change, preview: preview)]
             if !l.isText && slot == 0 { rows.append(blendRow(l, change: change, preview: preview)) }
             return rows
@@ -292,7 +292,7 @@ extension Inspector {
         return card(lineOnly ? "Line" : "Border", b.summary, id: Self.cardID("Border", slot), glyph: Glyphs.border((b.dash ?? 0) > 0 ? nil : b.firstWidth), dial: dial,
                     remove: remove, removal: lineOnly ? "Remove line" : "Remove border",
                     more: (lineOnly ? "Add another line" : "Add another border", { on in preview(on ? .moreBorder : nil) }, { [self] in self.opened = next; change(.moreBorder) }),
-                    body: { [self] in
+                    style: "border:\(slot)", body: { [self] in
             var rows: [UIElement] = []
             rows.append(Controls.presetStrip(presets.enumerated().map { k, p in
                 (Glyphs.view(Glyphs.border(p.width), size: 16, brush: Theme.ink(b.preset == k ? 1 : 2)), b.preset == k)
@@ -335,7 +335,7 @@ extension Inspector {
         return card(inset ? "Inner shadow" : "Shadow", s.summary, id: Self.cardID("Shadow", slot), mark: mark, dial: dial,
                     remove: { change(.remove("shadow", slot)) }, removal: "Remove shadow",
                     more: ("Add another shadow", { on in preview(on ? .moreShadow : nil) }, { [self] in self.opened = next; change(.moreShadow) }),
-                    body: { [self] in
+                    style: "shadow:\(slot)", body: { [self] in
             var rows: [UIElement] = []
             if canInset {
                 rows.append(Controls.segmented(inset, [(false, "Outside"), (true, "Inside")], width: Self.content) { change(.shadowInset(slot, $0)) })

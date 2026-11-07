@@ -56,6 +56,10 @@ final class Inspector {
     var prototypePicked: [UUID] = []
     /// The story card's moving drawing, held while it shows.
     var pullDemo: AnyObject?
+    /// The style rows that show all their styles, by the card's place; the style being renamed; the place whose look is being named.
+    var stylesAll: Set<String> = []
+    var renamingStyle: UUID?
+    var namingStyle: String?
     /// What Inspect's Asset card takes a layer as: its format, and for a picture how many pixels to the point.
     var assetFormat = "png"
     var assetScale = 2.0
@@ -207,7 +211,7 @@ final class Inspector {
     func card(_ title: String, _ summary: String, id: String? = nil, glyph: [Glyphs.Part]? = nil, mark: FrameworkElement? = nil,
               swatch: WindowsCore.Paint? = nil, dial: Dial? = nil, remove: (@MainActor () -> Void)? = nil, removal: String = "Remove",
               accessory: FrameworkElement? = nil, more: (help: String, preview: @MainActor (Bool) -> Void, add: @MainActor () -> Void)? = nil,
-              body: (@MainActor () -> [UIElement])? = nil) -> UIElement {
+              style: String? = nil, body: (@MainActor () -> [UIElement])? = nil) -> UIElement {
         let key = id ?? title
         let card = Theme.card(radius: 12)
         card.width = Theme.cardWidth
@@ -270,6 +274,20 @@ final class Inspector {
         value.maxWidth = 140
         value.textTrimming = .characterEllipsis
         line.children.append(value)
+        // A look with a name says its name, in pencil after the mark, and its picture is ringed.
+        var named: FrameworkElement?
+        if let style, let name = WindowsCore.styleName(at: style, session.selection) {
+            let summary = Self.namedSummary(name)
+            summary.horizontalAlignment = .right
+            summary.verticalAlignment = .center
+            summary.margin = value.margin
+            value.visibility = .collapsed
+            line.children.append(summary)
+            named = summary
+            box.borderBrush = Theme.brush(Theme.pencil, 0.75)
+            box.borderThickness = Theme.inset(1.2)
+            box.cornerRadius = Theme.corners(7.5)
+        }
         // Something to do at once, beside the summary, as the Mac's accessory: Release, Take Out,
         // the copy before and after. The summary gives way to it.
         if let accessory {
@@ -341,6 +359,8 @@ final class Inspector {
             let inside = StackPanel()
             inside.spacing = 8
             inside.margin = Theme.inset(12, 0, 12, 12)
+            // The design's styles of the kind first, and the look named.
+            if let style, let row = styleRow(style) { inside.children.append(row) }
             for e in body() { inside.children.append(e) }
             stack.children.append(inside)
         }
@@ -366,6 +386,8 @@ final class Inspector {
             guard turned || abs(dx) > 3 else { return }
             turned = true
             fill.opacity = 1
+            named?.visibility = .collapsed
+            value.visibility = .visible
             let raw = s.fraction + dx / Theme.cardWidth
             var f = min(1, max(0, raw))
             if let stop = dial.stops.first(where: { abs($0 - f) < 0.03 }) { f = stop }

@@ -120,6 +120,7 @@ final class DesignCanvas {
     /// The word "Mask" offered after a change, above what it is about (the Mac's MaskTool offer):
     /// pointed at, the mask shows made; pressed, it is made.
     private let offerChip = Border()
+    private let styleMarks = Canvas()
     private var shownOffer: WindowsCore.MaskOffer?
     private var offerLit = false
     /// What is offered for a moment after a change to a copy (the Mac's ComponentTool offer): a
@@ -378,13 +379,14 @@ final class DesignCanvas {
             self?.drawFlow()
         }
         session.listenToHover { [weak self] in self?.placeOverlays() }
+        session.listenToStyles { [weak self] in self?.drawStyleUsers() }
         session.listenToEdits { [weak self] board in
             guard let self else { return }
             self.redraw(board: board)
             self.place()
             // A step made at once to a copy offers what can be made of it; any other step takes
             // what was offered away.
-            if self.drag == nil, let considered = WindowsCore.considerCopyOffer() {
+            if self.drag == nil, let considered = WindowsCore.considerCopyOffer(selection: self.session.selection) {
                 if let offer = considered { self.showCopyOffer(offer) } else if self.copyOffer != nil {
                     self.copyOffer = nil
                     self.placeCopyOffer()
@@ -901,6 +903,7 @@ final class DesignCanvas {
             overlay.children.append(measurePill)
             overlaysAdded = true
         }
+        if session.pointedStyle != nil { drawStyleUsers() }
         for (k, board) in boards.enumerated() {
             let lit = session.board == board.index
             sheets[k]?.name.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)
@@ -1030,6 +1033,32 @@ final class DesignCanvas {
     /// As the Mac's ComponentTool: with a copy picked, every other copy of its component faintly
     /// dashed in violet, so what will change with it is in sight; and over the copy, at its top
     /// left, a diamond and the component's name, with the variant it shows.
+    /// Every layer that uses the style pointed at in the inspector, outlined in pencil.
+    private func drawStyleUsers() {
+        if styleMarks.parent == nil {
+            styleMarks.isHitTestVisible = false
+            overlay.children.append(styleMarks)
+        }
+        styleMarks.children.clear()
+        guard let id = session.pointedStyle, session.mode == 0 else { return }
+        var lines = PathData()
+        for corners in WindowsCore.styleUserOutlines(id) {
+            guard let first = corners.first else { continue }
+            let a = onStage(first)
+            lines.move(Double(a.x), Double(a.y))
+            for p in corners.dropFirst() { let q = onStage(p); lines.line(Double(q.x), Double(q.y)) }
+            lines.close()
+        }
+        guard !lines.d.isEmpty else { return }
+        for (width, alpha, filled) in [(5.0, 0.2, true), (1.25, 0.9, false)] {
+            if let path = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(lines.d)' StrokeThickness='\(width)' StrokeLineJoin='Round'/>")) as? WinUI.Path {
+                path.stroke = Theme.brush(Theme.pencil, alpha)
+                if filled { path.fill = Theme.brush(Theme.pencil, 0.08) }
+                styleMarks.children.append(path)
+            }
+        }
+    }
+
     private func drawComponents() {
         if componentMarks.parent == nil {
             componentMarks.isHitTestVisible = false
@@ -1117,9 +1146,11 @@ final class DesignCanvas {
             let pill = Border()
             pill.height = 20
             pill.cornerRadius = Theme.corners(10)
-            pill.background = i == 0 ? Theme.brush(Theme.linked) : Theme.brush(Theme.linked, 0.08)
+            // A component's offer in the violet of copies; a style's in the pencil's blue.
+            let tint = offer.style ? Theme.pencil : Theme.linked
+            pill.background = i == 0 ? Theme.brush(tint) : Theme.brush(tint, 0.08)
             let label = Theme.text(Words.match(title), size: 11.5, weight: 600)
-            label.foreground = i == 0 ? Theme.brush(0xFFFFFF) : Theme.brush(Theme.linked)
+            label.foreground = i == 0 ? Theme.brush(0xFFFFFF) : Theme.brush(tint)
             label.margin = Theme.inset(9, 0, 9, 0)
             label.verticalAlignment = .center
             pill.child = label

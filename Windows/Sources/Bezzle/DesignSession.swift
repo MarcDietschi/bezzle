@@ -43,6 +43,10 @@ final class DesignSession {
     var reveal: ((UUID) -> Void)?
     /// The Export sheet, opened.
     var openExport: (() -> Void)?
+    /// The style pointed at in the inspector: the canvas outlines every layer that uses it.
+    var pointedStyle: UUID? { didSet { if pointedStyle != oldValue { for f in styleListeners { f() } } } }
+    private var styleListeners: [() -> Void] = []
+    func listenToStyles(_ f: @escaping () -> Void) { styleListeners.append(f) }
     /// The Photo card's colour whose rows show, as a press on the photo picks it.
     var pickPhotoBand: ((String) -> Void)?
     /// The selected layers, all on the artboard at `board` (its index among the design's layers);

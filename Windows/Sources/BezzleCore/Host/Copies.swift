@@ -147,19 +147,56 @@ extension WindowsCore {
         public let words: String
         public let buttons: [String]
         public let token: UUID
+        /// About a style, not a component: shown in the pencil's blue.
+        public var style = false
     }
 
     nonisolated(unsafe) private static var offered: ComponentOffer?
 
+    /// What a style's offer is about (the Mac's StyleOffer.Kind).
+    enum StyleOffered {
+        /// The styles as they were before, and where the selection names them.
+        case onlyHere(styles: [UUID: Style], places: [FoundLook.Use])
+        /// Layers that look as a style just named does.
+        case nameToo(style: UUID, uses: [FoundLook.Use])
+        /// An artboard just made dark, to have a light one beside it as well.
+        case lightTwin(UUID)
+    }
+    nonisolated(unsafe) static var styleOffered: StyleOffered?
+    /// An offer made by a step itself (a look named), shown once the step has been looked at.
+    nonisolated(unsafe) static var pendingStyleOffer: CopyOffer?
+    /// Set while the design's styles are changed from their list, where no offer is made.
+    nonisolated(unsafe) public static var stylesFromList = false
+
     /// What the last step made at once offers, as the Mac's store looks after one: nil when no
     /// step has been made since; else what it offers, if anything, in place of anything offered
     /// before. Each step is looked at once.
-    public static func considerCopyOffer() -> CopyOffer?? {
+    public static func considerCopyOffer(selection: [UUID] = []) -> CopyOffer?? {
+        if let pending = pendingStyleOffer {
+            pendingStyleOffer = nil
+            Editing.lastStep = nil
+            offered = nil
+            return .some(pending)
+        }
         guard let step = Editing.lastStep, let doc = design else { return nil }
         Editing.lastStep = nil
         offered = doc.componentOffer(after: step.before, echo: step.echo)
-        guard let offer = offered else { return .some(nil) }
+        styleOffered = nil
+        guard let offer = offered else { return .some(styleOffer(after: step.before, selection: selection)) }
         return CopyOffer(anchor: offer.anchor, words: offer.words, buttons: offer.buttons.map(\.title), token: offer.token)
+    }
+
+    /// After a change made through the selected layers to styles they name, as the Mac's
+    /// noteStyles: the offer to keep it on them alone.
+    private static func styleOffer(after before: BezzleDocument, selection: [UUID]) -> CopyOffer? {
+        guard !stylesFromList, let doc = design, doc.styles != nil || before.styles != nil else { return nil }
+        let changed = BezzleDocument.stylesChanged(from: before, to: doc).filter { doc.style($0) != nil }
+        guard !changed.isEmpty else { return nil }
+        let users = doc.styleUsers()
+        guard let (anchor, olds, places, others) = doc.onlyHereOffer(before: before, selection: selection, changed: changed,
+                                                                     users: { users[$0] ?? [] }) else { return nil }
+        styleOffered = .onlyHere(styles: olds, places: places)
+        return CopyOffer(anchor: anchor, words: say("Also on %lld more layers", others.count), buttons: [say("Only Here")], token: UUID(), style: true)
     }
 
     /// A component just made: when other groups look the same, the offer to link them.
@@ -173,10 +210,28 @@ extension WindowsCore {
     }
 
     /// The offer let go of, untaken.
-    public static func dropCopyOffer() { offered = nil }
+    public static func dropCopyOffer() {
+        offered = nil
+        styleOffered = nil
+    }
 
     /// Does what the offer's button `index` offers, as one step; what is picked then, if that changes.
     @discardableResult public static func takeCopyOffer(_ index: Int) -> [UUID]? {
+        if let kind = styleOffered, offered == nil {
+            styleOffered = nil
+            switch kind {
+            case .onlyHere(let styles, let places):
+                edit { $0.keepOnlyHere(styles: styles, places: places) }
+            case .nameToo(let id, let uses):
+                guard design?.style(id) != nil else { return nil }
+                edit { $0.nameToo(id, uses: uses) }
+            case .lightTwin(let id):
+                var made: UUID?
+                edit { made = $0.addLightTwin(of: id) }
+                return made.map { [$0] }
+            }
+            return nil
+        }
         guard let offer = offered, offer.buttons.indices.contains(index), let doc = design else { return nil }
         offered = nil
         switch (offer.kind, offer.buttons[index].action) {

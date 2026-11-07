@@ -46,7 +46,7 @@ extension Inspector {
         let mark = Theme.text("Aa", size: 12.5, weight: 500, ink: 2)
         if let family = t.family, family != "System", let font = Self.font(of: family) { mark.fontFamily = font }
 
-        return card("Text", summary, mark: mark, dial: dial, body: { [self] in
+        return card("Text", summary, mark: mark, dial: dial, style: "text", body: { [self] in
             var rows: [UIElement] = []
             // The family, in the face of it most like the one the letters have.
             rows.append(Controls.menuButton(t.familyShown, width: Self.content, menus: menus, entries: {

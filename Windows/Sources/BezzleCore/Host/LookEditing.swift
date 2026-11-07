@@ -233,6 +233,13 @@ extension WindowsCore {
         return those.isEmpty ? nodes : those
     }
 
+    /// A fill as a card shows it.
+    static func paintLook(_ fill: Fill) -> PaintLook {
+        var n = Node(kind: .rectangle, name: "", frame: .zero)
+        n.fill = fill
+        return paint([n], \.fill)
+    }
+
     private static func paint(_ those: [Node], _ path: WritableKeyPath<Node, Fill>, blend: String? = nil) -> PaintLook {
         let first = those[0][keyPath: path]
         let kind = alike(those) { FillKind($0[keyPath: path]) }
