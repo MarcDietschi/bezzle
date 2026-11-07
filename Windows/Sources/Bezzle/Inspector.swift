@@ -932,7 +932,7 @@ final class Inspector {
 
     /// Dashed chips, 28 tall, radius 8, for adding what the selection has not got.
     /// Each chip's title, the card it opens once added, and what it adds.
-    func chips(_ items: [(String, String, () -> Void)], board: Int) -> UIElement {
+    func chips(_ items: [(String, String, () -> Void)], board: Int, previews: [String: @MainActor (Bool) -> Void] = [:]) -> UIElement {
         let wrap = StackPanel()
         wrap.spacing = 6
         var row: StackPanel?
@@ -967,12 +967,19 @@ final class Inspector {
             edge.strokeDashArray = dashes
             chip.children.append(edge)
             chip.children.append(label)
+            let preview = previews[item.0]
             let press = Pressable(radius: 8) { [weak self] in
+                preview?(false)
                 item.2()
                 self?.opened = item.1
                 self?.session.edited(board: board)
             }
             press.box.child = chip
+            // Pointed at, what it would add shows on the canvas, as the Mac's AddBar reshapes it.
+            if let preview {
+                press.box.pointerEntered.addHandler { _, _ in preview(true) }
+                press.box.pointerExited.addHandler { _, _ in preview(false) }
+            }
             row?.children.append(press.box)
         }
         return wrap

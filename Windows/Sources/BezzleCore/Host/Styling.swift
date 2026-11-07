@@ -361,3 +361,58 @@ extension WindowsCore {
         return ids.compactMap { doc.shownCorners(of: $0) }
     }
 }
+
+// MARK: - Light and dark
+
+extension WindowsCore {
+    /// How an artboard shows: dark or light (nil: with no dark look), and of the styles its
+    /// layers use, how many and how many have been made dark by hand.
+    public static func boardAppearance(_ id: UUID) -> (dark: Bool?, shows: Bool, named: Int, own: Int, locked: Bool)? {
+        guard let doc = design, let board = doc.node(id), board.isArtboard else { return nil }
+        var used = Set<UUID>()
+        func visit(_ n: Node) {
+            for place in StylePlace.all(in: n) { if let s = place.named(in: n) { used.insert(s) } }
+            n.children.forEach(visit)
+        }
+        visit(board)
+        let styles = (doc.styles ?? []).filter { used.contains($0.id) }
+        // Kept as it is in the light, as words on a button are, is no change made by hand.
+        return (board.dark, board.showsDark, styles.count, styles.filter { $0.dark != nil && $0.dark != $0.look }.count, board.locked)
+    }
+
+    /// Shows an artboard dark, or light again, keeping the switch between them, as one step; made
+    /// dark, its colours without a name get one, so each can be dark by itself. Made dark while
+    /// it is picked, the offer of a light one beside it follows.
+    @discardableResult public static func showDark(_ id: UUID, _ dark: Bool, picked: Bool) -> Bool {
+        guard let board = design?.node(id), board.isArtboard, board.showsDark != dark || board.dark == nil, !board.locked else { return false }
+        endPreview()
+        edit { $0.show(id, dark: dark, name: StyleNames.base) }
+        guard design?.node(id)?.showsDark == dark else { return false }
+        Editing.lastStep = nil
+        if dark, picked {
+            styleOffered = .lightTwin(id)
+            pendingStyleOffer = CopyOffer(anchor: id, words: say("A light one beside it"), buttons: [say("Add")], token: UUID(), style: true)
+        }
+        return true
+    }
+
+    /// The canvas showing an artboard dark while the choice is pointed at.
+    public static func previewDark(_ id: UUID, _ on: Bool) {
+        endPreview()
+        guard on else { return }
+        preview { $0.previewDark(id, dark: true) }
+    }
+
+    /// An artboard light for good, with no switch to dark any more; its styles stay as they are.
+    public static func forgetDark(_ id: UUID) {
+        guard let board = design?.node(id), board.isArtboard, board.dark != nil, !board.locked else { return }
+        edit { $0.update(id) { $0.dark = nil } }
+    }
+
+    /// A light copy of an artboard, beside it, as one step: what is picked then.
+    @discardableResult public static func addLightTwin(_ id: UUID) -> UUID? {
+        var made: UUID?
+        edit { made = $0.addLightTwin(of: id) }
+        return made
+    }
+}

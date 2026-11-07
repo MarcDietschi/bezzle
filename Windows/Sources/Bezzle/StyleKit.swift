@@ -363,7 +363,7 @@ extension Inspector {
 
     /// The words for light and dark, which the Mac keeps under keys of their own ("Light" is
     /// also a photo's).
-    private func appearance(_ dark: Bool) -> String {
+    func appearance(_ dark: Bool) -> String {
         let key = dark ? "appearance.dark" : "appearance.light"
         let w = Words.t(key)
         return w == key ? (dark ? "Dark" : "Light") : w
@@ -587,5 +587,77 @@ extension Glyphs {
         }
         p.close()
         return [Part(data: p.d, mode: .fill)]
+    }
+}
+
+extension Inspector {
+    /// An artboard shown dark, or light with its switch kept, as the Mac's DarkCard: its named
+    /// looks in their dark looks, made dark by themselves until one is changed there by hand. The
+    /// sun and moon on its line flip between the two; taken away, the artboard is light for good.
+    func darkCard(_ id: UUID, board: Int) -> UIElement? {
+        guard let a = WindowsCore.boardAppearance(id), a.dark != nil else { return nil }
+        let dark = a.shows
+        let pair = lightDarkPair(dark: dark) { [weak self] d in
+            guard let self else { return }
+            _ = WindowsCore.showDark(id, d, picked: self.session.selection.contains(id))
+            self.session.edited(board: nil)
+        }
+        let mark = Glyphs.view(dark ? Glyphs.moon(size: 14) : Glyphs.sun(size: 15), size: 15, brush: Theme.ink(2))
+        return card(appearance(dark), a.own == 0 ? "" : Words.t("%lld of %lld adjusted", a.own, a.named), id: "Appearance", mark: mark,
+                    remove: { [weak self] in
+                        WindowsCore.forgetDark(id)
+                        self?.session.edited(board: nil)
+                    }, removal: "No dark look", accessory: pair, body: { [self] in
+            let twin = Controls.cardButton(Words.t("Light One Beside It"), height: 28) { [weak self] in
+                guard let self, let made = WindowsCore.addLightTwin(id) else { return }
+                self.session.select([made], on: WindowsCore.boardIndex(of: made))
+                self.session.edited(board: nil)
+            }
+            return [twin]
+        })
+    }
+
+    /// Light or dark, as a sun and a moon in one well, the one chosen raised.
+    private func lightDarkPair(dark: Bool, _ choose: @escaping @MainActor (Bool) -> Void) -> FrameworkElement {
+        let well = Theme.well(radius: 8)
+        well.padding = Theme.inset(2)
+        let row = StackPanel()
+        row.orientation = .horizontal
+        for d in [false, true] {
+            let cell = Border()
+            cell.width = 28
+            cell.height = 20
+            cell.cornerRadius = Theme.corners(6)
+            cell.background = d == dark ? Theme.brush(Theme.card) : Theme.clear
+            let glyph = Glyphs.view(d ? Glyphs.moon(size: 13) : Glyphs.sun(size: 14), size: 14, brush: Theme.ink(d == dark ? 1 : 3))
+            glyph.horizontalAlignment = .center
+            glyph.verticalAlignment = .center
+            cell.child = glyph
+            cell.pointerPressed.addHandler { _, args in args?.handled = true }
+            cell.tapped.addHandler { _, args in
+                args?.handled = true
+                guard d != dark else { return }
+                DispatchQueue.main.async { MainActor.assumeIsolated { choose(d) } }
+            }
+            try? ToolTipService.setToolTip(cell, appearance(d))
+            row.children.append(cell)
+        }
+        well.child = row
+        return well
+    }
+}
+
+extension Glyphs {
+    /// A sun: a disc and its rays.
+    static func sun(size s: Double = 14) -> [Part] {
+        var disc = PathData(), rays = PathData()
+        let c = s / 2, r = s / 2
+        disc.ellipse(c - r * 0.42, c - r * 0.42, r * 0.84, r * 0.84)
+        for i in 0..<8 {
+            let a = Double(i) * .pi / 4
+            rays.move(c + cos(a) * r * 0.66, c + sin(a) * r * 0.66)
+            rays.line(c + cos(a) * r * 0.95, c + sin(a) * r * 0.95)
+        }
+        return [Part(data: disc.d, mode: .fill), Part(data: rays.d, mode: .stroke, width: max(1, r * 0.17))]
     }
 }

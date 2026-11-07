@@ -37,13 +37,24 @@ extension Inspector {
                     session.edited(board: nil)
                 }) { cards.append(layout) }
                 if let guides = guidesCard(id) { cards.append(guides) }
+                if let appearance = darkCard(id, board: board) { cards.append(appearance) }
             }
             if WindowsCore.exportMarked(ids) != false, let export = exportCard(ids, board: board) { cards.append(export) }
             // What an artboard can gain: a layout grid, and being marked for export.
             var more: [(String, String, () -> Void)] = []
             if ids.count == 1, WindowsCore.layoutLook(ids[0]) == nil { more.append(("Layout Grid", "Layout Grid", { WindowsCore.addLayout(ids[0]) })) }
             if WindowsCore.exportMarked(ids) == false { more.append(("Export", "Export", { WindowsCore.markForExport(ids) })) }
-            if !more.isEmpty { cards.append(chips(more, board: board)) }
+            // Showing a light artboard dark: pointed at, the canvas shows it so.
+            var previews: [String: @MainActor (Bool) -> Void] = [:]
+            if ids.count == 1, let a = WindowsCore.boardAppearance(ids[0]), a.dark == nil, !a.locked {
+                let id = ids[0], title = appearance(true)
+                more.append((title, title, { [self] in _ = WindowsCore.showDark(id, true, picked: session.selection.contains(id)) }))
+                previews[title] = { [self] on in
+                    WindowsCore.previewDark(id, on)
+                    session.previewed(board: nil)
+                }
+            }
+            if !more.isEmpty { cards.append(chips(more, board: board, previews: previews)) }
             return cards
         }
         cards.append(opacityCard(looks, change: change, preview: preview))
