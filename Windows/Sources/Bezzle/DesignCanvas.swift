@@ -903,7 +903,7 @@ final class DesignCanvas {
             overlay.children.append(measurePill)
             overlaysAdded = true
         }
-        if session.pointedStyle != nil { drawStyleUsers() }
+        if session.pointedStyle != nil || !session.litLayers.isEmpty { drawStyleUsers() }
         for (k, board) in boards.enumerated() {
             let lit = session.board == board.index
             sheets[k]?.name.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)
@@ -1040,9 +1040,10 @@ final class DesignCanvas {
             overlay.children.append(styleMarks)
         }
         styleMarks.children.clear()
-        guard let id = session.pointedStyle, session.mode == 0 else { return }
+        guard session.mode == 0, session.pointedStyle != nil || !session.litLayers.isEmpty else { return }
         var lines = PathData()
-        for corners in WindowsCore.styleUserOutlines(id) {
+        let outlines = session.pointedStyle.map { WindowsCore.styleUserOutlines($0) } ?? []
+        for corners in outlines + WindowsCore.layerOutlines(session.litLayers) {
             guard let first = corners.first else { continue }
             let a = onStage(first)
             lines.move(Double(a.x), Double(a.y))

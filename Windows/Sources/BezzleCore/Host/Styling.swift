@@ -178,3 +178,186 @@ extension WindowsCore {
         return (doc.styleUsers()[id] ?? []).compactMap { doc.shownCorners(of: $0) }
     }
 }
+
+// MARK: - The kit, with nothing picked
+
+extension WindowsCore {
+    /// One of the design's styles in the kit, or a look several layers have alike without a name.
+    nonisolated public struct KitEntry: Sendable {
+        /// The style's; nil for a look found.
+        public let id: UUID?
+        public let name: String?
+        public let sample: StyleSample
+        /// Its look in the dark, while the design shows anything dark.
+        public let dark: StyleSample?
+        /// How many layers use it, or have it alike.
+        public let uses: Int
+        /// The hex of a colour, "Gradient", or a type's size.
+        public let detail: String
+        /// What a type is, by family and face.
+        public let typeName: String
+    }
+
+    /// The kit's cards: each kind that has styles or looks found, with them, the most found first.
+    public static func styleKit() -> [(kind: String, named: [KitEntry], found: [KitEntry])] {
+        guard let doc = design else { return [] }
+        let found = doc.foundLooks()
+        let uses = doc.styleUses
+        let dark = doc.hasDark
+        func detail(_ look: StyleLook) -> String {
+            switch look {
+            case .colour(let c): return c.gradient != nil ? say("Gradient") : "#\(c.color.hex)"
+            case .text(let t): return said(Double(t.size))
+            default: return ""
+            }
+        }
+        func typeName(_ look: StyleLook) -> String {
+            guard case .text(let t) = look else { return "" }
+            return "\(Fonts.displayName(t.family)) \(t.face)"
+        }
+        var out: [(String, [KitEntry], [KitEntry])] = []
+        for kind in StyleKind.allCases {
+            let named = doc.styles(of: kind).map { s in
+                KitEntry(id: s.id, name: s.name, sample: sample(s.look), dark: dark ? sample(s.look(dark: true)) : nil,
+                         uses: uses[s.id] ?? 0, detail: detail(s.look), typeName: typeName(s.look))
+            }
+            let ghosts = (found[kind] ?? []).prefix(kind == .colour ? 8 : 4).map { f in
+                KitEntry(id: nil, name: nil, sample: sample(f.look), dark: nil, uses: f.count, detail: detail(f.look), typeName: typeName(f.look))
+            }
+            if !named.isEmpty || !ghosts.isEmpty { out.append((kind.rawValue, named, Array(ghosts))) }
+        }
+        return out
+    }
+
+    private static func said(_ v: Double) -> String {
+        let r = (v * 10).rounded() / 10
+        return r == r.rounded() ? "\(Int(r))" : String(format: "%.1f", r)
+    }
+
+    private static func found(_ kind: String, _ index: Int) -> FoundLook? {
+        guard let k = StyleKind(rawValue: kind), let list = design?.foundLooks()[k], list.indices.contains(index) else { return nil }
+        return list[index]
+    }
+
+    /// The layers a look found lies on, to outline while it is pointed at.
+    public static func foundLayers(_ kind: String, _ index: Int) -> [UUID] {
+        found(kind, index).map { Array(Set($0.uses.map(\.layer))) } ?? []
+    }
+
+    /// Names a look found on several layers, giving each of them the new style, as one step.
+    @discardableResult public static func nameFound(_ kind: String, _ index: Int) -> UUID? {
+        guard let doc = design, let f = found(kind, index) else { return nil }
+        let style = doc.styleNaming(f, nil)
+        stylesFromList = true
+        defer { stylesFromList = false }
+        edit { $0.name(f, as: style) }
+        return style.id
+    }
+
+    /// A style opened in the kit, to be changed: its name and what makes its look, as it is in the
+    /// light or, with `dark`, in the dark.
+    nonisolated public struct StyleEdit: Sendable {
+        public let name: String
+        public let kind: String
+        public let colour: Colour?
+        public let gradient: Bool
+        public let family: String
+        public let face: String
+        public let size: Double
+        public let line: Double?
+        public let tracking: Double
+        public let shadow: (colour: Colour, x: Double, y: Double, blur: Double, spread: Double)?
+        public let radius: Double
+        public let smooth: Bool
+        /// Whether its look in the dark is its own, made by hand.
+        public let ownDark: Bool
+        /// Whether it has a look in the dark to change: a colour or a shadow, while the design shows anything dark.
+        public let darkens: Bool
+    }
+
+    public static func styleEdit(_ id: UUID, dark: Bool) -> StyleEdit? {
+        guard let doc = design, let s = doc.style(id) else { return nil }
+        let darkens = doc.hasDark && (s.kind == .colour || s.kind == .shadow)
+        let look = s.look(dark: darkens && dark)
+        var e = (colour: Colour?.none, gradient: false, family: "", face: "", size: 0.0, line: Double?.none, tracking: 0.0,
+                 shadow: (colour: Colour, x: Double, y: Double, blur: Double, spread: Double)?.none, radius: 0.0, smooth: false)
+        switch look {
+        case .colour(let c): e.colour = Colour(c.color); e.gradient = c.gradient != nil
+        case .text(let t):
+            e.family = t.family; e.face = t.face; e.size = Double(t.size); e.line = t.lineSpacing.map { Double($0) }; e.tracking = Double(t.tracking)
+        case .shadow(let sh): e.shadow = (Colour(sh.color), Double(sh.x), Double(sh.y), Double(sh.blur), Double(sh.spread ?? 0))
+        case .corners(let c): e.radius = Double(c.radius); e.smooth = (c.smoothing ?? 0) > 0
+        }
+        return StyleEdit(name: s.name, kind: s.kind.rawValue, colour: e.colour, gradient: e.gradient, family: e.family, face: e.face, size: e.size,
+                         line: e.line, tracking: e.tracking, shadow: e.shadow, radius: e.radius, smooth: e.smooth, ownDark: s.dark != nil, darkens: darkens)
+    }
+
+    /// A change to a style from the kit, to every layer that uses it.
+    public enum StyleChange {
+        case colour(Colour)
+        case family(String), face(String), size(Double), line(Double), tracking(Double)
+        case shadowColour(Colour), shadowX(Double), shadowY(Double), shadowBlur(Double), shadowSpread(Double)
+        case radius(Double), smooth(Bool)
+    }
+
+    public static func changeStyle(_ id: UUID, dark: Bool, _ change: StyleChange) {
+        guard let doc = design, let s = doc.style(id) else { return }
+        let darkens = doc.hasDark && (s.kind == .colour || s.kind == .shadow)
+        stylesFromList = true
+        defer { stylesFromList = false }
+        edit { d in
+            d.changeStyleLook(id, dark: darkens && dark) { look in
+                switch (look, change) {
+                case (.colour, .colour(let c)): look = .colour(ColourLook(color: RGBA(c)))
+                case (.text(var t), _):
+                    switch change {
+                    case .family(let f): t.face = Fonts.face(like: t.face, of: t.family, in: f); t.family = f
+                    case .face(let f): t.face = f
+                    case .size(let v): t.size = CGFloat(v)
+                    case .line(let v): t.lineSpacing = CGFloat(v)
+                    case .tracking(let v): t.tracking = CGFloat(v)
+                    default: return
+                    }
+                    look = .text(t)
+                case (.shadow(var sh), _):
+                    switch change {
+                    case .shadowColour(let c): sh.color = RGBA(c)
+                    case .shadowX(let v): sh.x = CGFloat(v)
+                    case .shadowY(let v): sh.y = CGFloat(v)
+                    case .shadowBlur(let v): sh.blur = CGFloat(v)
+                    case .shadowSpread(let v): sh.spread = v == 0 ? nil : CGFloat(v)
+                    default: return
+                    }
+                    look = .shadow(sh)
+                case (.corners(var c), _):
+                    switch change {
+                    case .radius(let v): c.radius = CGFloat(v)
+                    case .smooth(let on): c.smoothing = on ? Presets.squircle : nil
+                    default: return
+                    }
+                    look = .corners(c)
+                default:
+                    return
+                }
+            }
+        }
+    }
+
+    /// A style's look in the dark follows its look again.
+    public static func followInTheDark(_ id: UUID) {
+        stylesFromList = true
+        defer { stylesFromList = false }
+        edit { $0.followInTheDark(id) }
+    }
+
+    /// A style taken away; its layers keep their looks.
+    public static func removeStyle(_ id: UUID) { edit { $0.removeStyle(id) } }
+}
+
+extension WindowsCore {
+    /// Layers as their corners on the canvas.
+    public static func layerOutlines(_ ids: [UUID]) -> [[CGPoint]] {
+        guard let doc = design else { return [] }
+        return ids.compactMap { doc.shownCorners(of: $0) }
+    }
+}

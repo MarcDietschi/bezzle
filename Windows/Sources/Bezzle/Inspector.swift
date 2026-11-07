@@ -58,6 +58,12 @@ final class Inspector {
     var pullDemo: AnyObject?
     /// The style rows that show all their styles, by the card's place; the style being renamed; the place whose look is being named.
     var stylesAll: Set<String> = []
+    /// The style opened in the kit, whether its name is to be typed, whether its look in the dark is shown, and its colour panel.
+    var kitOpen: UUID?
+    var kitNaming = false
+    var kitDark = false
+    var kitPanel: AnyObject?
+    var kitChanges = 0
     var renamingStyle: UUID?
     var namingStyle: String?
     /// What Inspect's Asset card takes a layer as: its format, and for a picture how many pixels to the point.
@@ -128,6 +134,8 @@ final class Inspector {
         if session.mode == 1 { showPrototype(); return }
         let layers = session.selectedLayers
         guard let layer = layers.first, let board = session.board else {
+            // The design's styles first, as the Mac's StyleKit stands above the tools.
+            for card in styleKitCards() { cards.children.append(card) }
             cards.children.append(toolsCard())
             return
         }

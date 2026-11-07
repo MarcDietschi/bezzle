@@ -45,6 +45,8 @@ final class DesignSession {
     var openExport: (() -> Void)?
     /// The style pointed at in the inspector: the canvas outlines every layer that uses it.
     var pointedStyle: UUID? { didSet { if pointedStyle != oldValue { for f in styleListeners { f() } } } }
+    /// Layers outlined for a moment besides, such as those a look found is on, while it is pointed at.
+    var litLayers: [UUID] = [] { didSet { if litLayers != oldValue { for f in styleListeners { f() } } } }
     private var styleListeners: [() -> Void] = []
     func listenToStyles(_ f: @escaping () -> Void) { styleListeners.append(f) }
     /// The Photo card's colour whose rows show, as a press on the photo picks it.
