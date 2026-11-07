@@ -581,6 +581,10 @@ final class DesignCanvas {
 
     /// The whole design in view, as the Mac fits it: 64 points round it, never above 1×.
     func fit() {
+        // Not yet laid out, the canvas fits itself once it is (root.loaded): drawn before that,
+        // its marks went onto the overlay twice and WinUI stopped the app (an AI assistant making
+        // or bringing in a design zooms to fit at once).
+        guard root.isLoaded else { return }
         boards = WindowsCore.boards()
         fit(boards.reduce(CGRect.null) { $0.union($1.frame) }, padding: 64, most: 1)
     }

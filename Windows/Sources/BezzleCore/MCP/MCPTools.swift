@@ -237,6 +237,37 @@ import Foundation
         return [.text(summary(of: store).text)]
     }
 
+    func importWebsite(_ args: Arguments) async throws -> [Content] {
+        guard let address = try args.string("url"), let url = WebCapture.address(address) else {
+            throw MCPError("Give the page's address, such as https://example.com.")
+        }
+        var sizes: [WebCapture.Size] = []
+        if let widths = args["widths"] as? [Any] {
+            for w in widths {
+                guard let n = WebCapture.number(w) ?? Double("\(w)"), n >= 240 else { throw MCPError("widths should be numbers of pixels, from 240 up.") }
+                let size = WindowsCore.WebWidth(n).size
+                if !sizes.contains(where: { $0.width == size.width }) { sizes.append(size) }
+            }
+        }
+        let design: URL, report: ImportReport
+        do {
+            (design, report) = try await WebImport.run(url, sizes: sizes, hideBanners: try args.bool("hide_banners") ?? true, into: MCPHost.shared.designsFolder())
+        } catch {
+            throw MCPError("\(address) could not be brought in: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
+        }
+        // Opened in the window, as the Mac opens it in a tab, with what came across at the canvas's foot.
+        MCPHost.shared.endEditing()
+        let store = DocumentStore.open
+        guard MCPHost.shared.open(design), store.isAt(design) else { throw MCPError("\(design.lastPathComponent) could not be opened.") }
+        MCPHost.shared.broughtIn(WindowsCore.summary(of: report))
+        store.zoomToFit()
+        var text = summary(of: store).text
+        var lines = report.notes.sorted { $0.value > $1.value }.map { "\($0.key): \($0.value)" }
+        if !report.missingFonts.isEmpty { lines.append("Fonts not on this computer: " + report.missingFonts.sorted().joined(separator: ", ")) }
+        if !lines.isEmpty { text += "\n\nOnly approximated:\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
+        return [.text(text)]
+    }
+
     func closeDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         let name = store.name
