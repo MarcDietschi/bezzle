@@ -115,40 +115,11 @@ enum Fonts {
         return (weight, font.fontDescriptor.symbolicTraits.contains(.italic))
     }
 
-    /// The face of `family` most like `face` of `from`: the same name if it has one, else the one
-    /// nearest in weight that leans as it does.
-    nonisolated static func face(like face: String, of from: String, in family: String) -> String {
-        let faces = self.faces(of: family)
-        if faces.contains(face) { return face }
-        guard !faces.isEmpty else { return face }
-        let want = traits(of: face, in: from)
-        return faces.min { a, b in
-            let ta = traits(of: a, in: family), tb = traits(of: b, in: family)
-            let da = abs(ta.weight - want.weight) + (ta.italic == want.italic ? 0 : 20)
-            let db = abs(tb.weight - want.weight) + (tb.italic == want.italic ? 0 : 20)
-            return da != db ? da < db : (a == "Regular") && b != "Regular"
-        } ?? face
+    /// The font's own line height, which a text has until one is set.
+    nonisolated static func naturalLineHeight(_ style: TextStyle) -> CGFloat {
+        let font = font(style)
+        return ceil(font.ascender - font.descender + font.leading)
     }
-
-    /// The face of a family that is the bold, or not bold, of `face`, keeping whether it leans.
-    nonisolated static func face(_ face: String, of family: String, bold: Bool) -> String {
-        let now = traits(of: face, in: family)
-        let faces = self.faces(of: family).filter { traits(of: $0, in: family).italic == now.italic }
-        let goal = bold ? 9 : 5
-        if bold ? now.weight >= 8 : now.weight <= 6 { return face }
-        return faces.min { abs(traits(of: $0, in: family).weight - goal) < abs(traits(of: $1, in: family).weight - goal) } ?? face
-    }
-
-    /// The face of a family that is the leaning, or upright, `face`, keeping its weight.
-    nonisolated static func face(_ face: String, of family: String, italic: Bool) -> String {
-        let now = traits(of: face, in: family)
-        guard now.italic != italic else { return face }
-        let faces = self.faces(of: family).filter { traits(of: $0, in: family).italic == italic }
-        return faces.min { abs(traits(of: $0, in: family).weight - now.weight) < abs(traits(of: $1, in: family).weight - now.weight) } ?? face
-    }
-
-    nonisolated static func isBold(_ face: String, of family: String) -> Bool { traits(of: face, in: family).weight >= 8 }
-    nonisolated static func isItalic(_ face: String, of family: String) -> Bool { traits(of: face, in: family).italic }
 
     // MARK: Features and axes
 

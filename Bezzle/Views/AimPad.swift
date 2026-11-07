@@ -87,24 +87,14 @@ struct CardInDepth: View {
 
     var body: some View {
         Canvas { ctx, size in
-            let w = size.width * 0.82, h = size.height * 0.82
-            let card = CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
-            let p = Perspective(Transform3D(x: turn.x, y: turn.y), center: card.center, distance: max(w, h) * 2.4)
-            let pts = [CGPoint(x: card.minX, y: card.minY), CGPoint(x: card.maxX, y: card.minY),
-                       CGPoint(x: card.maxX, y: card.maxY), CGPoint(x: card.minX, y: card.maxY)].map(p.shown)
+            let card = DepthAim.card(turn, in: size)
+            let pts = card.corners
             var shape = Path()
             shape.addLines(pts)
             shape.closeSubpath()
-            // Turned past edge on, its corners run the other way round: it shows its back.
-            let area = zip(pts, pts.dropFirst() + [pts[0]]).reduce(0) { $0 + $1.0.x * $1.1.y - $1.1.x * $1.0.y }
-            let back = area < 0
+            let back = card.back
             ctx.fill(shape, with: .color(back ? Theme.ink.opacity(0.18) : Theme.card))
-            if !back {
-                // The light is above the page, a little in front: a face turned up from it, brighter.
-                let a = turn.x * .pi / 180, b = turn.y * .pi / 180
-                let lit = max(0, -sin(a) * cos(b) * -0.5 + cos(a) * cos(b) * 0.87)
-                ctx.fill(shape, with: .color(Color.black.opacity((1 - lit) * 0.22)))
-            }
+            if !back { ctx.fill(shape, with: .color(Color.black.opacity(card.shade))) }
             ctx.stroke(shape, with: .color(Theme.ink.opacity(0.5)), lineWidth: 1)
             // Its top, stronger, so which way up it is reads.
             var top = Path()

@@ -130,17 +130,9 @@ final class MaskTool {
         return false
     }
 
-    /// Masking `ids` in the shape `over`, when that would cut something of them off that shows.
-    private func plan(_ ids: [UUID], over: UUID) -> MaskPlan? {
-        let doc = store.doc
-        guard let plan = DocumentStore.dipPlan(ids, over: over, in: doc), let shape = canvasBounds(of: over, in: doc) else { return nil }
-        var reach = CGRect.null
-        for id in plan.held { if let r = canvasBounds(of: id, in: doc) { reach = reach.union(r) } }
-        // What an artboard cuts off anyway is no reason to.
-        if let board = doc.artboard(of: over), board.clips { reach = reach.intersection(board.frame) }
-        guard !reach.isNull, reach.intersects(shape), !shape.insetBy(dx: -0.5, dy: -0.5).contains(reach) else { return nil }
-        return plan
-    }
+    /// Masking `ids` in the shape `over`, when that would cut something of them off that shows
+    /// (the shared `BezzleDocument.cuttingDip`).
+    private func plan(_ ids: [UUID], over: UUID) -> MaskPlan? { store.doc.cuttingDip(ids, over: over) }
 
     /// The shape resting has opened: what is held goes into it, as one step with the drag.
     private func open() {
@@ -197,57 +189,16 @@ final class MaskTool {
         glow.target = 0
     }
 
-    /// The shape, or the mask, a layer dragged to `p` on the canvas is held over: whatever is under
-    /// the pointer there, leaving out what is being dragged, down into groups as far as the shape
-    /// itself. Something else on top, such as a text, is what is under the pointer, and no shape is.
+    /// The shape, or the mask, a layer dragged to `p` on the canvas is held over (the shared
+    /// `BezzleDocument.maskTarget`).
     private func target(at p: CGPoint, moving: [UUID]) -> UUID? {
-        let skip = Set(moving)
-        func find(_ nodes: [Node], _ q: CGPoint) -> (found: UUID?, stop: Bool) {
-            for n in nodes.reversed() where !n.hidden && !n.locked && !skip.contains(n.id) {
-                let inner = CGPoint(x: q.x - n.frame.minX, y: q.y - n.frame.minY)
-                if let holder = n.holder {
-                    guard Mask.inside(holder, inner, tolerance: 0) else { continue }
-                    return (n.id, true)
-                }
-                if n.isGroup {
-                    let r = find(n.children, inner)
-                    if r.stop { return r }
-                    continue
-                }
-                guard Geometry.contains(n, q, tolerance: 0) else { continue }
-                return (Mask.canHold(n) ? n.id : nil, true)
-            }
-            return (nil, false)
-        }
-        for top in store.doc.nodes.reversed() where !top.hidden {
-            if top.isArtboard {
-                guard top.frame.contains(p) else { continue }
-                return find(store.seenLayers(of: top), CGPoint(x: p.x - top.frame.minX, y: p.y - top.frame.minY)).found
-            }
-            let r = find([top], p)
-            if r.stop { return r.found }
-        }
-        return nil
+        store.doc.maskTarget(at: p, moving: moving) { [store] in store.seenLayers(of: $0) }
     }
 
     /// The mask the layers being moved lie in, when they have been dragged wholly off its shape.
-    private func leaving(_ ids: [UUID]) -> UUID? {
-        let doc = store.doc
-        guard let first = ids.first, let mask = doc.parent(of: first), let holder = mask.holder,
-              ids.allSatisfy({ doc.parent(of: $0)?.id == mask.id && $0 != holder.id }),
-              let outline = Mask.outline(of: mask.id, in: doc) else { return nil }
-        let off = ids.allSatisfy { id in
-            guard let r = canvasBounds(of: id, in: doc) else { return true }
-            return !outline.intersects(CGPath(rect: r, transform: nil))
-        }
-        return off ? mask.id : nil
-    }
+    private func leaving(_ ids: [UUID]) -> UUID? { store.doc.leavingMask(ids) }
 
-    private func canvasBounds(of id: UUID, in doc: BezzleDocument) -> CGRect? {
-        guard let n = doc.node(id) else { return nil }
-        let o = doc.parentOrigin(of: id)
-        return Geometry.bounds(of: n).offsetBy(dx: o.x, dy: o.y)
-    }
+    private func canvasBounds(of id: UUID, in doc: BezzleDocument) -> CGRect? { doc.canvasBounds(of: id) }
 
     // MARK: - The word offered
 
@@ -262,19 +213,9 @@ final class MaskTool {
     /// lies mostly over one that reaches past it, as a shape drawn over a photo to frame it does.
     func invite() {
         invited = nil
-        guard store.selection.count == 1, let id = store.selection.first, let shape = store.node(id), Mask.canHold(shape),
-              shape.fill.image == nil, !shape.locked, let path = store.doc.path(of: id), let frame = canvasBounds(of: id, in: store.doc) else { return }
-        let siblings = path.parent.map { store.doc[$0].children } ?? store.doc.nodes
-        let i = path.indices.last!
-        for other in siblings[..<i].reversed() where !other.hidden && !other.locked && other.post == shape.post {
-            guard other.fill.on, other.fill.image != nil, Mask.canHold(other), let r = canvasBounds(of: other.id, in: store.doc) else { continue }
-            let both = r.intersection(frame)
-            guard !both.isNull, both.width * both.height >= frame.width * frame.height * 0.5 else { continue }
-            if frame.insetBy(dx: -0.5, dy: -0.5).contains(r) { return }
-            invited = (MaskPlan(shape: id, held: [other.id]), store.version)
-            redraw()
-            return
-        }
+        guard let plan = store.doc.maskInvitation(store.selection) else { return }
+        invited = (plan, store.version)
+        redraw()
     }
 
     /// What the word offers to mask, if it shows now.
@@ -282,13 +223,8 @@ final class MaskTool {
         guard store.tool == .select, store.editingText == nil, store.editingPath == nil, store.editingPicture == nil,
               store.building == nil, dip == nil, !store.inGesture, !store.isReadOnly else { return nil }
         if let invited, invited.version == store.version, store.selection == [invited.plan.shape] { return invited.plan }
-        guard store.selection.count > 1, store.selection.count <= 12, let plan = store.maskPlan else { return nil }
         // Only where all of them overlap the shape, so picking things to move together does not ask.
-        guard let reach = canvasBounds(of: plan.shape, in: store.doc),
-              plan.held.allSatisfy({ canvasBounds(of: $0, in: store.doc)?.intersects(reach) == true }),
-              store.node(plan.shape)?.isMask == true || plan.held.contains(where: { id in canvasBounds(of: id, in: store.doc).map { !reach.contains($0) } == true })
-        else { return nil }
-        return plan
+        return store.doc.maskOffer(store.selection)
     }
 
     private func offerRect(_ plan: MaskPlan, in bounds: CGRect) -> CGRect? {
@@ -511,10 +447,8 @@ final class MaskTool {
 
     /// Return on a selected mask picks what it holds, to move it inside it.
     func key(_ event: NSEvent) -> Bool {
-        guard event.keyCode == 36 || event.keyCode == 76, store.tool == .select, store.editingPath == nil, store.selection.count == 1,
-              let mask = store.node(store.selection[0]), mask.isMask, !mask.locked else { return false }
-        let held = mask.children.dropFirst().filter { !$0.hidden && !$0.locked }.map(\.id)
-        guard !held.isEmpty else { return false }
+        guard event.keyCode == 36 || event.keyCode == 76, store.tool == .select, store.editingPath == nil,
+              let held = store.doc.maskHeld(store.selection) else { return false }
         store.selection = held
         return true
     }

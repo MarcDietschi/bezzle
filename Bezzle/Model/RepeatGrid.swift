@@ -543,7 +543,7 @@ extension RepeatGrid {
         var g = grid
         let inner = CGPoint(x: pivot.x - g.frame.minX, y: pivot.y - g.frame.minY)
         g.children = g.children.map { BezzleDocument.turned($0, by: degrees, about: inner) }
-        let angle = CanvasView.normalized((g.grid?.turn ?? 0) + degrees)
+        let angle = Geometry.normalized((g.grid?.turn ?? 0) + degrees)
         g.grid?.angle = angle == 0 ? nil : angle
         return g
     }
@@ -575,7 +575,7 @@ extension RepeatGrid {
             cells.append((to, moved(child, key(from) ^ key(to))))
         }
         g.children = cells.sorted { ($0.0.row, $0.0.column) < ($1.0.row, $1.0.column) }.map(\.1) + others
-        if spec.turn != 0 { spec.angle = CanvasView.normalized(-spec.turn) }
+        if spec.turn != 0 { spec.angle = Geometry.normalized(-spec.turn) }
         g.grid = spec
         return g
     }

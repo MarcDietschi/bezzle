@@ -283,17 +283,6 @@ extension SampleContent {
     }
 }
 
-extension RepeatGrid {
-    /// Changes the layer with this id somewhere in a grid, however deep.
-    static func change(_ id: UUID, in node: inout Node, _ body: (inout Node) -> Void) {
-        if node.id == id {
-            body(&node)
-            return
-        }
-        for i in node.children.indices { change(id, in: &node.children[i], body) }
-    }
-}
-
 /// Four cells, two by two, the first drawn solid: for a repeat grid in the layers list.
 struct RepeatGridGlyph: View {
     var body: some View {

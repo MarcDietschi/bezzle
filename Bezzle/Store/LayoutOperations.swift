@@ -47,30 +47,22 @@ extension DocumentStore {
     /// Changes an artboard's layout grid: as one step of the history, or as part of a drag going on.
     /// What is changed is kept within what can be had, and a grid left with nothing in it goes.
     func changeLayout(of board: UUID, _ action: LocalizedStringResource, _ change: @escaping (inout LayoutGrid) -> Void) {
-        edit(action) { doc in doc.update(board) { Self.changeLayout(of: &$0, change) } }
+        edit(action) { $0.changeLayout(of: board, change) }
     }
 
     nonisolated static func changeLayout(of node: inout Node, _ change: (inout LayoutGrid) -> Void) {
-        guard node.isArtboard else { return }
-        var grid = node.layout ?? LayoutGrid()
-        change(&grid)
-        grid.columns = grid.columns?.tidied
-        grid.rows = grid.rows?.tidied
-        grid.baseline = grid.baseline?.tidied
-        node.layout = grid.orNil
-        // Shown again when it is changed, so what changes can be seen.
+        node.changeLayout(change)
     }
 
     /// Gives an artboard the columns that suit its size, and shows layout grids if they were hidden.
     func addLayout(to board: UUID) {
-        guard let node = node(board), node.isArtboard else { return }
-        let size = LayoutGrid.areas(of: node).first?.size ?? node.frame.size
-        changeLayout(of: board, "Add Layout Grid") { $0 = LayoutGrid.suggested(for: size) }
+        guard node(board)?.isArtboard == true else { return }
+        edit("Add Layout Grid") { $0.addLayout(to: board) }
         Helpers.shared.grids = true
     }
 
     func removeLayout(from board: UUID) {
-        edit("Remove Layout Grid") { doc in doc.update(board) { $0.layout = nil } }
+        edit("Remove Layout Grid") { $0.removeLayout(from: board) }
     }
 
     /// The layout grid of the artboard a layer lies on, and that artboard, when grids are shown.
@@ -84,58 +76,35 @@ extension DocumentStore {
     @discardableResult
     func addGuide(at position: CGFloat, vertical: Bool, to board: UUID, _ action: LocalizedStringResource = "Add Guide") -> String? {
         guard let node = node(board), node.isArtboard else { return nil }
-        let key = Guideline.key(besides: (node.guides ?? [:]).keys)
-        let guide = Guideline.at(position, vertical: vertical, in: node.frame.size)
-        edit(action) { doc in doc.update(board) { n in n.guides = (n.guides ?? [:]).merging([key: guide]) { _, new in new } } }
+        var key: String?
+        edit(action) { key = $0.addGuide(at: position, vertical: vertical, to: board) }
         Helpers.shared.guides = true
-        return self.node(board)?.guides?[key] != nil ? key : nil
+        return key.flatMap { self.node(board)?.guides?[$0] != nil ? $0 : nil }
     }
 
     /// Puts a guide somewhere else on its artboard, kept to the edge it is nearer now.
     func moveGuide(_ key: String, on board: UUID, to position: CGFloat, _ action: LocalizedStringResource = "Move Guide") {
-        guard let node = node(board), let guide = node.guides?[key] else { return }
-        let moved = Guideline.at(position, vertical: guide.vertical, in: node.frame.size)
-        guard moved != guide else { return }
-        edit(action) { doc in doc.update(board) { $0.guides?[key] = moved } }
+        guard let node = node(board), let guide = node.guides?[key],
+              Guideline.at(position, vertical: guide.vertical, in: node.frame.size) != guide else { return }
+        edit(action) { $0.moveGuide(key, on: board, to: position) }
     }
 
     func removeGuide(_ key: String, from board: UUID, _ action: LocalizedStringResource = "Remove Guide") {
         guard node(board)?.guides?[key] != nil else { return }
-        edit(action) { doc in
-            doc.update(board) { n in
-                n.guides?[key] = nil
-                if n.guides?.isEmpty == true { n.guides = nil }
-            }
-        }
+        edit(action) { $0.removeGuide(key, from: board) }
     }
 
     func removeGuides(from board: UUID) {
         guard node(board)?.guides?.isEmpty == false else { return }
-        edit("Remove Guides") { doc in doc.update(board) { $0.guides = nil } }
+        edit("Remove Guides") { $0.removeGuides(from: board) }
     }
 
     /// Guides for an artboard where its layout grid's columns, or rows, start and end: the margins,
     /// as lines to keep to once the grid is out of sight.
     func addGuidesAtMargins(of board: UUID) {
-        guard let node = node(board), let grid = node.layout else { return }
-        let size = node.frame.size
-        var wanted: [Guideline] = []
-        if let c = grid.columns {
-            wanted += [Guideline(vertical: true, edge: .start, offset: c.margin), Guideline(vertical: true, edge: .end, offset: c.margin)]
-        }
-        if let r = grid.rows {
-            wanted += [Guideline(vertical: false, edge: .start, offset: r.margin), Guideline(vertical: false, edge: .end, offset: r.margin)]
-        }
-        let have = Set((node.guides ?? [:]).values.map { "\($0.vertical) \($0.position(in: size))" })
-        let fresh = wanted.filter { !have.contains("\($0.vertical) \($0.position(in: size))") }
+        let fresh = doc.guidesAtMargins(of: board)
         guard !fresh.isEmpty else { return }
-        edit("Add Guides") { doc in
-            doc.update(board) { n in
-                var all = n.guides ?? [:]
-                for g in fresh { all[Guideline.key(besides: all.keys)] = g }
-                n.guides = all
-            }
-        }
+        edit("Add Guides") { $0.addGuides(fresh, to: board) }
         Helpers.shared.guides = true
     }
 }

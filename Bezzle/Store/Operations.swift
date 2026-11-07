@@ -33,30 +33,9 @@ extension DocumentStore {
         selection = copies
     }
 
-    /// Puts a copy of each layer right above it and returns the copies' ids.
+    /// Puts a copy of each layer right above it and returns the copies' ids (`BezzleDocument.duplicate`).
     static func duplicate(_ ids: [UUID], in doc: inout BezzleDocument, offset: CGPoint) -> [UUID] {
-        var copies: [UUID] = []
-        for id in ids {
-            // In a deck's post, the same layer of every post is copied too, each with its own words.
-            if let copy = Deck.duplicate(id, in: &doc, offset: offset) {
-                copies.append(copy)
-                continue
-            }
-            guard let path = doc.path(of: id) else { continue }
-            var copy = doc[path].freshCopy()
-            if copy.isArtboard {
-                // An artboard's copy goes beside it rather than over it.
-                copy.frame.origin.x += copy.frame.width + 80
-            } else {
-                copy.frame.origin.x += offset.x
-                copy.frame.origin.y += offset.y
-            }
-            var above = path
-            above.indices[above.indices.count - 1] += 1
-            doc.insert(copy, at: above)
-            copies.append(copy.id)
-        }
-        return copies
+        doc.duplicate(ids, offset: offset)
     }
 
     // MARK: Changing layers
@@ -86,16 +65,9 @@ extension DocumentStore {
     }
 
     /// Moves each layer onto the artboard its centre is over, or off onto the canvas, as when it
-    /// is dragged across. Keeps where it is on screen.
+    /// is dragged across (`BezzleDocument.settle`).
     func settle(_ ids: [UUID], in doc: inout BezzleDocument) {
-        for id in ids {
-            guard let node = doc.node(id), !node.isArtboard, let frame = doc.absoluteFrame(of: id) else { continue }
-            // What is in a group stays in it, wherever it is dragged.
-            if doc.parent(of: id)?.isGroup == true { continue }
-            let target = doc.artboard(at: frame.center)?.id
-            guard target != doc.parent(of: id)?.id else { continue }
-            if let n = doc.detach(id) { doc.attach(n, to: target) }
-        }
+        doc.settle(ids)
     }
 
     func setHidden(_ hidden: Bool, _ ids: [UUID]) {
@@ -121,19 +93,14 @@ extension DocumentStore {
 
     // MARK: Selecting
 
+    /// Selects what lies with the selection, or on the artboard in view, or everything (`Picking.all`).
     func selectAll() {
-        if let first = selection.first, let parent = doc.parent(of: first) {
-            selection = (parent.isArtboard ? seenLayers(of: parent) : parent.children).filter { !$0.hidden && !$0.locked }.map(\.id)
-        } else if let board = focusedArtboard, !board.children.isEmpty, selection.isEmpty {
-            selection = seenLayers(of: board).filter { !$0.hidden && !$0.locked }.map(\.id)
-        } else {
-            selection = doc.nodes.filter { !$0.hidden && !$0.locked }.map(\.id)
-        }
+        selection = Picking(doc: doc, selection: selection, fronts: fronts).all(focused: focusedArtboard)
     }
 
     // MARK: Arranging
 
-    enum Arrange { case front, forward, backward, back }
+    typealias Arrange = BezzleDocument.Arrange
 
     func arrange(_ how: Arrange) {
         let ids = selection
@@ -144,55 +111,15 @@ extension DocumentStore {
         case .backward: "Send Backward"
         case .back: "Send to Back"
         }
-        edit(name) { doc in
-            // Each list of siblings is arranged on its own.
-            func reorder(_ list: inout [Node]) {
-                let chosen = Set(ids)
-                guard list.contains(where: { chosen.contains($0.id) }) else { return }
-                switch how {
-                case .front:
-                    let moving = list.filter { chosen.contains($0.id) }
-                    list.removeAll { chosen.contains($0.id) }
-                    list += moving
-                case .back:
-                    let moving = list.filter { chosen.contains($0.id) }
-                    list.removeAll { chosen.contains($0.id) }
-                    list = moving + list
-                case .forward:
-                    for i in list.indices.reversed() where chosen.contains(list[i].id) && i + 1 < list.count && !chosen.contains(list[i + 1].id) {
-                        list.swapAt(i, i + 1)
-                    }
-                case .backward:
-                    for i in list.indices where chosen.contains(list[i].id) && i > 0 && !chosen.contains(list[i - 1].id) {
-                        list.swapAt(i, i - 1)
-                    }
-                }
-            }
-            // Each list on its own, however deep.
-            func everywhere(_ list: inout [Node]) {
-                reorder(&list)
-                for i in list.indices where !list[i].children.isEmpty { everywhere(&list[i].children) }
-            }
-            everywhere(&doc.nodes)
-        }
+        edit(name) { $0.arrange(ids, how) }
     }
 
     /// Moves a layer in the layers list: onto an artboard (or the canvas, when nil) at `index`,
-    /// counted bottom first.
+    /// counted bottom first (`BezzleDocument.move`).
     func move(_ id: UUID, to artboard: UUID?, at index: Int) {
         guard let node = doc.node(id), artboard != id else { return }
         if node.isArtboard && artboard != nil { return }
-        edit("Move Layer") { doc in
-            let oldPath = doc.path(of: id)
-            var target = index
-            // Removing it first shifts what comes after it in the same list.
-            if let oldPath {
-                let sameList = oldPath.parent.map { doc[$0].id } == artboard
-                if sameList && oldPath.indices.last! < target { target -= 1 }
-            }
-            guard let detached = doc.detach(id) else { return }
-            doc.attach(detached, to: artboard, at: target)
-        }
+        edit("Move Layer") { $0.move(id, to: artboard, at: index) }
     }
 
     // MARK: Grouping
@@ -224,121 +151,40 @@ extension DocumentStore {
         selection = selection.filter { !ids.contains($0) && doc.node($0) != nil } + freed
     }
 
-    /// The layers among `ids` that would go into a group: all but those inside another of them.
-    /// Nil when there are none, or one is an artboard or lies in a repeat grid, or they lie on
-    /// more than one artboard, or some on one and some on the canvas.
+    /// The layers among `ids` that would go into a group (`BezzleDocument.groupable`).
     static func groupable(_ ids: [UUID], in doc: BezzleDocument) -> [UUID]? {
-        let chosen = Set(ids)
-        let ids = ids.filter { id in doc.node(id) != nil && !doc.ancestors(of: id).contains { chosen.contains($0.id) } }
-        guard !ids.isEmpty, Set(ids.map { doc.artboard(of: $0)?.id }).count == 1,
-              ids.allSatisfy({ id in doc.node(id)?.isArtboard == false && !doc.ancestors(of: id).contains(where: \.isRepeatGrid) }) else { return nil }
-        return ids
+        doc.groupable(ids)
     }
 
-    /// Puts layers into a new group, in the artboard or group that holds them all, where the
-    /// frontmost of them was, and returns its id. Each stays where it is on the canvas, and in
-    /// the same order back to front.
+    /// Puts layers into a new group and returns its id (`BezzleDocument.group`).
     @discardableResult
     static func group(_ ids: [UUID], in doc: inout BezzleDocument, name: String? = nil) -> UUID? {
-        guard let ids = groupable(ids, in: doc) else { return nil }
-        // Back to front, as they are drawn.
-        let paths = ids.compactMap { id in doc.path(of: id).map { (id: id, at: $0.indices) } }
-            .sorted { $0.at.lexicographicallyPrecedes($1.at) }
-        guard let front = paths.last else { return nil }
-        // Where the deepest artboard or group that holds them all is.
-        var shared = Array(front.at.dropLast())
-        for p in paths {
-            let parent = p.at.dropLast()
-            shared = Array(zip(shared, parent).prefix { $0 == $1 }.map(\.0))
-        }
-        let holder = shared.isEmpty ? nil : doc.ancestors(of: front.id)[shared.count - 1].id
-        // Just above what holds the frontmost there, once those lying there themselves are out.
-        let place = front.at[shared.count]
-        let leaving = paths.filter { $0.at.count == shared.count + 1 && $0.at[shared.count] <= place }.count
-        var group = Node(kind: .group, name: name ?? doc.nextName(for: .group), frame: .zero)
-        // Taken out onto the canvas, and so into a group lying at the canvas's top left, they keep
-        // where they are; it is fitted round them afterwards.
-        group.children = paths.compactMap { doc.detach($0.id) }
-        doc.attach(group, to: holder, at: place + 1 - leaving)
-        return group.id
+        doc.group(ids, name: name)
     }
 
-    /// Takes the layers out of groups, each into its group's place, where they are, and returns them.
+    /// Takes the layers out of groups and returns them (`BezzleDocument.ungroup`).
     @discardableResult
     static func ungroup(_ ids: [UUID], in doc: inout BezzleDocument) -> [UUID] {
-        var freed: [UUID] = []
-        for id in ids {
-            guard let path = doc.path(of: id), let group = doc.node(id), group.isGroup else { continue }
-            // A group is never turned, so its layers only move by where it is.
-            let layers = group.children.map { child -> Node in
-                var c = child
-                c.frame = c.frame.offsetBy(dx: group.frame.minX, dy: group.frame.minY)
-                return c
-            }
-            let i = path.indices.last!
-            if let parent = path.parent {
-                var holder = doc[parent]
-                holder.children.replaceSubrange(i...i, with: layers)
-                doc[parent] = holder
-            } else {
-                doc.nodes.replaceSubrange(i...i, with: layers)
-            }
-            freed += layers.map(\.id)
-        }
-        // A group taken apart after the one it was in.
-        return freed.filter { doc.node($0) != nil }
+        doc.ungroup(ids)
     }
 
     // MARK: Aligning
 
-    enum Align { case left, centerX, right, top, centerY, bottom }
+    typealias Align = BezzleDocument.Align
 
-    /// Lines the selection up. A single layer lines up with its artboard.
+    /// Lines the selection up (`BezzleDocument.align`). A single layer lines up with its artboard.
     func align(_ how: Align) {
         let ids = selection.filter { doc.node($0)?.locked == false }
         guard !ids.isEmpty else { return }
-        let frames = ids.compactMap { id in doc.node(id).map { (id, Geometry.bounds(of: $0).offsetBy(dx: doc.parentOrigin(of: id).x, dy: doc.parentOrigin(of: id).y)) } }
-        let reference: CGRect
-        if ids.count == 1 {
-            guard let board = doc.artboard(of: ids[0]) else { return }
-            reference = board.frame
-        } else {
-            reference = frames.map(\.1).reduce(frames[0].1) { $0.union($1) }
-        }
-        edit("Align") { doc in
-            for (id, r) in frames {
-                var dx: CGFloat = 0, dy: CGFloat = 0
-                switch how {
-                case .left: dx = reference.minX - r.minX
-                case .centerX: dx = reference.midX - r.midX
-                case .right: dx = reference.maxX - r.maxX
-                case .top: dy = reference.minY - r.minY
-                case .centerY: dy = reference.midY - r.midY
-                case .bottom: dy = reference.maxY - r.maxY
-                }
-                doc.update(id) { $0.frame = $0.frame.offsetBy(dx: dx.rounded(), dy: dy.rounded()) }
-            }
-        }
+        if ids.count == 1, doc.artboard(of: ids[0]) == nil { return }
+        edit("Align") { $0.align(ids, how) }
     }
 
-    /// Spaces three or more layers evenly between the outermost two.
+    /// Spaces three or more layers evenly between the outermost two (`BezzleDocument.distribute`).
     func distribute(horizontally: Bool) {
         let ids = selection.filter { doc.node($0)?.locked == false }
         guard ids.count >= 3 else { return }
-        var items = ids.compactMap { id in doc.node(id).map { (id, Geometry.bounds(of: $0).offsetBy(dx: doc.parentOrigin(of: id).x, dy: doc.parentOrigin(of: id).y)) } }
-        items.sort { horizontally ? $0.1.minX < $1.1.minX : $0.1.minY < $1.1.minY }
-        let total = items.reduce(CGFloat(0)) { $0 + (horizontally ? $1.1.width : $1.1.height) }
-        let start = horizontally ? items.first!.1.minX : items.first!.1.minY
-        let end = horizontally ? items.map(\.1.maxX).max()! : items.map(\.1.maxY).max()!
-        let gap = (end - start - total) / CGFloat(items.count - 1)
-        edit("Distribute") { doc in
-            var cursor = start
-            for (id, r) in items {
-                let delta = cursor - (horizontally ? r.minX : r.minY)
-                doc.update(id) { $0.frame = $0.frame.offsetBy(dx: horizontally ? delta : 0, dy: horizontally ? 0 : delta) }
-                cursor += (horizontally ? r.width : r.height) + gap
-            }
-        }
+        edit("Distribute") { $0.distribute(ids, horizontally: horizontally) }
     }
 
     // MARK: Flipping
@@ -348,61 +194,23 @@ extension DocumentStore {
     func flip(horizontally: Bool) {
         let ids = selection.filter { doc.node($0).map { !$0.locked && !$0.isArtboard } == true }
         guard !ids.isEmpty else { return }
-        let box = ids.compactMap { id in doc.node(id).map { Geometry.bounds(of: $0).offsetBy(dx: doc.parentOrigin(of: id).x, dy: doc.parentOrigin(of: id).y) } }
-            .reduce(nil as CGRect?) { $0?.union($1) ?? $1 }
-        guard let box else { return }
-        edit(horizontally ? "Flip Horizontally" : "Flip Vertically") { doc in
-            for id in ids {
-                // The line in the layer's parent's own coordinates.
-                let o = doc.parentOrigin(of: id)
-                let axis = horizontally ? box.midX - o.x : box.midY - o.y
-                doc.update(id) { $0 = BezzleDocument.flipped($0, horizontally: horizontally, about: axis) }
-            }
-        }
+        edit(horizontally ? "Flip Horizontally" : "Flip Vertically") { $0.flip(ids, horizontally: horizontally) }
     }
 
-    /// Whether flipping the selection would change it. Words read forwards whichever way they
-    /// are flipped, so a text layer on its own stays as it is.
-    var canFlip: Bool {
-        let nodes = selectedNodes.filter { !$0.locked && !$0.isArtboard }
-        return nodes.count > 1 || nodes.contains { $0.kind != .text }
-    }
+    /// Whether flipping the selection would change it (`BezzleDocument.canFlip`).
+    var canFlip: Bool { doc.canFlip(selection) }
 
     // MARK: Copy and paste
 
-    static let pasteboardType = NSPasteboard.PasteboardType("com.erik.bezzle.layers")
-
-    private struct Clip: Codable {
-        /// Layers with their frames on the canvas.
-        var nodes: [Node]
-        /// The components any of them are copies of, to come along into another design.
-        var components: [Node]?
-        /// The styles any of them are named after, likewise. See `Style`.
-        var styles: [Style]?
-        /// The design they were copied from, which the components and styles new to another design
-        /// remember (`LibraryLink`).
-        var from: String?
-    }
+    static let pasteboardType = NSPasteboard.PasteboardType(LayerClip.type)
 
     func copySelection() {
-        let nodes = selection.compactMap { id -> Node? in
-            guard var n = doc.node(id) else { return nil }
-            n.frame = doc.absoluteFrame(of: id) ?? n.frame
-            return n
-        }
-        var used = Set(nodes.flatMap(\.componentsUsed))
-        for id in used { used.formUnion(doc.uses(id)) }
-        let masters = doc.masters.filter { used.contains($0.id) }
-        let named = (nodes + masters).reduce(into: Set<UUID>()) { $0.formUnion($1.stylesUsed) }
-        let styles = (doc.styles ?? []).filter { named.contains($0.id) }
-        guard !nodes.isEmpty, let data = try? JSONEncoder().encode(Clip(nodes: nodes, components: masters.isEmpty ? nil : masters,
-                                                                         styles: styles.isEmpty ? nil : styles, from: name)) else { return }
+        guard let (clip, words) = doc.clip(of: selection, designName: name), let data = try? JSONEncoder().encode(clip) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setData(data, forType: Self.pasteboardType)
         // Text layers also go out as plain text, for pasting elsewhere.
-        let words = nodes.compactMap(\.text).filter { !$0.isEmpty }
-        if !words.isEmpty { pb.setString(words.joined(separator: "\n"), forType: .string) }
+        if let words { pb.setString(words, forType: .string) }
     }
 
     func cutSelection() {
@@ -413,44 +221,17 @@ extension DocumentStore {
     }
 
     /// Pastes layers from Bezzle where they were copied from when that is in view, else in the
-    /// middle of the view; plain text becomes a text layer.
+    /// middle of the view (`BezzleDocument.paste`); plain text becomes a text layer.
     func paste() {
         let pb = NSPasteboard.general
-        if let data = pb.data(forType: Self.pasteboardType), let clip = try? JSONDecoder().decode(Clip.self, from: data) {
-            var nodes = clip.nodes.map { $0.freshCopy() }
-            let visible = visibleCanvasRect
-            let bounds = nodes.map(\.frame).reduce(nodes[0].frame) { $0.union($1) }
-            var shift = CGPoint.zero
-            if !visible.intersects(bounds) {
-                shift = CGPoint(x: (visible.midX - bounds.midX).rounded(), y: (visible.midY - bounds.midY).rounded())
-            }
-            // Pasting over the originals offsets the copies, so they can be seen.
-            if nodes.contains(where: { n in doc.allNodes.contains { $0.name == n.name && doc.absoluteFrame(of: $0.id) == n.frame } }) {
-                shift = shift + CGPoint(x: 10, y: 10)
-            }
-            for i in nodes.indices { nodes[i].frame = nodes[i].frame.offsetBy(dx: shift.x, dy: shift.y) }
-            let target = focusedArtboard?.id
-            // From another design, what is new here remembers where it came from.
-            let take = LibraryTake(name: clip.from == name ? nil : clip.from, masters: clip.components ?? [], styles: clip.styles ?? [])
-            edit("Paste") { doc in
-                // Styles and components new to this design come with the layers that use them.
-                let renamed = doc.bring(take)
-                if !renamed.isEmpty { nodes = nodes.map { $0.renamingStyles(renamed) } }
-                for n in nodes {
-                    let onto = n.isArtboard ? nil : (doc.artboard(at: n.frame.center)?.id ?? target.flatMap { id in doc.node(id)?.frame.intersects(n.frame) == true ? id : nil })
-                    doc.attach(n, to: onto)
-                }
-            }
-            selection = nodes.map(\.id)
+        if let data = pb.data(forType: Self.pasteboardType), let clip = try? JSONDecoder().decode(LayerClip.self, from: data), !clip.nodes.isEmpty {
+            let visible = visibleCanvasRect, target = focusedArtboard?.id, name = name
+            var pasted: [UUID] = []
+            edit("Paste") { pasted = $0.paste(clip, designName: name, visible: visible, focused: target) }
+            selection = pasted
         } else if let string = pb.string(forType: .string), !string.isEmpty {
             let board = focusedArtboard
-            let center = board?.frame.center ?? visibleCanvasRect.center
-            var node = Node(kind: .text, name: String(string.prefix(40)), frame: CGRect(origin: center, size: .zero))
-            node.text = string
-            node.style?.sizing = string.count > 60 ? .autoHeight : .autoWidth
-            if node.style?.sizing == .autoHeight { node.frame.size.width = min(board?.frame.width ?? 400, 400) * 0.8 }
-            node.refit()
-            node.frame.origin = CGPoint(x: (center.x - node.frame.width / 2).rounded(), y: (center.y - node.frame.height / 2).rounded())
+            let node = BezzleDocument.pastedText(string, center: board?.frame.center ?? visibleCanvasRect.center, width: board?.frame.width)
             add(node, onto: board?.id, action: "Paste")
         }
     }
@@ -506,15 +287,3 @@ extension DocumentStore {
     }
 }
 
-extension Node {
-    /// The same layer, and what lies on it, with new identities.
-    func freshCopy() -> Node {
-        var n = self
-        // A copy of a component stays one, its layers keyed from the component as every copy's are.
-        if instance != nil { return Components.freshCopy(of: self) }
-        n.id = UUID()
-        // A grid's cells stay copies of its first, each with what it holds; so do a deck's posts.
-        n.children = isRepeatGrid ? RepeatGrid.freshCells(of: self) : isDeck ? Deck.freshPosts(of: self) : children.map { $0.freshCopy() }
-        return n
-    }
-}

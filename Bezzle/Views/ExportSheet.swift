@@ -18,94 +18,31 @@ struct ExportSheet: View {
     /// An export waiting to be told whether to replace the files of the same name already there.
     @State private var asking: ExportPanel.Clash?
 
-    enum Scope: Hashable { case layers, post, artboards, marked, all }
+    typealias Scope = ExportChoices.Scope
 
-    /// The picked layers that are not artboards, each to be exported on its own.
-    private var layers: [ExportItem] {
-        store.selection.compactMap { id in ExportItem(layer: id, in: store.doc) }
+    /// What can go out from where the design stands (the shared `ExportChoices`).
+    private var choices: ExportChoices {
+        ExportChoices(doc: store.doc, seen: store.seenDoc, selection: store.selection, front: { store.front(of: $0) }, name: store.name)
     }
 
-    /// The artboards the picked layers lie on, or that are picked themselves.
-    private var pickedBoards: [Node] {
-        let ids = Set(store.selection.map { store.doc.artboard(of: $0)?.id ?? $0 })
-        return store.doc.artboards.filter { ids.contains($0.id) }
-    }
-
-    /// The deck picked, alone, whose post in front can go out by itself.
-    private var pickedDeck: Node? {
-        let boards = pickedBoards
-        return boards.count == 1 && boards[0].isDeck && boards[0].posts.count > 1 ? boards[0] : nil
-    }
-
-    /// Everything marked for export, as it is seen.
-    private var marked: [ExportItem] { ExportItem.marked(in: store.doc, seen: store.seenDoc) }
-
-    /// What can be chosen, the most particular first, which is what is chosen to begin with.
-    private var scopes: [Scope] {
-        var out: [Scope] = []
-        if !layers.isEmpty { out.append(.layers) }
-        if pickedDeck != nil { out.append(.post) }
-        let boards = pickedBoards.count
-        if boards > 0 && (boards < store.doc.artboards.count || !layers.isEmpty) { out.append(.artboards) }
-        if !marked.isEmpty { out.append(.marked) }
-        // All of them, unless that is what the artboards picked already are.
-        if boards < store.doc.artboards.count || out.isEmpty { out.append(.all) }
-        return out
-    }
-
-    private var chosen: Scope { scope.flatMap { scopes.contains($0) ? $0 : nil } ?? scopes[0] }
-
-    private var items: [ExportItem] {
-        switch chosen {
-        case .layers: layers
-        case .post: pickedDeck.map { ExportItem.items(for: $0, post: store.front(of: $0)) } ?? []
-        case .artboards: pickedBoards.flatMap(ExportItem.items(for:))
-        case .marked: marked
-        case .all: store.doc.artboards.flatMap(ExportItem.items(for:))
-        }
-    }
+    private var scopes: [Scope] { choices.scopes }
+    private var chosen: Scope { choices.chosen(scope) }
+    private var items: [ExportItem] { choices.items(chosen) }
+    private var layers: [ExportItem] { choices.layers }
+    private var marked: [ExportItem] { choices.marked }
 
     /// The format used, which is PNG again if the one last used cannot be written on this Mac.
     private var formatUsed: ExportFormat { format.isAvailable ? format : .png }
 
     /// What the export will write.
-    private var files: [ExportFile] {
-        chosen == .marked ? Exporter.files(presetsOf: items)
-            : Exporter.files(items, format: formatUsed, scale: CGFloat(scaleUsed.wrappedValue), name: store.name)
-    }
+    private var files: [ExportFile] { choices.files(chosen, format: formatUsed, scale: CGFloat(scaleUsed.wrappedValue)) }
 
-    /// Whether all that goes out is slides of carousels, which keep a scale of their own.
-    private var onlySlides: Bool {
-        let items = items
-        return !items.isEmpty && items.allSatisfy { $0.slide != nil }
-    }
-
-    private var scaleUsed: Binding<Double> { onlySlides ? $slideScale : $scale }
+    private var scaleUsed: Binding<Double> { choices.onlySlides(chosen) ? $slideScale : $scale }
 
     /// Whether how much of the picture is kept matters to what goes out.
-    private var lossy: Bool {
-        chosen == .marked ? files.contains { $0.format.isLossy } : formatUsed.isLossy
-    }
+    private var lossy: Bool { choices.lossy(chosen, format: formatUsed) }
 
-    private func title(_ scope: Scope) -> LocalizedStringResource {
-        switch scope {
-        case .layers:
-            let picked = layers
-            if picked.count > 1 { return "\(picked.count) layers" }
-            return picked.first?.node.isGroup == true ? "This group" : "This layer"
-        case .post: return "This post"
-        case .artboards:
-            if let deck = pickedDeck {
-                // A narrow choice beside the others, so it may say less than the deck's own offer does.
-                return LocalizedStringResource("export.all-posts", defaultValue: "All \(deck.posts.count) posts", comment: "Export choice: every post of the deck.")
-            }
-            return pickedBoards.count == 1 ? "Its artboard" : "\(pickedBoards.count) artboards"
-        case .marked:
-            return LocalizedStringResource("export.marked", defaultValue: "\(Set(marked.map(\.node.id)).count) marked",
-                                           comment: "Export choice: every layer and artboard marked for export, each as its Export card says.")
-        case .all: return "All \(store.doc.artboards.count)"
-        }
-    }
+    private func title(_ scope: Scope) -> LocalizedStringResource { choices.title(scope) }
 
     var body: some View {
         ZStack {
@@ -121,7 +58,7 @@ struct ExportSheet: View {
                     Spacer()
                     IconButton(symbol: "xmark", help: "Close") { close() }
                 }
-                if store.doc.artboards.isEmpty && layers.isEmpty && marked.isEmpty {
+                if choices.isEmpty {
                     Text("There is nothing to export yet. Draw an artboard with A.")
                         .prose(13)
                         .foregroundStyle(Theme.ink2)
@@ -180,61 +117,9 @@ struct ExportSheet: View {
         .onChange(of: quality) { asking = nil }
     }
 
-    /// What goes out, in words: a carousel by its slides, a deck by its posts.
-    private func names(_ items: [ExportItem]) -> String {
-        guard let first = items.first else { return "" }
-        if chosen == .layers { return items.count == 1 ? first.name : String(localized: "\(items.count) layers") }
-        if chosen == .post { return items.count == 1 ? first.name : String(localized: "The \(items.count) slides of \(first.name)") }
-        let boards = Set(items.map(\.node.id)).count
-        let carousels = Set(items.filter { $0.slide != nil }.map(\.node.id)).count
-        let decks = Set(items.filter { $0.post != nil }.map(\.node.id)).count
-        let name = first.node.name
-        if boards == 1, decks == 1, let posts = first.post?.count {
-            return switch (posts == 1, carousels == 1) {
-            case (true, false): String(localized: "The one post of \(name)")
-            case (true, true): String(localized: "The one post of \(name), a slide each")
-            case (false, false): String(localized: "The \(posts) posts of \(name)")
-            case (false, true): String(localized: "The \(posts) posts of \(name), a slide each")
-            }
-        }
-        if boards == 1 {
-            guard carousels == 1 else { return first.name }
-            return items.count == 1 ? String(localized: "The one slide of \(name)") : String(localized: "The \(items.count) slides of \(name)")
-        }
-        var parts = [String(localized: "\(boards) artboards")]
-        if decks > 0 { parts.append(decks == 1 ? String(localized: "the deck a post each") : String(localized: "the decks a post each")) }
-        if carousels > 0 { parts.append(carousels == 1 ? String(localized: "the carousel a slide each") : String(localized: "the carousels a slide each")) }
-        return parts.joined(separator: ", ")
-    }
-
     private var summary: String {
-        let items = items
-        guard let first = items.first else { return "" }
-        if chosen == .marked { return ExportPanel.listing(files) }
-        let one = items.count == 1
-        let names = names(items)
-        // A layer goes out only as big as what it paints, shadow and all, on nothing.
-        let alone = chosen == .layers ? (formatUsed.keepsTransparency ? String(localized: "on a transparent background") : String(localized: "on white")) : nil
-        // Each part of the sentence is whole in itself, so it reads in any language once joined.
-        var parts: [String?]
-        switch formatUsed {
-        case .pdf:
-            parts = [String(localized: "\(names) as one PDF"), one ? nil : String(localized: "a page each"),
-                     String(localized: "with text and shapes kept sharp at any size"), alone]
-        case .svg:
-            let lead = one ? String(localized: "\(names) as SVG") : String(localized: "\(names) as SVG, a file each")
-            parts = [String(localized: "\(lead): shapes, text and gradients stay editable; background blurs come as pictures"), alone]
-        case .png, .jpeg, .webp, .avif:
-            var lead = names
-            // One picture, or slides all the same size.
-            let sizes = one ? [first.bounds(assets: store.assets).size] : chosen == .layers ? [] : items.map { $0.bounds(assets: nil).size }
-            if let s = sizes.first, sizes.allSatisfy({ $0 == s }) {
-                let scale = scaleUsed.wrappedValue
-                lead = String(localized: "\(names) at \(Int((s.width * scale).rounded())) × \(Int((s.height * scale).rounded())) pixels")
-            }
-            parts = [lead, one ? nil : String(localized: "a file each"), alone]
-        }
-        return parts.compactMap { $0 }.joined(separator: ", ") + "."
+        let assets = store.assets, one = items.count == 1
+        return choices.summary(chosen, format: formatUsed, scale: scaleUsed.wrappedValue) { $0.bounds(assets: one ? assets : nil).size }
     }
 
     private func close() { store.exporting = false }
@@ -323,28 +208,11 @@ enum ExportPanel {
         }
     }
 
-    /// How much of a picture is kept, as offered: WebP's top is lossless, and with no format given,
-    /// the top is each format's best.
-    static func qualities(for format: ExportFormat?) -> [(Double, LocalizedStringResource)] {
-        let top: LocalizedStringResource = format == .webp ? "Lossless" : format == nil ? "Best" : .verbatim("100%")
-        return [(0.6, .verbatim("60%")), (0.8, .verbatim("80%")), (0.9, .verbatim("90%")), (1, top)]
-    }
+    /// How much of a picture is kept, as offered (the shared `ExportChoices.qualities`).
+    static func qualities(for format: ExportFormat?) -> [(Double, LocalizedStringResource)] { ExportChoices.qualities(for: format) }
 
-    /// The files that will be written, by name: the first few, and how many more; said to be as
-    /// marked, in the Export sheet, where other choices lie beside it.
-    static func listing(_ files: [ExportFile], marked: Bool = true) -> String {
-        let names = files.map { "\($0.name).\($0.format.fileExtension)" }
-        guard !names.isEmpty else { return "" }
-        let few = names.count <= 4
-        let list = few ? names.formatted(.list(type: .and)) : names.prefix(3).joined(separator: ", ")
-        let more = names.count - 3
-        return switch (marked, few) {
-        case (true, true): String(localized: "As marked: \(list).")
-        case (true, false): String(localized: "As marked: \(list) and \(more) more.")
-        case (false, true): list
-        case (false, false): String(localized: "\(list) and \(more) more")
-        }
-    }
+    /// The files that will be written, by name (the shared `ExportChoices.listing`).
+    static func listing(_ files: [ExportFile], marked: Bool = true) -> String { ExportChoices.listing(files, marked: marked) }
 
     /// The question before files of the same names are replaced: replace them, or keep both,
     /// the new ones numbered.

@@ -53,10 +53,7 @@ struct LayersPanel: View {
 
     /// Where a dragged layer goes when let go: into the gap above a row, the rows' count for the
     /// end, or onto a row that holds layers, and so in on top of them.
-    private enum DropSpot: Equatable {
-        case gap(Int)
-        case onto(Int)
-    }
+    private typealias DropSpot = LayerDropSpot
 
     /// One time a page was turned to.
     private struct Visit: Hashable {
@@ -67,12 +64,7 @@ struct LayersPanel: View {
     /// The page shown now, as this time it was turned to.
     private var current: Visit { Visit(page: board?.id, number: visit) }
 
-    struct Row: Identifiable {
-        let node: Node
-        let depth: Int
-        let parent: UUID?
-        var id: UUID { node.id }
-    }
+    typealias Row = ListedLayer
 
     /// What is selected, the artboard it lies on, and whether any of it lies on that artboard
     /// rather than being the artboard, so the list follows a layer moved onto another artboard
@@ -99,11 +91,7 @@ struct LayersPanel: View {
 
     /// What a layer holds as the list shows it: a repeat grid only its first cell, which the others
     /// follow, and a deck only the post in front.
-    private func listed(in node: Node) -> [Node] {
-        if node.isDeck { return store.seenLayers(of: node) }
-        guard node.isRepeatGrid, let layout = RepeatGrid.layout(of: node) else { return node.children }
-        return [node.children[layout.first]]
-    }
+    private func listed(in node: Node) -> [Node] { node.listed(fronts: store.fronts) }
 
     private var rows: [Row] {
         var out: [Row] = []
@@ -402,53 +390,17 @@ struct LayersPanel: View {
             }
     }
 
-    /// The middle half of a row that can take the layer is onto it; anywhere else is the gap nearest.
+    /// Where a dragged row would go, as every Bezzle drops it (`LayerDrop`, shared).
+    private func dropping(_ rows: [Row]) -> LayerDrop {
+        LayerDrop(doc: store.doc, rows: rows, board: board, isShut: { isShut($0) }, rowHeight: Self.rowHeight)
+    }
+
     private func spot(at y: CGFloat, for row: Row, rows: [Row]) -> DropSpot {
-        let at = y / Self.rowHeight
-        let i = Int(at.rounded(.down))
-        if rows.indices.contains(i), abs(at - CGFloat(i) - 0.5) < 0.25, canHold(rows[i], row) { return .onto(i) }
-        return .gap(min(max(Int(at.rounded()), 0), rows.count))
+        dropping(rows).spot(at: y, for: row)
     }
 
-    /// Whether `id` is the dragged layer or lies in it: nothing goes into itself, or into what it holds.
-    private func within(_ id: UUID, _ row: Row) -> Bool {
-        id == row.id || store.doc.ancestors(of: id).contains { $0.id == row.id }
-    }
-
-    /// Whether the layer a row shows can take the dragged one: an artboard or a group, though no
-    /// repeat grid, as its cells follow its first. Artboards themselves go into nothing.
-    private func canHold(_ target: Row, _ row: Row) -> Bool {
-        !row.node.isArtboard && target.node.isContainer && !target.node.isRepeatGrid && !within(target.id, row)
-    }
-
-    /// Where a dropped layer goes: on top of what is in the row it was let go onto, or between
-    /// the rows above and below the gap it was let go over.
     private func destination(for row: Row, spot: DropSpot, rows: [Row]) -> (parent: UUID?, index: Int, depth: Int)? {
-        let slot: Int
-        switch spot {
-        case .onto(let i):
-            guard rows.indices.contains(i), canHold(rows[i], row) else { return nil }
-            return (rows[i].id, rows[i].node.children.count, rows[i].depth + 1)
-        case .gap(let i):
-            slot = i
-        }
-        var above = slot > 0 ? rows[slot - 1] : nil
-        // Artboards only go between the layers on the canvas itself.
-        if row.node.isArtboard {
-            while let a = above, a.depth > 0 { above = rows.first { $0.id == a.parent } }
-        }
-        guard let above else { return board.map { ($0.id, $0.children.count, 0) } ?? (nil, store.doc.nodes.count, 0) }
-        if above.id == row.id { return nil }
-        if !row.node.isArtboard && above.node.isContainer && !isShut(above.node) {
-            // Just under an open artboard's or group's name: on top of what is in it.
-            return within(above.id, row) || above.node.isRepeatGrid ? nil : (above.id, above.node.children.count, above.depth + 1)
-        }
-        if let parent = above.parent, let container = store.node(parent),
-           let i = container.children.firstIndex(where: { $0.id == above.id }) {
-            return row.node.isArtboard || within(parent, row) || container.isRepeatGrid ? nil : (parent, i, above.depth)
-        }
-        guard let i = store.doc.nodes.firstIndex(where: { $0.id == above.id }) else { return nil }
-        return (nil, i, 0)
+        dropping(rows).destination(for: row, spot: spot)
     }
 
     private func drop(_ row: Row, at spot: DropSpot, rows: [Row]) {

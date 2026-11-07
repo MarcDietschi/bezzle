@@ -22,18 +22,6 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         case shadow(id: UUID, start: CGPoint, original: CGPoint, started: Bool)
     }
 
-    private enum HandleHit {
-        case resize(Handle)
-        case rotate(Handle)
-        case lineEnd(Int)
-        /// A dot inside a corner of a selected rectangle, which rounds the corners.
-        case corner(Handle)
-        /// The selected layer's shadow, outside the layer itself, which moves the shadow.
-        case shadow
-        /// Just outside the middle of a side, which turns what is picked in depth.
-        case turnInDepth
-    }
-
     private var interaction: Interaction = .none
     /// A note begun with the note tool: where it was pressed, and the loop drawn round part of the
     /// design since, if the pointer went on.
@@ -744,18 +732,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// A layer's outline on screen: its four corners, turned with it in the page and in depth,
     /// and with any group above it that is turned in depth.
     private func viewCorners(of id: UUID) -> [CGPoint]? {
-        guard let node = store.node(id) else { return nil }
-        let points: [CGPoint]
-        if node.kind == .line {
-            let (a, b) = node.lineEnds
-            let c = CGPoint(x: node.frame.midX, y: node.frame.midY)
-            points = [a, b].map { Perspective.shown(Geometry.rotated($0, about: c, by: node.rotation), of: node) }
-        } else if node.isGroup, case let (box, turn) = turnedBox(of: node), turn != 0 {
-            points = Geometry.corners(of: box, rotation: turn).map { Perspective.shown($0, of: node) }
-        } else {
-            points = Perspective.corners(of: node)
-        }
-        return points.map { store.viewport.toView(store.doc.shown($0, inParentOf: id)) }
+        store.doc.shownCorners(of: id) { turnedBox(of: $0) }?.map(store.viewport.toView)
     }
 
     /// Each group's turned box (`BezzleDocument.turnedBox`) as last worked out, by layer, for the
@@ -774,14 +751,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// Where a point of a layer, given on the canvas as it would lie flat, shows: turned in depth
     /// with it and with any group above it.
     private func shownOnCanvas(_ p: CGPoint, of node: Node) -> CGPoint {
-        let o = store.doc.parentOrigin(of: node.id)
-        return store.doc.shown(Perspective.shown(p - o, of: node), inParentOf: node.id)
+        store.doc.shownOnCanvas(p, of: node)
     }
 
     /// The other way: where on the layer, lying flat, a point of the canvas is. Nil past its horizon.
     private func flatOnCanvas(_ p: CGPoint, of node: Node) -> CGPoint? {
-        let o = store.doc.parentOrigin(of: node.id)
-        return store.doc.placed(p, inParentOf: node.id).flatMap { Perspective.flat($0, of: node) }.map { $0 + o }
+        store.doc.flatOnCanvas(p, of: node)
     }
 
     /// Moves where a layer pinned by its corners shows, by one of its handles pulled to a canvas
@@ -820,9 +795,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     /// Whether a layer shows anywhere but where its frame says, turned in depth or in a group that is.
-    private func inDepth(_ node: Node) -> Bool {
-        Perspective(node) != nil || store.doc.liesInDepth(node.id)
-    }
+    private func inDepth(_ node: Node) -> Bool { store.doc.inDepth(node) }
 
     private func outlinePath(_ points: [CGPoint], closed: Bool) -> CGPath {
         let p = CGMutablePath()
@@ -859,42 +832,17 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     /// The frame the handles sit on: the layer's own for one, the box around them all for several.
     private var handleFrame: (frame: CGRect, rotation: Double, single: Node?)? {
-        let ids = store.selection
-        guard !ids.isEmpty else { return nil }
-        if ids.count == 1, let node = store.node(ids[0]) {
-            // A group whose layers are turned is seen turned with them.
-            let (box, turn) = turnedBox(of: node)
-            let o = store.doc.parentOrigin(of: node.id)
-            return (box.offsetBy(dx: o.x, dy: o.y), turn, node)
-        }
-        guard let bounds = store.selectionBounds else { return nil }
-        return (bounds, 0, nil)
+        store.doc.handleFrame(of: store.selection) { turnedBox(of: $0) }
     }
 
     /// Whether a layer is text as wide as its words, which has one handle, at its bottom, as XD has it.
-    private static func pointText(_ node: Node?) -> Bool {
-        guard let node, node.kind == .text, node.curve == nil else { return false }
-        return (node.style?.sizing ?? .autoWidth) == .autoWidth
-    }
+    private static func pointText(_ node: Node?) -> Bool { BezzleDocument.pointText(node) }
 
     /// The handles the selection shows, and where; `every` gives text as wide as its words those
     /// of any other layer, for turning it from just outside them.
     private func handlePoints(every: Bool = false) -> [(Handle, CGPoint)] {
-        guard let (frame, rotation, single) = handleFrame else { return [] }
-        if single?.kind == .line || single?.locked == true { return [] }
-        // A repeat grid has handles of its own, which repeat it.
-        if single?.isRepeatGrid == true { return [] }
-        let size = store.viewport.toView(frame).size
-        let point = !every && Self.pointText(single)
-        return Handle.allCases.compactMap { h in
-            if point, h != .bottom { return nil }
-            // Small things keep only their corners, so the handles do not pile up; a text keeps
-            // its bottom, which fits its box to its words.
-            if !h.isCorner && !(single?.kind == .text && h == .bottom && !every) &&
-                ((h.unit.x == 0.5 && size.width < 28) || (h.unit.y == 0.5 && size.height < 28)) { return nil }
-            let at = Geometry.point(h.unit, of: frame, rotation: rotation)
-            return (h, store.viewport.toView(single.map { shownOnCanvas(at, of: $0) } ?? at))
-        }
+        store.doc.handlePoints(of: store.selection, zoom: store.viewport.zoom, every: every) { turnedBox(of: $0) }
+            .map { ($0.0, store.viewport.toView($0.1)) }
     }
 
     /// Words along a curve are typed straight: the corners of the line they are typed on, on screen.
@@ -953,25 +901,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if onShadow || { if case .shadow(_, _, _, true) = interaction { return true } else { return false } }() { drawShadowOutline(ctx) }
     }
 
-    /// A rectangle's corners in the order `Node.radii` keeps them.
-    private static let cornerOrder: [Handle] = [.topLeft, .topRight, .bottomRight, .bottomLeft]
-
     /// The dots inside a selected rectangle's corners, each along the diagonal as far in as its
     /// corner is round, and never nearer a corner than ten points on screen. Only for a rectangle
     /// big enough on screen for them not to crowd it.
     private func cornerDots() -> [(Handle, CGPoint)] {
-        guard store.tool == .select, store.editingText == nil, store.selection.count == 1, let node = store.node(store.selection[0]),
-              node.kind == .rectangle, !node.locked, !inDepth(node), let frame = store.doc.absoluteFrame(of: node.id) else { return [] }
-        let zoom = store.viewport.zoom
-        guard frame.width * zoom >= 48, frame.height * zoom >= 48 else { return [] }
-        let half = min(frame.width, frame.height) / 2
-        return zip(Self.cornerOrder, node.radii).map { h, radius in
-            let inset = min(max(min(max(radius, 0), half), 10 / zoom), half)
-            let sx: CGFloat = h.unit.x == 0 ? 1 : -1, sy: CGFloat = h.unit.y == 0 ? 1 : -1
-            let local = CGPoint(x: (h.unit.x - 0.5) * frame.width + sx * inset, y: (h.unit.y - 0.5) * frame.height + sy * inset)
-            let v = Geometry.rotate(local, by: node.rotation)
-            return (h, store.viewport.toView(CGPoint(x: frame.midX + v.x, y: frame.midY + v.y)))
-        }
+        guard store.tool == .select, store.editingText == nil else { return [] }
+        return store.doc.cornerDots(of: store.selection, zoom: store.viewport.zoom).map { ($0.0, store.viewport.toView($0.1)) }
     }
 
     private func drawCornerDots(_ ctx: CGContext) {
@@ -990,12 +925,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     /// The selected layer's shape where its shadow falls, dashed, while the pointer is on it.
     private func drawShadowOutline(_ ctx: CGContext) {
-        guard store.selection.count == 1, let node = store.node(store.selection[0]), let slot = store.shadowSlot(of: node),
-              let frame = store.doc.absoluteFrame(of: node.id) else { return }
-        let shadow = node[shadow: slot], grown = Renderer.spreads(node, shadow) ? shadow.grown : 0
-        let shadowFrame = frame.offsetBy(dx: shadow.x, dy: shadow.y).insetBy(dx: -grown, dy: -grown)
+        guard let corners = store.doc.shadowCorners(of: store.selection, slot: store.shadowSlot) else { return }
         ctx.saveGState()
-        ctx.addPath(outlinePath(Geometry.corners(of: shadowFrame, rotation: node.rotation).map(store.viewport.toView), closed: true))
+        ctx.addPath(outlinePath(corners.map(store.viewport.toView), closed: true))
         ctx.setStrokeColor(CanvasInk.pencil.withAlphaComponent(0.7).cgColor)
         ctx.setLineWidth(1)
         ctx.setLineDash(phase: 0, lengths: [3, 3])
@@ -1005,18 +937,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Whether a point on screen is on the selected layer's shadow and not on the layer itself.
     private func isOnShadow(_ v: CGPoint) -> Bool {
-        guard store.tool == .select, store.editingText == nil, store.selection.count == 1, let node = store.node(store.selection[0]),
-              let slot = store.shadowSlot(of: node), !node.locked, !node.isArtboard, node.kind != .line, !inDepth(node),
-              let frame = store.doc.absoluteFrame(of: node.id) else { return false }
-        let shadow = node[shadow: slot], grown = Renderer.spreads(node, shadow) ? max(shadow.grown, 0) : 0
-        let p = store.viewport.toCanvas(v)
-        let own = Geometry.local(p, in: frame, rotation: node.rotation)
-        if abs(own.x) <= frame.width / 2 + tolerance && abs(own.y) <= frame.height / 2 + tolerance { return false }
-        // As far out as the shadow shows, and a little more when it is a fine one.
-        let spread = max(shadow.blur / 2, 6 / store.viewport.zoom) + grown
-        let shadowFrame = frame.offsetBy(dx: shadow.x, dy: shadow.y)
-        let q = Geometry.local(p, in: shadowFrame, rotation: node.rotation)
-        return abs(q.x) <= shadowFrame.width / 2 + spread && abs(q.y) <= shadowFrame.height / 2 + spread
+        guard store.tool == .select, store.editingText == nil else { return false }
+        return store.doc.isOnShadow(store.viewport.toCanvas(v), selection: store.selection, zoom: store.viewport.zoom, tolerance: tolerance, slot: store.shadowSlot)
     }
 
     private func drawHandle(_ p: CGPoint, in ctx: CGContext, round: Bool, warning: Bool = false) {
@@ -1081,85 +1003,24 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var tolerance: CGFloat { 4 / store.viewport.zoom }
 
     /// The topmost layer under a canvas point that a click would select.
-    private func hit(_ p: CGPoint) -> UUID? {
-        for node in store.doc.nodes.reversed() where !node.hidden {
-            if node.isArtboard {
-                let inside = node.frame.contains(p)
-                guard inside || !node.clips else { continue }
-                let local = p - node.frame.origin
-                for child in store.seenLayers(of: node).reversed() where !child.hidden && !child.locked {
-                    if Geometry.contains(child, local, tolerance: tolerance) { return child.id }
-                }
-                // An artboard's empty space hides what lies under it.
-                if inside { return nil }
-            } else if !node.locked, Geometry.contains(node, p, tolerance: tolerance) {
-                return node.id
-            }
-        }
-        return nil
+    /// What a click picks, as every Bezzle picks it (`Picking`, shared): the design as this
+    /// viewer sees it, the group the selection is in looked in first.
+    private var picking: Picking {
+        Picking(doc: store.doc, selection: store.selection, fronts: store.fronts, zoom: store.viewport.zoom)
     }
+
+    private func hit(_ p: CGPoint) -> UUID? { picking.hit(p) }
 
     /// The group the selection is in, where clicks look first, as they do after a double click into it.
-    private var enteredGroup: Node? {
-        guard let first = store.selection.first, let parent = store.doc.parent(of: first), parent.isGroup else { return nil }
-        return parent
-    }
+    private var enteredGroup: Node? { picking.enteredGroup }
 
     /// What in a group lies under a canvas point, one level down.
-    private func hit(_ p: CGPoint, in group: Node) -> UUID? {
-        guard let inner = store.doc.placed(p, inside: group.id) else { return nil }
-        if let holder = group.holder {
-            // In a mask, only what shows inside its shape; along its edge, the shape itself, to
-            // take hold of it rather than of what it holds. A hidden shape still cuts off, but is
-            // not there to be taken hold of.
-            guard Mask.inside(holder, inner, tolerance: tolerance) else { return nil }
-            let takes = !holder.locked && !holder.hidden
-            let edge = Renderer.heldOutline(of: holder).copy(strokingWithWidth: 12 / store.viewport.zoom, lineCap: .round, lineJoin: .round, miterLimit: 4)
-            if takes, edge.contains(inner) { return holder.id }
-            return group.children.dropFirst().reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance) }?.id
-                ?? (takes ? holder.id : nil)
-        }
-        return group.children.reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance) }?.id
-    }
+    private func hit(_ p: CGPoint, in group: Node) -> UUID? { picking.hit(p, in: group) }
 
-    /// Something picked inside a mask, where its ghost shows past the mask's shape.
-    private func pickedGhost(at p: CGPoint) -> UUID? {
-        guard let mask = enteredGroup, let holder = mask.holder, let inner = store.doc.placed(p, inside: mask.id),
-              !Mask.inside(holder, inner, tolerance: 0) else { return nil }
-        return mask.children.dropFirst().reversed().first { child in
-            store.selection.contains(child.id) && !child.hidden && !child.locked && Geometry.contains(child, inner, tolerance: tolerance)
-        }?.id
-    }
-
-    /// What a click picks: something in the group the selection is in, or else what is under it as
-    /// usual. Anything lying over that group is picked as usual, as it is what the click meets.
     /// What a click at a canvas point would pick, for what is placed over the canvas.
     func layer(at p: CGPoint) -> UUID? { pick(p) }
 
-    private func pick(_ p: CGPoint) -> UUID? {
-        if let id = pickedGhost(at: p) { return id }
-        if let group = enteredGroup, uncovered(group, at: p), let id = hit(p, in: group) { return id }
-        if let id = pickInOtherCell(p) { return id }
-        return hit(p)
-    }
-
-    /// Whether a click at a canvas point meets this group before anything else: at every level from
-    /// the canvas down, what lies on top there is the group or what holds it.
-    private func uncovered(_ group: Node, at p: CGPoint) -> Bool {
-        let chain = store.doc.ancestors(of: group.id).filter { !$0.isArtboard } + [group]
-        guard hit(p) == chain[0].id else { return false }
-        return zip(chain, chain.dropFirst()).allSatisfy { outer, inner in hit(p, in: outer) == inner.id }
-    }
-
-    /// Inside a cell of a repeat grid, a click on another cell picks what lies there as deep in it
-    /// as the selection lies in its own, as if that cell had been entered the same way.
-    private func pickInOtherCell(_ p: CGPoint) -> UUID? {
-        guard let group = enteredGroup, let grid = store.grid(holding: group.id), grid.id != group.id, uncovered(grid, at: p),
-              let here = RepeatGrid.cell(of: group.id, in: grid, doc: store.doc),
-              let root = hit(p, in: grid), let there = RepeatGrid.cell(of: root, in: grid, doc: store.doc),
-              let other = store.node(group.id.mixed(RepeatGrid.key(here.cell)).mixed(RepeatGrid.key(there.cell))) else { return nil }
-        return hit(p, in: other)
-    }
+    private func pick(_ p: CGPoint) -> UUID? { picking.pick(p) }
 
     private func titleHit(_ viewPoint: CGPoint) -> UUID? {
         store.doc.artboards.reversed().first { !$0.hidden && titleRect(of: $0).insetBy(dx: 0, dy: -2).contains(viewPoint) }?.id
@@ -1174,41 +1035,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     private func handleHit(_ v: CGPoint) -> HandleHit? {
         guard store.editingText == nil || typingShowsHandles, store.editingPath == nil, store.editingPicture == nil, store.building == nil else { return nil }
-        let ids = store.selection
-        if ids.count == 1, let node = store.node(ids[0]), node.kind == .line {
-            guard !node.locked, let ends = viewCorners(of: ids[0]) else { return nil }
-            for (i, p) in ends.enumerated() where hypot(p.x - v.x, p.y - v.y) <= 7 { return .lineEnd(i) }
-            return nil
-        }
-        let points = handlePoints()
-        for (h, p) in points where abs(p.x - v.x) <= 6 && abs(p.y - v.y) <= 6 { return .resize(h) }
-        for (h, p) in cornerDots() where hypot(p.x - v.x, p.y - v.y) <= 6 { return .corner(h) }
-        // Just outside a corner, the pointer turns things.
-        guard let (frame, rotation, single) = handleFrame, single?.isArtboard != true, !store.selection.contains(where: { store.node($0)?.isArtboard == true }) else { return nil }
-        let viewFrame = store.viewport.toView(frame)
-        let local = Geometry.local(v, in: viewFrame, rotation: rotation)
-        var outside = abs(local.x) > viewFrame.width / 2 || abs(local.y) > viewFrame.height / 2
-        // Turned in depth, outside the shape it makes.
-        if let single, inDepth(single), let corners = viewCorners(of: single.id) {
-            outside = !outlinePath(corners, closed: true).contains(v)
-        }
-        guard outside else { return nil }
-        // Text as wide as its words turns from just outside its one handle, as XD has it, and its
-        // corners, as anything does.
-        let point = Self.pointText(single)
-        let around = point ? handlePoints(every: true) : points
-        for (h, p) in around where h.isCorner || (point && h == .bottom) {
-            let d = hypot(p.x - v.x, p.y - v.y)
-            if d > 5 && d < 20 { return .rotate(h) }
-        }
-        if isOnShadow(v) { return .shadow }
-        // Just outside the middle of a side, the pointer turns them in depth, as outside a corner
-        // it turns them in the page.
-        for (h, p) in around where !h.isCorner && !(point && h == .bottom) {
-            let d = hypot(p.x - v.x, p.y - v.y)
-            if d > 5 && d < 22 { return .turnInDepth }
-        }
-        return nil
+        return store.doc.handleHit(at: v, selection: store.selection, zoom: store.viewport.zoom, toView: store.viewport.toView,
+                                   selecting: store.tool == .select && store.editingText == nil, slot: store.shadowSlot) { turnedBox(of: $0) }
     }
 
     // MARK: - Pointer
@@ -1684,16 +1512,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                                             y: origin.y - (v.y - startView.y) / store.viewport.zoom)
 
         case .marquee(let start, let base, let inside):
-            let rect = Geometry.rect(from: start, to: p)
-            var picked: [UUID] = []
-            if let inside, let board = store.node(inside) {
-                let local = rect.offsetBy(dx: -board.frame.minX, dy: -board.frame.minY)
-                picked = store.seenLayers(of: board).filter { !$0.hidden && !$0.locked && Geometry.bounds(of: $0).intersects(local) }.map(\.id)
-            } else {
-                for n in store.doc.nodes where !n.hidden && !n.locked {
-                    if n.isArtboard ? rect.contains(n.frame) : Geometry.bounds(of: n).intersects(rect) { picked.append(n.id) }
-                }
-            }
+            let picked = picking.marquee(Geometry.rect(from: start, to: p), inside: inside)
             store.selection = base + picked.filter { !base.contains($0) }
             needsDisplay = true
 
@@ -1732,32 +1551,16 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             case .normal:
                 break
             }
-            var dx = p.x - start.x, dy = p.y - start.y
-            if shift { if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 } }
-            var guides: [Guide] = []
-            if snapping {
-                let (shiftBy, g) = targets.snap(moving: bounds.offsetBy(dx: dx, dy: dy), threshold: threshold)
-                dx += shift && dx == 0 ? 0 : shiftBy.x
-                dy += shift && dy == 0 ? 0 : shiftBy.y
-                guides = g
-            }
-            // A text sitting on a baseline stays on it, rather than on the whole point nearest.
-            let onBaseline = snapping && targets.sitsOnBaseline(bounds.offsetBy(dx: dx, dy: dy))
-            dx = dx.rounded()
-            if !onBaseline { dy = dy.rounded() }
-            if snapping { guides += targets.gapGuides(for: bounds.offsetBy(dx: dx, dy: dy)) }
+            // Caught on what is around it, Shift keeping to an axis (`SnapTargets.move`, shared).
+            let (moved, guides) = targets.move(bounds, by: CGPoint(x: p.x - start.x, y: p.y - start.y), constrain: shift,
+                                               snapping: snapping, threshold: threshold)
             // Even gaps caught are felt as well as seen, once each time they catch.
             let caught = Set(guides.filter(\.mine).map { Int(hypot($0.to.x - $0.from.x, $0.to.y - $0.from.y).rounded()) })
             if caught != gapsCaught {
                 if !caught.isEmpty { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
                 gapsCaught = caught
             }
-            let place = { (doc: inout BezzleDocument) in
-                for (id, frame) in originals {
-                    let o = doc.parentOrigin(of: id)
-                    doc.update(id) { $0.frame.origin = CGPoint(x: frame.minX + dx - o.x, y: frame.minY + dy - o.y) }
-                }
-            }
+            let place = { (doc: inout BezzleDocument) in doc.place(originals, movedBy: moved) }
             store.edit("Move", place)
             // Held over a shape a moment, it goes into it; a shape it went into and was dragged off
             // lets it go again. Either way it is placed once more, as it now lies.
@@ -1777,37 +1580,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 flat = true
             }
             let keep = shift || keepsAspect(originals, handle)
-            var frame = Geometry.resize(bounds, rotation: rotation, handle: handle, to: p, keepAspect: keep, fromCenter: option)
-            var guides: [Guide] = []
-            if let carousel, let slide = carousel.slideSize, slide.width > 0 {
-                // Across, as many whole slides as the pointer reaches past half of one; up or down,
-                // the slides' height, which catches on each format's proportions. The side across
-                // from the handle stays put.
-                let u = handle.unit
-                let count = u.x == 0.5 ? carousel.slideCount : Int(((u.x == 0 ? bounds.maxX - p.x : p.x - bounds.minX) / slide.width).rounded())
-                var height = u.y == 0.5 ? slide.height : max((u.y == 0 ? bounds.maxY - p.y : p.y - bounds.minY).rounded(), 1)
-                if u.y != 0.5, snapping, !option,
-                   let caught = Carousel.formats.map({ (slide.width * $0.size.height / $0.size.width).rounded() }).min(by: { abs($0 - height) < abs($1 - height) }),
-                   abs(caught - height) <= threshold {
-                    height = caught
-                }
-                let width = carousel.carouselSize(count: count).width
-                frame = CGRect(x: u.x == 0 ? bounds.maxX - width : bounds.minX, y: u.y == 0 ? bounds.maxY - height : bounds.minY, width: width, height: height)
-            } else if rotation == 0 && !flat {
-                if snapping && !option {
-                    if keep, bounds.width > 0, bounds.height > 0 {
-                        // Its proportions hold whatever it catches on: the nearest catch sizes it,
-                        // the other side following, from the corner or side across from the handle.
-                        let u = handle.unit
-                        let still = CGPoint(x: bounds.minX + (1 - u.x) * bounds.width, y: bounds.minY + (1 - u.y) * bounds.height)
-                        (frame, guides) = targets.snap(frame, keeping: bounds.width / bounds.height, anchor: still,
-                                                       along: (u.x != 0.5, u.y != 0.5), threshold: threshold)
-                    } else {
-                        (frame, guides) = targets.snap(resizing: frame, handle: handle, threshold: threshold)
-                    }
-                }
-                frame = Geometry.snapToPixels(frame)
-            }
+            // Along its turn, caught on what is around it (`BezzleDocument.pull`, shared).
+            let (frame, guides) = BezzleDocument.pull(bounds, rotation: rotation, handle: handle, to: p, keep: keep, fromCenter: option,
+                                                      carousel: carousel, flat: flat, snapping: snapping, targets: targets, threshold: threshold)
             var adapted: [UUID: (result: Adapt.Result, rearranged: Bool, origin: CGPoint)] = [:]
             store.edit("Resize") { doc in
                 for (id, original) in originals {
@@ -1815,60 +1590,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                     let o = doc.parentOrigin(of: id)
                     var next = originals.count == 1 ? frame : Geometry.map(whole, from: bounds, to: frame)
                     if originals.count > 1 { next = Geometry.snapToPixels(next) }
-                    doc.update(id) { node in
-                        node = original
-                        node.frame = next.offsetBy(dx: -o.x, dy: -o.y)
-                        // A carousel's slides are as high as it is pulled.
-                        if carousel != nil { node.slideSize?.height = next.height }
-                        if node.isGroup, !node.isRepeatGrid, originals.count == 1, rotation != 0 {
-                            // A group seen turned stretches along its turn, its box as the handles show it.
-                            node = BezzleDocument.scaled(original, turned: rotation, from: bounds.offsetBy(dx: -o.x, dy: -o.y), to: next.offsetBy(dx: -o.x, dy: -o.y))
-                        } else if node.isGroup {
-                            node.children = BezzleDocument.scaled(original.children, from: original.frame.size, to: node.frame.size)
-                            node.mask = original.mask.map { BezzleDocument.scaled($0, from: original.frame.size, to: node.frame.size) }
-                        }
-                        if node.kind == .text {
-                            let single = originals.count == 1
-                            let sizing = original.style?.sizing ?? .autoWidth
-                            // As XD has it. Text as wide as its words has one handle, which grows its
-                            // letters and lines with its box; along a curve, on one line, every handle
-                            // does. Among others, such text grows by the height.
-                            let scales = (sizing == .autoWidth || original.curve != nil) && whole.width > 0 && whole.height > 0
-                            if scales {
-                                let byHeight = !single || handle.unit.x == 0.5
-                                node.scaleType(by: byHeight ? next.height / whole.height : next.width / whole.width)
-                            } else if single, sizing == .autoHeight, handle.unit.y != 0.5 {
-                                // A fixed width's sides wrap its words, as tall as its lines; pulled by
-                                // its top, its bottom or a corner, it is a box of fixed size. A box of
-                                // fixed size is what is dragged, its letters as they are.
-                                node.style?.sizing = .fixed
-                            }
-                            node.refit()
-                            // Its words settle its size to a point or so. The side across from the
-                            // handle stays where it was; along it, the text grows as it does with more
-                            // words, from its top and from the side it is aligned to. From the middle,
-                            // or turned, it stays round the middle.
-                            if scales, single {
-                                let fitted = node.frame.size
-                                if option || rotation != 0 {
-                                    let box = next.offsetBy(dx: -o.x, dy: -o.y)
-                                    node.frame.origin = CGPoint(x: (box.midX - fitted.width / 2).rounded(), y: (box.midY - fitted.height / 2).rounded())
-                                } else {
-                                    let was = whole.offsetBy(dx: -o.x, dy: -o.y)
-                                    let aligned: CGFloat = switch node.style?.align ?? .left {
-                                    case .left, .justify: 0
-                                    case .center: 0.5
-                                    case .right: 1
-                                    }
-                                    let ax = handle.unit.x == 0.5 ? aligned : 1 - handle.unit.x, ay = handle.unit.y == 0.5 ? 0 : 1 - handle.unit.y
-                                    node.frame.origin = CGPoint(x: (was.minX + (was.width - fitted.width) * ax).rounded(),
-                                                                y: (was.minY + (was.height - fitted.height) * ay).rounded())
-                                }
-                            }
-                        }
-                        if node.kind == .line, original.frame.width > 0, original.frame.height > 0 {
-                            node.rising = original.rising
-                        }
+                    doc.update(id) {
+                        $0 = BezzleDocument.resized(original, to: next, whole: whole, origin: o, bounds: bounds, rotation: rotation,
+                                                    handle: handle, single: originals.count == 1, fromCenter: option, carousel: carousel != nil)
                     }
                     if original.isArtboard, let session = adaptSessions[id] {
                         // Its design is laid out again for the size it is being given.
@@ -1881,10 +1605,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                         adapted[id] = (r, rearranged, next.origin)
                     } else if original.isArtboard {
                         // An artboard's contents stay where they are on the canvas as its edges move.
-                        let shift = CGPoint(x: original.frame.minX - next.minX, y: original.frame.minY - next.minY)
-                        doc.update(id) { b in
-                            for i in b.children.indices { b.children[i].frame = b.children[i].frame.offsetBy(dx: shift.x, dy: shift.y) }
-                        }
+                        doc.update(id) { $0 = BezzleDocument.keepingLayers($0, from: original, to: next) }
                     }
                 }
             }
@@ -1916,24 +1637,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         case .rotate(let center, let startAngle, let originals, let absolute):
             var delta = Double((atan2(p.y - center.y, p.x - center.x) - startAngle) * 180 / .pi)
             // How far one layer is turned already, a group or a grid as it is seen turned.
-            let base = originals.count == 1 ? originals.values.first.map { $0.grid?.turn ?? ($0.isGroup ? BezzleDocument.turn(of: $0) : $0.rotation) } ?? 0 : 0
+            let base = BezzleDocument.turnBase(originals)
             if shift {
                 delta = ((base + delta) / 15).rounded() * 15 - base
             }
-            store.edit("Rotate") { doc in
-                for (id, original) in originals {
-                    guard let whole = absolute[id] else { continue }
-                    // Turned where it lay when the drag began, then put where that is in what holds
-                    // it now: a group holding it is fitted round it as it turns, and moves its own
-                    // origin, which would otherwise carry the layer off a little more at every step.
-                    let began = CGPoint(x: whole.minX - original.frame.minX, y: whole.minY - original.frame.minY)
-                    let o = doc.parentOrigin(of: id)
-                    doc.update(id) { node in
-                        node = BezzleDocument.turned(original, by: delta, about: CGPoint(x: center.x - began.x, y: center.y - began.y))
-                        node.frame.origin = node.frame.origin + began - o
-                    }
-                }
-            }
+            store.edit("Rotate") { $0.turn(originals, absolute: absolute, by: delta, about: center) }
             let shown = Self.normalized(base + delta)
             store.measurement = ("\(Self.number(shown))°", store.selectionBounds ?? .zero)
 
@@ -1952,17 +1660,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             store.measurement = ("\(Self.number(hypot(end.x - fixed.x, end.y - fixed.y)))", Geometry.rect(from: fixed, to: end))
 
         case .corner(let id, let frame, let rotation, let corner, let original):
-            // How far in along the diagonal the pointer is, measured on each side.
-            let local = Geometry.local(p, in: frame, rotation: rotation)
-            let sx: CGFloat = corner.unit.x == 0 ? 1 : -1, sy: CGFloat = corner.unit.y == 0 ? 1 : -1
-            let along = ((local.x - (corner.unit.x - 0.5) * frame.width) * sx + (local.y - (corner.unit.y - 0.5) * frame.height) * sy) / 2
-            let radius = min(max(along, 0), min(frame.width, frame.height) / 2).rounded()
             // Every corner alike, or with Option, pressed before or during the drag, only this one.
-            var radii = Array(repeating: radius, count: 4)
-            if option, let i = Self.cornerOrder.firstIndex(of: corner) {
-                radii = original
-                radii[i] = radius
-            }
+            let (radii, radius) = BezzleDocument.cornerRadii(at: p, frame: frame, rotation: rotation, corner: corner, original: original, alone: option)
             store.edit("Change Corners") { doc in doc.update(id) { $0.radii = radii } }
             store.measurement = (String(localized: "Radius \(Self.number(radius))"), Geometry.bounds(of: frame, rotation: rotation))
 
@@ -2023,8 +1722,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// Text as wide as its words, or along a curve, grows and shrinks in proportion from its top
     /// and bottom.
     private func keepsAspect(_ originals: [UUID: Node], _ handle: Handle) -> Bool {
-        guard originals.count == 1, let text = originals.values.first, text.kind == .text else { return false }
-        return handle.unit.x == 0.5 && (text.curve != nil || (text.style?.sizing ?? .autoWidth) == .autoWidth)
+        BezzleDocument.keepsAspect(Array(originals.values), handle)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -2499,11 +2197,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     /// The deepest layer under a point, through every group: what a dropped picture or list fills.
-    private func dropTarget(at p: CGPoint) -> UUID? {
-        guard var id = hit(p) else { return nil }
-        while let n = store.node(id), n.isGroup, let inner = hit(p, in: n) { id = inner }
-        return id
-    }
+    private func dropTarget(at p: CGPoint) -> UUID? { picking.dropTarget(p) }
 
     // MARK: - Edit menu
 
@@ -2892,12 +2586,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return Double(r).formatted(.number.precision(.fractionLength(0...1)).grouping(.never))
     }
 
-    static func normalized(_ degrees: Double) -> Double {
-        var d = degrees.truncatingRemainder(dividingBy: 360)
-        if d > 180 { d -= 360 }
-        if d <= -180 { d += 360 }
-        return (d * 100).rounded() / 100
-    }
+    nonisolated static func normalized(_ degrees: Double) -> Double { Geometry.normalized(degrees) }
 }
 
 final class FlippedView: NSView {

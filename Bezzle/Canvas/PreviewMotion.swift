@@ -52,13 +52,6 @@ final class PreviewMotion {
 private func mix(_ a: CGFloat, _ b: CGFloat, _ t: Double) -> CGFloat { a + (b - a) * CGFloat(t) }
 private func mix(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
 
-extension RGBA {
-    /// Part of the way from this colour to `other`.
-    func mixed(_ other: RGBA, _ t: Double) -> RGBA {
-        RGBA(r: mix(r, other.r, t), g: mix(g, other.g, t), b: mix(b, other.b, t), a: mix(a, other.a, t))
-    }
-}
-
 extension Node {
     /// Part of the way from this layer to `other`. What can be measured is mixed; what cannot,
     /// such as a font, a gradient or a dash, is `other`'s at once. Something coming on fades

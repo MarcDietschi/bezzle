@@ -246,7 +246,7 @@ nonisolated struct BezzleDocument: Codable, Equatable, Sendable {
             return n
         }
         n.frame = CGRect(center: Geometry.rotated(n.frame.center, about: pivot, by: degrees), size: n.frame.size)
-        n.rotation = CanvasView.normalized(n.rotation + degrees)
+        n.rotation = Geometry.normalized(n.rotation + degrees)
         return n
     }
 
@@ -267,7 +267,7 @@ nonisolated struct BezzleDocument: Codable, Equatable, Sendable {
         let c = n.frame.center
         n.frame = CGRect(center: horizontally ? CGPoint(x: 2 * axis - c.x, y: c.y) : CGPoint(x: c.x, y: 2 * axis - c.y), size: n.frame.size)
         // Not -0, which a file would keep.
-        if n.rotation != 0 { n.rotation = CanvasView.normalized(-n.rotation) }
+        if n.rotation != 0 { n.rotation = Geometry.normalized(-n.rotation) }
         n.fill = n.fill.flipped(horizontally: horizontally)
         n.moreFills = n.moreFills?.map { $0.flipped(horizontally: horizontally) }
         n.border = n.border.flipped(horizontally: horizontally)
@@ -333,7 +333,7 @@ nonisolated struct BezzleDocument: Codable, Equatable, Sendable {
         (group.cutBy.map { [$0] } ?? group.children).forEach(visit)
         guard let key = areas.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) })?.key,
               key != 0, let rotation = largest[key]?.rotation else { return 0 }
-        return CanvasView.normalized(rotation)
+        return Geometry.normalized(rotation)
     }
 
     /// How a layer lies in its parent, as its selection shows: its frame, upright, and how far that

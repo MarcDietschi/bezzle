@@ -237,15 +237,7 @@ struct SelectionInspector: View {
 
     /// The selection's frame in its artboard: the layer's own for one (a group seen turned, its
     /// box along the turn), the box around them all for several.
-    var frame: CGRect? {
-        if nodes.count == 1 { return BezzleDocument.turnedBox(of: nodes[0]).frame }
-        guard let bounds = store.selectionBounds else { return nil }
-        let parents = Set(nodes.map { store.doc.parent(of: $0.id)?.id })
-        if parents.count == 1, let p = parents.first ?? nil, let parent = store.doc.absoluteFrame(of: p) {
-            return bounds.offsetBy(dx: -parent.minX, dy: -parent.minY)
-        }
-        return bounds
-    }
+    var frame: CGRect? { store.doc.selectionFrame(nodes.map(\.id)) }
 
     /// The artboard all the selected layers lie on, when they share one.
     private var board: Node? {
@@ -373,49 +365,20 @@ struct SelectionInspector: View {
         }
     }
 
-    /// A layer turned to a new angle. A repeat grid turns as one, about its middle; a group's layers
-    /// turn together, about the middle of its box, from as far as they are seen turned.
+    /// A layer turned to a new angle (`Node.turn`, shared with the other Bezzles).
     static func rotate(_ n: inout Node, to degrees: Double) {
-        if let turn = n.grid?.turn {
-            n = RepeatGrid.turned(n, by: CanvasView.normalized(degrees) - turn, about: n.frame.center)
-        } else if n.isGroup {
-            let (box, turn) = BezzleDocument.turnedBox(of: n)
-            n = BezzleDocument.turned(n, by: CanvasView.normalized(degrees) - turn, about: box.center)
-        } else {
-            n.rotation = CanvasView.normalized(degrees)
-        }
+        n.turn(to: degrees)
     }
 
-    /// A layer at a new size. Text wraps its words to a new width, or grows its letters and lines.
+    /// A layer at a new size (`Node.resize`, shared). An artboard's design is laid out again for
+    /// its new size; a carousel, an artboard too, keeps whole slides instead.
     static func resize(_ n: inout Node, to size: CGSize, byHeight: Bool) {
-        // A carousel is as high as its slides, which take the height, and as wide as whole slides.
-        if n.isCarousel, let slide = n.slideSize, slide.width > 0 {
-            n.setSlideSize(CGSize(width: slide.width, height: size.height))
-            n.frame.size = n.carouselSize(count: Int((size.width / slide.width).rounded()))
-            return
-        }
-        // An artboard's design is laid out again for its new size.
-        if n.isArtboard {
+        if n.isArtboard, !n.isCarousel {
             n = Adapting.resized(n, to: size)
             Adapting.announce([n.id])
             return
         }
-        let old = n.frame
-        if n.kind == .text, old.height > 0, old.width > 0 {
-            n.resizeText(to: size, byHeight: byHeight)
-        } else if n.isGroup, !n.isRepeatGrid, case let (box, turn) = BezzleDocument.turnedBox(of: n), turn != 0 {
-            // A group seen turned stretches along its turn, from its box's top left as anything turned does.
-            n = BezzleDocument.scaled(n, turned: turn, from: box, to: CGRect(origin: box.origin, size: size))
-        } else {
-            // A group's layers stretch with it, and a grid's gaps.
-            if n.isGroup {
-                n.children = BezzleDocument.scaled(n.children, from: old.size, to: size)
-                n.mask = n.mask.map { BezzleDocument.scaled($0, from: old.size, to: size) }
-                if old.width > 0 { n.grid?.columnGap *= size.width / old.width }
-                if old.height > 0 { n.grid?.rowGap *= size.height / old.height }
-            }
-            n.frame.size = size
-        }
+        n.resize(to: size, byHeight: byHeight)
     }
 
     /// Sizes the selection, keeping its proportions when the lock is closed or `keepingProportions`.
@@ -439,31 +402,7 @@ struct SelectionInspector: View {
     /// artboard's coordinates, or on the canvas. An artboard among them has its design laid out
     /// again for its new size.
     static func place(_ doc: inout BezzleDocument, _ ids: [UUID], from f: CGRect, to target: CGRect) {
-        let parentOrigins = Dictionary(ids.map { ($0, doc.parentOrigin(of: $0)) }, uniquingKeysWith: { a, _ in a })
-        let shared = Set(ids.map { doc.parent(of: $0)?.id }).count == 1
-        for id in ids {
-            doc.update(id) { n in
-                let o = shared ? .zero : parentOrigins[id] ?? .zero
-                let own = n.frame.offsetBy(dx: o.x, dy: o.y)
-                let next = Geometry.snapToPixels(Geometry.map(own, from: f, to: target)).offsetBy(dx: -o.x, dy: -o.y)
-                if n.isArtboard {
-                    n = Adapting.resized(n, to: next.size)
-                    n.frame.origin = next.origin
-                } else if n.isGroup, n.frame.size != next.size, n.frame.width > 0, n.frame.height > 0 {
-                    // A group's layers stretch with it, as they do when it is resized alone; set
-                    // only its frame, it would be fitted back round them as it was.
-                    let old = n.frame.size
-                    n.children = BezzleDocument.scaled(n.children, from: old, to: next.size)
-                    n.mask = n.mask.map { BezzleDocument.scaled($0, from: old, to: next.size) }
-                    n.grid?.columnGap *= next.width / old.width
-                    n.grid?.rowGap *= next.height / old.height
-                    n.frame = next
-                } else {
-                    n.frame = next
-                }
-                n.refit()
-            }
-        }
+        doc.place(ids, from: f, to: target) { Adapting.resized($0, to: $1) }
     }
 
     // MARK: Artboard

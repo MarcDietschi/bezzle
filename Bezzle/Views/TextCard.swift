@@ -19,17 +19,12 @@ struct TextCard: View {
     /// How the letters shown look, a run's worth each.
     private var letters: [Letters] { store.lettersShown(in: nodes) }
 
-    /// What every one of `items` has alike, or nil when they differ.
-    private func alike<T: Equatable, I>(_ items: [I], _ value: (I) -> T) -> T? {
-        guard let first = items.first.map(value) else { return nil }
-        return items.allSatisfy { value($0) == first } ? first : nil
-    }
+    /// What the layers have alike (the shared `TextSummary`).
+    private var summed: TextSummary { TextSummary(nodes: nodes, letters: letters) }
 
-    private func common<T: Equatable>(_ value: (TextStyle) -> T) -> T? {
-        alike(nodes.map { $0.style ?? TextStyle() }, value)
-    }
+    private func common<T: Equatable>(_ value: (TextStyle) -> T) -> T? { summed.common(value) }
 
-    private func letter<T: Equatable>(_ value: (Letters) -> T) -> T? { alike(letters, value) }
+    private func letter<T: Equatable>(_ value: (Letters) -> T) -> T? { summed.letter(value) }
 
     /// Changes what is about the whole layer.
     private func set(_ action: LocalizedStringResource, _ change: @escaping (inout TextStyle) -> Void) {
@@ -66,7 +61,7 @@ struct TextCard: View {
         let family = letter(\.family)
         let face = letter(\.face)
         let size = letter { Double($0.size) }
-        let first = letters.first ?? TextLook.plain.resolved(over: TextStyle(), color: .black)
+        let first = summed.first
         let summary = [family.map { Fonts.displayName($0) } ?? String(localized: "Several fonts"),
                        size.map { "\(SelectionInspector.said($0)) pt" } ?? SelectionInspector.several].joined(separator: " · ")
         let dial = Dial(value: Double(first.size), range: 1...max(200, Double(first.size) * 1.5), stops: Presets.textSizes.map(Double.init),
@@ -182,7 +177,7 @@ struct TextCard: View {
                     value: lineSpacing, range: 0...4000, scrub: 0.25, action: "Change Line Spacing") { v in
             set("Change Line Spacing") { $0.lineSpacing = CGFloat(v) }
         } each: { f in
-            set("Change Line Spacing") { $0.lineSpacing = CGFloat(f(Double($0.lineSpacing ?? Self.naturalLineHeight($0)))) }
+            set("Change Line Spacing") { $0.lineSpacing = CGFloat(f(Double($0.lineSpacing ?? Fonts.naturalLineHeight($0)))) }
         }
     }
 
@@ -194,30 +189,18 @@ struct TextCard: View {
         }
     }
 
-    /// The font's own line height, which the text has until one is set.
-    private static func naturalLineHeight(_ style: TextStyle) -> CGFloat {
-        let font = Fonts.font(style)
-        return ceil(font.ascender - font.descender + font.leading)
-    }
-
     /// The line spacing they share, or the font's own line height until one is set.
-    private var lineSpacing: Double? {
-        if let set = common(\.lineSpacing) {
-            if let set { return Double(set) }
-            guard let style = nodes.first?.style else { return nil }
-            return Double(Self.naturalLineHeight(style))
-        }
-        return nil
-    }
+    private var lineSpacing: Double? { summed.lineSpacing }
 
     // MARK: Case
 
     private var caseMenu: some View {
         let now = common(\.letterCase)
-        let options: [(LetterCase?, LocalizedStringResource)] = [
-            (nil, LocalizedStringResource("text.case-typed", defaultValue: "As Typed", comment: "Letters set as they were typed, beside Uppercase and the others.")),
-            (.upper, "Uppercase"), (.lower, "Lowercase"), (.title, "Title Case"), (.smallCaps, "Small Caps"),
+        let names: [LetterCase?: LocalizedStringResource] = [
+            nil: LocalizedStringResource("text.case-typed", defaultValue: "As Typed", comment: "Letters set as they were typed, beside Uppercase and the others."),
+            .upper: "Uppercase", .lower: "Lowercase", .title: "Title Case", .smallCaps: "Small Caps",
         ]
+        let options = TextSummary.cases.map { ($0, names[$0] ?? "As Typed") }
         let title = now.map { n in options.first { $0.0 == n }?.1 ?? "As Typed" } ?? "Several"
         return MenuButton(id: "text-case", title: title, width: 180, fills: true) {
             options.map { value, name in
@@ -234,31 +217,24 @@ struct TextCard: View {
     /// The layers' font as their style has it, for what it offers.
     private var baseFont: NSFont { Fonts.font(nodes.first?.style ?? TextStyle()) }
 
-    /// Features that are on unless turned off.
-    private static let onByDefault: Set<String> = ["liga", "calt"]
-
-    /// What each feature is called here, when the font's own name says little; in the order they show.
-    private static let known: [(tag: String, name: LocalizedStringResource)] = [
-        ("liga", "Ligatures"), ("dlig", "Rare Ligatures"), ("calt", "Contextual Alternates"),
-        ("onum", "Old-Style Figures"), ("lnum", "Lining Figures"), ("tnum", "Tabular Figures"), ("pnum", "Proportional Figures"),
-        ("zero", "Slashed Zero"), ("frac", "Fractions"), ("sups", "Superscript"), ("subs", "Subscript"), ("ordn", "Ordinals"),
-        ("case", "Case-Sensitive Forms"), ("salt", "Stylistic Alternates"), ("swsh", "Swashes"), ("titl", "Titling Forms"),
+    /// What each feature is called here, when the font's own name says little; they show in the
+    /// order `TextFeatures.named` has them.
+    private static let names: [String: LocalizedStringResource] = [
+        "liga": "Ligatures", "dlig": "Rare Ligatures", "calt": "Contextual Alternates",
+        "onum": "Old-Style Figures", "lnum": "Lining Figures", "tnum": "Tabular Figures", "pnum": "Proportional Figures",
+        "zero": "Slashed Zero", "frac": "Fractions", "sups": "Superscript", "subs": "Subscript", "ordn": "Ordinals",
+        "case": "Case-Sensitive Forms", "salt": "Stylistic Alternates", "swsh": "Swashes", "titl": "Titling Forms",
     ]
-
-    private func isOn(_ tag: String, in style: TextStyle) -> Bool {
-        if let v = style.features?[tag] { return v != 0 }
-        return Self.onByDefault.contains(tag)
-    }
 
     private var featuresMenu: some View {
         let font = baseFont
         let offered = Fonts.features(of: font)
         let has = Set(offered.map(\.tag))
         let style = nodes.first?.style ?? TextStyle()
-        let named = Self.known.filter { has.contains($0.tag) }
-        let sets = offered.filter { $0.tag.hasPrefix("ss") && $0.tag.count == 4 }
-        let variants = offered.filter { $0.tag.hasPrefix("cv") && $0.tag.count == 4 }
-        let changed = (style.features ?? [:]).filter { has.contains($0.key) && ($0.value != 0) != Self.onByDefault.contains($0.key) }.count
+        let named = TextFeatures.named.filter(has.contains).compactMap { tag in Self.names[tag].map { (tag: tag, name: $0) } }
+        let sets = offered.filter { TextFeatures.isStylisticSet($0.tag) }
+        let variants = offered.filter { TextFeatures.isCharacterVariant($0.tag) }
+        let changed = TextFeatures.changed(in: style, offered: has)
         let title: LocalizedStringResource = named.isEmpty && sets.isEmpty && variants.isEmpty ? "No Features"
             : changed == 0 ? "Features" : "\(changed) Features"
         var entries = named.map { featureEntry($0.tag, $0.name, style: style) }
@@ -278,13 +254,8 @@ struct TextCard: View {
 
     /// A feature in the menu, ticked when it is on; pointing at it shows it turned the other way.
     private func featureEntry(_ tag: String, _ name: LocalizedStringResource, style: TextStyle) -> MenuEntry {
-        let on = isOn(tag, in: style)
-        let flip: (inout TextStyle) -> Void = { s in
-            var f = s.features ?? [:]
-            // Back to how the font sets it, rather than kept, where that is what is asked.
-            if on == Self.onByDefault.contains(tag) { f[tag] = on ? 0 : 1 } else { f[tag] = nil }
-            s.features = f.isEmpty ? nil : f
-        }
+        let on = TextFeatures.isOn(tag, in: style)
+        let flip: (inout TextStyle) -> Void = { s in TextFeatures.flip(tag, from: on, in: &s) }
         return MenuEntry.item(name, checked: on, preview: { p in previewStyle(p ? flip : nil) }) {
             set(on ? "Turn Feature Off" : "Turn Feature On", flip)
         }

@@ -6,25 +6,14 @@ import AppKit
 /// light up, with how many when it spans them exactly. A new grid falls into place from the
 /// artboard's top, its middle columns first; changed, its columns slide to where they go, one
 /// splitting into two as more come and two closing into one as fewer do. While its card is open,
-/// a grid's gutters, margins and baselines are dragged on the canvas itself.
+/// a grid's gutters, margins and baselines are dragged on the canvas itself (the shared
+/// `LayoutHandles`, Model/LayoutHandles.swift).
 final class LayoutTool {
     private let store: DocumentStore
-    var redraw: () -> Void = {}
-
-    enum Part: Equatable {
-        /// The gutters, held at one of them, whose middle is here on the artboard: pulled away from
-        /// it they all open, toward it they close.
-        case gutter(columns: Bool, middle: CGFloat)
-        case margin(columns: Bool, end: Bool)
-        /// The baselines, held by the one this many steps below the first.
-        case baseline(Int)
-    }
-
-    private struct Drag {
-        let part: Part
-        let board: UUID
-        let start: CGPoint
-        let grid: LayoutGrid
+    private let handles: LayoutHandles
+    var redraw: () -> Void {
+        get { handles.redraw }
+        set { handles.redraw = newValue }
     }
 
     /// One band as it moves from where it was to where it goes, fading out if it goes nowhere.
@@ -51,8 +40,6 @@ final class LayoutTool {
     }
 
     private var looks: [UUID: Look] = [:]
-    private var drag: Drag?
-    private var hovered: Part?
     private var last: CFTimeInterval?
     private var deviceScale: CGFloat = 2
     /// The canvas on screen, which nothing is drawn beyond.
@@ -63,9 +50,10 @@ final class LayoutTool {
 
     init(store: DocumentStore) {
         self.store = store
+        handles = LayoutHandles(host: store)
     }
 
-    var dragging: Bool { drag != nil }
+    var dragging: Bool { handles.dragging }
 
     var isAnimating: Bool {
         let now = CACurrentMediaTime()
@@ -89,18 +77,13 @@ final class LayoutTool {
     private func active(_ board: Node) -> Bool {
         if store.selection == [board.id], store.openAspect == .layout || store.pointedAspect == .layout { return true }
         if store.preview?.ids.contains(board.id) == true { return true }
-        if drag?.board == board.id || (hovered != nil && editable?.id == board.id) { return true }
+        if handles.heldBoard == board.id || (handles.hovered != nil && editable?.id == board.id) { return true }
         if store.inGesture, let first = store.selection.first, first != board.id, store.doc.artboard(of: first)?.id == board.id { return true }
         return false
     }
 
     /// The artboard whose grid the canvas can change: selected alone, with its card open.
-    private var editable: Node? {
-        guard store.tool == .select, store.editingText == nil, store.editingPath == nil, store.building == nil,
-              store.selection.count == 1, store.openAspect == .layout, let b = store.node(store.selection[0]), b.isArtboard,
-              !b.hidden, let grid = b.layout, !grid.isEmpty, Helpers.shared.grids else { return nil }
-        return b
-    }
+    private var editable: Node? { handles.editable }
 
     // MARK: - Motion
 
@@ -304,18 +287,10 @@ final class LayoutTool {
     /// The columns what is being changed on an artboard overlaps, by their place among all its
     /// columns, and how many it spans when its edges lie on theirs.
     private func spanned(on board: Node) -> (lit: Set<Int>, exact: Int?, box: CGRect)? {
-        guard store.inGesture, Helpers.shared.grids, board.layout?.columns != nil, let first = store.selection.first, first != board.id,
-              store.doc.artboard(of: first)?.id == board.id, let bounds = store.selectionBounds, let look = looks[board.id] else { return nil }
-        let r = bounds.offsetBy(dx: -board.frame.minX, dy: -board.frame.minY)
-        var lit = Set<Int>()
-        var starts: Int?, ends: Int?
-        for (i, c) in look.columns.enumerated() {
-            if min(r.maxX, c.maxX) - max(r.minX, c.minX) > 0.5 { lit.insert(i) }
-            if abs(r.minX - c.minX) < 0.5 { starts = i }
-            if abs(r.maxX - c.maxX) < 0.5 { ends = i }
-        }
-        let exact = starts.flatMap { s in ends.flatMap { e in e >= s ? e - s + 1 : nil } }
-        return (lit, exact, bounds)
+        guard store.inGesture, Helpers.shared.grids, let first = store.selection.first, first != board.id,
+              store.doc.artboard(of: first)?.id == board.id, let bounds = store.selectionBounds, looks[board.id] != nil,
+              let span = board.columnSpan(of: bounds) else { return nil }
+        return (span.lit, span.exact, bounds)
     }
 
     /// How many columns something spans exactly, in a red pill over it.
@@ -336,19 +311,14 @@ final class LayoutTool {
 
     /// The part under the pointer, or being dragged, lit up in its band.
     private func drawHover(_ board: Node, _ ctx: CGContext) {
-        guard let part = drag?.part ?? hovered, let grid = board.layout else { return }
-        let vp = store.viewport, o = board.frame.origin
+        let vp = store.viewport
         ctx.saveGState()
         defer { ctx.restoreGState() }
         let red = CanvasInk.column
-        for (i, band) in bands(of: part, grid: grid, on: board).enumerated() {
-            let v = vp.toView(band.offsetBy(dx: o.x, dy: o.y))
-            if case .baseline(let k) = part {
-                // The one held, firmly; its step marked off down to the first.
-                let lines = grid.baselines(in: LayoutGrid.areas(of: board).first ?? .zero).count
-                let held = i % max(lines, 1) == k
-                guard held || i % max(lines, 1) == 0 else { continue }
-                ctx.setFillColor(CanvasInk.baseline.withAlphaComponent(held ? 0.95 : 0.6).cgColor)
+        for band in handles.lit() {
+            let v = vp.toView(band.rect)
+            if band.line {
+                ctx.setFillColor(CanvasInk.baseline.withAlphaComponent(band.held ? 0.95 : 0.6).cgColor)
                 ctx.fill(CGRect(x: v.minX, y: v.midY - 0.75, width: v.width, height: 1.5))
                 continue
             }
@@ -370,152 +340,29 @@ final class LayoutTool {
         }
     }
 
-    /// Every band a part is one of, on the artboard: all its gutters, both its margins, or all its baselines.
-    private func bands(of part: Part, grid: LayoutGrid, on board: Node) -> [CGRect] {
-        var out: [CGRect] = []
-        for area in LayoutGrid.areas(of: board) {
-            switch part {
-            case .gutter(let columns, _):
-                let rects = columns ? grid.columnRects(in: area) : grid.rowRects(in: area)
-                for (a, b) in zip(rects, rects.dropFirst()) {
-                    out.append(columns ? CGRect(x: a.maxX, y: area.minY, width: b.minX - a.maxX, height: area.height)
-                                       : CGRect(x: area.minX, y: a.maxY, width: area.width, height: b.minY - a.maxY))
-                }
-            case .margin(let columns, _):
-                let rects = columns ? grid.columnRects(in: area) : grid.rowRects(in: area)
-                guard let first = rects.first, let last = rects.last else { continue }
-                if columns {
-                    out += [CGRect(x: area.minX, y: area.minY, width: first.minX - area.minX, height: area.height),
-                            CGRect(x: last.maxX, y: area.minY, width: area.maxX - last.maxX, height: area.height)]
-                } else {
-                    out += [CGRect(x: area.minX, y: area.minY, width: area.width, height: first.minY - area.minY),
-                            CGRect(x: area.minX, y: last.maxY, width: area.width, height: area.maxY - last.maxY)]
-                }
-            case .baseline:
-                out += grid.baselines(in: area).map { CGRect(x: area.minX, y: $0, width: area.width, height: 0) }
-            }
-        }
-        return out
-    }
-
     // MARK: - The pointer
 
-    /// The part of the editable grid under a point on screen.
-    private func part(at v: CGPoint) -> Part? {
-        guard let board = editable, let grid = board.layout else { return nil }
-        let p = store.viewport.toCanvas(v) - board.frame.origin
-        let slop = 4 / zoom
-        for area in LayoutGrid.areas(of: board) where area.insetBy(dx: -slop, dy: -slop).contains(p) {
-            for columns in [true, false] {
-                let rects = columns ? grid.columnRects(in: area) : grid.rowRects(in: area)
-                guard let first = rects.first, let last = rects.last else { continue }
-                let along = columns ? p.x : p.y
-                let lo = columns ? area.minX : area.minY, hi = columns ? area.maxX : area.maxY
-                func inBand(_ a: CGFloat, _ b: CGFloat) -> Bool {
-                    let half = max((b - a) / 2, 4 / zoom), mid = (a + b) / 2
-                    return abs(along - mid) <= half
-                }
-                for (a, b) in zip(rects, rects.dropFirst()) {
-                    let s = columns ? a.maxX : a.maxY, e = columns ? b.minX : b.minY
-                    if inBand(s, e) { return .gutter(columns: columns, middle: (s + e) / 2) }
-                }
-                let fs = columns ? first.minX : first.minY, le = columns ? last.maxX : last.maxY
-                if along >= lo, along <= fs + 2 / zoom, fs - lo >= 0 { return .margin(columns: columns, end: false) }
-                if along <= hi, along >= le - 2 / zoom, hi - le >= 0 { return .margin(columns: columns, end: true) }
-            }
-            // Off the gutters and margins, right on a baseline, when they are far enough apart to point at one.
-            if let base = grid.baseline, base.step * zoom >= 9 {
-                for (k, y) in grid.baselines(in: area).enumerated() where k > 0 && abs(p.y - y) <= 2 / zoom {
-                    return .baseline(k)
-                }
-            }
-        }
-        return nil
-    }
-
-    func down(at v: CGPoint, event: NSEvent) -> Bool {
-        guard let board = editable, let grid = board.layout, let part = part(at: v) else { return false }
-        store.beginGesture()
-        drag = Drag(part: part, board: board.id, start: store.viewport.toCanvas(v), grid: grid)
-        redraw()
-        return true
-    }
-
-    func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
-        guard let d = drag, let board = store.node(d.board) else { return }
-        let p = store.viewport.toCanvas(v)
-        let moved = p - d.start
-        var grid = d.grid
-        let said: String
-        switch d.part {
-        case .gutter(let columns, let middle):
-            // Opened by as much again as the pointer has gone further from its middle, as a gap
-            // pulled open from both sides at once.
-            let o = columns ? board.frame.minX : board.frame.minY
-            let now = (columns ? p.x : p.y) - o, then = (columns ? d.start.x : d.start.y) - o
-            let along = abs(now - middle) - abs(then - middle)
-            _ = moved
-            if columns {
-                grid.columns?.gutter = max(((d.grid.columns?.gutter ?? 0) + along * 2).rounded(), 0)
-                said = String(localized: "Gutter \(CanvasView.number(grid.columns?.gutter ?? 0))")
-            } else {
-                grid.rows?.gutter = max(((d.grid.rows?.gutter ?? 0) + along * 2).rounded(), 0)
-                said = String(localized: "Gutter \(CanvasView.number(grid.rows?.gutter ?? 0))")
-            }
-        case .margin(let columns, let end):
-            let along = (columns ? moved.x : moved.y) * (end ? -1 : 1)
-            if columns {
-                grid.columns?.margin = max(((d.grid.columns?.margin ?? 0) + along).rounded(), 0)
-                said = String(localized: "Margin \(CanvasView.number(grid.columns?.margin ?? 0))")
-            } else {
-                grid.rows?.margin = max(((d.grid.rows?.margin ?? 0) + along).rounded(), 0)
-                said = String(localized: "Margin \(CanvasView.number(grid.rows?.margin ?? 0))")
-            }
-        case .baseline(let k):
-            guard let base = d.grid.baseline else { return }
-            let area = LayoutGrid.areas(of: board).first ?? .zero
-            let y = p.y - board.frame.minY - area.minY
-            let firstLine = base.offset.truncatingRemainder(dividingBy: base.step)
-            let step = ((y - firstLine) / CGFloat(k) * 2).rounded() / 2
-            grid.baseline?.step = min(max(step, LayoutGrid.Baseline.steps.lowerBound), LayoutGrid.Baseline.steps.upperBound)
-            said = String(localized: "Baseline \(CanvasView.number(grid.baseline?.step ?? 0))")
-        }
-        if store.node(d.board)?.layout != grid {
-            store.changeLayout(of: d.board, "Change Layout Grid") { $0 = grid }
-        }
-        store.measurement = (said, board.frame)
-        redraw()
-    }
-
-    func up() {
-        guard drag != nil else { return }
-        drag = nil
-        store.endGesture("Change Layout Grid")
-        store.measurement = nil
-        redraw()
-    }
-
-    func cancel() {
-        guard drag != nil else { return }
-        drag = nil
-        store.cancelGesture()
-        store.measurement = nil
-        redraw()
-    }
-
-    func hover(_ v: CGPoint?) {
-        let now = v.flatMap { drag == nil ? part(at: $0) : nil }
-        if now != hovered {
-            hovered = now
-            redraw()
-        }
-    }
+    func down(at v: CGPoint, event: NSEvent) -> Bool { handles.down(at: v) }
+    func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) { handles.drag(to: v) }
+    func up() { handles.up() }
+    func cancel() { handles.cancel() }
+    func hover(_ v: CGPoint?) { handles.hover(v) }
 
     func cursor(at v: CGPoint) -> NSCursor? {
-        guard let part = drag?.part ?? part(at: v) else { return nil }
-        switch part {
-        case .gutter(let columns, _), .margin(let columns, _): return columns ? .resizeLeftRight : .resizeUpDown
-        case .baseline: return .resizeUpDown
+        handles.pointer(at: v).map { $0 ? .resizeLeftRight : .resizeUpDown }
+    }
+}
+
+extension DocumentStore: LayoutHost {
+    var layoutCardOpen: Bool { openAspect == .layout }
+    var gridsShown: Bool { Helpers.shared.grids }
+
+    func measure(_ what: LayoutMeasure?, _ box: CGRect) {
+        switch what {
+        case nil: measurement = nil
+        case .gutter(let v)?: measurement = (String(localized: "Gutter \(CanvasView.number(v))"), box)
+        case .margin(let v)?: measurement = (String(localized: "Margin \(CanvasView.number(v))"), box)
+        case .baseline(let v)?: measurement = (String(localized: "Baseline \(CanvasView.number(v))"), box)
         }
     }
 }

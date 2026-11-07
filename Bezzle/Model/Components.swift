@@ -630,7 +630,7 @@ extension Components {
             if var inst = x.instance {
                 let moved = Geometry.rotated(o + inst.box.center, about: c, by: t)
                 inst.box = CGRect(center: moved - o, size: inst.box.size)
-                let turned = CanvasView.normalized((inst.turn ?? 0) + t)
+                let turned = Geometry.normalized((inst.turn ?? 0) + t)
                 inst.turn = abs(turned) < 1e-9 ? nil : turned
                 x.instance = inst
             }
@@ -651,7 +651,7 @@ extension Components {
                 let mirrored = h ? CGPoint(x: 2 * axis - c.x, y: c.y) : CGPoint(x: c.x, y: 2 * axis - c.y)
                 inst.box = CGRect(center: mirrored - o, size: inst.box.size)
                 if h { inst.flipX = inst.flipX == true ? nil : true } else { inst.flipY = inst.flipY == true ? nil : true }
-                if let t = inst.turn, t != 0 { inst.turn = CanvasView.normalized(-t) }
+                if let t = inst.turn, t != 0 { inst.turn = Geometry.normalized(-t) }
                 x.instance = inst
             }
             for i in x.children.indices { tell(&x.children[i], o) }
@@ -912,7 +912,7 @@ extension Components {
 
     /// Turned as a whole about some point: every layer by as much, and its middle about that point.
     private static func turning(_ a: [Leaf], _ b: [Leaf], _ inst: Instance) -> Instance? {
-        let delta = CanvasView.normalized(b[0].rotation - a[0].rotation)
+        let delta = Geometry.normalized(b[0].rotation - a[0].rotation)
         guard abs(delta) > 0.01 else { return nil }
         let r = Geometry.radians(delta), c = cos(r), s = sin(r)
         // c' - p = R(c - p): (I - R)p = c' - Rc.
@@ -924,13 +924,13 @@ extension Components {
         guard abs(det) > 1e-9 else { return nil }
         let pivot = CGPoint(x: (m11 * v.x - m01 * v.y) / det, y: (-m10 * v.x + m00 * v.y) / det)
         for (x, y) in zip(a, b) {
-            guard abs(CanvasView.normalized(y.rotation - x.rotation - delta)) < 0.05,
+            guard abs(Geometry.normalized(y.rotation - x.rotation - delta)) < 0.05,
                   abs(x.frame.width - y.frame.width) < 0.01, abs(x.frame.height - y.frame.height) < 0.01 else { return nil }
             let moved = Geometry.rotated(x.frame.center, about: pivot, by: delta)
             guard close(moved.x, y.frame.center.x), close(moved.y, y.frame.center.y) else { return nil }
         }
         var next = inst
-        let t = CanvasView.normalized((inst.turn ?? 0) + delta)
+        let t = Geometry.normalized((inst.turn ?? 0) + delta)
         next.turn = abs(t) < 1e-9 ? nil : t
         next.box = CGRect(center: Geometry.rotated(inst.box.center, about: pivot, by: delta), size: inst.box.size)
         return next
@@ -947,7 +947,7 @@ extension Components {
                 // pixel, as a pull on its edge snapped to whole pixels does, was nearly a flip.
                 return exact(mx, y.frame.midX) && exact(my, y.frame.midY)
                     && abs(x.frame.width - y.frame.width) < 0.01 && abs(x.frame.height - y.frame.height) < 0.01
-                    && abs(CanvasView.normalized(y.rotation + x.rotation)) < 0.05
+                    && abs(Geometry.normalized(y.rotation + x.rotation)) < 0.05
             }
             // Something lying across the line itself stays where it is; a turn shows which way.
             guard fits, zip(a, b).contains(where: { abs($0.frame.midX - $1.frame.midX) > 0.01 || abs($0.frame.midY - $1.frame.midY) > 0.01 || $0.rotation != $1.rotation })
@@ -961,7 +961,7 @@ extension Components {
                 next.flipY = inst.flipY == true ? nil : true
                 next.box = CGRect(center: CGPoint(x: c.x, y: 2 * axis - c.y), size: inst.box.size)
             }
-            if let t = inst.turn, t != 0 { next.turn = CanvasView.normalized(-t) }
+            if let t = inst.turn, t != 0 { next.turn = Geometry.normalized(-t) }
             return next
         }
         return nil

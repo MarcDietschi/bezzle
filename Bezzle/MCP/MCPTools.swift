@@ -150,7 +150,7 @@ final class MCPTools {
         return URL(fileURLWithPath: (ref as NSString).expandingTildeInPath).standardizedFileURL
     }
 
-    /// The App Store's Bezzle is sandboxed: past Downloads and Pictures, it sees only what the
+    /// Bezzle as released is sandboxed: past Downloads and Pictures, it sees only what the
     /// user let it into. Added to what the AI hears when a file it named can't be found.
     static var unreachable: String {
         ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] == nil ? ""

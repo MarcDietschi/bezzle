@@ -208,7 +208,8 @@ extension DocumentStore {
     /// Which of a layer's shadows a drag on the canvas moves: the one whose card is open, when it
     /// falls under the layer, or else the first that does.
     func shadowSlot(of node: Node) -> Int? {
-        if case .shadow(let slot)? = openAspect, node[shadow: slot].outside { return slot }
-        return (0..<node.slots(.shadow)).first { node[shadow: $0].outside }
+        var open: Int?
+        if case .shadow(let slot)? = openAspect { open = slot }
+        return BezzleDocument.shadowSlot(of: node, open: open)
     }
 }

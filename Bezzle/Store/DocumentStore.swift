@@ -37,19 +37,6 @@ enum Tool: String, CaseIterable {
     }
 }
 
-/// A line the canvas draws while something snaps to it, in canvas points.
-struct Guide: Equatable {
-    var from: CGPoint
-    var to: CGPoint
-    /// For a gap as wide as another, rather than edges lined up: the space between the two sides
-    /// facing across it, which the canvas fills, `from` and `to` running across its middle.
-    var field: CGRect? = nil
-    /// Whether the gap is beside what is being moved, rather than one it is as wide as.
-    var mine = false
-
-    var gap: Bool { field != nil }
-}
-
 /// One open design: the document itself, what is selected, how it is looked at, and the undo
 /// history. Every change to the document goes through `edit`, which records it for Undo and
 /// saves the file a moment later. There is no Save: a design is always on disk.
@@ -522,51 +509,17 @@ final class DocumentStore {
 
     /// The colours used on each artboard and loose layer, in the order met, with how often, so
     /// that after a change only what changed is counted again.
-    private struct Used {
-        let color: RGBA
-        let key: Int
-        var count: Int
-    }
-
-    @ObservationIgnored private var colorsOn: [UUID: (node: Node, used: [Used])] = [:]
+    @ObservationIgnored private var colorsOn: [UUID: (node: Node, used: [UsedColor])] = [:]
 
     private func countColors() -> [RGBA] {
-        var counts: [Int: Int] = [:]
-        var order: [Used] = []
-        var kept: [UUID: (node: Node, used: [Used])] = [:]
-        for top in doc.nodes {
-            let used = colorsOn[top.id].flatMap { $0.node == top ? $0.used : nil } ?? Self.colors(in: top)
+        var kept: [UUID: (node: Node, used: [UsedColor])] = [:]
+        let perTop = doc.nodes.map { top in
+            let used = colorsOn[top.id].flatMap { $0.node == top ? $0.used : nil } ?? BezzleDocument.colorsUsed(in: top)
             kept[top.id] = (top, used)
-            for u in used {
-                if counts[u.key] == nil { order.append(u) }
-                counts[u.key, default: 0] += u.count
-            }
+            return used
         }
         colorsOn = kept
-        return order.enumerated().sorted { a, b in
-            let (ca, cb) = (counts[a.element.key] ?? 0, counts[b.element.key] ?? 0)
-            return ca != cb ? ca > cb : a.offset < b.offset
-        }.map(\.element.color)
-    }
-
-    /// The fill and border colours in a layer and all it holds, without their transparency, told
-    /// apart as their hex codes are.
-    private static func colors(in top: Node) -> [Used] {
-        var at: [Int: Int] = [:]
-        var used: [Used] = []
-        func byte(_ x: Double) -> Int { Int((min(max(x, 0), 1) * 255).rounded()) }
-        func visit(_ n: Node) {
-            for c in (n.kind != .artboard ? n.fills.map(\.color) : []) + n.borders.map(\.color) {
-                let key = byte(c.r) << 16 | byte(c.g) << 8 | byte(c.b)
-                if let i = at[key] { used[i].count += 1 } else {
-                    at[key] = used.count
-                    used.append(Used(color: c.with(alpha: 1), key: key, count: 1))
-                }
-            }
-            for child in n.children { visit(child) }
-        }
-        visit(top)
-        return used
+        return BezzleDocument.ranked(perTop)
     }
 
     // MARK: Saving
@@ -876,16 +829,7 @@ final class DocumentStore {
     func node(_ id: UUID) -> Node? { doc.node(id) }
 
     /// The selection's outline on the canvas: around what is drawn, turned layers included.
-    var selectionBounds: CGRect? {
-        var bounds: CGRect?
-        for id in selection {
-            guard let n = doc.node(id) else { continue }
-            let o = doc.parentOrigin(of: id)
-            let r = Geometry.bounds(of: n).offsetBy(dx: o.x, dy: o.y)
-            bounds = bounds?.union(r) ?? r
-        }
-        return bounds
-    }
+    var selectionBounds: CGRect? { doc.bounds(of: selection) }
 
     /// The artboard a new layer should go on: the one being looked at most, or the one the
     /// selection is on.
@@ -905,6 +849,4 @@ final class DocumentStore {
     }
 }
 
-extension CGRect {
-    var area: CGFloat { isNull || isEmpty ? 0 : width * height }
-}
+

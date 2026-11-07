@@ -126,19 +126,8 @@ struct ExportCard: View {
         }
     }
 
-    /// The presets in a few words: each format once, with its sizes, "PNG 1× 2× 3× · SVG".
-    static func summary(of presets: [ExportPreset]) -> String {
-        var formats: [ExportFormat] = []
-        var sizes: [ExportFormat: [String]] = [:]
-        for p in presets {
-            if sizes[p.format] == nil {
-                formats.append(p.format)
-                sizes[p.format] = []
-            }
-            if p.format.isPicture { sizes[p.format, default: []].append(p.size.shown) }
-        }
-        return formats.map { ([$0.title] + (sizes[$0] ?? [])).joined(separator: " ") }.joined(separator: " · ")
-    }
+    /// The presets in a few words (the shared `ExportPreset.summary`).
+    static func summary(of presets: [ExportPreset]) -> String { ExportPreset.summary(of: presets) }
 }
 
 /// A word or two in a well, typed into and kept on Return or a click elsewhere; Escape puts back

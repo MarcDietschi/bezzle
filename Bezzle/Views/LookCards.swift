@@ -414,16 +414,7 @@ extension SelectionInspector {
             return t.x == 0 && t.y == 0 ? String(localized: "Corners pinned") : String(localized: "Corners pinned, \(turned)")
         } ?? Self.several
         let dial = Dial(value: hypot(turn.x, turn.y), range: 0...60, step: 2, action: "Turn in Depth") { v in
-            store.updateSelection("Turn in Depth") { n in
-                var t = n.transform3D ?? Transform3D()
-                let now = hypot(t.x, t.y), held = hypot(Presets.heldUp.x, Presets.heldUp.y)
-                // Tipped the way it is turned already; laid flat, the way a layer is first held up.
-                let (dx, dy) = now > 0.05 ? (t.x / now, t.y / now) : (Presets.heldUp.x / held, Presets.heldUp.y / held)
-                let by = max(v, 0.1)
-                t.x = (dx * by * 10).rounded() / 10
-                t.y = (dy * by * 10).rounded() / 10
-                n.transform3D = t
-            }
+            store.updateSelection("Turn in Depth") { n in n.transform3D = (n.transform3D ?? Transform3D()).tipped(v) }
         }
         return AspectCard(aspect: .depth, title: "3D", summary: summary, dial: dial,
                           remove: { store.updateSelection("Remove 3D") { $0.transform3D = nil } }, removal: "Remove 3D", live: live) {

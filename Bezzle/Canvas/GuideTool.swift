@@ -1,467 +1,159 @@
 import AppKit
 
-/// Guides on the canvas. Each runs across its artboard from edge to edge, as a thread stretched
-/// across a sheet, and quivers for a moment when it catches on something or is let go. One is
-/// pulled out of a ruler, or put down by a click on one, and dragged by its tab on the ruler, or
-/// by its line wherever no layer lies under it; resting on it where one does lights up its tab. While it moves, it catches on the
-/// artboard's edges and middle, on what lies on the artboard and on the layout grid, Shift holding
-/// it to tens; its distance to either edge shows in a pill, solid toward the edge it keeps to.
-/// Dragged off its artboard, or back onto the ruler, it goes when let go. A click on a guide
-/// without a drag is a click on what lies under it; with Option a drag leaves a copy behind.
+/// Guides on the Mac's canvas: the shared `GuideDragging` (Model/GuideDragging.swift, which says
+/// what they do), handed the canvas's events; here they are felt, and drawn as threads stretched
+/// across a sheet that unroll as they come, quiver when they catch on something or are let go,
+/// and while one is dragged its distances to either edge, as a draftsman dimensions a drawing.
 final class GuideTool {
     private let store: DocumentStore
     private let rulers: Rulers
-    var redraw: () -> Void = {}
+    let guides: GuideDragging
+    var redraw: () -> Void {
+        get { guides.redraw }
+        set { guides.redraw = newValue }
+    }
     /// A press on a guide that did not become a drag, which the canvas takes as a click.
     var click: (CGPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
     /// Opens a menu at a point on screen.
     var menu: (CGPoint, [MenuEntry]) -> Void = { _, _ in }
     /// Where the layer a press at a point on screen would take lies on the canvas, if one does.
-    /// Where one does, a guide's line leaves the pointer to it, and the guide is taken by its tab
-    /// on the ruler, which lights up to say so; unless the guide runs nearly all the way across
-    /// it, as across a backdrop, which it lies on as on the sheet itself.
-    var under: (CGPoint) -> CGRect? = { _ in nil }
-
-    struct Ref: Hashable {
-        let board: UUID
-        let key: String
+    var under: (CGPoint) -> CGRect? {
+        get { guides.under }
+        set { guides.under = newValue }
     }
 
-    private enum Drag {
-        /// A press on a ruler, not yet a drag: a click puts a guide where it was.
-        case press(Rulers.Part, start: CGPoint)
-        /// A guide coming out of a ruler, or a copy of one, on no artboard until it is let go.
-        case new(vertical: Bool, from: Ref?)
-        /// A guide on an artboard, moved, by its line or its tab.
-        case move(Ref, vertical: Bool, grip: CGFloat, started: Bool, start: CGPoint, copy: Bool, flags: NSEvent.ModifierFlags)
-        /// Two guides at once, out of the corner.
-        case cross
-    }
+    typealias Ref = GuideDragging.Ref
 
-    /// Where a guide being dragged is, and what it is doing.
-    private struct Held {
-        var board: UUID?
-        var vertical: Bool
-        /// Across or down its artboard.
-        var position: CGFloat
-        var leaving: Bool
-        var caught: CGFloat?
-        /// Where along it the pointer is, on the canvas, for the pills.
-        var pointer: CGPoint
-    }
-
-    private var drag: Drag?
-    private var held: [Held] = []
-    private var hovered: Ref?
-    /// The guide the pointer rests on where a layer lies over it: the press is the layer's, and
-    /// the guide's tab on the ruler lights up, where it is taken instead. `beckoned` keeps the
-    /// glow on it while it fades.
-    private var beckoning: Ref?
+    /// The guide a layer lies over where the pointer rests, kept while its glow fades.
     private var beckoned: Ref?
     private var beckon = DeckTool.Spring(0)
-    private var caught: [CGFloat?] = []
-
-    // Motion.
     private var grow = DeckTool.Spring(1)
-    private var appearing: [Ref: CFTimeInterval] = [:]
-    private var plucks: [Ref: CFTimeInterval] = [:]
-    private var heldPluck: CFTimeInterval?
-    private struct Vanishing {
-        var from: CGPoint
-        var to: CGPoint
-        var born: CFTimeInterval
-    }
-    private var vanishing: [Vanishing] = []
     private var last: CFTimeInterval?
     private var deviceScale: CGFloat = 2
 
     /// How long a guide takes to unroll across its artboard, and how long a pluck rings.
-    private static let unroll = 0.32
+    private static let unroll = GuideDragging.unroll
     private static let ring = 1.05
+
+    /// The store and the rulers as the shared guides see them.
+    private final class Host: GuideHost {
+        let store: DocumentStore
+        let rulers: Rulers
+        init(store: DocumentStore, rulers: Rulers) {
+            self.store = store
+            self.rulers = rulers
+        }
+        var doc: BezzleDocument { store.doc }
+        var zoom: CGFloat { store.viewport.zoom }
+        func toView(_ p: CGPoint) -> CGPoint { store.viewport.toView(p) }
+        func toCanvas(_ v: CGPoint) -> CGPoint { store.viewport.toCanvas(v) }
+        var visibleCanvasRect: CGRect { store.visibleCanvasRect }
+        var selectsGuides: Bool { store.tool == .select }
+        var isReadOnly: Bool { store.isReadOnly }
+        func seenLayers(of board: Node) -> [Node] { store.seenLayers(of: board) }
+        func beginGesture() { store.beginGesture() }
+        func endGesture(_ action: LocalizedStringResource) { store.endGesture(action) }
+        func cancelGesture() { store.cancelGesture() }
+        func edit(_ action: LocalizedStringResource, _ change: (inout BezzleDocument) -> Void) { store.edit(action, change) }
+        var guidesShown: Bool {
+            get { Helpers.shared.guides }
+            set { Helpers.shared.guides = newValue }
+        }
+        var gridsShown: Bool { Helpers.shared.grids }
+        var rulersShown: Bool { Helpers.shared.rulers }
+        var guidesLocked: Bool { Helpers.shared.guidesLocked }
+        func rulerPart(at v: CGPoint) -> RulerPart? {
+            switch rulers.part(at: v) {
+            case .top?: .top
+            case .left?: .left
+            case .corner?: .corner
+            case nil: nil
+            }
+        }
+        var rulerBoard: Node? { rulers.board }
+        var rulerThickness: CGFloat { rulers.thickness }
+    }
 
     init(store: DocumentStore, rulers: Rulers) {
         self.store = store
         self.rulers = rulers
-    }
-
-    var dragging: Bool {
-        switch drag {
-        case nil, .press: false
-        case .move(_, _, _, let started, _, _, _): started
-        default: true
+        guides = GuideDragging(host: Host(store: store, rulers: rulers))
+        guides.now = { CACurrentMediaTime() }
+        guides.feel = { kind in
+            let pattern: NSHapticFeedbackManager.FeedbackPattern = switch kind {
+            case .generic: .generic
+            case .alignment: .alignment
+            case .levelChange: .levelChange
+            }
+            NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
+        }
+        guides.began = { [weak self] fresh in
+            guard let self else { return }
+            self.grow = DeckTool.Spring(fresh ? 0 : 1)
+            if fresh { self.grow.target = 1 }
+        }
+        guides.click = { [weak self] v, f in
+            var flags: NSEvent.ModifierFlags = []
+            if f.contains(.shift) { flags.insert(.shift) }
+            if f.contains(.option) { flags.insert(.option) }
+            if f.contains(.command) { flags.insert(.command) }
+            self?.click(v, flags)
+        }
+        guides.cornerMenu = { [weak self] v in
+            guard let self else { return }
+            self.menu(v, Helpers.shared.entries(for: self.store))
         }
     }
 
-    var pressed: Bool { drag != nil }
+    var dragging: Bool { guides.dragging }
+    var pressed: Bool { guides.pressed }
 
     var isAnimating: Bool {
         let now = CACurrentMediaTime()
-        return grow.isMoving || beckon.isMoving || !vanishing.isEmpty || appearing.values.contains { now - $0 < Self.unroll }
-            || plucks.values.contains { now - $0 < Self.ring } || heldPluck.map { now - $0 < Self.ring } ?? false
+        return grow.isMoving || beckon.isMoving || !guides.vanishing.isEmpty || guides.appearing.values.contains { now - $0 < Self.unroll }
+            || guides.plucks.values.contains { now - $0 < Self.ring } || guides.heldPluck.map { now - $0 < Self.ring } ?? false
     }
 
     private var zoom: CGFloat { store.viewport.zoom }
     private var shown: Bool { Helpers.shared.guides }
 
-    // MARK: - Finding guides
+    func guide(at v: CGPoint) -> Ref? { guides.guide(at: v) }
 
-    /// The artboards whose guides are in sight, big enough on screen to be worked with.
-    private func boards() -> [Node] {
-        let visible = store.visibleCanvasRect
-        return store.doc.artboards.filter { !$0.hidden && $0.guides?.isEmpty == false && $0.frame.intersects(visible.insetBy(dx: -20, dy: -20))
-            && min($0.frame.width, $0.frame.height) * zoom >= 24 }
-    }
+    // MARK: - The pointer
 
-    /// A guide's line on the canvas, from edge to edge of its artboard and no further.
-    private func line(of g: Guideline, on board: Node) -> (CGPoint, CGPoint) {
-        let f = board.frame, at = g.position(in: f.size)
-        return g.vertical ? (CGPoint(x: f.minX + at, y: f.minY), CGPoint(x: f.minX + at, y: f.maxY))
-                          : (CGPoint(x: f.minX, y: f.minY + at), CGPoint(x: f.maxX, y: f.minY + at))
-    }
-
-    /// The guide whose line a point on screen is within a few points of, and whether a layer lies
-    /// under the point, where the press is the layer's.
-    private func nearest(at v: CGPoint) -> (ref: Ref, covered: Bool)? {
-        guard shown else { return nil }
-        for board in boards().reversed() {
-            var best: (String, CGFloat)?
-            for (key, g) in board.guides ?? [:] {
-                let (a, b) = line(of: g, on: board)
-                let va = store.viewport.toView(a), vb = store.viewport.toView(b)
-                let off = g.vertical ? abs(v.x - va.x) : abs(v.y - va.y)
-                let within = g.vertical ? (v.y >= va.y - 3 && v.y <= vb.y + 3) : (v.x >= va.x - 3 && v.x <= vb.x + 3)
-                guard within, off <= 4, best.map({ off < $0.1 }) ?? true else { continue }
-                best = (key, off)
-            }
-            if let best, let g = board.guides?[best.0] {
-                return (Ref(board: board.id, key: best.0), store.viewport.toView(board.frame).contains(v) && covered(v, by: g, on: board))
-            }
-        }
-        return nil
-    }
-
-    /// Whether a layer under a point keeps a guide's line from the pointer there: one the guide
-    /// crosses, as a card it centres. One it runs along nearly from edge to edge of the artboard,
-    /// as a picture or colour laid under the whole page, is the ground it is drawn on, and a
-    /// guide there could otherwise only ever be taken by its tab.
-    private func covered(_ v: CGPoint, by g: Guideline, on board: Node) -> Bool {
-        guard let f = under(v) else { return false }
-        let b = board.frame
-        let (run, from, to) = g.vertical ? (b.height, max(f.minY, b.minY), min(f.maxY, b.maxY))
-                                         : (b.width, max(f.minX, b.minX), min(f.maxX, b.maxX))
-        return to - from < run * Self.ground
-    }
-
-    /// How much of a guide's length a layer has to lie along to be ground for it.
-    static let ground: CGFloat = 0.85
-
-    /// The guide under a point on screen that a press there takes: within a few points of it,
-    /// where no layer lies under the pointer.
-    func guide(at v: CGPoint) -> Ref? {
-        guard let n = nearest(at: v), !n.covered else { return nil }
-        return n.ref
-    }
-
-    /// The guide whose tab on a ruler is under a point on screen.
-    private func tab(at v: CGPoint, on part: Rulers.Part) -> Ref? {
-        guard shown, let board = rulers.board, part != .corner else { return nil }
-        let across = part == .top
-        let f = board.frame
-        var best: (String, CGFloat)?
-        for (key, g) in board.guides ?? [:] where g.vertical == across {
-            let p = store.viewport.toView(CGPoint(x: f.minX + g.position(in: f.size), y: f.minY + g.position(in: f.size)))
-            let off = abs(across ? v.x - p.x : v.y - p.y)
-            if off <= 6, best.map({ off < $0.1 }) ?? true { best = (key, off) }
-        }
-        return best.map { Ref(board: board.id, key: $0.0) }
-    }
-
-    // MARK: - Pressing
-
-    /// A press on a ruler, whatever the tool. False leaves it to the canvas.
     func rulerDown(at v: CGPoint, event: NSEvent) -> Bool {
-        guard let part = rulers.part(at: v) else { return false }
-        if event.clickCount >= 2 { return true }
-        if let ref = tab(at: v, on: part), !Helpers.shared.guidesLocked, let g = store.node(ref.board)?.guides?[ref.key] {
-            let at = position(of: g, on: ref.board)
-            let p = canvas(v)
-            drag = .move(ref, vertical: g.vertical, grip: (g.vertical ? p.x : p.y) - at, started: false, start: v, copy: false, flags: event.modifierFlags)
-            return true
-        }
-        drag = .press(part, start: v)
-        return true
+        guides.rulerDown(at: v, clicks: event.clickCount, flags: PathTool.flags(event.modifierFlags))
     }
 
-    /// A press with the select tool on a guide's line. False leaves it to the canvas.
-    func down(at v: CGPoint, event: NSEvent) -> Bool {
-        guard store.tool == .select, !Helpers.shared.guidesLocked, !store.isReadOnly, let ref = guide(at: v),
-              let g = store.node(ref.board)?.guides?[ref.key] else { return false }
-        let at = position(of: g, on: ref.board), p = canvas(v)
-        drag = .move(ref, vertical: g.vertical, grip: (g.vertical ? p.x : p.y) - at, started: false, start: v,
-                     copy: event.modifierFlags.contains(.option), flags: event.modifierFlags)
-        return true
-    }
-
-    /// A guide's place across its artboard, or down it, as the artboard is now.
-    private func position(of g: Guideline, on board: UUID) -> CGFloat {
-        guard let b = store.node(board) else { return 0 }
-        return (g.vertical ? b.frame.minX : b.frame.minY) + g.position(in: b.frame.size)
-    }
-
-    private func canvas(_ v: CGPoint) -> CGPoint { store.viewport.toCanvas(v) }
-
-    func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
-        switch drag {
-        case .press(let part, let start):
-            guard hypot(v.x - start.x, v.y - start.y) > 3, !store.isReadOnly else { return }
-            // Out of the top ruler comes a guide across, out of the left one a guide down.
-            switch part {
-            case .top: drag = .new(vertical: false, from: nil)
-            case .left: drag = .new(vertical: true, from: nil)
-            case .corner: drag = .cross
-            }
-            grow = DeckTool.Spring(0)
-            grow.target = 1
-            caught = []
-            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
-            drag(to: v, flags: flags)
-            return
-        case .move(let ref, let vertical, let grip, let started, let start, let copy, let first):
-            if !started {
-                guard hypot(v.x - start.x, v.y - start.y) > 3 else { return }
-                if copy {
-                    drag = .new(vertical: vertical, from: ref)
-                    grow = DeckTool.Spring(1)
-                    drag(to: v, flags: flags)
-                    return
-                }
-                store.beginGesture()
-                drag = .move(ref, vertical: vertical, grip: grip, started: true, start: start, copy: false, flags: first)
-            }
-            let p = canvas(v)
-            var h = place(vertical: vertical, at: (vertical ? p.x : p.y) - grip, pointer: p, view: v, board: ref.board, except: ref.key, flags: flags)
-            h.board = ref.board
-            if !h.leaving { store.moveGuide(ref.key, on: ref.board, to: h.position) }
-            note(h, slot: 0)
-            held = [h]
-        case .new(let vertical, let from):
-            let p = canvas(v)
-            let board = from?.board ?? store.doc.artboard(at: p)?.id ?? rulers.board?.id
-            let h = place(vertical: vertical, at: vertical ? p.x : p.y, pointer: p, view: v, board: board, except: nil, flags: flags)
-            note(h, slot: 0)
-            held = [h]
-        case .cross:
-            let p = canvas(v)
-            let board = store.doc.artboard(at: p)?.id ?? rulers.board?.id
-            let a = place(vertical: true, at: p.x, pointer: p, view: v, board: board, except: nil, flags: flags)
-            let b = place(vertical: false, at: p.y, pointer: p, view: v, board: board, except: nil, flags: flags)
-            note(a, slot: 0)
-            note(b, slot: 1)
-            held = [a, b]
-        case nil:
-            return
-        }
-        redraw()
-    }
-
-    /// A guide's catch felt, and seen as a quiver, each time it catches on something new.
-    private func note(_ h: Held, slot: Int) {
-        while caught.count <= slot { caught.append(nil) }
-        if h.caught != caught[slot] {
-            if h.caught != nil {
-                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                heldPluck = CACurrentMediaTime()
-            }
-            caught[slot] = h.caught
-        }
-    }
-
-    /// Where a guide dragged to `value` on the canvas settles on an artboard: caught on what is near,
-    /// held to tens with Shift, or let go of anything with Command; and whether it is leaving.
-    private func place(vertical: Bool, at value: CGFloat, pointer p: CGPoint, view v: CGPoint, board id: UUID?, except: String?,
-                       flags: NSEvent.ModifierFlags) -> Held {
-        guard let id, let board = store.node(id) else {
-            return Held(board: nil, vertical: vertical, position: value, leaving: true, caught: nil, pointer: p)
-        }
-        let f = board.frame
-        let length = vertical ? f.width : f.height
-        var at = value - (vertical ? f.minX : f.minY)
-        var caughtOn: CGFloat?
-        if flags.contains(.shift) {
-            // In tens from the edge it is nearer.
-            at = at <= length / 2 ? (at / 10).rounded() * 10 : length - ((length - at) / 10).rounded() * 10
-        } else if !flags.contains(.command) {
-            let reach = 6 / zoom
-            if let near = targets(on: board, vertical: vertical, except: except).min(by: { abs($0 - at) < abs($1 - at) }), abs(near - at) <= reach {
-                at = near
-                caughtOn = near
-            } else {
-                at = at.rounded()
-            }
-        } else {
-            at = at.rounded()
-        }
-        // Back on the ruler it came from, or well off the artboard, it goes when let go.
-        let t = rulers.thickness
-        let onRuler = vertical ? v.x < t : v.y < t
-        let slack = 14 / zoom
-        let leaving = onRuler || at < -slack || at > length + slack
-        return Held(board: id, vertical: vertical, position: min(max(at, 0), length), leaving: leaving, caught: leaving ? nil : caughtOn, pointer: p)
-    }
-
-    /// What a guide catches on along an artboard, in its own coordinates: its edges and middle,
-    /// each slide's of a carousel, the edges and middles of what lies on it, and its grid's columns,
-    /// rows and baselines.
-    private func targets(on board: Node, vertical: Bool, except: String?) -> [CGFloat] {
-        let f = board.frame, length = vertical ? f.width : f.height
-        var out: [CGFloat] = [0, length / 2, length]
-        if board.isCarousel { for s in board.slideRects { out += vertical ? [s.minX, s.midX, s.maxX] : [s.minY, s.midY, s.maxY] } }
-        for child in store.seenLayers(of: board) where !child.hidden {
-            let b = Geometry.bounds(of: child)
-            out += vertical ? [b.minX, b.midX, b.maxX] : [b.minY, b.midY, b.maxY]
-        }
-        if Helpers.shared.grids, let grid = board.layout {
-            let edges = grid.edges(of: board)
-            out += vertical ? edges.xs : edges.ys + edges.baselines
-        }
-        return out
-    }
-
-    func up(at v: CGPoint, flags: NSEvent.ModifierFlags) {
-        defer {
-            drag = nil
-            held = []
-            caught = []
-            redraw()
-        }
-        switch drag {
-        case .press(let part, _):
-            if part == .corner {
-                menu(v, Helpers.shared.entries(for: store))
-                return
-            }
-            // A click on a ruler puts a guide down there, running across the ruler.
-            guard !store.isReadOnly, let board = rulers.board else { return }
-            let vertical = part == .top
-            let p = canvas(v)
-            let f = board.frame
-            let at = ((vertical ? p.x - f.minX : p.y - f.minY)).rounded()
-            guard at >= 0, at <= (vertical ? f.width : f.height) else { return }
-            if let key = store.addGuide(at: at, vertical: vertical, to: board.id) {
-                let ref = Ref(board: board.id, key: key), now = CACurrentMediaTime()
-                appearing[ref] = now
-                // It quivers as it comes taut at the far edge.
-                plucks[ref] = now + Self.unroll * 0.8
-                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
-            }
-        case .move(let ref, _, _, let started, _, _, let first):
-            guard started else {
-                // A click on a guide is a click on what lies under it; on a tab, nothing.
-                if rulers.part(at: v) == nil { click(v, first) }
-                return
-            }
-            if let h = held.first, h.leaving {
-                store.cancelGesture()
-                if let b = store.node(ref.board), let g = b.guides?[ref.key] { vanish(g, on: b, at: h.pointer) }
-                store.removeGuide(ref.key, from: ref.board)
-                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-            } else {
-                store.endGesture("Move Guide")
-                plucks[ref] = CACurrentMediaTime()
-            }
-        case .new:
-            commit(held, action: "Add Guide")
-        case .cross:
-            commit(held, action: "Add Guides")
-        case nil:
-            break
-        }
-    }
-
-    private func commit(_ guides: [Held], action: LocalizedStringResource) {
-        let kept = guides.filter { !$0.leaving && $0.board != nil }
-        guard !kept.isEmpty else {
-            for h in guides { vanish(h) }
-            return
-        }
-        var added: [Ref] = []
-        store.edit(action) { doc in
-            for h in kept {
-                guard let id = h.board, let b = doc.node(id) else { continue }
-                let key = Guideline.key(besides: (b.guides ?? [:]).keys)
-                let g = Guideline.at(h.position, vertical: h.vertical, in: b.frame.size)
-                doc.update(id) { $0.guides = ($0.guides ?? [:]).merging([key: g]) { _, new in new } }
-                added.append(Ref(board: id, key: key))
-            }
-        }
-        let now = CACurrentMediaTime()
-        for r in added { plucks[r] = now }
-        Helpers.shared.guides = true
-    }
-
-    func cancel() {
-        guard drag != nil else { return }
-        if case .move(_, _, _, true, _, _, _) = drag { store.cancelGesture() }
-        drag = nil
-        held = []
-        redraw()
-    }
-
-    /// A guide taken away, shrinking to where the pointer let it go as it fades.
-    private func vanish(_ g: Guideline, on board: Node, at p: CGPoint) {
-        let (a, b) = line(of: g, on: board)
-        vanishing.append(Vanishing(from: g.vertical ? CGPoint(x: p.x, y: a.y) : CGPoint(x: a.x, y: p.y),
-                                   to: g.vertical ? CGPoint(x: p.x, y: b.y) : CGPoint(x: b.x, y: p.y), born: CACurrentMediaTime()))
-    }
-
-    private func vanish(_ h: Held) {
-        guard let id = h.board, let board = store.node(id) else { return }
-        let g = Guideline(vertical: h.vertical, edge: .start, offset: h.position)
-        vanish(g, on: board, at: h.pointer)
-    }
-
-    // MARK: - The pointer at rest
+    func down(at v: CGPoint, event: NSEvent) -> Bool { guides.down(at: v, flags: PathTool.flags(event.modifierFlags)) }
+    func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) { guides.drag(to: v, flags: PathTool.flags(flags)) }
+    func up(at v: CGPoint, flags: NSEvent.ModifierFlags) { guides.up(at: v, flags: PathTool.flags(flags)) }
+    func cancel() { guides.cancel() }
 
     func hover(_ v: CGPoint?) {
-        var ref: Ref?, through: Ref?
-        if let v, drag == nil {
-            if let part = rulers.part(at: v) {
-                ref = tab(at: v, on: part)
-            } else if store.tool == .select, !Helpers.shared.guidesLocked, !store.isReadOnly, let n = nearest(at: v) {
-                if n.covered { through = n.ref } else { ref = n.ref }
-            }
-        }
-        // Its tab lights up only where there is one: on the rulers, measuring its artboard.
-        if let t = through, !(Helpers.shared.rulers && rulers.board?.id == t.board) { through = nil }
-        if ref != hovered || through != beckoning {
-            hovered = ref
-            beckoning = through
-            if let through { beckoned = through }
-            redraw()
-        }
+        guides.hover(v)
+        if let through = guides.beckoning { beckoned = through }
     }
 
     func cursor(at v: CGPoint) -> NSCursor? {
-        if let h = held.first, case .move = drag, dragging { return h.vertical ? .resizeLeftRight : .resizeUpDown }
-        if case .new(let vertical, _) = drag { return held.first?.leaving == true ? .disappearingItem : vertical ? .resizeLeftRight : .resizeUpDown }
-        if case .cross = drag { return .crosshair }
+        if let vertical = guides.movingVertical, guides.dragging { return vertical ? .resizeLeftRight : .resizeUpDown }
+        if let vertical = guides.newVertical { return guides.held.first?.leaving == true ? .disappearingItem : vertical ? .resizeLeftRight : .resizeUpDown }
+        if guides.crossing { return .crosshair }
         if let part = rulers.part(at: v) {
             if part == .corner { return .pointingHand }
-            if let ref = tab(at: v, on: part), let g = store.node(ref.board)?.guides?[ref.key] { return g.vertical ? .resizeLeftRight : .resizeUpDown }
+            if let vertical = guides.tabVertical(at: v) { return vertical ? .resizeLeftRight : .resizeUpDown }
             return .arrow
         }
-        guard drag == nil, store.tool == .select, let ref = hovered, rulers.part(at: v) == nil,
-              let g = store.node(ref.board)?.guides?[ref.key] else { return nil }
-        return g.vertical ? .resizeLeftRight : .resizeUpDown
+        guard !guides.pressed, store.tool == .select, let vertical = guides.hoveredVertical else { return nil }
+        return vertical ? .resizeLeftRight : .resizeUpDown
     }
 
     /// What a right click on a guide offers, if it is on one.
     func menuEntries(at v: CGPoint) -> [MenuEntry]? {
-        guard let ref = guide(at: v) else { return nil }
-        let count = store.node(ref.board)?.guides?.count ?? 0
+        guard let (ref, count) = guides.guideForMenu(at: v) else { return nil }
         return [
-            .item("Remove Guide", enabled: !store.isReadOnly) { self.store.removeGuide(ref.key, from: ref.board) },
-            .item("Remove Guides", enabled: count > 1 && !store.isReadOnly) { self.store.removeGuides(from: ref.board) },
+            .item("Remove Guide", enabled: !store.isReadOnly) { self.guides.removeGuide(ref) },
+            .item("Remove Guides", enabled: count > 1 && !store.isReadOnly) { self.guides.removeGuides(from: ref.board) },
             .separator,
             .item("Lock Guides", checked: Helpers.shared.guidesLocked) { Helpers.shared.guidesLocked.toggle() },
         ]
@@ -471,24 +163,10 @@ final class GuideTool {
 
     /// The tabs of the guides of the artboard the rulers measure, and of a guide being dragged.
     func tabs() -> [Rulers.Tab] {
-        guard shown, let board = rulers.board else { return [] }
-        let f = board.frame, vp = store.viewport
-        var out: [Rulers.Tab] = []
-        let moving: Ref? = if case .move(let r, _, _, true, _, _, _) = drag { r } else { nil }
-        for (key, g) in board.guides ?? [:] {
-            let ref = Ref(board: board.id, key: key)
-            if ref == moving, held.first?.leaving == true { continue }
-            let p = vp.toView(CGPoint(x: f.minX + g.position(in: f.size), y: f.minY + g.position(in: f.size)))
-            let glow = ref == beckoned ? CGFloat(min(max(beckon.value, 0), 1)) : 0
-            out.append(Rulers.Tab(at: g.vertical ? p.x : p.y, vertical: g.vertical, lit: ref == hovered || ref == moving || glow > 0.5, glow: glow))
+        guides.tabs().map { t in
+            let glow = t.ref != nil && t.ref == beckoned ? CGFloat(min(max(beckon.value, 0), 1)) : 0
+            return Rulers.Tab(at: t.at, vertical: t.vertical, lit: t.lit || glow > 0.5, glow: glow)
         }
-        if case .move = drag {} else {
-            for h in held where !h.leaving && h.board == board.id {
-                let p = vp.toView(CGPoint(x: f.minX + h.position, y: f.minY + h.position))
-                out.append(Rulers.Tab(at: h.vertical ? p.x : p.y, vertical: h.vertical, lit: true))
-            }
-        }
-        return out
     }
 
     // MARK: - Drawing
@@ -499,41 +177,39 @@ final class GuideTool {
         let dt = min(now - (last ?? now), 1.0 / 30)
         last = now
         grow.step(dt, stiffness: 260, damping: 26)
-        beckon.target = beckoning == nil ? 0 : 1
+        beckon.target = guides.beckoning == nil ? 0 : 1
         beckon.step(dt, stiffness: 320, damping: 26)
-        if beckoning == nil, beckon.value < 0.01, !beckon.isMoving { beckoned = nil }
-        appearing = appearing.filter { now - $0.value < Self.unroll }
-        plucks = plucks.filter { now - $0.value < Self.ring }
-        vanishing = vanishing.filter { now - $0.born < 0.24 }
+        if guides.beckoning == nil, beckon.value < 0.01, !beckon.isMoving { beckoned = nil }
+        guides.settle(unrollFor: Self.unroll, ringFor: Self.ring, fadeFor: 0.24)
 
         ctx.saveGState()
         defer { ctx.restoreGState() }
         if shown {
-            let moving: Ref? = if case .move(let r, _, _, true, _, _, _) = drag { r } else { nil }
-            for board in boards() {
+            let moving = guides.moving
+            for board in guides.boards() {
                 for (key, g) in board.guides ?? [:] {
                     let ref = Ref(board: board.id, key: key)
-                    if ref == moving, held.first?.leaving == true { continue }
-                    let lit = ref == hovered || ref == moving
+                    if ref == moving, guides.held.first?.leaving == true { continue }
+                    let lit = ref == guides.hovered || ref == moving
                     // Pointed at through a layer: brighter, as its tab lights up, but not lifted.
                     let glow = ref == beckoned ? CGFloat(min(max(beckon.value, 0), 1)) : 0
-                    let (a, b) = line(of: g, on: board)
+                    let (a, b) = guides.line(of: g, on: board)
                     var reach: CGFloat = 1
-                    if let born = appearing[ref] { reach = Self.unrolled(min((now - born) / Self.unroll, 1)) }
-                    let pluck = ref == moving ? heldPluck : plucks[ref]
+                    if let born = guides.appearing[ref] { reach = Self.unrolled(min((now - born) / Self.unroll, 1)) }
+                    let pluck = ref == moving ? guides.heldPluck : guides.plucks[ref]
                     drawThread(ctx, from: a, to: b, alpha: lit ? 1 : 0.62 + 0.26 * glow, width: lit ? 1.25 : 1, reach: reach, from0: true,
                                pluck: pluck.map { now - $0 }, strength: ref == moving ? Self.caughtStrength : 1, vertical: g.vertical)
                 }
             }
         }
-        for v in vanishing {
+        for v in guides.vanishing {
             let k = CGFloat((now - v.born) / 0.24)
             let mid = CGPoint(x: (v.from.x + v.to.x) / 2, y: (v.from.y + v.to.y) / 2)
             let a = CGPoint(x: v.from.x + (mid.x - v.from.x) * k, y: v.from.y + (mid.y - v.from.y) * k)
             let b = CGPoint(x: v.to.x + (mid.x - v.to.x) * k, y: v.to.y + (mid.y - v.to.y) * k)
             drawThread(ctx, from: a, to: b, alpha: 0.7 * (1 - k), width: 1, reach: 1, from0: true, pluck: nil, vertical: v.from.x == v.to.x)
         }
-        for h in held { drawHeld(h, ctx, now: now) }
+        for h in guides.held { drawHeld(h, ctx, now: now) }
     }
 
     /// How far a guide has unrolled: quickly at first, slowing to a stop at the far edge, never past it.
@@ -586,7 +262,7 @@ final class GuideTool {
 
     /// A guide being dragged: on its artboard, with its distances to either edge as a draftsman
     /// dimensions a drawing, or, leaving, dashed and fading, offering to go.
-    private func drawHeld(_ h: Held, _ ctx: CGContext, now: CFTimeInterval) {
+    private func drawHeld(_ h: GuideDragging.Held, _ ctx: CGContext, now: CFTimeInterval) {
         let vp = store.viewport
         guard let id = h.board, let board = store.node(id) else {
             // Over no artboard at all: just a line under the pointer, dashed.
@@ -598,7 +274,7 @@ final class GuideTool {
         }
         let f = board.frame
         let g = Guideline(vertical: h.vertical, edge: .start, offset: h.position)
-        var (a, b) = line(of: g, on: board)
+        var (a, b) = guides.line(of: g, on: board)
         if h.leaving {
             // Off the artboard, it follows the pointer out, dashed.
             if h.vertical { a.x = h.pointer.x; b.x = h.pointer.x } else { a.y = h.pointer.y; b.y = h.pointer.y }
@@ -611,8 +287,8 @@ final class GuideTool {
         let p = h.pointer
         let ca = h.vertical ? CGPoint(x: a.x, y: p.y + (a.y - p.y) * k) : CGPoint(x: p.x + (a.x - p.x) * k, y: a.y)
         let cb = h.vertical ? CGPoint(x: b.x, y: p.y + (b.y - p.y) * k) : CGPoint(x: p.x + (b.x - p.x) * k, y: b.y)
-        if case .move = drag {} else {
-            drawThread(ctx, from: ca, to: cb, alpha: 1, width: 1.25, reach: 1, from0: true, pluck: heldPluck.map { now - $0 }, strength: Self.caughtStrength, vertical: h.vertical)
+        if guides.moving == nil {
+            drawThread(ctx, from: ca, to: cb, alpha: 1, width: 1.25, reach: 1, from0: true, pluck: guides.heldPluck.map { now - $0 }, strength: Self.caughtStrength, vertical: h.vertical)
         }
         // Its distances to both edges: solid toward the edge it keeps to, outlined toward the other.
         let length = h.vertical ? f.width : f.height

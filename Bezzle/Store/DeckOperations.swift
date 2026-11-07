@@ -6,16 +6,10 @@ extension DocumentStore {
     // MARK: Which post is in front
 
     /// The post a deck shows: the one turned to here, or else its first.
-    func front(of deck: Node) -> Int? {
-        let posts = deck.posts
-        if let f = fronts[deck.id], posts.contains(f) { return f }
-        return posts.first
-    }
+    func front(of deck: Node) -> Int? { deck.front(in: fronts) }
 
     /// What lies on an artboard as it is seen: for a deck, the post in front.
-    func seenLayers(of board: Node) -> [Node] {
-        board.isDeck ? board.layers(of: front(of: board)) : board.children
-    }
+    func seenLayers(of board: Node) -> [Node] { board.seenLayers(fronts: fronts) }
 
     /// The design as it is seen: each deck with only the post in front of it on it.
     var seenDoc: BezzleDocument {
@@ -114,48 +108,15 @@ extension DocumentStore {
         }
     }
 
-    /// Adds a post after `after` (or the last), a copy of it, and returns its number.
+    /// Adds a post after `after` (or the last), a copy of it, and returns its number (the shared
+    /// `BezzleDocument.addPost`).
     @discardableResult
     static func addPost(to boardID: UUID, after: Int?, in doc: inout BezzleDocument) -> Int? {
-        guard let path = doc.path(of: boardID), path.indices.count == 1 else { return nil }
-        var board = doc[path]
-        guard board.isArtboard else { return nil }
-        if !board.isDeck { board = madeDeck(board) }
-        var posts = board.posts
-        guard let from = after.flatMap({ posts.contains($0) ? $0 : nil }) ?? posts.last else { return nil }
-        let n = Deck.number(besides: posts)
-        let k = Deck.key(from: from, to: n)
-        board.children += board.layers(of: from).map { layer in
-            var copy = RepeatGrid.copy(layer, k)
-            copy.post = n
-            return copy
-        }
-        posts.insert(n, at: (posts.firstIndex(of: from) ?? posts.count - 1) + 1)
-        board.deck = Deck(posts: posts)
-        doc[path] = board
-        return n
+        doc.addPost(to: boardID, after: after)
     }
 
-    /// An artboard made a deck of one post: its layers, as they are, are that post, and a copy of
-    /// them is the design behind it.
-    static func madeDeck(_ board: Node) -> Node {
-        var b = board
-        let p = Deck.number(besides: [])
-        let k = Deck.key(p)
-        let layers = board.children.map { c in
-            var n = c.forgettingOwn()
-            n.post = p
-            return n
-        }
-        let design = layers.map { layer in
-            var d = RepeatGrid.copy(layer, k)
-            d.post = nil
-            return d
-        }
-        b.children = design + layers
-        b.deck = Deck(posts: [p])
-        return b
-    }
+    /// An artboard made a deck of one post (the shared `BezzleDocument.madeDeck`).
+    static func madeDeck(_ board: Node) -> Node { BezzleDocument.madeDeck(board) }
 
     /// Takes a post away from a deck; the one after it comes to the front, or else the one before.
     /// The last post stays. Undone, the post is back in front if it was, with what was selected in it.
@@ -338,37 +299,12 @@ extension DocumentStore {
         return pairs.count
     }
 
-    /// Fills layers of one post, and the same layers in the posts after it, `count` posts in all,
-    /// adding posts at the end as needed: `fill` is given each post's copy of a layer and which post
-    /// of them it is, from 0. An artboard that is no deck becomes one. Returns the posts filled.
+    /// Fills layers of one post, and the same layers in the posts after it, `count` posts in all
+    /// (the shared `BezzleDocument.spread`), as one step. Returns the posts filled.
     @discardableResult
     func spread(_ fills: [(layer: UUID, fill: (inout Node, Int) -> Void)], count: Int, action: LocalizedStringResource) -> [Int] {
-        guard count > 0, let first = fills.first?.layer, let board = doc.artboard(of: first) else { return [] }
-        let own = board.isDeck ? doc.post(of: first)?.post : nil
         var filled: [Int] = []
-        edit(action) { doc in
-            if !(doc.node(board.id)?.isDeck ?? false), let path = doc.path(of: board.id) {
-                doc[path] = Self.madeDeck(doc[path])
-            }
-            guard let deck = doc.node(board.id), let start = own ?? deck.posts.first else { return }
-            var posts = deck.posts
-            var at = posts.firstIndex(of: start) ?? 0
-            for i in 0..<count {
-                if i > 0 {
-                    at += 1
-                    if at >= posts.count {
-                        guard let n = Self.addPost(to: board.id, after: posts.last, in: &doc) else { break }
-                        posts.append(n)
-                    }
-                }
-                let p = posts[at]
-                for (layer, fill) in fills {
-                    // The layer as it is in the design behind every post, and then in this one.
-                    doc.update(layer.mixed(Deck.key(start)).mixed(Deck.key(p))) { fill(&$0, i) }
-                }
-                filled.append(p)
-            }
-        }
+        edit(action) { doc in filled = doc.spread(fills, count: count) }
         return filled
     }
 }
