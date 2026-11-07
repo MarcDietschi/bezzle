@@ -32,6 +32,21 @@ do {
         print("thumbnail \(path): \(drawn ? "drawn" : "not drawn"), \(painted) of \(size.0 * size.1) pixels painted")
     }
     var boards = try WindowsCore.open(URL(fileURLWithPath: arguments[2]))
+    // With BEZZLE_TEXTS (a file), how the core measures the design's texts and probe texts is
+    // written there instead (TextReport.swift), for comparing with Text Kit; BEZZLE_TEXTS_PROBES=0
+    // leaves the probes out.
+    if let file = ProcessInfo.processInfo.environment["BEZZLE_TEXTS"] {
+        let name = URL(fileURLWithPath: arguments[2]).deletingPathExtension().lastPathComponent
+        try Data(WindowsCore.textReport(design: name).utf8).write(to: URL(fileURLWithPath: file))
+        print("texts measured → \(file)")
+        exit(0)
+    }
+    // With BEZZLE_INK (a file), where letters are drawn against their baselines (TextReport.swift).
+    if let file = ProcessInfo.processInfo.environment["BEZZLE_INK"] {
+        try Data(WindowsCore.inkReport().utf8).write(to: URL(fileURLWithPath: file))
+        print("ink measured → \(file)")
+        exit(0)
+    }
     // With BEZZLE_DROP (files separated by ;, then @x,y on the canvas), they are let go there
     // first, as when dragged onto the canvas; the design is saved with them.
     if let drop = ProcessInfo.processInfo.environment["BEZZLE_DROP"], let at = drop.split(separator: "@").last,

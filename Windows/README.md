@@ -46,3 +46,7 @@ and `VM/input.ps1` there moves the mouse and presses keys (real input, as WinUI 
 `BEZZLE_TRACE` set, the app writes what `Trace.say` reports to `%TEMP%\bezzle-trace.log`.
 `bezzle-render` draws a design's artboards to PNG files (`BEZZLE_TWICE`, `BEZZLE_FIRST` and
 `BEZZLE_HOST_TRACE` for drawing twice, after other designs, and tracing what is missing).
+`BEZZLE_TEXTS=<file>` writes instead how the core measures the design's texts and probe texts in
+every family the open fonts stand in for (lines, baselines, widths, fitted frames;
+`Host/TextReport.swift`), to compare with Text Kit on the Mac; `BEZZLE_INK=<file>` where letters
+are drawn against their baselines.
