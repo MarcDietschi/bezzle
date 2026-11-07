@@ -221,5 +221,6 @@ extension WindowsCore {
 }
 
 extension Linking {
-    fileprivate static func forgetRoom(_ room: String) { forget(room) }
+    /// Forgets the room: its tokens, and which design it was.
+    static func forgetRoom(_ room: String) { forget(room) }
 }

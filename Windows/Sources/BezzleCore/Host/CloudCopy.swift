@@ -127,13 +127,19 @@ final class CloudCopy {
         do {
             try await send(session, server)
             try await receive(session, server)
-            if problem != nil { problem = nil }
+            if problem != nil {
+                problem = nil
+                WindowsCore.tellShareNews()
+            }
         } catch ShareError.gone {
             gone()
         } catch {
             NSLog("Bezzle: room %@: %@", String(keys.room.prefix(8)), "\(error)")
             let now = String(localized: "Bezzle cannot connect right now. Your changes are kept and go out once it can.")
-            if problem != now { problem = now }
+            if problem != now {
+                problem = now
+                WindowsCore.tellShareNews()
+            }
         }
     }
 
@@ -268,7 +274,8 @@ final class CloudCopy {
             session.retitled(link)
         }
         if !fetched.changes.isEmpty {
-            session.receive(fetched.changes, from: .cloud, current: WindowsCore.previewBase ?? WindowsCore.design)
+            // What was done here is taken in first, from the design in front only when it is this one.
+            session.receive(fetched.changes, from: .cloud, current: WindowsCore.sharing === session ? WindowsCore.previewBase ?? WindowsCore.design : nil)
             session.persist()
         }
         keepProgress()

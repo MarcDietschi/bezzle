@@ -95,6 +95,10 @@ final class BezzleApp: SwiftApplication {
         if let test = ProcessInfo.processInfo.environment["BEZZLE_DESIGNS_FOLDER"], !test.isEmpty {
             return URL(fileURLWithPath: test, isDirectory: true)
         }
+        #if DEBUG
+        // BEZZLE_DESIGNS: a test copy's own, away from the person's designs.
+        if let given = ProcessInfo.processInfo.environment["BEZZLE_DESIGNS"], !given.isEmpty { return URL(fileURLWithPath: given, isDirectory: true) }
+        #endif
         if let chosen = UserDefaults.standard.string(forKey: "designsFolderPath"), FileManager.default.fileExists(atPath: chosen) {
             return URL(fileURLWithPath: chosen, isDirectory: true)
         }
@@ -175,6 +179,8 @@ final class BezzleApp: SwiftApplication {
                 window.content = message("Bezzle could not read its fonts", detail: "\(error)")
                 return
             }
+            // bezzle: links open with this copy (Links.swift).
+            answerLinks()
             startTabs()
             fitWindow(forDesigns: false, centred: true)
             Tabs.shared.showFront()
@@ -187,6 +193,7 @@ final class BezzleApp: SwiftApplication {
                 self?.bringForward()
             }
         }
+        MainActor.assumeIsolated { watchActivation() }
         try? window.activate()
         Trace.time("window activated")
         // Once shown, the window's borders are known, and its size is set exactly.
@@ -226,7 +233,7 @@ final class BezzleApp: SwiftApplication {
     /// starts Bezzle with it. Accepting it is sharing's (Host/Linking.swift, `acceptLink`), which
     /// joins here.
     @MainActor func openLink(_ link: String) {
-        Trace.say("A shared design's link came; links are not opened from the command line yet")
+        openShareLink(link)
     }
 
     private static func isAbsolute(_ path: String) -> Bool {
@@ -273,6 +280,7 @@ final class BezzleApp: SwiftApplication {
 
     @MainActor private func makeHome() -> HomeView {
         let home = HomeView(folder: Self.designsFolder) { url in Tabs.shared.open(url) }
+        home.openShareLink = { [weak self] link in self?.openShareLink(link) }
         home.root.requestedTheme = Theme.dark ? .dark : .light
         home.root.loaded.addHandler { _, _ in Trace.time("home on screen") }
         // The tabs' keys on home too: Ctrl+Tab, Ctrl+N, Ctrl+O, Ctrl+W (which quits there).

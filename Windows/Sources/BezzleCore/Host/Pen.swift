@@ -54,7 +54,7 @@ extension WindowsCore {
         /// A change: inside a gesture added to what the gesture has done so far (the pen adds a
         /// layer and then shapes it in one drag), else one step of the history.
         private func change(_ f: (inout BezzleDocument) -> Void) {
-            guard let doc = WindowsCore.design else { return }
+            guard !WindowsCore.isReadOnly, let doc = WindowsCore.design else { return }
             if let start = Editing.gestureStart {
                 WindowsCore.design = Editing.edited(doc, start: start, f)
             } else {

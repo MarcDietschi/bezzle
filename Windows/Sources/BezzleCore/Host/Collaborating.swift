@@ -140,6 +140,17 @@ extension WindowsCore {
         guard let data = try? Data(contentsOf: file) else { return }
         // Asked for again the next time it is drawn: one not there yet is not kept as missing.
         _ = data.withUnsafeBytes { bz_asset_add(name, $0.baseAddress, Int32($0.count)) }
+        pictureCame = true
+        tellShareNews()
+    }
+
+    /// Whether a picture came since the window last drew the design for one (`tookPictures`).
+    nonisolated(unsafe) static var pictureCame = false
+
+    /// Whether a picture came since the last time this was asked: the window draws the design again.
+    public static func tookPictures() -> Bool {
+        defer { pictureCame = false }
+        return pictureCame
     }
 
     /// Finds the design's package again when it is no longer where it was, as when someone else in
@@ -209,6 +220,8 @@ final class SharedSession {
     private var decoded: [UUID: (layer: SharedLayer, node: Node)] = [:]
     /// Others' changes taken in but not shown yet, while a drag or a preview is going on.
     private var unshown = false
+    /// Who changed each layer not shown yet, by their replica, for the layers to light up.
+    private var unshownAuthors: [UUID: String] = [:]
     /// Others' changes from elsewhere than the folder, to keep with this computer's parts.
     private var toKeep: [SharedDesign] = []
     /// The latest change made here.
@@ -310,6 +323,7 @@ final class SharedSession {
             try? Linking.write(ended, to: url)
         }
         roomChanged()
+        WindowsCore.tellShareNews()
     }
 
     /// The pictures layers show, in their looks and their masks.
@@ -367,12 +381,19 @@ final class SharedSession {
     /// is kept as it is. They show once nothing holds them back (`toShow`).
     func receive(_ changes: [SharedDesign], from source: ShareSource, current: BezzleDocument?) {
         if let current { takeIn(current) }
+        var came = false
         for c in changes where !c.isEmpty {
             let layers = state.merge(c)
             if source != .folder { toKeep.append(c) }
-            if !layers.isEmpty { unshown = true }
+            guard !layers.isEmpty else { continue }
+            unshown = true
+            came = true
+            let authors = c.authors
+            for id in layers { if let by = authors[id] { unshownAuthors[id] = by } }
         }
         if source == .relay { cloud?.relayed(changes) }
+        // Shown as soon as nothing holds them back, as the Mac shows them.
+        if came { WindowsCore.tellShareNews() }
     }
 
     /// The design with what others changed, if there is anything not shown yet.
@@ -383,6 +404,9 @@ final class SharedSession {
         let map = state.flatDesign(reusing: &decoded)
         base = map
         baseDoc = nil
+        // What each of them changed lights up for a moment in their pencil, as on the Mac.
+        live?.glow(unshownAuthors)
+        unshownAuthors = [:]
         return map.document()
     }
 

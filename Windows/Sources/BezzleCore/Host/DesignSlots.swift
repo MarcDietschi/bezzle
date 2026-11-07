@@ -58,6 +58,11 @@ extension WindowsCore {
         v.visit(&fronts)
         v.visit(&showingVersion)
         v.visit(&sharing)
+        // Sharing's own: how often the design changed (its room takes in by it), whether a picture
+        // came, and who hears of the share's news: each tab's window.
+        v.visit(&designVersion)
+        v.visit(&pictureCame)
+        v.visit(&shareNews)
         v.visit(&Editing.gestureStart)
         v.visit(&Editing.gestureBase)
         v.visit(&Editing.undos)

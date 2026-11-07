@@ -15,5 +15,7 @@
   "Off": {"de": "Aus", "fr": "Désactivé", "it": "Disattivato"},
   "Press Enter for the next misspelt word.": {"de": "Drücke die Eingabetaste für den nächsten Fehler.", "fr": "Appuyez sur Entrée pour la faute suivante.", "it": "Premi Invio per l’errore successivo."},
   "Show in Explorer": {"de": "Im Explorer zeigen", "fr": "Afficher dans l’Explorateur", "it": "Mostra in Esplora file"},
-  "Windows has no spellings to offer for this word.": {"de": "Windows hat für dieses Wort keine Vorschläge.", "fr": "Windows n’a aucune suggestion pour ce mot.", "it": "Windows non ha suggerimenti per questa parola."}
+  "Windows has no spellings to offer for this word.": {"de": "Windows hat für dieses Wort keine Vorschläge.", "fr": "Windows n’a aucune suggestion pour ce mot.", "it": "Windows non ha suggerimenti per questa parola."},
+  "OK": {"de": "OK", "fr": "OK", "it": "OK"},
+  "Move “%@” to the Recycle Bin and stop sharing it?": {"de": "„%@“ in den Papierkorb verschieben und nicht mehr teilen?", "fr": "Placer « %@ » dans la Corbeille et arrêter de le partager ?", "it": "Spostare “%@” nel Cestino e interrompere la condivisione?"}
 }

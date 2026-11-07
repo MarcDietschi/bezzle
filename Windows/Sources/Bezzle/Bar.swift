@@ -17,6 +17,8 @@ final class Bar {
     /// What is to do with the design, at the right, which the tabs leave room for.
     let right = StackPanel()
     private let session: DesignSession
+    /// How the design is shared, and Share… (ShareViews.swift).
+    let sharing: ShareControls
     private let zoomLabel = Theme.text("50%", size: 12, ink: 1)
     private var segments: [(box: Border, label: TextBlock)] = []
 
@@ -35,6 +37,7 @@ final class Bar {
 
     init(session: DesignSession) {
         self.session = session
+        sharing = ShareControls(session: session)
         root.height = Theme.barHeight
         for width in [GridLength(value: 1, gridUnitType: .auto), GridLength(value: 1, gridUnitType: .star),
                       GridLength(value: 1, gridUnitType: .auto), GridLength(value: Self.captionRoom, gridUnitType: .pixel)] {
@@ -57,9 +60,10 @@ final class Bar {
         right.spacing = 10
         right.verticalAlignment = .center
         right.margin = Theme.inset(0, 0, 8, 0)
+        right.children.append(sharing.tag)
         right.children.append(zoomMenu())
         right.children.append(versionsButton())
-        right.children.append(cardButton("Share…", glyph: Glyphs.share()))
+        right.children.append(sharing.button)
         right.children.append(modeSwitch())
         right.children.append(actionButton())
         try? Grid.setColumn(right, 2)

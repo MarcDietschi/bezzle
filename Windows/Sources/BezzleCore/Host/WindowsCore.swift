@@ -30,7 +30,10 @@ public enum WindowsCore {
         return r.integral
     }
 
-    nonisolated(unsafe) static var design: BezzleDocument?
+    nonisolated(unsafe) static var design: BezzleDocument? { didSet { designVersion &+= 1 } }
+    /// Counts the changes to `design`, as the Mac's store.version: the live room takes in what
+    /// was done here when it moves on.
+    nonisolated(unsafe) static var designVersion = 0
     nonisolated(unsafe) static var assets = Assets(folder: nil)
     /// Where the open design is kept: its package, or its file.
     nonisolated(unsafe) public internal(set) static var designURL: URL?

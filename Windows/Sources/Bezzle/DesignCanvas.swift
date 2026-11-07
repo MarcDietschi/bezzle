@@ -28,7 +28,11 @@ final class DesignCanvas {
     /// Where the design's origin is on the stage, in its pixels (DIPs).
     private var pan = CGPoint(x: 64, y: 64)
     private var pixelScale = 1.0
-    private var zoom: Double { session.zoom }
+    private var zoom: Double { flyingZoom ?? session.zoom }
+    /// The zoom while the view flies to someone in the live room, until it rests (LiveCanvas.swift).
+    private var flyingZoom: Double?
+    /// The others in the design's live room, drawn on the canvas.
+    let liveCanvas = LiveCanvas()
 
     private var boards: [WindowsCore.Board] = []
     private struct Sheet {
@@ -469,6 +473,7 @@ final class DesignCanvas {
         stage.pointerMoved.addHandler { [weak self] _, args in self?.moved(args) }
         stage.pointerReleased.addHandler { [weak self] _, args in self?.released(args) }
         stage.pointerExited.addHandler { [weak self] _, _ in
+            self?.liveCanvas.pointerMoved(to: nil, stage: .zero)
             if self?.drag == nil {
                 self?.setHover(nil)
                 self?.gridHand.hover(nil)
@@ -512,6 +517,7 @@ final class DesignCanvas {
         session.listenToHover { [weak self] in self?.placeOverlays() }
         // The fill menu opened or shut, or another of its gradient's colours chosen.
         session.listenToGradient { [weak self] in self?.gradients.draw() }
+        wireLive()
         session.listenToStyles { [weak self] in self?.drawStyleUsers() }
         session.listenToEdits { [weak self] board in
             guard let self else { return }
@@ -571,6 +577,7 @@ final class DesignCanvas {
         let width = max(200, root.actualWidth > 0 ? root.actualWidth : 900), height = max(200, root.actualHeight > 0 ? root.actualHeight : 600)
         if !all.isNull, all.width > 0, all.height > 0 {
             let z = min(most, (width - 2 * padding) / Double(all.width), (height - 2 * padding) / Double(all.height))
+            flyingZoom = nil
             session.zoom = max(0.02, z)
             pan = CGPoint(x: (width - Double(all.width) * zoom) / 2 - Double(all.minX) * zoom,
                           y: (height - Double(all.height) * zoom) / 2 - Double(all.minY) * zoom)
@@ -825,6 +832,8 @@ final class DesignCanvas {
         }
         letters.draw()
         placeOverlays()
+        // The others' marks move with the canvas.
+        liveCanvas.changed()
     }
 
     /// While a layer of a post is moved, resized or typed into, the same layer in every other
@@ -3049,6 +3058,12 @@ final class DesignCanvas {
             drag = (p, -1, false, .inspect(start: pan, target: inspect.deepest(at: p)))
             return
         }
+        // Someone else's design no longer shared is only looked at: a click picks, nothing changes.
+        if WindowsCore.isReadOnly {
+            let picked = pick(p)
+            session.select(picked.map { [$0] } ?? [], on: picked.flatMap(WindowsCore.board(of:)) ?? session.board)
+            return
+        }
         // A word offered after a change is taken before anything else.
         if let hit = copyButtons.first(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) {
             copyOffer = nil
@@ -3292,6 +3307,7 @@ final class DesignCanvas {
     private func moved(_ args: PointerRoutedEventArgs?) {
         let p = point(args)
         lastPoint = p
+        liveCanvas.pointerMoved(to: inDesign(p), stage: p)
         if case .deck? = drag?.grab {
             decks.drag(to: p)
             return
@@ -3924,7 +3940,7 @@ final class DesignCanvas {
     /// Typing into a text, in a field over it, one step for all of it; the canvas draws the
     /// design without it meanwhile, so what is seen is the field's.
     private func beginEditing(_ id: UUID, board: Int) {
-        guard let layer = WindowsCore.layers(board: board).first(where: { $0.id == id }), layer.isText else { return }
+        guard !WindowsCore.isReadOnly, let layer = WindowsCore.layers(board: board).first(where: { $0.id == id }), layer.isText else { return }
         endEditing()
         editing = (id, board)
         WindowsCore.beginGesture()
@@ -4036,6 +4052,7 @@ final class DesignCanvas {
     /// The Mac's zoom range (2% to 6400%), keeping `p` (on the stage) where it is.
     private func zoom(to z: Double, around p: CGPoint) {
         let before = inDesign(p)
+        flyingZoom = nil
         session.zoom = min(64, max(0.02, z))
         let after = onStage(before)
         pan = CGPoint(x: Double(pan.x) + Double(p.x) - Double(after.x), y: Double(pan.y) + Double(p.y) - Double(after.y))
@@ -5093,5 +5110,59 @@ extension DesignCanvas {
         try? Canvas.setTop(box, Double(r.minY))
         box.isHitTestVisible = false
         return box
+    }
+}
+
+// MARK: - The live room
+
+extension DesignCanvas {
+    /// The others in the design's live room, as the Mac's canvas draws them (LiveCanvas.swift):
+    /// pools of light on the table under the artboards, marks over the design, tokens on the rim;
+    /// what they drag drawn where they have it; the view flown to them and along with them.
+    private func wireLive() {
+        let live = liveCanvas
+        var at: UInt32 = 0
+        if (try? stage.children.indexOf(paper, &at)) == true { try? stage.children.insertAt(at + 1, live.lights) } else { try? stage.children.insertAt(0, live.lights) }
+        if (try? root.children.indexOf(overlay, &at)) == true { try? root.children.insertAt(at + 1, live.marks) } else { root.children.append(live.marks) }
+        root.children.append(live.rim)
+        live.view = { [weak self] in
+            guard let self else { return (.zero, 1, .zero) }
+            let z = self.zoom
+            return (CGPoint(x: -Double(self.pan.x) / z, y: -Double(self.pan.y) / z), z, CGSize(width: self.stage.actualWidth, height: self.stage.actualHeight))
+        }
+        live.presence = { [weak self] in
+            guard let self else { return (.zero, [], "select", "looking") }
+            let doing = self.editing != nil ? "typing" : self.drag?.moved == true ? (self.session.tool == .select ? "moving" : "drawing") : "looking"
+            return (self.visibleOnCanvas, self.session.selection, self.session.tool.rawValue, doing)
+        }
+        live.move = { [weak self] origin, z, last in self?.flyView(origin, z, last: last) }
+        live.redraw = { [weak self] places in self?.redrawLive(places) }
+        live.rulers = { WindowsCore.showsRulers ? Rulers.thickness : 0 }
+    }
+
+    /// The view the live room's camera gives: placed at once, drawn again at its zoom once it rests.
+    private func flyView(_ origin: CGPoint, _ z: Double, last: Bool) {
+        if last {
+            guard let landed = flyingZoom else { return }
+            flyingZoom = nil
+            session.zoom = landed
+            drawAll()
+            return
+        }
+        let z = min(64, max(0.02, z))
+        flyingZoom = abs(z - session.zoom) > 1e-9 ? z : nil
+        pan = CGPoint(x: -Double(origin.x) * z, y: -Double(origin.y) * z)
+        place()
+    }
+
+    /// The artboards and loose layers at these places in the design drawn again, with what the
+    /// others drag where they have it this moment.
+    private func redrawLive(_ places: Set<Int>) {
+        WindowsCore.drawingOthersMotion {
+            boards = WindowsCore.boards()
+            for (k, board) in boards.enumerated() where places.contains(board.index) { draw(k) }
+            if loose.contains(where: { places.contains($0.index) }) { drawLoose() }
+        }
+        place()
     }
 }

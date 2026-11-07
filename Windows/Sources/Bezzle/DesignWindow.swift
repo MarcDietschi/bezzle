@@ -17,6 +17,8 @@ final class DesignWindow {
     let canvas: DesignCanvas
     let inspector: Inspector
     let menus = MenuHost()
+    /// What the window asks, as the Mac asks with an alert (ShareViews.swift).
+    let questions = Questions()
     private lazy var export = ExportSheet(session: session)
     /// The prototype being played, over the panels and the canvas.
     private var playing: PlayerView?
@@ -193,6 +195,7 @@ final class DesignWindow {
                 }
                 return
             }
+            if self.questions.key(args) { return }
             if let playing = self.playing {
                 playing.key(args)
                 return
@@ -278,6 +281,7 @@ final class DesignWindow {
             if args.key == .menu { self.inspector.photoAltChanged() }
             self.canvas.keyUp(args)
         }
+        wireSharing()
     }
 
     /// Another tab comes to the front, with this design still the core's: what is being typed is

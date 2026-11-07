@@ -19,6 +19,10 @@ final class HomeView {
     let right = StackPanel()
     /// Bezzle's own menus, over the home screen: a design's menu.
     let menus = MenuHost()
+    /// What home asks, as the Mac asks with an alert (ShareViews.swift).
+    let questions = Questions()
+    /// A design's link pasted or dropped here opens it (Links.swift).
+    var openShareLink: ((String) -> Void)?
     /// What home's search looks for among the designs' names.
     private var query = ""
     /// The designs' pictures drawn so far, by design, size and when it was last changed.
@@ -65,6 +69,12 @@ final class HomeView {
         root.sizeChanged.addHandler { [weak self] _, _ in self?.showDesigns() }
         try? Grid.setRowSpan(menus.layer, 2)
         root.children.append(menus.layer)
+        try? Grid.setRowSpan(questions.layer, 2)
+        root.children.append(questions.layer)
+        root.keyDown.addHandler { [weak self] _, args in
+            guard let self, let args, !args.handled, !self.questions.key(args) else { return }
+            self.pasteLink(args)
+        }
         takeDrops()
     }
 
@@ -106,6 +116,8 @@ final class HomeView {
         // The designs whose names have what is typed in them, as it is typed.
         field.textChanged.addHandler { [weak self] sender, _ in
             guard let self, let text = (sender as? TextBox)?.text else { return }
+            // A design's link pasted here opens it.
+            if self.tookLink(text, from: sender as? TextBox) { return }
             self.query = text.trimmingCharacters(in: .whitespaces)
             // Once the typing is over: pictures made inside the field's event stay blank.
             DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
@@ -150,10 +162,26 @@ final class HomeView {
         root.allowDrop = true
         root.dragOver.addHandler { _, args in
             guard let args, let view = args.dataView else { return }
-            args.acceptedOperation = (try? view.contains(Self.storageItems)) == true ? .copy : .none
+            // Words or a link dragged in, as from a browser or a mail, may be a design's link.
+            let link = (try? view.contains("Text")) == true || (try? view.contains("UniformResourceLocatorW")) == true
+            args.acceptedOperation = (try? view.contains(Self.storageItems)) == true || link ? .copy : .none
         }
         root.drop.addHandler { [weak self] _, args in
-            guard let args, let view = args.dataView, (try? view.contains(Self.storageItems)) == true else { return }
+            guard let args, let view = args.dataView else { return }
+            if (try? view.contains(Self.storageItems)) != true {
+                let web = (try? view.contains("UniformResourceLocatorW")) == true, words = (try? view.contains("Text")) == true
+                guard web || words else { return }
+                let deferral = try? args.getDeferral()
+                Task { @MainActor [weak self] in
+                    defer { try? deferral?.complete() }
+                    var text: String?
+                    if web { text = (try? await view.getWebLinkAsync()?.get())??.absoluteUri }
+                    if text == nil, words { text = try? await view.getTextAsync()?.get() }
+                    self?.dropped(link: text)
+                }
+                return
+            }
+            guard (try? view.contains(Self.storageItems)) == true else { return }
             let deferral = try? args.getDeferral()
             Task { @MainActor [weak self] in
                 defer { try? deferral?.complete() }
@@ -399,7 +427,9 @@ final class HomeView {
         let columns = max(1, Int((width + 22) / (220 + 22)))
         let tile = (width - Double(columns - 1) * 22) / Double(columns)
         var row: StackPanel?
-        for (k, url) in urls.enumerated() {
+        // Designs on their way from a link come first, where they will be (Links.swift).
+        let cards = ShareHome.arrivalCards(width: tile) + urls.map { card($0, width: tile) }
+        for (k, card) in cards.enumerated() {
             if k % columns == 0 {
                 let r = StackPanel()
                 r.orientation = .horizontal
@@ -407,7 +437,7 @@ final class HomeView {
                 designs.children.append(r)
                 row = r
             }
-            row?.children.append(card(url, width: tile))
+            row?.children.append(card)
         }
     }
 
@@ -455,6 +485,8 @@ final class HomeView {
         column.children.append(frame)
         let name = Theme.text(url.deletingPathExtension().lastPathComponent, size: 15, serif: true)
         column.children.append(name)
+        // How it is shared, under its name.
+        if let note = ShareHome.note(for: url) { column.children.append(note) }
         let pick = Pressable(radius: 12) { [weak self] in self?.open(url) }
         pick.hoverWash = 0
         pick.box.pointerEntered.addHandler { _, _ in name.foreground = Theme.brush(Theme.pencil) }
@@ -483,7 +515,8 @@ final class HomeView {
                 explorer.arguments = ["/select," + url.path.replacingOccurrences(of: "/", with: "\\")]
                 try? explorer.run()
             },
-            .item(Words.t("Rename"), enabled: Tabs.shared.mayRename(url)) { rename() },
+            // Someone else's design keeps the name it was shared under, as in its tab.
+            .item(Words.t("Rename"), enabled: Tabs.shared.mayRename(url) && ShareHome.renamable(url)) { rename() },
             .item(Words.t("Duplicate")) { [weak self] in
                 // One open in a tab is copied as it is now.
                 Tabs.shared.tab(showing: url)?.save()
@@ -495,14 +528,21 @@ final class HomeView {
                     i += 1
                 }
                 guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { MessageBeep(0); return }
+                // A copy is a design of its own, never shared.
+                WindowsCore.forgetSharing(ofCopy: copy, from: url)
                 self?.refresh()
             },
             .separator,
             .item(Words.t("Move to Recycle Bin")) { [weak self] in
-                // One open in a tab is closed first, saved, as the Mac's library closes its tab.
-                if let tab = Tabs.shared.tab(showing: url) { Tabs.shared.close(tab) }
-                guard WindowsCore.recycle(url) else { MessageBeep(0); return }
-                self?.refresh()
+                guard let self else { return }
+                // One this computer shared stops being shared, once the person says so; one open in
+                // a tab is closed first, saved, as the Mac's library closes its tab.
+                ShareHome.recycle(url, asking: self.questions, closing: {
+                    if let tab = Tabs.shared.tab(showing: url) { Tabs.shared.close(tab) }
+                }) { [weak self] done in
+                    guard done else { MessageBeep(0); return }
+                    self?.refresh()
+                }
             },
         ]
     }
@@ -555,6 +595,35 @@ final class HomeView {
             _ = try? box.focus(.programmatic)
             try? box.selectAll()
         }
+    }
+
+    // MARK: Links pasted or dropped
+
+    /// Ctrl+V with a design's link on the clipboard opens it.
+    private func pasteLink(_ args: KeyRoutedEventArgs) {
+        guard args.key == .v, GetKeyState(Int32(VK_CONTROL)) < 0, let text = Clipboard.text, WindowsCore.isShareLink(text) else { return }
+        args.handled = true
+        let link = text
+        DispatchQueue.main.async { MainActor.assumeIsolated { self.openShareLink?(link) } }
+    }
+
+    /// Whether what the search field holds now is a design's link, which opens instead.
+    private func tookLink(_ text: String, from field: TextBox?) -> Bool {
+        guard WindowsCore.isShareLink(text) else { return false }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                field?.text = ""
+                self.openShareLink?(text)
+            }
+        }
+        return true
+    }
+
+    /// Words or a link dropped here: a design's link opens.
+    private func dropped(link text: String?) {
+        guard let text, WindowsCore.isShareLink(text) else { return }
+        // After the drop is over: opening replaces home, which the drop is still on.
+        DispatchQueue.main.async { MainActor.assumeIsolated { self.openShareLink?(text) } }
     }
 
     /// The designs listed again, as they are in the folder now.

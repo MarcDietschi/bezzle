@@ -189,8 +189,14 @@ public final class LiveTogether {
     public private(set) var link: LiveLinkState = .connecting
     /// Where each is and what they do; what they drag, as it is this moment; their winks.
     public private(set) var presence: [UInt32: WindowsCore.LiveSeen] = [:]
-    private(set) var motion: [UInt32: [UUID: Node]] = [:]
-    public private(set) var winks: [(by: UInt32, at: CGPoint, time: Date)] = []
+    /// What each is dragging, as it is this moment; once they let go, kept until the design
+    /// shows what they left it as (`settled`, the Mac's Motion).
+    private(set) var motion: [UInt32: (nodes: [UUID: Node], settled: Double?)] = [:]
+    /// Pointers shaken, on the canvas, by whom (`selfID` for this computer's own), and when.
+    public private(set) var winks: [(by: UInt32, at: CGPoint, time: Double)] = []
+    /// What others just changed, lighting up for a moment in their pencil (the Mac's glows).
+    public private(set) var glows: [(id: UUID, pencil: UInt32, time: Double)] = []
+    private let opened = WindowsCore.now
     /// Something the canvas or the bar shows changed: someone came, moved, winked, left.
     public var changed: () -> Void = {}
 
@@ -209,6 +215,18 @@ public final class LiveTogether {
     private var relayedUpTo: Int64 = 0
     /// Where this computer is and what it does, as the app last said.
     private var mine = LivePresence(pointer: nil, view: .zero)
+    /// This computer's own winks, among the others' (the Mac's LiveRoom.selfID).
+    public static let selfID: UInt32 = 0
+    private var detector = WinkDetector()
+    /// Who this computer goes along with, its canvas flying to where they look and staying there.
+    public internal(set) var following: UInt32?
+    /// What the canvas draws of the others, eased from frame to frame (Host/LiveScene.swift).
+    let marks = LiveMarks()
+    let camera = LiveCamera()
+    /// What was dragged here last, sent as it moved; the design as last taken in.
+    private var sentMotion: [Node] = []
+    private var wasInGesture = false
+    private var takenVersion = -1
 
     init(session: SharedSession, keys: ShareKeys, relay: URL) {
         self.session = session
@@ -250,9 +268,24 @@ public final class LiveTogether {
     /// Where this computer's pointer is on the canvas (nil off it), what its canvas shows, what is
     /// picked, which tool is out, and what it is doing ("looking", "moving", "typing", "drawing").
     public func say(pointer: CGPoint?, view: CGRect, selection: [UUID], tool: String, doing: String, away: Bool = false) {
-        mine = LivePresence(pointer: pointer, view: view, selection: selection, tool: tool,
+        mine = LivePresence(pointer: pointer, view: view, selection: Array(selection.prefix(64)), tool: tool,
                             doing: LivePresence.Doing(rawValue: doing) ?? .looking, away: away)
     }
+
+    /// Where this computer's pointer is on the canvas, nil off it, as it moves, with where it is
+    /// in the window (`screen`) at `time`: a shake of it is a wink, circled here and sent.
+    public func pointerMoved(to p: CGPoint?, screen: CGPoint, at time: Double) {
+        mine.pointer = p
+        guard let p else { return }
+        if detector.add(screen, at: time) {
+            winks.append((Self.selfID, p, WindowsCore.now))
+            send(.wink(p))
+            changed()
+        }
+    }
+
+    /// Where this computer's pointer is on the canvas, as last said.
+    var myPointer: CGPoint? { mine.pointer }
 
     /// The layers being dragged here, as they are this moment, and when the drag ends, as it left them.
     public func moving(_ ids: [UUID]) {
@@ -265,13 +298,45 @@ public final class LiveTogether {
         send(.settle(ids.compactMap { doc.node($0).map(Self.alone) }))
     }
 
-    /// A shake of the pointer at a canvas point, to be looked at.
-    public func wink(at p: CGPoint) { send(.wink(p)) }
+    /// Others' changes have just been shown: each layer lights up for a moment in its maker's
+    /// colour; not for a whole design arriving, as it does on opening.
+    func glow(_ authors: [UUID: String]) {
+        guard !authors.isEmpty, authors.count <= 400, WindowsCore.now - opened > 2 else { return }
+        let now = WindowsCore.now
+        let mine = session?.replica ?? WindowsCore.replica
+        for (id, replica) in authors where replica != mine { glows.append((id, pencil(of: replica), now)) }
+        changed()
+    }
 
-    private static func alone(_ node: Node) -> Node {
+    /// A shake of the pointer at a canvas point, to be looked at.
+    public func wink(at p: CGPoint) {
+        winks.append((Self.selfID, p, WindowsCore.now))
+        send(.wink(p))
+    }
+
+    static func alone(_ node: Node) -> Node {
         var n = node
         n.children = []
         return n
+    }
+
+    /// The selected layers as they are this moment of a drag, without what they hold, and what
+    /// is in them while that is not much (the Mac's movingNodes).
+    private func movingNodes() -> [Node] {
+        guard let doc = WindowsCore.design else { return [] }
+        var out: [Node] = []
+        for id in mine.selection.prefix(32) {
+            guard let node = doc.node(id) else { continue }
+            out.append(Self.alone(node))
+            func inside(_ n: Node) {
+                for c in n.children where out.count < 48 {
+                    out.append(Self.alone(c))
+                    inside(c)
+                }
+            }
+            if !node.isArtboard { inside(node) }
+        }
+        return out
     }
 
     /// The pencil of someone in the room by their replica, as sRGB.
@@ -317,7 +382,32 @@ public final class LiveTogether {
     /// second from its own timer, or by hand where no run loop turns (the headless checks).
     func tick() {
         dropSilent()
-        guard inCompany else { return }
+        let inGesture = Editing.gestureStart != nil
+        defer { wasInGesture = inGesture }
+        guard inCompany else {
+            takenVersion = WindowsCore.designVersion
+            return
+        }
+        // Changes made here go as soon as they are made, rather than when the design is next
+        // saved; a drag's, once it ends (the Mac's LiveRoom.tick).
+        // Only the design in front is the one the core's design is: another tab's room waits.
+        guard let session, WindowsCore.sharing === session else { return }
+        if !inGesture, WindowsCore.designVersion != takenVersion, let doc = WindowsCore.previewBase ?? WindowsCore.design {
+            takenVersion = WindowsCore.designVersion
+            var shared = doc
+            shared.viewport = nil
+            session.takeIn(shared)
+        }
+        if inGesture {
+            let nodes = movingNodes()
+            if nodes != sentMotion {
+                sentMotion = nodes
+                send(.motion(nodes), droppable: true)
+            }
+        } else if wasInGesture {
+            send(.settle(sentMotion.compactMap { n in WindowsCore.design?.node(n.id).map(Self.alone) }))
+            sentMotion = []
+        }
         let now = Date()
         if mine != sentPresence || now.timeIntervalSince(sentPresenceAt) > 4 {
             send(.presence(mine), droppable: mine == sentPresence)
@@ -381,20 +471,23 @@ public final class LiveTogether {
             handOutPencils()
             // Whoever comes in hears straight away where this one is.
             if first { send(.presence(mine), to: peer) }
+            marks.arrived(peer)
         case .presence(let p):
             presence[peer] = WindowsCore.LiveSeen(pointer: p.pointer, view: p.view, selection: p.selection, tool: p.tool, doing: p.doing.rawValue, away: p.away)
             updatePerson(peer) { $0.doing = p.doing.rawValue; $0.away = p.away }
         case .motion(let nodes):
-            motion[peer] = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        case .settle:
-            motion[peer] = nil
+            motion[peer] = (Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }), nil)
+        case .settle(let nodes):
+            if nodes.isEmpty { motion[peer] = nil } else {
+                motion[peer] = (Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }), WindowsCore.now)
+            }
         case .changes(let changes):
             guard let session else { return }
-            session.receive([changes], from: .relay, current: WindowsCore.previewBase ?? WindowsCore.design)
+            // What was done here is taken in first, from the design in front only when it is this one.
+            session.receive([changes], from: .relay, current: WindowsCore.sharing === session ? WindowsCore.previewBase ?? WindowsCore.design : nil)
             session.persist()
         case .wink(let at):
-            winks.append((peer, at, Date()))
-            winks.removeAll { Date().timeIntervalSince($0.time) > PencilLoop.lasts }
+            winks.append((peer, at, WindowsCore.now))
         case .glimpses, .want:
             // No glimpses on Windows yet (Host/GlimpseStandIns.swift).
             break
@@ -444,6 +537,7 @@ public final class LiveTogether {
         presence[peer] = nil
         motion[peer] = nil
         guard hellos.removeValue(forKey: peer) != nil else { return }
+        if following == peer { stopFollowing() }
         handOutPencils()
     }
 
@@ -471,6 +565,33 @@ public final class LiveTogether {
         heard = [:]
         presence = [:]
         motion = [:]
+        stopFollowing()
         handOutPencils()
+    }
+
+    // MARK: Settling and forgetting
+
+    /// A motion settles once the design shows what it ended with, or after a while in any case.
+    func settle(_ doc: BezzleDocument, at now: Double) {
+        for (peer, m) in motion {
+            guard let settled = m.settled else { continue }
+            let left = m.nodes.filter { id, n in doc.node(id).map { !Self.same($0, n) } ?? false }
+            if left.isEmpty || now - settled > 8 { motion[peer] = nil } else if left.count != m.nodes.count { motion[peer]?.nodes = left }
+        }
+    }
+
+    private static func same(_ a: Node, _ b: Node) -> Bool {
+        var x = a, y = b
+        x.children = []
+        y.children = []
+        if abs(x.frame.minX - y.frame.minX) < 0.01, abs(x.frame.minY - y.frame.minY) < 0.01,
+           abs(x.frame.width - y.frame.width) < 0.01, abs(x.frame.height - y.frame.height) < 0.01 { x.frame = y.frame }
+        return x == y
+    }
+
+    /// Takes away what has finished showing.
+    func forget(before now: Double) {
+        winks.removeAll { now - $0.time > PencilLoop.lasts }
+        glows.removeAll { now - $0.time > 1.5 }
     }
 }
