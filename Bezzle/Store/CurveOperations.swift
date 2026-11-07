@@ -11,72 +11,20 @@ extension DocumentStore {
 
     // MARK: Riding a shape
 
-    /// Whether a text could ride `shape`'s outline: it is a shape lying flat, not in a repeat grid
-    /// or holding a mask, and neither is locked.
+    /// Whether a text could ride `shape`'s outline (`BezzleDocument.canRide`, in Model/TextRiding.swift).
     static func canRide(_ text: UUID, on shape: UUID, in doc: BezzleDocument) -> Bool {
-        guard text != shape, let t = doc.node(text), t.kind == .text, !t.locked, let s = doc.node(shape), TextCurve.canCarry(s), !s.locked else { return false }
-        let above = doc.ancestors(of: shape)
-        guard !above.contains(where: { $0.isRepeatGrid || $0.id == text || $0.locked }), !doc.ancestors(of: text).contains(where: \.isRepeatGrid) else { return false }
-        // A mask's shape holds what lies in it, and would cut words along it in half.
-        if let parent = above.last, parent.isMask, parent.children.first?.id == shape { return false }
-        return true
+        doc.canRide(text, on: shape)
     }
 
-    /// Lays a text along a shape's outline, placed as `curve` says, and returns the group they
-    /// share: the one the shape already carries words in, or a new one in the shape's place,
-    /// holding the shape and then the words, so what lay over the shape still does.
+    /// Lays a text along a shape's outline and returns the group they share (`BezzleDocument.ride`).
     @discardableResult
     static func ride(_ text: UUID, on shape: UUID, curve: TextCurve, in doc: inout BezzleDocument) -> UUID? {
-        guard canRide(text, on: shape, in: doc), var taken = doc.detach(text) else { return nil }
-        var placed = curve
-        placed.bend = nil
-        placed.rides = true
-        taken.curve = placed
-        taken.curvePath = nil
-        taken.rotation = 0
-        taken.post = nil
-        taken.own = nil
-        if let parent = doc.parent(of: shape), parent.carrier?.id == shape {
-            doc.attach(taken, to: parent.id)
-            return parent.id
-        }
-        guard let at = doc.path(of: shape), let alone = doc.detach(shape) else {
-            doc.attach(taken, to: nil)
-            return nil
-        }
-        var group = Node(kind: .group, name: TextCurve.name(in: doc), frame: .zero)
-        // A shape lying straight on a deck's post keeps its words in that post.
-        group.post = alone.post
-        var inside = alone
-        inside.post = nil
-        group.children = [inside, taken]
-        doc.attach(group, to: at.parent.map { doc[$0].id }, at: at.indices.last!)
-        return group.id
+        doc.ride(text, on: shape, curve: curve)
     }
 
-    /// Takes texts off the outlines they ride, straight again and reading upright, each just above
-    /// the group it rode in; a group left with its shape alone is that shape again.
+    /// Takes texts off the outlines they ride (`BezzleDocument.takeOffPath`).
     static func takeOffPath(_ ids: [UUID], in doc: inout BezzleDocument) {
-        for id in ids {
-            guard let node = doc.node(id), node.rides else { continue }
-            doc.update(id) { $0.straighten() }
-            guard let group = doc.parent(of: id), group.isGroup, let at = doc.path(of: group.id) else { continue }
-            let holder = at.parent.map { doc[$0].id }
-            guard var layer = doc.detach(id) else { continue }
-            layer.post = group.post
-            doc.attach(layer, to: holder, at: at.indices.last! + 1)
-            unwrapIfAlone(group.id, in: &doc)
-        }
-    }
-
-    /// A group made for words to ride its shape, left holding the shape alone, is the shape again.
-    private static func unwrapIfAlone(_ group: UUID, in doc: inout BezzleDocument) {
-        guard let g = doc.node(group), g.isGroup, g.children.count == 1, let only = g.children.first, TextCurve.canCarry(only),
-              g.clipsToFirst != true, !g.isRepeatGrid, let at = doc.path(of: group) else { return }
-        var shape = only
-        shape.frame = shape.frame.offsetBy(dx: g.frame.minX, dy: g.frame.minY)
-        shape.post = g.post
-        doc.replace(at: at, with: [shape])
+        doc.takeOffPath(ids)
     }
 
     /// The selection as a text to lay along a shape: one text and one shape it could ride.

@@ -354,6 +354,55 @@ struct ParityTests {
 }
 
 extension ParityTests {
+    // MARK: Words riding a shape
+
+    /// Texts laid on a ring and taken off again, through the store as the canvas and the
+    /// assistant do, and what could and could not ride: a mask's shape, a locked one, a grid's cell.
+    @Test func ridingShapes() {
+        func words(_ name: String, _ text: String, at: CGPoint) -> Node {
+            var n = Node(kind: .text, name: name, frame: CGRect(origin: at, size: CGSize(width: 10, height: 10)))
+            n.text = text
+            n.style?.size = 24
+            n.refit()
+            return n
+        }
+        var locked = CanvasTests.rect("Locked", CGRect(x: 300, y: 300, width: 80, height: 40))
+        locked.locked = true
+        let bench = Bench(extra: [words("Words", "ROUND AND ROUND", at: CGPoint(x: 40, y: 40)), words("More", "and again", at: CGPoint(x: 40, y: 300)),
+                                  Node(kind: .ellipse, name: "Ring", frame: CGRect(x: 100, y: 80, width: 160, height: 160)), locked,
+                                  CanvasTests.rect("Cut", CGRect(x: 400, y: 80, width: 80, height: 80)),
+                                  CanvasTests.rect("Held", CGRect(x: 410, y: 90, width: 40, height: 40))])
+        let id = { (name: String) in bench.node(name)!.id }
+        bench.store.selection = [id("Cut"), id("Held")]
+        bench.step { bench.store.maskSelection() }
+        let doc = { bench.store.doc }
+        func line(_ what: String) { Self.log("riding", what) }
+        func tree(_ ids: [UUID]) -> String {
+            ids.compactMap { doc().node($0) }.map { n in
+                let parent = doc().parent(of: n.id)
+                return "\(n.name) in \(parent?.name ?? "-") [\(parent?.children.map(\.name).joined(separator: ",") ?? "")] frame \(Self.r(n.frame)) curve \(n.curve.map { "\($0)" } ?? "nil") path \(n.curvePath ?? "nil") rotation \(Self.n(n.rotation))"
+            }.joined(separator: " ; ")
+        }
+        for shape in ["Ring", "Locked", "Cut", "Held", "Words"] {
+            line("can ride \(shape): \(DocumentStore.canRide(id("Words"), on: id(shape), in: doc()))")
+        }
+        var curve = TextCurve(rides: true)
+        curve.at = 0.3
+        bench.step { bench.store.edit(DocumentStore.riding) { doc in line("rode into \(DocumentStore.ride(id("Words"), on: id("Ring"), curve: curve, in: &doc).flatMap { doc.node($0)?.name } ?? "nil")") } }
+        line("after riding: " + tree([id("Words"), id("Ring")]))
+        if let group = doc().parent(of: id("Words")) { line("group \(group.name) frame \(Self.r(group.frame))") }
+        bench.step { bench.store.edit(DocumentStore.riding) { doc in line("second rode into \(DocumentStore.ride(id("More"), on: id("Ring"), curve: TextCurve(reversed: true, hangs: true), in: &doc).flatMap { doc.node($0)?.name } ?? "nil")") } }
+        line("after the second: " + tree([id("Words"), id("More"), id("Ring")]))
+        bench.step { bench.store.edit(DocumentStore.takingOffPath) { doc in DocumentStore.takeOffPath([id("Words")], in: &doc) } }
+        line("one off: " + tree([id("Words"), id("More"), id("Ring")]))
+        bench.step { bench.store.edit(DocumentStore.takingOffPath) { doc in DocumentStore.takeOffPath([id("More")], in: &doc) } }
+        line("both off: " + tree([id("Words"), id("More"), id("Ring")]))
+        line("artboard holds: " + (doc().parent(of: id("Ring"))?.children.map(\.name).joined(separator: ",") ?? "-"))
+        bench.undoLast()
+        line("one undone: " + tree([id("Words"), id("More"), id("Ring")]))
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.
