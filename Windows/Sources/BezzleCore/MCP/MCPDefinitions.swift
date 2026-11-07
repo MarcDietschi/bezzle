@@ -1,8 +1,8 @@
 import Foundation
 
 // From Bezzle/MCP/MCPDefinitions.swift, for Windows: the tools as the assistant is told of them, in
-// the Mac's words; those Windows has no way to do yet are left out: importing a website, converting
-// to a path and removing a background.
+// the Mac's words; those Windows has no way to do yet are left out: importing a website and
+// removing a background.
 
 /// The tools as the assistant is told of them: each one's name, what it does, and what it takes.
 extension MCPTools {
@@ -148,6 +148,9 @@ extension MCPTools {
                        description: "Makes two or more rectangles, ellipses and paths one path, styled as the one at the back. union: all of them. subtract: the back one less those in front. intersect: only where all overlap. exclude: only where an odd number overlap.",
                        properties: .object([design, layers, ("operation", Self.choice(["union", "subtract", "intersect", "exclude"], "How."))]),
                        required: ["operation"], run: { [unowned self] in try await self.combineShapes($0) }),
+            Definition(name: "convert_to_path", title: "Convert to path",
+                       description: "Makes rectangles, ellipses and lines paths, whose outline can then be given as SVG path data. Each keeps its id. Texts stay texts in Bezzle for Windows: it cannot outline letters yet.",
+                       properties: .object([design, layers]), run: { [unowned self] in try await self.convertToPath($0) }),
             Definition(name: "place_image", title: "Place a picture",
                        description: "Puts a picture file into the design: as a new rectangle filled with it, at its own size unless that is too big; or into an existing rectangle, ellipse or path's fill, the letters of a text, or a layer's first border. The file is copied into the design.",
                        properties: .object([
