@@ -83,6 +83,8 @@ final class DesignSession {
     var gradientStop = 0 { didSet { if gradientStop != oldValue { for f in gradientListeners { f() } } } }
     private var gradientListeners: [() -> Void] = []
     func listenToGradient(_ f: @escaping () -> Void) { gradientListeners.append(f) }
+    /// A mask's outline drawn once on the canvas, running out (true) as it is let go, or in.
+    var ringMask: ((UUID, Bool) -> Void)?
     /// The fill menu made again as the gradient changed on the canvas: with its colour panel
     /// (another colour chosen), or its bar alone.
     var refreshFillMenu: ((_ panelToo: Bool) -> Void)?

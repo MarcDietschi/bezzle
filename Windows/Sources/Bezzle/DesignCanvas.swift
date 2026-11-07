@@ -185,14 +185,20 @@ final class DesignCanvas {
     private struct Dip {
         var over: UUID?
         var at: CGPoint = .zero
+        /// When the rest began, for the line run round the shape as it passes.
+        var since = 0.0
         var ready = false
         var opened: (shape: UUID, mask: UUID)?
         var declined: Set<UUID> = []
         /// Counts each rest, so a wait for an earlier one comes to nothing.
         var rest = 0
+        /// The mask what is moved would come out of, lying wholly off its shape.
+        var leaving: UUID?
     }
     private var dip: Dip?
-    private let dipMarks = Canvas()
+    /// What masks show as things go into them and come out (the Mac's MaskTool): the line run
+    /// round a shape rested on, the glow, the ghosts of what is cut off, the rings, the names.
+    private let maskMarks = MaskMarks()
     /// How long something has to rest over a shape for it to open, and how far the pointer may
     /// wander on screen and still be resting, as on the Mac.
     private static let dipRest = 0.9
@@ -273,6 +279,8 @@ final class DesignCanvas {
         stage.children.append(decks.feet)
         root.children.append(letters.layer)
         root.children.append(overlay)
+        // First on the overlay: right over the artboards, under every other mark.
+        overlay.children.append(maskMarks.layer)
         root.children.append(decks.layer)
         root.children.append(margin.layer)
         root.children.append(rulers.root)
@@ -366,6 +374,19 @@ final class DesignCanvas {
             self?.session.changed()
         }
         pictures.changed = { [weak self] in self?.session.edited(board: nil) }
+        maskMarks.view = { [weak self] in
+            guard let self else { return (1, .zero, .zero, 1) }
+            return (self.zoom, self.pan, CGSize(width: self.stage.actualWidth, height: self.stage.actualHeight), self.pixelScale)
+        }
+        maskMarks.state = { [weak self] in
+            guard let self else { return ([], nil, nil, nil, false) }
+            let d = self.dip
+            var waiting: (over: UUID, since: Double)?
+            if let d, d.opened == nil, d.ready, let over = d.over { waiting = (over, d.since) }
+            return (self.session.selection, waiting, d?.opened, d?.opened == nil ? d?.leaving : nil, self.editing != nil)
+        }
+        maskMarks.unwound = { [weak self] in self?.session.previewed(board: nil) }
+        session.ringMask = { [weak self] mask, out in self?.maskMarks.ring(mask, out: out) }
         pen.redraw = { [weak self] in self?.drawPen() }
         knife.redraw = { [weak self] in self?.drawPen() }
         depth.redraw = { [weak self] in self?.drawDepth() }
@@ -1265,6 +1286,8 @@ final class DesignCanvas {
         placeCopyOffer()
         drawComponents()
         drawPictures()
+        // Something picked inside a mask: the mask's outline, and the ghost of what it cuts off.
+        maskMarks.update()
         gradients.draw()
         if drag == nil, let p = lastPoint { updatePointer(at: p) }
     }
@@ -1433,6 +1456,7 @@ final class DesignCanvas {
         let offer = free ? WindowsCore.maskOffer(session.selection) : nil
         if offer != shownOffer, offerLit, let was = shownOffer {
             offerLit = false
+            maskMarks.previewEnded()
             WindowsCore.previewOffer(was, false)
             session.previewed(board: nil)
         }
@@ -1740,6 +1764,8 @@ final class DesignCanvas {
         if let opened = d.opened {
             // Inside it still, what it holds moves inside it.
             if WindowsCore.onDip(opened.mask, at: inDesign(p), slop: CGFloat(12 / zoom)) { dip = d; return }
+            // Off it, it closes: its outline runs out once, as it was.
+            maskMarks.closed(opened.mask)
             WindowsCore.closeDip()
             d.opened = nil
             d.declined.insert(opened.shape)
@@ -1754,15 +1780,17 @@ final class DesignCanvas {
         if over != d.over || wandered {
             d.over = over
             d.at = p
+            d.since = WindowsCore.now
             d.ready = over.map { !d.declined.contains($0) && WindowsCore.canDip(ids, over: $0) } == true
             d.rest += 1
             if d.ready, let over {
                 let rest = d.rest
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.dipRest) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.dipRest * MaskMarks.slow) { [weak self] in
                     MainActor.assumeIsolated { self?.dipOpens(over, rest: rest) }
                 }
             }
         }
+        d.leaving = WindowsCore.leavingMask(ids)
         dip = d
         drawDip()
     }
@@ -1775,26 +1803,17 @@ final class DesignCanvas {
         d.opened = (over, mask)
         dip = d
         session.edited(board: nil)
+        // What reaches past the shape was showing whole a moment ago: it fades from there, and
+        // the shape glows open.
+        maskMarks.opened(holding: session.selection)
         drawDip()
     }
 
-    /// The shape waited on, its outline dashed; the one opened, its outline drawn firmly round
-    /// what it now holds (the Mac runs a line round it as the moment passes, and it glows open).
+    /// What resting over a shape shows, as the Mac's MaskTool draws it: a line run round the
+    /// shape waited on as the moment passes, the shape opened glowing, what it cuts off a ghost,
+    /// and its name under it (`MaskMarks`).
     private func drawDip() {
-        if dipMarks.parent == nil {
-            dipMarks.isHitTestVisible = false
-            overlay.children.append(dipMarks)
-        }
-        dipMarks.children.clear()
-        guard let d = dip else { return }
-        let id = d.opened?.mask ?? (d.ready ? d.over : nil)
-        guard let id, let data = WindowsCore.outlineData(of: id, zoom: zoom, pan: pan), !data.isEmpty else { return }
-        let open = d.opened != nil
-        let dashes = open ? "" : " StrokeDashArray='4 3'"
-        let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(data)' StrokeThickness='\(open ? 2 : 1.5)'\(dashes)/>"
-        guard let path = (try? XamlReader.load(xaml)) as? WinUI.Path else { return }
-        path.stroke = Theme.brush(Theme.selection, open ? 0.9 : 0.6)
-        dipMarks.children.append(path)
+        maskMarks.update()
     }
 
     /// The outline's dots and edge see the canvas as it is now.
@@ -3011,6 +3030,8 @@ final class DesignCanvas {
             offerLit = false
             if let mask = WindowsCore.takeOffer(offer) {
                 session.select([mask], on: WindowsCore.board(of: mask) ?? session.board)
+                // What was cut off sinks in, and the outline draws in once.
+                maskMarks.committed(mask)
             }
             session.edited(board: nil)
             return
@@ -3351,7 +3372,8 @@ final class DesignCanvas {
                 let lit = onOffer(p)
                 if lit != offerLit, let offer = shownOffer {
                     offerLit = lit
-                    WindowsCore.previewOffer(offer, lit)
+                    // Shown made, what it cuts off fading; let go, it grows back before it goes.
+                    maskMarks.preview(offer, lit)
                     session.previewed(board: nil)
                     placeOffer()
                 }
@@ -3555,8 +3577,12 @@ final class DesignCanvas {
                 // it lay in, it comes out of it, as one step with the move.
                 let opened = dip?.opened?.mask
                 dip = nil
+                let leaving = opened == nil ? WindowsCore.leavingMask(session.selection) : nil
+                // Coming out, the mask's outline runs out once, as it was; going in, it draws in.
+                if let leaving { maskMarks.ring(leaving, out: true) }
                 drawDip()
-                WindowsCore.endMove(takingOut: opened == nil && WindowsCore.leavingMask(session.selection) != nil)
+                WindowsCore.endMove(takingOut: leaving != nil)
+                if let opened, WindowsCore.board(of: opened) != nil { maskMarks.ring(opened, out: false) }
                 let picked = opened.flatMap { WindowsCore.board(of: $0) != nil ? [$0] : nil } ?? session.selection
                 session.select(picked, on: picked.first.flatMap(WindowsCore.board(of:)) ?? session.board)
                 WindowsCore.inviteMask(session.selection)
@@ -4062,6 +4088,8 @@ final class DesignCanvas {
 
     /// A mask taken apart; what it held, and its shape, are picked.
     private func releaseMask(_ id: UUID) {
+        // A ripple runs out from its shape, as what it cut off comes back.
+        maskMarks.ring(id, out: true)
         let freed = WindowsCore.releaseMask(id)
         session.select(freed, on: freed.first.flatMap(WindowsCore.board(of:)) ?? session.board)
         session.edited(board: nil)
@@ -4199,9 +4227,14 @@ final class DesignCanvas {
             let canMask = WindowsCore.canMask(selection), mask = WindowsCore.selectedMask(selection)
             if canMask {
                 entries.append(.item("Mask", shortcut: "Ctrl+M", preview: { [weak self] on in
-                    WindowsCore.previewMask(selection, on)
-                    self?.session.previewed(board: nil)
-                }) { [weak self] in self?.maskSelection() })
+                    // Shown made, what it would cut off fading away, as the word offered shows it.
+                    guard let self, let offer = WindowsCore.maskPlanOffer(selection) else { return }
+                    self.maskMarks.preview(offer, on)
+                    self.session.previewed(board: nil)
+                }) { [weak self] in
+                    self?.maskSelection()
+                    if let made = self?.session.selection.first, WindowsCore.selectedMask([made]) == made { self?.maskMarks.committed(made) }
+                })
             }
             if let mask {
                 if WindowsCore.inMask(selection) {

@@ -15,6 +15,14 @@ extension WindowsCore {
         return made.flatMap { design?.node($0) != nil ? $0 : nil }
     }
 
+    /// The mask the layers would make, as the word offered tells of one, for the canvas to show
+    /// made while the menu's entry is pointed at.
+    public static func maskPlanOffer(_ ids: [UUID]) -> MaskOffer? {
+        guard let doc = previewBase ?? design, let plan = doc.maskPlan(ids), var box = doc.canvasBounds(of: plan.shape) else { return nil }
+        for id in plan.held { if let r = doc.canvasBounds(of: id) { box = box.union(r) } }
+        return MaskOffer(shape: plan.shape, held: plan.held, box: box)
+    }
+
     /// Shows the mask the layers would make, while its menu entry is pointed at.
     public static func previewMask(_ ids: [UUID], _ on: Bool) {
         endPreview()
@@ -158,5 +166,154 @@ extension WindowsCore {
         guard let outline = n.isMask ? Mask.outline(of: id, in: doc) : doc.outline(of: id) else { return nil }
         var t = CGAffineTransform(a: CGFloat(zoom), b: 0, c: 0, d: CGFloat(zoom), tx: pan.x, ty: pan.y)
         return outline.copy(using: &t).map { PathData.string($0) }
+    }
+}
+
+// MARK: - What the canvas shows of masks
+
+// The Mac's MaskTool draws more than the outline: the line run round a shape as something rests
+// over it, the rings an outline draws as something sinks into a mask or comes out, the ghost of
+// what a mask cuts off, and the names under a mask opened or left. These are their parts the
+// canvas cannot work out by itself.
+
+extension WindowsCore {
+    /// Whether the canvas shows a change pointed at rather than the design as it is.
+    public static var previewing: Bool { previewBase != nil }
+
+    /// The mask the layers picked lie in, when they are all that is picked and its shape is not
+    /// one of them (the Mac's MaskTool.picked).
+    public static func maskPicked(_ selection: [UUID]) -> UUID? {
+        guard let doc = design, let first = selection.first, let mask = doc.parent(of: first), let holder = mask.holder,
+              selection.allSatisfy({ doc.parent(of: $0)?.id == mask.id && $0 != holder.id }) else { return nil }
+        return mask.id
+    }
+
+    /// The mask the first of these layers lies in, in the design as it shows now.
+    public static func mask(holding id: UUID) -> UUID? {
+        guard let mask = design?.parent(of: id), mask.isMask else { return nil }
+        return mask.id
+    }
+
+    /// A shape's outline, or a mask's, on the canvas, as path data: what a ring is drawn from
+    /// after the mask has gone.
+    public static func canvasOutline(of id: UUID) -> String? {
+        guard let doc = design, let n = doc.node(id) else { return nil }
+        guard let outline = n.isMask ? Mask.outline(of: id, in: doc) : doc.outline(of: id) else { return nil }
+        return PathData.string(outline)
+    }
+
+    /// An outline on the canvas (`canvasOutline`) `grown` about its middle (1 as it is), placed
+    /// on the stage: its path data there, the box round it and about how long it is, its curves
+    /// measured in short straight steps (the Mac's MaskTool.length).
+    public static func stageOutline(_ data: String, grown: Double = 1, zoom: Double, pan: CGPoint) -> (data: String, box: CGRect, length: Double)? {
+        let path = PathData.cgPath(data)
+        let box = path.boundingBoxOfPath
+        guard !box.isNull else { return nil }
+        let c = CGPoint(x: box.midX, y: box.midY), s = CGFloat(grown)
+        var t = CGAffineTransform(translationX: c.x, y: c.y).scaledBy(x: s, y: s).translatedBy(x: -c.x, y: -c.y)
+            .concatenating(CGAffineTransform(a: CGFloat(zoom), b: 0, c: 0, d: CGFloat(zoom), tx: pan.x, ty: pan.y))
+        guard let placed = path.copy(using: &t) else { return nil }
+        return (PathData.string(placed), placed.boundingBoxOfPath, Double(length(of: placed)))
+    }
+
+    private static func length(of path: CGPath) -> CGFloat {
+        var total: CGFloat = 0
+        var last = CGPoint.zero, start = CGPoint.zero
+        func walk(_ to: CGPoint) {
+            total += hypot(to.x - last.x, to.y - last.y)
+            last = to
+        }
+        path.applyWithBlock { element in
+            let p = element.pointee.points
+            switch element.pointee.type {
+            case .moveToPoint:
+                last = p[0]
+                start = p[0]
+            case .addLineToPoint:
+                walk(p[0])
+            case .addQuadCurveToPoint:
+                let a = last
+                for i in 1...8 {
+                    let t = CGFloat(i) / 8, u = 1 - t
+                    walk(CGPoint(x: u * u * a.x + 2 * u * t * p[0].x + t * t * p[1].x, y: u * u * a.y + 2 * u * t * p[0].y + t * t * p[1].y))
+                }
+            case .addCurveToPoint:
+                let a = last
+                for i in 1...12 {
+                    let t = CGFloat(i) / 12, u = 1 - t
+                    let x = u * u * u * a.x + 3 * u * u * t * p[0].x + 3 * u * t * t * p[1].x + t * t * t * p[2].x
+                    let y = u * u * u * a.y + 3 * u * u * t * p[0].y + 3 * u * t * t * p[1].y + t * t * t * p[2].y
+                    walk(CGPoint(x: x, y: y))
+                }
+            case .closeSubpath:
+                walk(start)
+            @unknown default:
+                break
+            }
+        }
+        return total
+    }
+
+    /// What tells one ghost of `ids` from another: the mask they lie in as it is drawn now, and
+    /// where the canvas is. Nil when they lie in no mask.
+    public static func maskGhostKey(_ ids: [UUID], zoom: Double, pan: CGPoint) -> Int? {
+        guard let doc = design, let first = ids.first, let mask = doc.parent(of: first), mask.isMask else { return nil }
+        var h = Hasher()
+        // Where each of its layers lies and how it shows: what moves while it is dragged.
+        func add(_ n: Node) {
+            h.combine(n.id)
+            for v in [n.frame.minX, n.frame.minY, n.frame.width, n.frame.height] { h.combine(Double(v)) }
+            h.combine(n.rotation)
+            h.combine(n.opacity)
+            h.combine(n.hidden)
+            for c in n.children { add(c) }
+        }
+        add(mask)
+        h.combine(ids)
+        h.combine(doc.parentOrigin(of: first).x)
+        h.combine(doc.parentOrigin(of: first).y)
+        h.combine(zoom)
+        h.combine(pan.x)
+        h.combine(pan.y)
+        return h.finalize()
+    }
+
+    /// What of the layers `ids`, inside a mask, reaches past its shape: drawn whole, only past
+    /// the outline (inside it, the mask shows them itself), as the Mac's MaskTool.drawGhost does,
+    /// at full strength; the canvas fades it. Over as much of the stage (`stage` big) as it
+    /// covers, `scale` pixels a point, into pixels as `render(board:)` does; where, or nil.
+    public static func maskGhost(_ ids: [UUID], scale: Double, zoom: Double, pan: CGPoint, stage: CGSize,
+                                 into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> CGRect? {
+        guard let doc = design, let first = ids.first, let mask = doc.parent(of: first), mask.isMask,
+              let outline = Mask.outline(of: mask.id, in: doc) else { return nil }
+        let o = doc.parentOrigin(of: first)
+        let layers = mask.children.dropFirst().filter { ids.contains($0.id) && !$0.hidden }
+        var reach = CGRect.null
+        for n in layers { reach = reach.union(Renderer.reach(of: n).offsetBy(dx: o.x, dy: o.y)) }
+        guard !reach.isNull else { return nil }
+        let z = CGFloat(zoom), toView = CGAffineTransform(a: z, b: 0, c: 0, d: z, tx: pan.x, ty: pan.y)
+        let box = reach.insetBy(dx: -2, dy: -2).applying(toView).intersection(CGRect(origin: .zero, size: stage))
+        guard !box.isNull, box.width >= 1, box.height >= 1 else { return nil }
+        return overlay(box: box, scale: scale, into: fill) { ctx in
+            ctx.concatenate(toView)
+            ctx.beginPath()
+            ctx.addRect(reach.insetBy(dx: -2, dy: -2))
+            ctx.addPath(outline)
+            ctx.clip(using: .evenOdd)
+            ctx.translateBy(x: o.x, y: o.y)
+            Renderer.withFlippedContext(ctx) {
+                let options = Renderer.Options(deviceScale: CGFloat(scale) * z, assets: assets)
+                for n in layers { Renderer.drawNode(n, in: ctx, options: options) }
+            }
+        }
+    }
+
+    /// What the canvas says under a mask opened, or left: the name of the shape it is made of,
+    /// or its own.
+    public static func maskName(_ id: UUID, shape: UUID? = nil) -> String? {
+        guard let doc = design else { return nil }
+        if let shape, let n = doc.node(shape) { return n.name }
+        guard let mask = doc.node(id) else { return nil }
+        return mask.holder?.name ?? mask.name
     }
 }

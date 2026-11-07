@@ -10,6 +10,8 @@ extension Inspector {
         guard let m = WindowsCore.maskCard(ids), !m.locked else { return nil }
         let release: @MainActor () -> Void = { [self] in
             if m.isMask, let mask = ids.first {
+                // A ripple runs out from its shape, as what it cut off comes back.
+                session.ringMask?(mask, true)
                 let freed = WindowsCore.releaseMask(mask)
                 session.select(freed, on: board)
             } else {
