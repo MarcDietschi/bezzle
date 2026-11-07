@@ -17,7 +17,19 @@ do {
     // With BEZZLE_FIRST (designs, separated by ;), each is opened and its first artboard drawn
     // small before, as home's thumbnails are.
     for path in (ProcessInfo.processInfo.environment["BEZZLE_FIRST"] ?? "").split(separator: ";") {
-        _ = WindowsCore.thumbnail(of: URL(fileURLWithPath: String(path)), width: 300, height: 188, scale: 1) { w, h in UnsafeMutableRawPointer.allocate(byteCount: w * h * 4, alignment: 16) }
+        var buffer: UnsafeMutableRawPointer?
+        var size = (0, 0)
+        let drawn = WindowsCore.thumbnail(of: URL(fileURLWithPath: String(path)), width: 300, height: 188, scale: 1) { w, h in
+            let p = UnsafeMutableRawPointer.allocate(byteCount: w * h * 4, alignment: 16)
+            p.initializeMemory(as: UInt8.self, repeating: 0, count: w * h * 4)
+            buffer = p
+            size = (w, h)
+            return p
+        }
+        // Whether it drew, and how much of it, for trying home's thumbnails.
+        var painted = 0
+        if let b = buffer { painted = (0..<(size.0 * size.1)).filter { b.load(fromByteOffset: $0 * 4 + 3, as: UInt8.self) > 0 }.count }
+        print("thumbnail \(path): \(drawn ? "drawn" : "not drawn"), \(painted) of \(size.0 * size.1) pixels painted")
     }
     var boards = try WindowsCore.open(URL(fileURLWithPath: arguments[2]))
     // With BEZZLE_DROP (files separated by ;, then @x,y on the canvas), they are let go there

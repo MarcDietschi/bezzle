@@ -1,6 +1,7 @@
 import Foundation
 import WinUI
 import UWP
+import WinSDK
 import BezzleCore
 
 /// Home, as the Mac's (Views/HomeView.swift, HomeStage.swift; numbers in DESIGN.md): the bar
@@ -13,6 +14,12 @@ import BezzleCore
 final class HomeView {
     let root = Grid()
     let dragArea = Border()
+    /// Bezzle's own menus, over the home screen: the Bezzle menu.
+    private let menus = MenuHost()
+    /// What home's search looks for among the designs' names.
+    private var query = ""
+    /// The designs' pictures drawn so far, by design, size and when it was last changed.
+    private var pictures: [String: WriteableBitmap] = [:]
     private let folder: URL
     private let open: (URL) -> Void
     private let page = StackPanel()
@@ -53,6 +60,8 @@ final class HomeView {
             self.showDesigns()
         }
         root.sizeChanged.addHandler { [weak self] _, _ in self?.showDesigns() }
+        try? Grid.setRowSpan(menus.layer, 2)
+        root.children.append(menus.layer)
     }
 
     // MARK: Bar
@@ -72,6 +81,16 @@ final class HomeView {
         let word = Theme.text("Bezzle", size: 15, weight: 600, serif: true)
         word.margin = Theme.inset(10, 0, 10, 0)
         home.child = word
+        // The Bezzle menu, as on a design's bar.
+        home.pointerPressed.addHandler { _, args in args?.handled = true }
+        home.tapped.addHandler { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.menus.show(below: home, width: 260, entries: Bar.appEntries())
+                }
+            }
+        }
         bar.children.append(home)
 
         dragArea.background = Theme.clear
@@ -95,6 +114,13 @@ final class HomeView {
         field.padding = Theme.inset(10, 5, 10, 0)
         field.minHeight = 26
         search.child = field
+        // The designs whose names have what is typed in them, as it is typed.
+        field.textChanged.addHandler { [weak self] sender, _ in
+            guard let self, let text = (sender as? TextBox)?.text else { return }
+            self.query = text.trimmingCharacters(in: .whitespaces)
+            // Once the typing is over: pictures made inside the field's event stay blank.
+            DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
+        }
         right.children.append(search)
         let openButton = Theme.card(radius: 8)
         openButton.height = 28
@@ -336,6 +362,7 @@ final class HomeView {
         designs.spacing = 24
         let urls = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
             .filter { $0.pathExtension == "bezzle" }
+            .filter { query.isEmpty || $0.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveContains(query) }
             .sorted { (date($0) ?? .distantPast) > (date($1) ?? .distantPast) }
         let columns = max(1, Int((width + 22) / (220 + 22)))
         let tile = (width - Double(columns - 1) * 22) / Double(columns)
@@ -373,17 +400,24 @@ final class HomeView {
         image.stretch = .uniformToFill
         image.verticalAlignment = .top
         frame.child = image
-        // Drawn once the page shows, one after another, so home comes up at once.
+        // Drawn once the page shows, one after another, so home comes up at once; kept for when
+        // the list is made again (a search, say) while the design and the size are as they were.
         let scale = pixelScale
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                var bitmap: WriteableBitmap?
-                _ = WindowsCore.thumbnail(of: url, width: width, height: width * 300 / 480, scale: scale) { w, h in
-                    bitmap = WriteableBitmap(Int32(w), Int32(h))
-                    return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+        let key = "\(url.path)|\(Int(width))|\(date(url)?.timeIntervalSince1970 ?? 0)"
+        if let kept = pictures[key] {
+            image.source = kept
+        } else {
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    var bitmap: WriteableBitmap?
+                    _ = WindowsCore.thumbnail(of: url, width: width, height: width * 300 / 480, scale: scale) { w, h in
+                        bitmap = WriteableBitmap(Int32(w), Int32(h))
+                        return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+                    }
+                    try? bitmap?.invalidate()
+                    image.source = bitmap
+                    if let bitmap { self.pictures[key] = bitmap }
                 }
-                try? bitmap?.invalidate()
-                image.source = bitmap
             }
         }
         column.children.append(frame)
@@ -394,6 +428,96 @@ final class HomeView {
         pick.box.pointerEntered.addHandler { _, _ in name.foreground = Theme.brush(Theme.pencil) }
         pick.box.pointerExited.addHandler { _, _ in name.foreground = Theme.ink(1) }
         pick.box.child = column
-        return pick.box
+        // What a right click on a design offers, as on the Mac.
+        let box = pick.box
+        box.rightTapped.addHandler { [weak self] _, args in
+            args?.handled = true
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.menus.show(below: box, width: 220, entries: self.designEntries(url, rename: { self.rename(url, label: name, column: column) }))
+                }
+            }
+        }
+        return box
+    }
+
+    private func designEntries(_ url: URL, rename: @escaping @MainActor () -> Void) -> [MenuHost.Entry] {
+        [
+            .item(Words.t("Open")) { [weak self] in self?.open(url) },
+            .item(Words.t("Show in Explorer")) {
+                let explorer = Process()
+                explorer.executableURL = URL(fileURLWithPath: "C:\\Windows\\explorer.exe")
+                explorer.arguments = ["/select," + url.path.replacingOccurrences(of: "/", with: "\\")]
+                try? explorer.run()
+            },
+            .item(Words.t("Rename")) { rename() },
+            .item(Words.t("Duplicate")) { [weak self] in
+                let folder = url.deletingLastPathComponent(), base = url.deletingPathExtension().lastPathComponent + " copy"
+                var copy = folder.appendingPathComponent("\(base).bezzle")
+                var i = 2
+                while FileManager.default.fileExists(atPath: copy.path) {
+                    copy = folder.appendingPathComponent("\(base) \(i).bezzle")
+                    i += 1
+                }
+                guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { MessageBeep(0); return }
+                self?.refresh()
+            },
+            .separator,
+            .item(Words.t("Move to Recycle Bin")) { [weak self] in
+                guard WindowsCore.recycle(url) else { MessageBeep(0); return }
+                self?.refresh()
+            },
+        ]
+    }
+
+    /// The design's name typed anew in its place: Enter keeps it, Esc puts it back.
+    private func rename(_ url: URL, label: TextBlock, column: StackPanel) {
+        var k: UInt32 = 0
+        guard (try? column.children.indexOf(label, &k)) == true else { return }
+        let field = TextBox()
+        field.text = label.text
+        field.fontFamily = Theme.serif
+        field.fontSize = 15
+        field.minHeight = 0
+        field.padding = Theme.inset(4, 2, 4, 2)
+        column.children.removeAt(k)
+        column.children.insertAt(k, field)
+        var done = false
+        func finish(_ keep: Bool) {
+            guard !done else { return }
+            done = true
+            let typed = field.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let clean = String(typed.map { "\\/:*?\"<>|".contains($0) ? "-" : $0 })
+            let target = url.deletingLastPathComponent().appendingPathComponent("\(clean).bezzle")
+            if keep, !clean.isEmpty, clean != label.text, !FileManager.default.fileExists(atPath: target.path),
+               (try? FileManager.default.moveItem(at: url, to: target)) != nil {
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
+                return
+            }
+            if keep, !clean.isEmpty, clean != label.text { MessageBeep(0) }
+            var at: UInt32 = 0
+            if (try? column.children.indexOf(field, &at)) == true {
+                column.children.removeAt(at)
+                column.children.insertAt(at, label)
+            }
+        }
+        field.keyDown.addHandler { _, args in
+            guard let args else { return }
+            if args.key == .enter { args.handled = true; finish(true) }
+            if args.key == .escape { args.handled = true; finish(false) }
+        }
+        field.lostFocus.addHandler { _, _ in finish(true) }
+        field.loaded.addHandler { sender, _ in
+            guard let box = sender as? TextBox else { return }
+            _ = try? box.focus(.programmatic)
+            try? box.selectAll()
+        }
+    }
+
+    /// The designs listed again, as they are in the folder now.
+    func refresh() {
+        shownWidth = 0
+        showDesigns()
     }
 }

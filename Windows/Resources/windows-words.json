@@ -1,6 +1,8 @@
 {
   "Add this word to the dictionary": {"de": "Dieses Wort zum Wörterbuch hinzufügen", "fr": "Ajouter ce mot au dictionnaire", "it": "Aggiungi questa parola al dizionario"},
   "New variant, of this copy as it looks": {"de": "Neue Variante, so wie diese Kopie aussieht", "fr": "Nouvelle variante, telle que cette copie apparaît", "it": "Nuova variante, così come appare questa copia"},
+  "Choose": {"de": "Wählen", "fr": "Choisir", "it": "Scegli"},
+  "Move to Recycle Bin": {"de": "In den Papierkorb verschieben", "fr": "Placer dans la Corbeille", "it": "Sposta nel Cestino"},
   "Off": {"de": "Aus", "fr": "Désactivé", "it": "Disattivato"},
   "Press Enter for the next misspelt word.": {"de": "Drücke die Eingabetaste für den nächsten Fehler.", "fr": "Appuyez sur Entrée pour la faute suivante.", "it": "Premi Invio per l’errore successivo."},
   "Show in Explorer": {"de": "Im Explorer zeigen", "fr": "Afficher dans l’Explorateur", "it": "Mostra in Esplora file"},

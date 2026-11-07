@@ -156,6 +156,9 @@ final class Bar {
         return button.box
     }
 
+    /// Chooses another folder for designs (the app's).
+    static var chooseDesignsFolder: (() -> Void)?
+
     static func appEntries() -> [MenuHost.Entry] {
         let server = MCPServer.shared
         let on = AIControl.allowed
@@ -169,6 +172,19 @@ final class Bar {
         // Codex in the terminal and in the ChatGPT app, which share their servers.
         entries.append(.item(Words.t("Copy Codex Command"), enabled: on) { Clipboard.copyText("codex mcp add bezzle --url \(address)") })
         entries.append(.item(Words.t("Copy Server Address"), enabled: on) { Clipboard.copyText(address) })
+        entries.append(.separator)
+        entries.append(.item(Words.t("Designs Folder…")) { Bar.chooseDesignsFolder?() })
+        // The open design's file, picked out in Explorer.
+        if let url = WindowsCore.designURL {
+            entries.append(.separator)
+            entries.append(.item(Words.t("Show in Explorer")) {
+                // Picked out in the folder it is in: a design is a folder itself.
+                let explorer = Process()
+                explorer.executableURL = URL(fileURLWithPath: "C:\\Windows\\explorer.exe")
+                explorer.arguments = ["/select," + url.path.replacingOccurrences(of: "/", with: "\\")]
+                try? explorer.run()
+            })
+        }
         return entries
     }
 

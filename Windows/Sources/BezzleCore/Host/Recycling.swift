@@ -4,7 +4,7 @@ import WinSDK
 extension WindowsCore {
     /// Moves a file or a design's folder to the Recycle Bin, as Explorer's Delete does, without
     /// asking or showing progress: whether it went.
-    static func recycle(_ url: URL) -> Bool {
+    public static func recycle(_ url: URL) -> Bool {
         // The shell takes a list of paths, each ended by a nought and the list by another.
         var from = Array(url.standardizedFileURL.path.replacingOccurrences(of: "/", with: "\\").utf16)
         from += [0, 0]

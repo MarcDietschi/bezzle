@@ -77,10 +77,21 @@ final class BezzleApp: SwiftApplication {
     var home: HomeView?
     var design: DesignWindow?
 
-    /// Where designs are kept, as the Mac's standard Designs folder: Documents › Bezzle.
+    /// Where designs are kept: the folder chosen in the Bezzle menu (Designs Folder…), or, as the
+    /// Mac's standard one, Documents › Bezzle.
     static var designsFolder: URL {
-        (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.homeDirectoryForCurrentUser)
+        if let chosen = UserDefaults.standard.string(forKey: "designsFolderPath"), FileManager.default.fileExists(atPath: chosen) {
+            return URL(fileURLWithPath: chosen, isDirectory: true)
+        }
+        return (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.homeDirectoryForCurrentUser)
             .appendingPathComponent("Bezzle", isDirectory: true)
+    }
+
+    /// Another folder chosen to keep designs in, as the Mac's Designs Folder…; home shows it.
+    @MainActor func chooseDesignsFolder() {
+        guard let folder = FileDialogs.chooseFolder(title: Words.t("Designs Folder…"), button: Words.t("Choose"), startingIn: Self.designsFolder) else { return }
+        UserDefaults.standard.set(folder.path, forKey: "designsFolderPath")
+        if design == nil { showHome() }
     }
 
     required init() {
@@ -167,6 +178,7 @@ final class BezzleApp: SwiftApplication {
         host.setZoom = { [weak self] z in self?.design?.canvas.zoom(to: z) }
         host.focusedBoard = { [weak self] in self?.design?.session.board }
         host.endEditing = { [weak self] in self?.design?.canvas.finishTyping() }
+        Bar.chooseDesignsFolder = { [weak self] in self?.chooseDesignsFolder() }
         MCPServer.shared.failed = { why in Trace.say("AI server: \(why)") }
         if AIControl.allowed { MCPServer.shared.start() }
         Trace.time("AI server at \(MCPServer.shared.address)")
@@ -203,6 +215,13 @@ final class BezzleApp: SwiftApplication {
         let view = DesignWindow(name: name) { [weak self] in self?.showHome() }
         view.session.onOpen = { [weak self] in
             if let url = FileDialogs.chooseDesign(startingIn: Self.designsFolder) { self?.openDesign(url) }
+        }
+        view.session.onHome = { [weak self] in self?.showHome() }
+        view.session.onSaveCopy = { [weak self, weak view] in
+            guard let self, let view else { return }
+            view.session.save()
+            guard let copy = try? WindowsCore.saveCopy(named: Words.t("%@ copy", name), in: Self.designsFolder) else { MessageBeep(0); return }
+            self.openDesign(copy)
         }
         view.root.requestedTheme = Theme.dark ? .dark : .light
         window.content = view.root
