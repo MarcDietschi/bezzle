@@ -62,6 +62,7 @@ final class HomeView {
         root.sizeChanged.addHandler { [weak self] _, _ in self?.showDesigns() }
         try? Grid.setRowSpan(menus.layer, 2)
         root.children.append(menus.layer)
+        takeDrops()
     }
 
     // MARK: Bar
@@ -122,6 +123,14 @@ final class HomeView {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.refresh() } }
         }
         right.children.append(search)
+        // A design here is a folder, which Open… picks: files from other apps come in by their own button.
+        let bringIn = Theme.card(radius: 8)
+        bringIn.height = 28
+        let bringLabel = Theme.text(Words.t("Bring In…"), size: 12, weight: 500)
+        bringLabel.margin = Theme.inset(12, 0, 12, 0)
+        bringIn.child = bringLabel
+        bringIn.tapped.addHandler { [weak self] _, _ in self?.chooseAndBringIn() }
+        right.children.append(bringIn)
         let openButton = Theme.card(radius: 8)
         openButton.height = 28
         let label = Theme.text(Words.t("Open…"), size: 12, weight: 500)
@@ -136,6 +145,40 @@ final class HomeView {
 
     func chooseAndOpen() {
         if let url = FileDialogs.chooseDesign(startingIn: folder) { open(url) }
+    }
+
+    func chooseAndBringIn() {
+        if let url = FileDialogs.chooseFileToBringIn() { open(url) }
+    }
+
+    // MARK: Files dropped on home
+
+    /// StandardDataFormats.StorageItems, which the bindings leave out: files, as Explorer drags them.
+    private static let storageItems = "Shell IDList Array"
+
+    /// Designs and files from other apps dropped anywhere on home open, as on the Mac: the first
+    /// of them, as one design shows at a time here.
+    private func takeDrops() {
+        root.allowDrop = true
+        root.dragOver.addHandler { _, args in
+            guard let args, let view = args.dataView else { return }
+            args.acceptedOperation = (try? view.contains(Self.storageItems)) == true ? .copy : .none
+        }
+        root.drop.addHandler { [weak self] _, args in
+            guard let args, let view = args.dataView, (try? view.contains(Self.storageItems)) == true else { return }
+            let deferral = try? args.getDeferral()
+            Task { @MainActor [weak self] in
+                defer { try? deferral?.complete() }
+                guard let items = try? await view.getStorageItemsAsync()?.get() else { return }
+                var urls: [URL] = []
+                for k in 0..<items.size {
+                    if let item = (try? items.getAt(k)) ?? nil, !item.path.isEmpty { urls.append(URL(fileURLWithPath: item.path)) }
+                }
+                guard let first = urls.first(where: { $0.pathExtension.lowercased() == "bezzle" || WindowsCore.imports($0) }) else { return }
+                // After the drop is over: opening replaces home, which the drop is still on.
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.open(first) } }
+            }
+        }
     }
 
     // MARK: Greeting and stage

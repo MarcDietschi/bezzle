@@ -179,6 +179,7 @@ final class BezzleApp: SwiftApplication {
         host.focusedBoard = { [weak self] in self?.design?.session.board }
         host.endEditing = { [weak self] in self?.design?.canvas.finishTyping() }
         Bar.chooseDesignsFolder = { [weak self] in self?.chooseDesignsFolder() }
+        host.broughtIn = { [weak self] report in self?.design?.showImportReport(report) }
         MCPServer.shared.failed = { why in Trace.say("AI server: \(why)") }
         if AIControl.allowed { MCPServer.shared.start() }
         Trace.time("AI server at \(MCPServer.shared.address)")
@@ -201,7 +202,13 @@ final class BezzleApp: SwiftApplication {
         self.home = home
     }
 
+    /// Opens a design; a file from Adobe XD, Figma, Sketch or Photoshop is brought in first, each
+    /// time as a new design in the Designs folder, as on the Mac, and the file is left as it is.
     @MainActor func openDesign(_ url: URL) {
+        if WindowsCore.imports(url) {
+            bringIn(url)
+            return
+        }
         guard let window else { return }
         Theme.readAppearance()
         design?.session.save()
@@ -223,12 +230,47 @@ final class BezzleApp: SwiftApplication {
             guard let copy = try? WindowsCore.saveCopy(named: Words.t("%@ copy", name), in: Self.designsFolder) else { MessageBeep(0); return }
             self.openDesign(copy)
         }
+        view.session.onBringIn = { [weak self] in
+            if let url = FileDialogs.chooseFileToBringIn() { self?.openDesign(url) }
+        }
         view.root.requestedTheme = Theme.dark ? .dark : .light
         window.content = view.root
         try? window.setTitleBar(view.bar.dragArea)
         window.title = name + " — Bezzle"
         design = view
         home = nil
+    }
+
+    /// Brings a file in from another app and opens the design it makes, with what came across at
+    /// the canvas's foot. A Photoshop mockup takes a moment, so its name shows meanwhile.
+    @MainActor private func bringIn(_ file: URL) {
+        guard let window else { return }
+        Theme.readAppearance()
+        design?.session.save()
+        window.content = message(Words.t("Bringing in %@…", file.lastPathComponent), detail: "")
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                do {
+                    let (made, summary) = try WindowsCore.importDesign(file, into: Self.designsFolder)
+                    self.openDesign(made)
+                    self.design?.showImportReport(summary)
+                } catch {
+                    let why = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                    let page = StackPanel()
+                    page.spacing = 18
+                    page.horizontalAlignment = .center
+                    page.verticalAlignment = .center
+                    page.children.append(self.message(Words.t("Bezzle could not bring in the file"), detail: "\(file.lastPathComponent): \(why)"))
+                    let back = Controls.cardButton(Words.t("Done"), height: 28) { [weak self] in
+                        if let self, self.design != nil, let url = WindowsCore.designURL { self.openDesign(url) } else { self?.showHome() }
+                    }
+                    back.horizontalAlignment = .center
+                    page.children.append(back)
+                    window.content = page
+                }
+            }
+        }
     }
 
     @MainActor private func message(_ title: String, detail: String) -> UIElement {

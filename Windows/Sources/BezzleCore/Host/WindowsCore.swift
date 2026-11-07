@@ -193,6 +193,8 @@ public enum WindowsCore {
                     clamp = c ? 1 : 0
                     ramp = [Double(a.x), Double(a.y), Double(b.x), Double(b.y)]
                 case .perspective(let m, _): perspective = m
+                // Worked out by the core where it is asked for (ImportPictures.spread).
+                case .spread: break
                 }
             }
             defer {
@@ -210,8 +212,26 @@ public enum WindowsCore {
                     bz_picture_changed(id, w, h, Int32(from.id), c.baseAddress, blur, clamp, nil)
                 }
             }
-        case .pixels(let bytes, let row, _):
-            bytes.withUnsafeBufferPointer { bz_picture_pixels(id, w, h, Int32(row), $0.baseAddress) }
+        case .pixels(let bytes, let row, let gray):
+            guard gray || p.straightAlpha else {
+                bytes.withUnsafeBufferPointer { bz_picture_pixels(id, w, h, Int32(row), $0.baseAddress) }
+                return
+            }
+            // Skia is given RGBA, its colours multiplied by how solid they are.
+            var rgba = [UInt8](repeating: 255, count: p.width * p.height * 4)
+            for y in 0..<p.height {
+                for x in 0..<p.width {
+                    let to = (y * p.width + x) * 4
+                    if gray {
+                        for c in 0..<3 { rgba[to + c] = bytes[y * row + x] }
+                    } else {
+                        let from = y * row + x * 4, a = Int(bytes[from + 3])
+                        for c in 0..<3 { rgba[to + c] = UInt8((Int(bytes[from + c]) * a + 127) / 255) }
+                        rgba[to + 3] = UInt8(a)
+                    }
+                }
+            }
+            rgba.withUnsafeBufferPointer { bz_picture_pixels(id, w, h, w * 4, $0.baseAddress) }
         }
     }
 

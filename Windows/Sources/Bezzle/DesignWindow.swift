@@ -28,6 +28,18 @@ final class DesignWindow {
     private lazy var news = LibraryNewsChip(session: session)
     /// Looking through the design's words, at the top of the canvas while it is open.
     private lazy var find = FindBar(session: session)
+    /// Where the note on a design just brought in from another app goes (`showImportReport`).
+    private let importReport = Grid()
+    private var reportCard: ImportReportCard?
+
+    /// Says what came across from the other app the design was just brought in from, and what
+    /// looks a little different, at the canvas's foot until Done.
+    func showImportReport(_ summary: WindowsCore.ImportSummary) {
+        let card = ImportReportCard(summary)
+        reportCard = card
+        importReport.children.clear()
+        importReport.children.append(card.root)
+    }
 
     init(name: String, onClose: @escaping () -> Void) {
         session = DesignSession(name: name)
@@ -88,6 +100,9 @@ final class DesignWindow {
         // News from other designs, floating at the canvas's top.
         try? Grid.setColumn(news.root, 2)
         body.children.append(news.root)
+        // What came across, when the design was just brought in from another app, at its foot.
+        try? Grid.setColumn(importReport, 2)
+        body.children.append(importReport)
         // The find bar, there too: the news waits while it is open, as on the Mac.
         WindowsCore.closeFind()
         try? Grid.setColumn(find.root, 2)

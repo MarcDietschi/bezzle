@@ -52,6 +52,9 @@ let package = Package(
     ],
     targets: frameworks.map { .target(name: $0) } + [
         .target(name: "LZFSE", exclude: ["LICENSE", "README.md"]),
+        // What the Mac's importers (Import/) take from Apple's Compression and Accelerate, here only.
+        .target(name: "Compression", dependencies: ["CBezzleHost"]),
+        .target(name: "Accelerate"),
         .target(
             name: "CBezzleHost",
             cxxSettings: [.headerSearchPath("../../Packages/skia")] + skiaDefines.map { define in
@@ -63,7 +66,7 @@ let package = Package(
         ),
         .target(
             name: "BezzleCore",
-            dependencies: frameworks.map { .target(name: $0) } + ["LZFSE", "CBezzleHost"],
+            dependencies: frameworks.map { .target(name: $0) } + ["LZFSE", "CBezzleHost", "Compression", "Accelerate"],
             // The browser's host and Main.swift are replaced by Host/; Live.swift seals with
             // CryptoKit, and DesignTokens.swift comes from Web/prepare.sh, as for the web core.
             exclude: ["Platform/WebHost.swift", "Shared/Model/Live.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],

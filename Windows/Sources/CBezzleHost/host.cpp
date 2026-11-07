@@ -195,6 +195,40 @@ extern "C" int32_t bz_image_size(const void* data, int32_t count, int32_t* width
     return d.width() > 0 && d.height() > 0 ? 1 : 0;
 }
 
+// Pictures in files being brought in from other apps (Import/, through the ImageIO stand-ins in
+// Windows/Sources/BezzleCore/Import): read and written as Image I/O does, as the pixels are kept,
+// not turned by their orientation. On any thread.
+
+extern "C" int32_t bz_image_pixel_size(const void* data, int64_t count, int32_t* width, int32_t* height) {
+    decode(nullptr, 0);
+    auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
+    if (!codec) return 0;
+    const auto d = codec->dimensions();
+    *width = d.width();
+    *height = d.height();
+    return d.width() > 0 && d.height() > 0 ? 1 : 0;
+}
+
+extern "C" int32_t bz_image_decode(const void* data, int64_t count, int32_t width, int32_t height, void* pixels) {
+    decode(nullptr, 0);
+    auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
+    if (!codec || codec->dimensions().width() != width || codec->dimensions().height() != height) return 1;
+    const SkImageInfo info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    const auto result = codec->getPixels(info, pixels, size_t(width) * 4);
+    return result == SkCodec::kSuccess || result == SkCodec::kIncompleteInput || result == SkCodec::kErrorInInput ? 0 : 2;
+}
+
+extern "C" int64_t bz_png_encode(int32_t width, int32_t height, const void* pixels, int32_t straight, void* out, int64_t capacity) {
+    const SkImageInfo info = SkImageInfo::Make(std::max(1, width), std::max(1, height), kRGBA_8888_SkColorType,
+                                               straight ? kUnpremul_SkAlphaType : kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    SkDynamicMemoryWStream stream;
+    if (!SkPngEncoder::Encode(&stream, SkPixmap(info, pixels, size_t(width) * 4), {})) return -1;
+    const int64_t size = int64_t(stream.bytesWritten());
+    if (size > capacity) return -size;
+    stream.copyTo(out);
+    return size;
+}
+
 /// A picture by name: its number, width and height, or 0 when there is none (bezzle.mjs's image).
 std::vector<double> imageByName(const double* v, size_t n) {
     std::string name;
@@ -1383,6 +1417,37 @@ extern "C" int32_t bz_inflate(const void* bytes, int32_t count) {
     out.resize(made);
     answer = std::move(out);
     return int32_t(answer.size());
+}
+
+extern "C" int64_t bz_inflate_into(const void* bytes, int64_t count, void* out, int64_t capacity) {
+    z_stream z = {};
+    if (inflateInit2(&z, -15) != Z_OK) return -1;
+    // zlib counts in 32 bits: what is larger goes through in pieces.
+    const Bytef* in = (const Bytef*)bytes;
+    Bytef* to = (Bytef*)out;
+    int64_t inLeft = count, outLeft = capacity;
+    int result = Z_OK;
+    while (result == Z_OK && outLeft > 0) {
+        if (z.avail_in == 0 && inLeft > 0) {
+            uInt n = uInt(std::min<int64_t>(inLeft, int64_t(1) << 30));
+            z.next_in = (Bytef*)in;
+            z.avail_in = n;
+            in += n;
+            inLeft -= n;
+        }
+        uInt room = uInt(std::min<int64_t>(outLeft, int64_t(1) << 30));
+        z.next_out = to;
+        z.avail_out = room;
+        result = inflate(&z, Z_NO_FLUSH);
+        uInt made = room - z.avail_out;
+        to += made;
+        outLeft -= made;
+        // Out of input before the end: what there was is all there is.
+        if (result == Z_BUF_ERROR) break;
+    }
+    inflateEnd(&z);
+    if (result != Z_OK && result != Z_STREAM_END && result != Z_BUF_ERROR) return -1;
+    return capacity - outLeft;
 }
 
 extern "C" int32_t bz_png_write(const char* path, int32_t width, int32_t height, const void* pixels) {

@@ -27,7 +27,7 @@ enum Words {
     }()
 
     private static let table: [String: Entry] = {
-        guard language != "en" else { return [:] }
+        // English has only its plurals there ("1 artboard"): the code's words are English.
         let file = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("strings.json")
         guard let data = try? Data(contentsOf: file),
               let all = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

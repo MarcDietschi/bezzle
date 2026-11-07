@@ -45,8 +45,15 @@ To try it in the VM without anyone at it: `VM/desktop` runs a command in its sig
 and `VM/input.ps1` there moves the mouse and presses keys (real input, as WinUI needs). With
 `BEZZLE_TRACE` set, the app writes what `Trace.say` reports to `%TEMP%\bezzle-trace.log`.
 `bezzle-render` draws a design's artboards to PNG files (`BEZZLE_TWICE`, `BEZZLE_FIRST` and
-`BEZZLE_HOST_TRACE` for drawing twice, after other designs, and tracing what is missing).
+`BEZZLE_HOST_TRACE` for drawing twice, after other designs, and tracing what is missing). Given a
+file from Adobe XD, Figma, Sketch or Photoshop instead, it brings it in first, as the app does
+(into the out folder, or `BEZZLE_IMPORT_TO`), says what came across, and draws the new design.
 `BEZZLE_TEXTS=<file>` writes instead how the core measures the design's texts and probe texts in
 every family the open fonts stand in for (lines, baselines, widths, fitted frames;
 `Host/TextReport.swift`), to compare with Text Kit on the Mac; `BEZZLE_INK=<file>` where letters
 are drawn against their baselines.
+
+Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
+`Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O
+and Core Text); home's Bring In… button, the Bezzle menu, files dropped on home and a file given
+on the command line all bring one in.

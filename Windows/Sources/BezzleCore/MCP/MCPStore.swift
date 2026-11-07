@@ -31,6 +31,8 @@ import Foundation
     public var focusedBoard: () -> Int? = { nil }
     /// Typing into a text ends, so a change comes after it.
     public var endEditing: () -> Void = {}
+    /// What came across from the other app the design just opened was brought in from, for the window to say.
+    public var broughtIn: (WindowsCore.ImportSummary) -> Void = { _ in }
 }
 
 /// The Mac's DocumentStore as the tools ask it, over the open design.

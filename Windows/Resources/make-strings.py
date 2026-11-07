@@ -16,7 +16,8 @@ strings = json.load(open(catalog, encoding='utf-8'))['strings']
 languages = {}
 for key, entry in strings.items():
     for lang, loc in (entry.get('localizations') or {}).items():
-        if lang == 'en':
+        # English only where a number chooses the words ("1 artboard", "2 artboards").
+        if lang == 'en' and 'plural' not in (loc.get('variations') or {}):
             continue
         if 'stringUnit' in loc:
             unit = loc['stringUnit']

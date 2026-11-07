@@ -133,14 +133,26 @@ import Foundation
     }
 
     /// Opens a design in the window, as the home screen does.
+    /// A file from Adobe XD, Figma, Sketch or Photoshop becomes a new design in the designs
+    /// folder, which is what opens, as on the Mac.
     private func open(_ url: URL) throws -> DocumentStore {
+        var url = url
+        var report: WindowsCore.ImportSummary?
+        if WindowsCore.imports(url) {
+            do {
+                (url, report) = try WindowsCore.importDesign(url, into: MCPHost.shared.designsFolder())
+            } catch {
+                throw MCPError("\(url.lastPathComponent) could not be brought in: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
+            }
+        }
         guard url.pathExtension.lowercased() == "bezzle" else {
-            throw MCPError("\(url.lastPathComponent) is not a design: Bezzle on Windows opens .bezzle designs.")
+            throw MCPError("\(url.lastPathComponent) is not a design: Bezzle opens .bezzle designs, and brings in .xd, .fig, .sketch, .psd and .psb files.")
         }
         let store = DocumentStore.open
         if store.isAt(url) { return store }
         MCPHost.shared.endEditing()
         guard MCPHost.shared.open(url), store.isAt(url) else { throw MCPError("\(url.lastPathComponent) could not be opened.") }
+        if let report { MCPHost.shared.broughtIn(report) }
         return store
     }
 

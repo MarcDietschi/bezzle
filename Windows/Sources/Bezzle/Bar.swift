@@ -147,7 +147,10 @@ final class Bar {
         var holder: Border?
         let button = Pressable(radius: 8) { [weak self] in
             guard let self, let menus = self.menus, let holder else { return }
-            menus.show(below: holder, width: 260, entries: Self.appEntries())
+            // A design here is a folder, which Open (Ctrl+O) picks, so files from other apps come in by their own entry.
+            let session = self.session
+            let bringIn: [MenuHost.Entry] = [.item(Words.t("Bring In a Design…")) { session.onBringIn?() }, .separator]
+            menus.show(below: holder, width: 260, entries: bringIn + Self.appEntries())
         }
         holder = button.box
         let word = Theme.text("Bezzle", size: 15, weight: 600, serif: true)

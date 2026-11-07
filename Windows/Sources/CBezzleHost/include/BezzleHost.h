@@ -95,6 +95,16 @@ void bz_spell_learn(const char *language, const uint16_t *word, int32_t count);
 /// How big a picture file's picture is, in pixels, upright as its orientation turns it; 0 if
 /// Skia cannot read it.
 int32_t bz_image_size(const void *data, int32_t count, int32_t *width, int32_t *height);
+/// How many pixels a picture file keeps, as Image I/O counts them (not turned by its
+/// orientation); 0 if Skia cannot read it. On any thread.
+int32_t bz_image_pixel_size(const void *data, int64_t count, int32_t *width, int32_t *height);
+/// Reads a picture file's pixels, `width` by `height` as bz_image_pixel_size says, into premultiplied
+/// RGBA, rows top first. Returns 0 when done. On any thread.
+int32_t bz_image_decode(const void *data, int64_t count, int32_t width, int32_t height, void *pixels);
+/// RGBA pixels (premultiplied, or not with `straight`) as a PNG file's bytes into `out`, which
+/// holds `capacity`: how many bytes, minus that when they did not fit, -1 if it could not be made.
+/// On any thread.
+int64_t bz_png_encode(int32_t width, int32_t height, const void *pixels, int32_t straight, void *out, int64_t capacity);
 /// Adds one of a design's pictures by name, as its encoded bytes. Returns its asset number, 0
 /// if Skia cannot read it.
 int32_t bz_asset_add(const char *name, const void *data, int32_t count);
@@ -132,6 +142,9 @@ int32_t bz_stage(int32_t width, int32_t height, double scale, uint32_t table, ui
 /// Unpacks raw DEFLATE (RFC 1951, as Apple's COMPRESSION_ZLIB writes it, the icon library's
 /// packing): keeps the bytes and returns their length, for bz_host_take; -1 if they cannot be.
 int32_t bz_inflate(const void *bytes, int32_t count);
+/// The same, into `out`, which holds `capacity` bytes, on any thread: how many bytes it wrote
+/// (`capacity` when there were more), -1 if they cannot be unpacked.
+int64_t bz_inflate_into(const void *bytes, int64_t count, void *out, int64_t capacity);
 /// Writes pixels as bz_picture_read makes them to a PNG file at `path` (UTF-8). Returns 0 when done.
 int32_t bz_png_write(const char *path, int32_t width, int32_t height, const void *pixels);
 /// Premultiplied RGBA pixels as a picture file's bytes, `format` 0 PNG, 1 JPEG, `quality` 0…1:

@@ -1,5 +1,6 @@
 import Foundation
 import WinSDK
+import BezzleCore
 
 /// Windows' own Open dialog, through its COM interface (IFileOpenDialog). A design is a folder
 /// named "….bezzle", as a package is on the Mac, so the dialog picks folders.
@@ -7,6 +8,15 @@ import WinSDK
 enum FileDialogs {
     static func chooseDesign(startingIn folder: URL?) -> URL? {
         chooseFolder(title: "Open a Design", button: "Open", startingIn: folder)
+    }
+
+    /// A file from Adobe XD, Figma, Sketch or Photoshop, to bring in as a new design, as the Mac's
+    /// Open panel offers them beside designs (a design here is a folder, which this dialog cannot
+    /// pick at the same time).
+    static func chooseFileToBringIn() -> URL? {
+        let patterns = WindowsCore.importedExtensions.map { "*.\($0)" }.joined(separator: ";")
+        return chooseFiles(title: Words.t("Bring In a Design"), button: Words.t("Bring In"),
+                           filters: [(Words.t("Adobe XD, Figma, Sketch and Photoshop"), patterns)], several: false).first
     }
 
     /// A folder chosen in Windows' own dialog, as the Mac's NSOpenPanel for folders.

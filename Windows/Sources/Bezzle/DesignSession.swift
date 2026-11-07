@@ -129,6 +129,8 @@ final class DesignSession {
     var onHome: (() -> Void)?
     /// A copy of the design saved beside the others and opened (Ctrl+Shift+S, the Mac's Save a Copy).
     var onSaveCopy: (() -> Void)?
+    /// Asks for a file from Adobe XD, Figma, Sketch or Photoshop to bring in (the Bezzle menu).
+    var onBringIn: (() -> Void)?
 
     /// Why the design could not be saved, if it could not; shown by the window.
     private(set) var unsaved: String?

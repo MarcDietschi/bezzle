@@ -1,5 +1,13 @@
 {
   "Add this word to the dictionary": {"de": "Dieses Wort zum Wörterbuch hinzufügen", "fr": "Ajouter ce mot au dictionnaire", "it": "Aggiungi questa parola al dizionario"},
+  "Adobe XD, Figma, Sketch and Photoshop": {"de": "Adobe XD, Figma, Sketch und Photoshop", "fr": "Adobe XD, Figma, Sketch et Photoshop", "it": "Adobe XD, Figma, Sketch e Photoshop"},
+  "Bezzle could not bring in the file": {"de": "Bezzle konnte die Datei nicht übernehmen", "fr": "Bezzle n’a pas pu importer le fichier", "it": "Bezzle non è riuscito a importare il file"},
+  "Bring In": {"de": "Übernehmen", "fr": "Importer", "it": "Importa"},
+  "Bring In a Design": {"de": "Ein Design übernehmen", "fr": "Importer un design", "it": "Importa un design"},
+  "Bring In a Design…": {"de": "Ein Design übernehmen …", "fr": "Importer un design…", "it": "Importa un design…"},
+  "Bring In…": {"de": "Übernehmen …", "fr": "Importer…", "it": "Importa…"},
+  "Bringing in %@…": {"de": "%@ wird übernommen …", "fr": "Importation de %@…", "it": "Importazione di %@…"},
+  "Fonts not on this computer, shown in another: %@": {"de": "Schriften, die auf diesem Computer fehlen, durch eine andere ersetzt: %@", "fr": "Polices absentes de cet ordinateur, remplacées par une autre : %@", "it": "Font non presenti su questo computer, mostrati con un altro: %@"},
   "New variant, of this copy as it looks": {"de": "Neue Variante, so wie diese Kopie aussieht", "fr": "Nouvelle variante, telle que cette copie apparaît", "it": "Nuova variante, così come appare questa copia"},
   "Choose": {"de": "Wählen", "fr": "Choisir", "it": "Scegli"},
   "Move to Recycle Bin": {"de": "In den Papierkorb verschieben", "fr": "Placer dans la Corbeille", "it": "Sposta nel Cestino"},
