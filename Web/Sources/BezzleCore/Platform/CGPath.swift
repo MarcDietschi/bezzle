@@ -243,7 +243,9 @@ nonisolated public class CGPath: Equatable, Hashable, @unchecked Sendable {
 
     public func copy(strokingWithWidth width: CGFloat, lineCap: CGLineCap, lineJoin: CGLineJoin, miterLimit: CGFloat,
                      transform: CGAffineTransform = .identity) -> CGPath {
-        let out = Skia.op(.stroke, self, nil, params: [Double(width), Double(lineCap.rawValue), Double(lineJoin.rawValue), Double(miterLimit)])
+        // Skia's path operations drop an outline thinner than about a hundredth of a point as
+        // nothing, where Core Graphics keeps it: the knife's blade is a thousandth wide.
+        let out = Skia.op(.stroke, self, nil, params: [Double(max(width, 0.02)), Double(lineCap.rawValue), Double(lineJoin.rawValue), Double(miterLimit)])
         return transform.isIdentity ? out : (out.copy(using: [transform]) ?? out)
     }
 

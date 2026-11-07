@@ -51,15 +51,6 @@ enum CanvasInk {
     static let shadow = NSColor(srgbRed: 0x3A / 255, green: 0x32 / 255, blue: 0x26 / 255, alpha: 1)
 }
 
-/// A line the canvas draws while something snaps to it (the app's, in DocumentStore.swift).
-struct Guide: Equatable {
-    var from: CGPoint
-    var to: CGPoint
-    var field: CGRect? = nil
-    var mine = false
-    var gap: Bool { field != nil }
-}
-
 /// Which drawing aids show, and so what snaps (the app's, in LayoutOperations.swift).
 final class Helpers {
     static let shared = Helpers()
@@ -103,41 +94,4 @@ nonisolated enum DesignFile {
 
 nonisolated extension DesignFile {
     static func isPackage(_ url: URL) -> Bool { true }
-}
-
-/// The canvas (the app's, in CanvasView.swift): only its way of writing an angle is used by the model.
-enum CanvasView {
-    nonisolated static func normalized(_ degrees: Double) -> Double {
-        var d = degrees.truncatingRemainder(dividingBy: 360)
-        if d > 180 { d -= 360 }
-        if d <= -180 { d += 360 }
-        return (d * 100).rounded() / 100
-    }
-}
-
-// Model logic that lives in the app's Store today (Operations.swift, ComponentOperations.swift);
-// it belongs in the model, where both would share it.
-extension Node {
-    func freshCopy() -> Node {
-        var n = self
-        if instance != nil { return Components.freshCopy(of: self) }
-        n.id = UUID()
-        n.children = isRepeatGrid ? RepeatGrid.freshCells(of: self) : isDeck ? Deck.freshPosts(of: self) : children.map { $0.freshCopy() }
-        return n
-    }
-}
-
-extension Components {
-    static func freshCopy(of copy: Node) -> Node {
-        guard let k = key(of: copy), let inst = copy.instance else { return copy }
-        let next = freshKey()
-        var n = RepeatGrid.copy(copy, k ^ next)
-        n.id = inst.of.mixed(next)
-        return n
-    }
-}
-
-// The app's, in DocumentStore.swift.
-extension CGRect {
-    nonisolated var area: CGFloat { isNull || isEmpty ? 0 : width * height }
 }

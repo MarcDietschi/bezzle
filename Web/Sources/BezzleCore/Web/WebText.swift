@@ -17,6 +17,31 @@ nonisolated enum Fonts {
     }
 
     static func displayName(_ family: String) -> String { family == TextStyle.system ? "SF Pro" : family }
+
+    /// How heavy a face is and whether it leans, as the Mac's font manager counts weight (5
+    /// regular, 9 bold): here read from the face's name, the open fonts' faces being named as
+    /// the Mac's are.
+    static func traits(of face: String, in family: String) -> (weight: Int, italic: Bool) {
+        traits(named: face)
+    }
+
+    nonisolated(unsafe) static var lineHeights: [String: CGFloat] = [:]
+
+    /// The font's own line height, which a text has until one is set: its ascent, descent and
+    /// leading, rounded up, as the Mac measures it.
+    static func naturalLineHeight(_ style: TextStyle) -> CGFloat {
+        let key = "\(style.family)/\(style.face)/\(style.size)"
+        if let known = lineHeights[key] { return known }
+        var s = style
+        s.lineSpacing = nil
+        var probe = Node(kind: .text, name: "", frame: .zero)
+        probe.text = "A"
+        probe.style = s
+        probe.spans = nil
+        let height = TextLayout.ownLineHeight(probe)
+        lineHeights[key] = height
+        return height
+    }
 }
 
 nonisolated enum TextLayout {
@@ -64,7 +89,10 @@ nonisolated enum TextLayout {
     nonisolated(unsafe) private static var kept: [Key: Laid] = [:]
 
     /// Forgets every text set so far, as when the page has fonts it had not: each is set again.
-    static func forget() { kept = [:] }
+    static func forget() {
+        kept = [:]
+        Fonts.lineHeights = [:]
+    }
 
     /// How far the letters are raised in lines set further apart than the font's own, as on the Mac.
     private static func lift(_ style: TextStyle, natural: CGFloat) -> CGFloat {
@@ -92,6 +120,12 @@ nonisolated enum TextLayout {
             }
         }
         if runs.isEmpty { runs = [TextSpan(text: "")]; texts = [""] }
+        // The layer's OpenType features (small capitals among them) and its font's axes, as
+        // "tag=value" lists, as the Mac's Fonts.font sets them.
+        var wanted = style.features ?? [:]
+        if style.letterCase == .smallCaps, wanted["smcp"] == nil { wanted["smcp"] = 1 }
+        let features = wanted.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+        let axes = (style.axes ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         return zip(runs, texts).map { run, text in
             let letters = run.look.resolved(over: style, color: color ?? .black)
             var r: [String: Any] = [
@@ -100,6 +134,8 @@ nonisolated enum TextLayout {
                 "underline": letters.underline, "strike": letters.strikethrough,
             ]
             if color != nil { r["color"] = [letters.color.r, letters.color.g, letters.color.b, letters.color.a] }
+            if !features.isEmpty { r["features"] = features }
+            if !axes.isEmpty { r["axes"] = axes }
             return r
         }
     }
@@ -152,6 +188,16 @@ nonisolated enum TextLayout {
             defer { y += height }
             return Line(start: Int(m[0]), end: Int(m[1]), top: y, height: height, width: CGFloat(m[2]), baseline: y + baseline, drawn: y + drawn)
         }
+    }
+
+    /// The first line's own height, as the font sets it: for `Fonts.naturalLineHeight`.
+    static func ownLineHeight(_ node: Node) -> CGFloat {
+        let spec: [String: Any] = ["width": 100_000.0, "align": "left", "lineSpacing": 0.0, "paragraphSpacing": 0.0, "runs": runs(node)]
+        let json = (try? JSONSerialization.data(withJSONObject: spec)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let answer = Host.call(.textLayout, string: json)
+        guard let data = answer.data(using: .utf8), let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let m = (reply["lines"] as? [[Double]])?.first, m.count >= 6 else { return ceil((node.style?.size ?? 12) * 1.2) }
+        return CGFloat(m[3] + m[4] + m[5]).rounded(.up)
     }
 
     static func height(_ node: Node, width: CGFloat) -> CGFloat {

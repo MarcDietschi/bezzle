@@ -22,6 +22,9 @@ nonisolated public final class CIImage: @unchecked Sendable {
     public let extent: CGRect
     /// Its edges carry on outward without end.
     let clamped: Bool
+    /// A linear gradient from black at `from` to white at `to` (Core Image's pixels from the
+    /// bottom left), as a masked variable blur takes its mask; nil for a picture.
+    var gradient: (from: CGPoint, to: CGPoint)?
 
     public init(cgImage: CGImage) {
         source = cgImage
@@ -38,6 +41,14 @@ nonisolated public final class CIImage: @unchecked Sendable {
 
     public func applyingGaussianBlur(sigma: Double) -> CIImage {
         CIImage(source, changes + [.blur(sigma: sigma, clamp: clamped)], extent: clamped ? extent : extent.insetBy(dx: -sigma * 3, dy: -sigma * 3), clamped: clamped)
+    }
+
+    /// Blurred by none at `from` growing to `sigma` at `to`, in Core Image's pixels from the
+    /// bottom left, as the masked variable blur along a linear gradient blurs it.
+    func applyingRampBlur(sigma: Double, from: CGPoint, to: CGPoint) -> CIImage {
+        let h = CGFloat(source?.height ?? 0)
+        let change = Images.Change.rampBlur(sigma: sigma, clamp: clamped, from: CGPoint(x: from.x, y: h - from.y), to: CGPoint(x: to.x, y: h - to.y))
+        return CIImage(source, changes + [change], extent: clamped ? extent : extent.insetBy(dx: -sigma * 3, dy: -sigma * 3), clamped: clamped)
     }
 
     public func cropped(to r: CGRect) -> CIImage { CIImage(source, changes, extent: extent.intersection(r), clamped: false) }
@@ -81,7 +92,7 @@ nonisolated public final class CIContext: @unchecked Sendable {
     public func createCGImage(_ image: CIImage, from rect: CGRect) -> CGImage? { image.made(rect) }
 }
 
-/// The filters Bezzle's blurs name; a blur that grows along a ramp is made even for now.
+/// The filters Bezzle's blurs name.
 nonisolated public class CIFilter: @unchecked Sendable {
     public var inputImage: CIImage?
     public var outputImage: CIImage? { inputImage }
@@ -93,12 +104,23 @@ nonisolated public class CIFilter: @unchecked Sendable {
     public final class LinearGradient: CIFilter, @unchecked Sendable {
         public var point0 = CGPoint.zero, point1 = CGPoint.zero
         public var color0 = CIColor(red: 0, green: 0, blue: 0), color1 = CIColor(red: 1, green: 1, blue: 1)
+        public override var outputImage: CIImage? {
+            let image = CIImage(nil, [], extent: .infinite, clamped: false)
+            image.gradient = (point0, point1)
+            return image
+        }
     }
 
+    /// Blurred as much as its mask is light: along a linear gradient from black to white, none
+    /// at its start growing to `radius` at its end; any other mask blurs it evenly.
     public final class MaskedVariableBlur: CIFilter, @unchecked Sendable {
         public var mask: CIImage?
         public var radius: Float = 0
-        public override var outputImage: CIImage? { inputImage?.applyingGaussianBlur(sigma: Double(radius)) }
+        public override var outputImage: CIImage? {
+            guard let inputImage else { return nil }
+            if let g = mask?.gradient { return inputImage.applyingRampBlur(sigma: Double(radius), from: g.from, to: g.to) }
+            return inputImage.applyingGaussianBlur(sigma: Double(radius))
+        }
     }
 }
 

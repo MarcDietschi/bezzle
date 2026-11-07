@@ -29,6 +29,12 @@ nonisolated public final class CGImage: @unchecked Sendable, Equatable, Hashable
         Images.shared.list.append(self)
     }
 
+    /// Told when a picture is no longer held anywhere, so that a host keeping what it made of it
+    /// (Bezzle for Windows' Skia) can let it go too; the browser's page keeps none, so nil there.
+    public nonisolated(unsafe) static var released: ((Int) -> Void)?
+
+    deinit { Self.released?(id) }
+
     public static func == (a: CGImage, b: CGImage) -> Bool { a.id == b.id }
     public func hash(into h: inout Hasher) { h.combine(id) }
 
@@ -74,6 +80,10 @@ nonisolated public final class Images: @unchecked Sendable {
     public enum Change {
         /// Blurred by `sigma` pixels; with `clamp`, its edges carry on outward first.
         case blur(sigma: Double, clamp: Bool)
+        /// Blurred by none at `from` growing to `sigma` at `to`, in the source's pixels from its
+        /// top left, and as it is past either (Core Image's masked variable blur along a linear
+        /// ramp). A page that knows no ramp blurs it evenly.
+        case rampBlur(sigma: Double, clamp: Bool, from: CGPoint, to: CGPoint)
         /// Cut to part of it.
         case crop(CGRect)
         /// Drawn through a 3×3 matrix, row by row, into a picture whose top left is `origin` in its pixels.
@@ -95,6 +105,8 @@ nonisolated public final class Images: @unchecked Sendable {
                 s += changes.map { change -> String in
                     switch change {
                     case .blur(let sigma, let clamp): return "{\"blur\":\(sigma),\"clamp\":\(clamp)}"
+                    case .rampBlur(let sigma, let clamp, let a, let b):
+                        return "{\"blur\":\(sigma),\"clamp\":\(clamp),\"ramp\":[\(a.x),\(a.y),\(b.x),\(b.y)]}"
                     case .crop(let r): return "{\"crop\":[\(r.minX),\(r.minY),\(r.width),\(r.height)]}"
                     case .perspective(let m, let origin): return "{\"perspective\":\(Recording.json(m)),\"origin\":[\(origin.x),\(origin.y)]}"
                     }
