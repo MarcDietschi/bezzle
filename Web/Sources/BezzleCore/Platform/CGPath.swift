@@ -168,14 +168,17 @@ nonisolated public class CGPath: Equatable, Hashable, @unchecked Sendable {
     }
 
     /// The path as straight lines, curves cut into short ones.
-    func polygons(tolerance: CGFloat = 0.1) -> [[CGPoint]] {
-        var out: [[CGPoint]] = [], poly: [CGPoint] = []
+    func polygons(tolerance: CGFloat = 0.1) -> [[CGPoint]] { runs(tolerance: tolerance).map(\.points) }
+
+    /// Each run of the path as a line of short straight steps, and whether it was closed.
+    private func runs(tolerance: CGFloat) -> [(points: [CGPoint], closed: Bool)] {
+        var out: [(points: [CGPoint], closed: Bool)] = [], poly: [CGPoint] = []
         var k = 0, current = CGPoint.zero
         func steps(_ length: CGFloat) -> Int { max(2, min(1024, Int((length / max(tolerance * 8, 1e-6)).squareRoot().rounded(.up)) * 2)) }
         for t in types {
             switch t {
             case .moveToPoint:
-                if poly.count > 1 { out.append(poly) }
+                if poly.count > 1 { out.append((poly, false)) }
                 current = points[k]; poly = [current]
             case .addLineToPoint:
                 current = points[k]; poly.append(current)
@@ -190,13 +193,13 @@ nonisolated public class CGPath: Equatable, Hashable, @unchecked Sendable {
                 for i in 1...n { poly.append(Self.cubic(current, c1, c2, e, CGFloat(i) / CGFloat(n))) }
                 current = e
             case .closeSubpath:
-                if poly.count > 1 { out.append(poly) }
+                if poly.count > 1 { out.append((poly, true)) }
                 current = poly.first ?? current
                 poly = [current]
             }
             k += Self.count(t)
         }
-        if poly.count > 1 { out.append(poly) }
+        if poly.count > 1 { out.append((poly, false)) }
         return out
     }
 
@@ -268,7 +271,11 @@ nonisolated public class CGPath: Equatable, Hashable, @unchecked Sendable {
 
     public func flattened(threshold: CGFloat) -> CGPath {
         let m = CGMutablePath()
-        for poly in polygons(tolerance: threshold) { m.addLines(between: poly) }
+        // Closed runs stay closed, as Core Graphics flattens them.
+        for run in runs(tolerance: threshold) {
+            m.addLines(between: run.points)
+            if run.closed { m.closeSubpath() }
+        }
         return m
     }
 

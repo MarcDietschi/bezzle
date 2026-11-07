@@ -29,23 +29,6 @@ nonisolated enum Developer {
     static func developed(_ picture: CGImage, _ develop: Develop?) -> CGImage { picture }
 }
 
-/// Text along a curve is not drawn here yet; it keeps its frame.
-nonisolated enum CurvedText {
-    final class Laid: @unchecked Sendable {
-        let box: CGRect
-        let anchor: CGPoint
-        let anchorAngle: CGFloat
-        let alignK: CGFloat
-        init(box: CGRect) { self.box = box; anchor = CGPoint(x: box.midX, y: box.midY); anchorAngle = 0; alignK = 0.5 }
-    }
-
-    static func laid(_ node: Node) -> Laid? { nil }
-    static func lay(_ node: Node, along path: CGPath, curve: TextCurve) -> Laid { Laid(box: CGRect(origin: .zero, size: node.frame.size)) }
-    static func arc(for node: Node, apex: CGPoint, bend: Double) -> CGPath? { nil }
-    static func hits(_ laid: Laid, _ p: CGPoint, tolerance: CGFloat) -> Bool { false }
-    static func draw(_ laid: Laid, in ctx: CGContext, painting: ((CGContext) -> Void)? = nil) {}
-}
-
 /// The canvas's ink, light, as the page's canvas is.
 enum CanvasInk {
     static let shadow = NSColor(srgbRed: 0x3A / 255, green: 0x32 / 255, blue: 0x26 / 255, alpha: 1)

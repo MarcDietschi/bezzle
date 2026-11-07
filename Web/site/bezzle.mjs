@@ -143,6 +143,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     } else {
       s.fontFamilies = [`${run.family}|${run.face}`, 'System']
     }
+    // The Mac always sets letters' spacing (Text Kit's kern), and set to nought, Core Text leaves
+    // out the font's own kerning between pairs such as "Te"; set to anything else, it keeps it.
+    if (!run.tracking && !/(^|,)kern=/.test(run.features ?? '')) s.fontFeatures = [{ name: 'kern', value: 0 }]
     let d = 0
     if (run.underline) d |= CK.UnderlineDecoration
     if (run.strike) d |= CK.LineThroughDecoration
@@ -174,12 +177,64 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     return out
   }
 
+  // Texts set as one line for a curve (WebCurvedText.swift): their letters, each drawn on its
+  // own where the core places it (drawing call 13).
+  const glyphLines = new Map()
+  const utf8 = new TextEncoder()
+
+  // A font's cap height and x height, from its letters H and x, as CanvasKit's metrics have neither.
+  function heights(font) {
+    const ids = font.getGlyphIDs('Hx')
+    const b = font.getGlyphBounds(ids, null, null)
+    return { cap: -(b[1] ?? 0), x: -(b[5] ?? 0) }
+  }
+
+  function glyphCall(spec) {
+    const runs = spec.runs.length ? spec.runs : [{ text: '', family: 'System', face: 'Regular', size: 12, tracking: 0 }]
+    const p = paragraph({ align: 'left', runs }, runs, 1e7)
+    const m = p.getLineMetrics()[0]
+    // Where each run begins in the words' UTF-8, which is how Skia tells where a letter is from.
+    const starts = []
+    let at = 0
+    for (const r of runs) { starts.push(at); at += utf8.encode(r.text).length }
+    const runOf = (u) => { let k = 0; while (k + 1 < starts.length && starts[k + 1] <= u) k++; return k }
+    const laid = []
+    const line = p.getShapedLines()[0]
+    // Skia puts half the letters' spacing before each, Core Text all of it after.
+    const spacings = runs.map((r) => style(r).letterSpacing ?? 0)
+    for (const run of line?.runs ?? []) {
+      const font = new CK.Font(run.typeface, run.size)
+      for (let k = 0; k < run.glyphs.length; k++) {
+        const r = runOf(run.offsets[k])
+        laid.push({ font, id: run.glyphs[k], x: run.positions[2 * k] - spacings[r] / 2, y: run.positions[2 * k + 1], run: r })
+      }
+    }
+    const baseline = laid.length ? laid[0].y : 0
+    let width = p.getMaxIntrinsicWidth() - spacings[0] / 2, capHeight = -1
+    const out = []
+    laid.forEach((g, k) => {
+      const metrics = g.font.getMetrics(), h = heights(g.font), size = g.font.getSize()
+      const next = laid[k + 1]
+      // As far as the next letter, or for the last, its own width and the spacing after it.
+      const advance = next && next.x >= g.x ? next.x - g.x : g.font.getGlyphWidths([g.id])[0] + spacings[g.run]
+      width = Math.max(width, g.x + advance)
+      if (capHeight < 0) capHeight = h.cap
+      out.push([g.run, g.x, g.y - baseline, advance, -metrics.ascent, metrics.descent, size * 0.1, size / 14, h.x, h.cap])
+    })
+    const ascent = m?.ascent ?? runs[0].size * 0.8, descent = m?.descent ?? runs[0].size * 0.2
+    p.delete()
+    const id = nextText++
+    glyphLines.set(id, laid.map((g) => ({ font: g.font, id: g.id })))
+    return JSON.stringify({ id, line: [width, ascent, descent, capHeight >= 0 ? capHeight : ascent * 0.7], glyphs: out })
+  }
+
   function textCall(spec) {
     if (spec.place !== undefined) {
       const t = texts.get(spec.place)
       if (t) t.baselines = spec.baselines
       return ''
     }
+    if (spec.glyphs) return glyphCall(spec)
     const whole = paragraph(spec, spec.runs, spec.width)
     const metrics = whole.getLineMetrics()
     const lines = []
@@ -191,7 +246,10 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       // Each line drawn on its own, so it can sit where the core puts it.
       const line = runs.length ? paragraph(spec, runs, spec.width) : null
       const lm = line?.getLineMetrics()[0]
-      lines.push({ paragraph: line, baseline: lm?.baseline ?? m.baseline })
+      // Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
+      // lines set from the left: drawn that much to the left (centred or from the right, they lie where the Mac's do).
+      const fromLeft = spec.align !== 'center' && spec.align !== 'right'
+      lines.push({ paragraph: line, baseline: lm?.baseline ?? m.baseline, back: runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0 })
       // Skia shares the leading out above and below the line; Text Kit keeps it apart.
       out.push([m.startIndex, end, m.width, m.ascent - leading / 2, m.descent - leading / 2, leading])
     }
@@ -337,8 +395,19 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
           const t = texts.get(id)
           const layered = l.alpha < 1 || l.shadowed || l.blend
           if (layered) { paint.setAlphaf(l.alpha); canvas.saveLayer(paint, null) }
-          if (t) t.lines.forEach((line, k) => line.paragraph && canvas.drawParagraph(line.paragraph, x, y + (t.baselines[k] ?? 0) - line.baseline))
+          if (t) t.lines.forEach((line, k) => line.paragraph && canvas.drawParagraph(line.paragraph, x - line.back, y + (t.baselines[k] ?? 0) - line.baseline))
           if (layered) canvas.restore()
+          paint.delete()
+          break
+        }
+        case 13: {
+          // One letter of a line set for a curve, its baseline's left end at the origin.
+          const paint = new CK.Paint(); paint.setAntiAlias(true)
+          const l = look(c, i, paint, canvas); i = l.next
+          const id = c[i], k = c[i + 1]; i += 2
+          paint.setColor(CK.Color4f(c[i], c[i + 1], c[i + 2], c[i + 3] * l.alpha)); i += 4
+          const g = glyphLines.get(id)?.[k]
+          if (g) canvas.drawGlyphs([g.id], [0, 0], 0, 0, g.font, paint)
           paint.delete()
           break
         }

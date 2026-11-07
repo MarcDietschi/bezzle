@@ -53,7 +53,7 @@ nonisolated public final class CGContext: @unchecked Sendable {
     // MARK: Commands, as the page reads them
 
     enum Op: Double {
-        case save = 1, restore, concat, clip, fill, stroke, linear, radial, image, layer, endLayer, text
+        case save = 1, restore, concat, clip, fill, stroke, linear, radial, image, layer, endLayer, text, glyph
     }
 
     private func put(_ op: Op) { commands.append(op.rawValue) }
@@ -307,6 +307,15 @@ nonisolated public final class CGContext: @unchecked Sendable {
         putLook()
         put(Double(id), Double(at.x), Double(at.y))
         if let color { put(1); put(color) } else { put(0, 0, 0, 0, 0) }
+    }
+
+    /// One letter of a line the page set for a curve (`CurvedText`), by the line's number there
+    /// and the letter's place in it, its baseline's left end at the origin, y down.
+    public func drawGlyph(_ index: Int, of line: Int, color: CGColor) {
+        put(.glyph)
+        putLook()
+        put(Double(line), Double(index))
+        put(color)
     }
 
     /// What has been drawn so far, as a picture.

@@ -92,6 +92,7 @@ nonisolated enum TextLayout {
     static func forget() {
         kept = [:]
         Fonts.lineHeights = [:]
+        CurvedText.forget()
     }
 
     /// How far the letters are raised in lines set further apart than the font's own, as on the Mac.
@@ -101,7 +102,7 @@ nonisolated enum TextLayout {
     }
 
     /// The runs of a text, as the page sets them: each with its own look over the text's style.
-    private static func runs(_ node: Node) -> [[String: Any]] {
+    static func runs(_ node: Node) -> [[String: Any]] {
         let style = node.style ?? TextStyle()
         let color = node.letterColor
         var runs = node.runs
