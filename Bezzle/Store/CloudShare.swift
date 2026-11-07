@@ -36,25 +36,7 @@ final class CloudShare {
     @ObservationIgnored private var asked: [String: Date] = [:]
 
     /// What this Mac has done with the room so far.
-    struct Progress: Codable, Equatable, Sendable {
-        /// The room's latest record seen.
-        var seq: Int64 = 0
-        /// Every record in the room, as far as known, with the seq it last had.
-        var known: [String: Int64] = [:]
-        /// Records taken in, and those that would not open.
-        var read: Set<String> = []
-        var failed: Set<String> = []
-        /// Copies whose records went before they were read: their next whole is read.
-        var behind: Set<String> = []
-        /// The latest of this Mac's changes in the room.
-        var sentUpTo: Int64 = 0
-        /// This Mac's own parts in the room, by key.
-        var parts: [String] = []
-        /// Pictures in the room, by their names in the design.
-        var pictures: Set<String> = []
-        /// Who this Mac last said it was there.
-        var introduced: FolderShare.Person?
-    }
+    typealias Progress = CloudRoom.Progress
 
     init(keys: ShareKeys, replica: String) {
         self.keys = keys
@@ -340,105 +322,20 @@ final class CloudShare {
     }
 
     /// What a look at the room found.
-    struct Fetched: Sendable {
-        var progress: Progress
-        var changes: [SharedDesign] = []
-        var meta: ShareMeta?
-        var people: [String: FolderShare.Person] = [:]
-        var versions: [DesignVersion] = []
-        /// Something went before it was read: another look is needed.
-        var again = false
-    }
+    typealias Fetched = CloudRoom.Fetched
+    /// A design that came from a link: everything in its room, as one design.
+    typealias Arrived = CloudRoom.Arrived
 
-    /// Reads what is new in the room since `progress`, or everything, `fully`: everyone else's
-    /// newest whole and their changes after it, the design's name and owner, who everyone is, and
-    /// named versions. Away from the main thread.
+    /// Reads what is new in the room since `progress` (see `CloudRoom.fetch`).
     @concurrent nonisolated static func fetch(_ keys: ShareKeys, from server: ShareServer, progress: Progress, fully: Bool,
                                               replica: String) async throws -> Fetched {
-        var p = progress
-        var found = Fetched(progress: progress)
-        let listing = try await server.list(keys.room, since: fully ? 0 : p.seq, read: keys.readToken)
-        if fully { p.known = [:] }
-        var changed: Set<String> = []
-        for record in listing.records where p.known[record.key] != record.seq {
-            p.known[record.key] = record.seq
-            changed.insert(record.key)
-        }
-        p.seq = max(p.seq, listing.seq)
-        var parts: [String: [FolderShare.Part]] = [:]
-        for key in p.known.keys {
-            if case .part(let who, let part)? = ShareRecord(key: key) { parts[who, default: []].append(part) }
-        }
-        if fully { p.parts = (parts[replica] ?? []).sorted().map { $0.record(of: replica) } }
-        for (who, all) in parts where who != replica {
-            var read = Set(all.filter { p.read.contains($0.record(of: who)) })
-            // Behind: everything after its newest whole is read again, with the whole.
-            if p.behind.remove(who) != nil { read = read.filter { $0.kind == .whole } }
-            let failed = Set(all.filter { p.failed.contains($0.record(of: who)) })
-            for part in FolderShare.toRead(all, read: read, failed: failed) {
-                let key = part.record(of: who)
-                guard let sealed = try await server.get(keys.room, key, read: keys.readToken) else {
-                    // Folded into a whole meanwhile: that whole is read next time.
-                    p.known[key] = nil
-                    if part.kind == .changes {
-                        p.behind.insert(who)
-                        found.again = true
-                    }
-                    continue
-                }
-                if let design = keys.open(sealed, about: key).flatMap(FolderShare.unpack) {
-                    found.changes.append(design)
-                    p.read.insert(key)
-                    p.failed.remove(key)
-                } else {
-                    p.failed.insert(key)
-                }
-            }
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .millisecondsSince1970
-        for key in changed.sorted() {
-            switch ShareRecord(key: key) {
-            case .meta?:
-                if let data = try await server.get(keys.room, key, read: keys.readToken).flatMap({ keys.open($0, about: key) }) {
-                    found.meta = FolderShare.decode(ShareMeta.self, from: data)
-                }
-            case .person(let who)?:
-                if let data = try await server.get(keys.room, key, read: keys.readToken).flatMap({ keys.open($0, about: key) }),
-                   let person = FolderShare.decode(FolderShare.Person.self, from: data), person.replica == who {
-                    found.people[who] = person
-                }
-            case .version?:
-                if let data = try await server.get(keys.room, key, read: keys.readToken).flatMap({ keys.open($0, about: key) }),
-                   var version = try? decoder.decode(DesignVersion.self, from: data), version.isNamed {
-                    version.shared = true
-                    found.versions.append(version)
-                }
-            default:
-                break
-            }
-        }
-        p.read = p.read.filter { p.known[$0] != nil }
-        p.failed = p.failed.filter { p.known[$0] != nil }
-        found.progress = p
-        return found
-    }
-
-    /// A design that came from a link: everything in its room, as one design.
-    struct Arrived: Sendable {
-        var state: SharedDesign
-        var meta: ShareMeta?
-        var progress: Progress
+        try await CloudRoom.fetch(keys, from: server, progress: progress, fully: fully, replica: replica)
     }
 
     static func download(_ keys: ShareKeys, from server: ShareServer, meta: (ShareMeta) -> Void) async throws -> Arrived {
         let fetched = try await fetch(keys, from: server, progress: Progress(), fully: true, replica: Sharing.replica)
         if let found = fetched.meta { meta(found) }
-        var state = SharedDesign()
-        for design in fetched.changes { state.merge(design) }
-        // Its owner is still sending it, or it is gone.
-        guard !state.isEmpty else { throw ShareError.missing }
-        return Arrived(state: state, meta: fetched.meta, progress: fetched.progress)
+        return try CloudRoom.arrived(fetched)
     }
 
     // MARK: Keeping what was done

@@ -1,37 +1,6 @@
 import Foundation
 import Observation
 
-/// What ties a design to its room on the relay, the same for everyone who has it, kept in its
-/// package as `sharing/share.json`. Its secret is the design's link: whoever has the package
-/// has the link too, as they have the design.
-nonisolated struct ShareLink: Codable, Equatable, Sendable {
-    /// The link's secret, as base64url. Empty in a design someone shared through iCloud, which
-    /// is no longer shared now that Bezzle shares through its relay.
-    var secret: String
-    /// The design's name as its owner gave it.
-    var title: String?
-    /// The name of whoever shared it, as they gave it.
-    var ownerName: String?
-    /// Its owner stopped sharing it, so it is kept as it last was, to look at and to save a copy of.
-    var ended = false
-
-    init(secret: String, title: String? = nil, ownerName: String? = nil, ended: Bool = false) {
-        self.secret = secret
-        self.title = title
-        self.ownerName = ownerName
-        self.ended = ended
-    }
-
-    /// The room's keys, while it is shared.
-    var keys: ShareKeys? { ended ? nil : ShareKeys(link: secret) }
-
-    /// The page on Bezzle's website that hands the link to Bezzle, in any browser.
-    var page: URL? {
-        guard keys != nil else { return nil }
-        return URL(string: "https://bezzle.ch/open.html#2.\(secret)")
-    }
-}
-
 /// How a design is shared, as the home screen and its window show it.
 enum SharingMark: Equatable {
     /// Shared from this Mac, by link.

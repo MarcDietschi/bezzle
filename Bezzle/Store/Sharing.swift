@@ -117,7 +117,7 @@ final class Sharing {
     /// Whether this Mac shared the design whose room this is.
     func owns(_ room: String) -> Bool { ownerToken(for: room) != nil }
 
-    nonisolated static func hash(_ token: String) -> String { Data(SHA256.hash(data: Data(token.utf8))).hex }
+    nonisolated static func hash(_ token: String) -> String { CloudRoom.hash(token) }
 
     // MARK: Sharing a design
 
@@ -249,28 +249,11 @@ final class Sharing {
 
     // MARK: Opening a link
 
-    /// Where Bezzle's website is, and was until 7 November 2026: links made before then lead to
-    /// mfrports.github.io/bezzle-web, which sends them on to bezzle.ch.
-    nonisolated static let websites: Set<String> = ["bezzle.ch", "www.bezzle.ch", "mfrports.github.io"]
+    /// Where Bezzle's website is, and was (see `CloudRoom.websites`).
+    nonisolated static var websites: Set<String> { CloudRoom.websites }
 
-    /// The secret in a design's link: `bezzle://share/2.<secret>`, or Bezzle's page on the web with
-    /// it after the #. Anything else is not a design's link.
-    nonisolated static func secret(from url: URL) -> String? {
-        let token: String
-        switch url.scheme?.lowercased() {
-        case "bezzle":
-            guard url.host()?.lowercased() == "share" else { return nil }
-            token = url.path(percentEncoded: false).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        case "https":
-            guard let host = url.host()?.lowercased(), websites.contains(host), let fragment = url.fragment(percentEncoded: false) else { return nil }
-            token = fragment
-        default:
-            return nil
-        }
-        guard token.hasPrefix("2.") else { return nil }
-        let secret = String(token.dropFirst(2))
-        return ShareKeys(link: secret) != nil ? secret : nil
-    }
+    /// The secret in a design's link (see `CloudRoom.secret(from:)`).
+    nonisolated static func secret(from url: URL) -> String? { CloudRoom.secret(from: url) }
 
     /// A design's link was opened: the design comes from the relay into the designs folder and
     /// opens, its pictures following. One here already just opens. What went wrong shows on the
@@ -348,136 +331,4 @@ final class Sharing {
 /// Something that stops a design being shared, in words for the person sharing it.
 struct SharingError: Error {
     let message: String
-}
-
-// MARK: - The relay
-
-/// What went wrong with the relay.
-nonisolated enum ShareError: Error, Equatable {
-    /// The room was unshared.
-    case gone
-    /// There is no such room, or no such record.
-    case missing
-    /// The relay would not take what was sent, with its status.
-    case refused(Int)
-    /// The relay could not be reached.
-    case unreachable
-}
-
-/// A room's records, as the relay lists them.
-nonisolated struct ShareListing: Sendable, Equatable {
-    struct Entry: Sendable, Equatable {
-        var key: String
-        var seq: Int64
-        var size: Int
-    }
-
-    var seq: Int64
-    var records: [Entry]
-}
-
-/// The relay's rooms, as Relay/SHARING.md has them; in tests, one kept in memory.
-nonisolated protocol ShareServer: AnyObject, Sendable {
-    func create(_ room: String, hashes: [String: String]) async throws
-    func list(_ room: String, since: Int64, read: String) async throws -> ShareListing
-    /// A record, or nil when there is none.
-    func get(_ room: String, _ key: String, read: String) async throws -> Data?
-    func put(_ room: String, _ key: String, _ body: Data, write: String, writer: String?, owner: String?) async throws
-    func delete(_ room: String, _ key: String, write: String, writer: String) async throws
-    func unshare(_ room: String, write: String, owner: String) async throws
-}
-
-/// Bezzle's relay on Cloudflare, over HTTPS.
-nonisolated final class RelayServer: ShareServer {
-    let base: URL
-    private let session: URLSession
-
-    init(base relay: URL) {
-        var parts = URLComponents(url: relay, resolvingAgainstBaseURL: false)!
-        if parts.scheme == "wss" { parts.scheme = "https" } else if parts.scheme == "ws" { parts.scheme = "http" }
-        base = parts.url!
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 600
-        session = URLSession(configuration: config)
-    }
-
-    private func url(_ room: String, _ key: String? = nil, since: Int64? = nil) -> URL {
-        var url = base.appendingPathComponent("v2").appendingPathComponent(room)
-        if let key { url = url.appendingPathComponent(key) }
-        guard let since, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
-        parts.queryItems = [URLQueryItem(name: "since", value: String(since))]
-        return parts.url!
-    }
-
-    private func send(_ request: URLRequest, body: Data? = nil) async throws -> (Data, Int) {
-        do {
-            let (data, response): (Data, URLResponse)
-            if let body { (data, response) = try await session.upload(for: request, from: body) } else { (data, response) = try await session.data(for: request) }
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 410 { throw ShareError.gone }
-            return (data, status)
-        } catch let error as ShareError {
-            throw error
-        } catch {
-            throw ShareError.unreachable
-        }
-    }
-
-    private func request(_ url: URL, _ method: String, token: String? = nil) -> URLRequest {
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        return request
-    }
-
-    func create(_ room: String, hashes: [String: String]) async throws {
-        var request = request(url(room), "POST")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let (_, status) = try await send(request, body: try JSONEncoder().encode(hashes))
-        guard status == 201 else { throw ShareError.refused(status) }
-    }
-
-    func list(_ room: String, since: Int64, read: String) async throws -> ShareListing {
-        let (data, status) = try await send(request(url(room, since: since), "GET", token: read))
-        if status == 404 { throw ShareError.missing }
-        guard status == 200, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ShareError.refused(status) }
-        let records = (json["records"] as? [[String: Any]] ?? []).compactMap { r -> ShareListing.Entry? in
-            guard let key = r["key"] as? String, let seq = (r["seq"] as? NSNumber)?.int64Value else { return nil }
-            return ShareListing.Entry(key: key, seq: seq, size: (r["size"] as? NSNumber)?.intValue ?? 0)
-        }
-        return ShareListing(seq: (json["seq"] as? NSNumber)?.int64Value ?? since, records: records)
-    }
-
-    func get(_ room: String, _ key: String, read: String) async throws -> Data? {
-        let (data, status) = try await send(request(url(room, key), "GET", token: read))
-        if status == 404 { return nil }
-        guard status == 200 else { throw ShareError.refused(status) }
-        return data
-    }
-
-    func put(_ room: String, _ key: String, _ body: Data, write: String, writer: String?, owner: String?) async throws {
-        var request = request(url(room, key), "PUT", token: write)
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        if let writer { request.setValue(writer, forHTTPHeaderField: "X-Bezzle-Writer") }
-        if let owner { request.setValue(owner, forHTTPHeaderField: "X-Bezzle-Owner") }
-        let (_, status) = try await send(request, body: body)
-        // Taken already: a record written once is the same wherever it came from.
-        guard [200, 201, 409].contains(status) else { throw ShareError.refused(status) }
-    }
-
-    func delete(_ room: String, _ key: String, write: String, writer: String) async throws {
-        var request = request(url(room, key), "DELETE", token: write)
-        request.setValue(writer, forHTTPHeaderField: "X-Bezzle-Writer")
-        let (_, status) = try await send(request)
-        guard [200, 204, 404].contains(status) else { throw ShareError.refused(status) }
-    }
-
-    func unshare(_ room: String, write: String, owner: String) async throws {
-        var request = request(url(room), "DELETE", token: write)
-        request.setValue(owner, forHTTPHeaderField: "X-Bezzle-Owner")
-        let (_, status) = try await send(request)
-        if status == 404 { throw ShareError.missing }
-        guard [200, 204].contains(status) else { throw ShareError.refused(status) }
-    }
 }

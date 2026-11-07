@@ -1184,6 +1184,119 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: A design shared by link
+
+    /// A room on a relay kept in memory, read as CloudShare reads it (moved into
+    /// Model/RelayRooms.swift for Windows), with no Mac's sharing state: links read, keys made,
+    /// records written by hand as copies write them, every look at the room, a copy folding
+    /// while it is read, a record that will not open, someone new, and unsharing.
+    @Test func linkSharing() async throws {
+        let t = "link"
+        let secret = Data((0..<32).map { UInt8($0 * 7 % 256) })
+        for given in ["https://bezzle.ch/open.html#2.\(secret.base64URL)", "https://www.bezzle.ch/open.html#2.\(secret.base64URL)",
+                      "https://mfrports.github.io/bezzle-web/open.html#2.\(secret.base64URL)", "bezzle://share/2.\(secret.base64URL)",
+                      "https://example.com/open.html#2.\(secret.base64URL)", "https://bezzle.ch/open.html#1.\(secret.base64URL)",
+                      "bezzle://share/2.short", "http://bezzle.ch/open.html#2.\(secret.base64URL)"] {
+            Self.log(t, "link \(given.prefix(40)): \(Sharing.secret(from: URL(string: given)!) == secret.base64URL)")
+        }
+        let keys = try #require(ShareKeys(secret: secret))
+        Self.log(t, "keys \(keys.room) \(keys.readToken) \(keys.writeToken) \(keys.pictureName("photo.png")) hash \(Sharing.hash(keys.writeToken))")
+        let link = ShareLink(secret: secret.base64URL, title: "Poster", ownerName: "Anna")
+        var ended = link
+        ended.ended = true
+        Self.log(t, "share.json \(String(decoding: try #require(FolderShare.encode(link)), as: UTF8.self)) page \(link.page?.absoluteString.prefix(30) ?? "-") ended keys \(ended.keys == nil) page \(ended.page == nil)")
+
+        let relay = ParityRelay()
+        let owner = "owner-token", writer = "writer-token"
+        try await relay.create(keys.room, hashes: ["read": Sharing.hash(keys.readToken), "write": Sharing.hash(keys.writeToken), "owner": Sharing.hash(owner)])
+        func put(_ key: String, _ plain: Data, owner: String? = nil) async throws {
+            try await relay.put(keys.room, key, try #require(keys.seal(plain, about: key)), write: keys.writeToken, writer: writer, owner: owner)
+        }
+        func put(_ part: FolderShare.Part, of who: String, _ design: SharedDesign) async throws {
+            try await put(part.record(of: who), try #require(FolderShare.pack(design)))
+        }
+        func layers(_ changes: [SharedDesign]) -> String {
+            var state = SharedDesign()
+            for c in changes { state.merge(c) }
+            return state.flatDesign().document().allNodes.map { "\($0.name) \(Self.r($0.frame)) \(Self.n($0.fill.color.r))" }.joined(separator: "; ")
+        }
+        func said(_ f: CloudShare.Fetched) -> String {
+            "\(f.changes.count) designs [\(layers(f.changes))] meta \(f.meta?.title ?? "-") by \(f.meta?.owner ?? "-") people \(f.people.keys.sorted()) versions \(f.versions.map { $0.name ?? "-" }) again \(f.again) seq \(f.progress.seq) known \(f.progress.known.count) read \(f.progress.read.sorted()) failed \(f.progress.failed.sorted()) behind \(f.progress.behind.sorted()) parts \(f.progress.parts)"
+        }
+
+        // Anna's whole, Ben's change, Anna's change, who they are, the name, a version, a picture.
+        var doc = BezzleDocument()
+        doc.nodes = [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50)), CanvasTests.rect("S", CGRect(x: 100, y: 10, width: 50, height: 50))]
+        var anna = FolderShare.first(doc, modified: 1_000, by: "anna")
+        try await put(FolderShare.Part(.whole, upTo: 1_000), of: "anna", anna)
+        var ben = anna
+        var bens = doc
+        bens.nodes[0].fill.color = .black
+        ben.absorb(FlatDesign(bens), since: FlatDesign(doc), by: "ben", at: 2_000)
+        try await put(FolderShare.Part(.changes, upTo: 2_000), of: "ben", ben.changes(by: "ben", after: 1_000))
+        var annas = doc
+        annas.nodes[0].frame.origin.x = 300
+        anna.absorb(FlatDesign(annas), since: FlatDesign(doc), by: "anna", at: 3_000)
+        try await put(FolderShare.Part(.changes, upTo: 3_000), of: "anna", anna.changes(by: "anna", after: 1_000))
+        for who in ["anna", "ben"] {
+            try await put(ShareRecord.person(who).key, try #require(FolderShare.encode(FolderShare.Person(replica: who, name: who.capitalized, since: 1))))
+        }
+        try await put(ShareRecord.meta.key, try #require(FolderShare.encode(ShareMeta(title: "Poster", owner: "Anna", made: 1))), owner: owner)
+        var version = DesignVersion(date: Date(timeIntervalSince1970: 1_000), name: "For the client", by: "Anna", replica: "anna", layers: 2)
+        version.id = UUID(uuidString: "00000000-0000-0000-0000-0000000000AB")!
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        try await put(ShareRecord.version(version.id).key, try encoder.encode(version))
+        try await put(ShareRecord.picture(keys.pictureName("photo.png")).key, Data("a picture".utf8))
+
+        let first = try await CloudShare.fetch(keys, from: relay, progress: CloudShare.Progress(), fully: true, replica: "zed")
+        Self.log(t, "first look: " + said(first))
+        let again = try await CloudShare.fetch(keys, from: relay, progress: first.progress, fully: false, replica: "zed")
+        Self.log(t, "nothing new: " + said(again))
+        // Ben goes on; a look sees only that.
+        var bens2 = bens
+        bens2.nodes[1].name = "S, renamed"
+        ben.absorb(FlatDesign(bens2), since: FlatDesign(bens), by: "ben", at: 4_000)
+        try await put(FolderShare.Part(.changes, upTo: 4_000), of: "ben", ben.changes(by: "ben", after: 2_000))
+        let next = try await CloudShare.fetch(keys, from: relay, progress: again.progress, fully: false, replica: "zed")
+        Self.log(t, "ben went on: " + said(next))
+        // Ben folds: a whole, then his changes before it go. One reading along and one coming late.
+        try await put(FolderShare.Part(.whole, upTo: 5_000), of: "ben", ben)
+        let late = try await CloudShare.fetch(keys, from: relay, progress: first.progress, fully: false, replica: "zed")
+        for key in ["c.ben.000000000002000", "c.ben.000000000004000"] { try await relay.delete(keys.room, key, write: keys.writeToken, writer: writer) }
+        let along = try await CloudShare.fetch(keys, from: relay, progress: next.progress, fully: false, replica: "zed")
+        Self.log(t, "late, before the fold went: " + said(late))
+        Self.log(t, "along, after it went: " + said(along))
+        // Listed, then gone before it was read: read again from the next whole.
+        let listedOnly = try await CloudShare.fetch(keys, from: relay, progress: CloudShare.Progress(), fully: true, replica: "zed")
+        try await put(FolderShare.Part(.changes, upTo: 6_000), of: "ben", ben.changes(by: "ben", after: 4_000))
+        relay.vanishing = ["c.ben.000000000006000"]
+        let missed = try await CloudShare.fetch(keys, from: relay, progress: listedOnly.progress, fully: false, replica: "zed")
+        relay.vanishing = []
+        Self.log(t, "gone before read: " + said(missed))
+        // A record that will not open: sealed for another place.
+        let packed = try #require(FolderShare.pack(anna))
+        try await relay.put(keys.room, "c.anna.000000000007000", try #require(keys.seal(packed, about: "elsewhere")),
+                            write: keys.writeToken, writer: writer, owner: nil)
+        let unopened = try await CloudShare.fetch(keys, from: relay, progress: along.progress, fully: false, replica: "zed")
+        Self.log(t, "will not open: " + said(unopened))
+        // One's own parts, as a copy finds them coming back to the room.
+        let own = try await CloudShare.fetch(keys, from: relay, progress: CloudShare.Progress(), fully: true, replica: "anna")
+        Self.log(t, "as anna: " + said(own))
+        let arrived = try await CloudShare.download(keys, from: relay) { meta in Self.log(t, "arriving: \(meta.title) by \(meta.owner)") }
+        Self.log(t, "downloaded: [\(layers([arrived.state]))] meta \(arrived.meta?.title ?? "-") read \(arrived.progress.read.count)")
+
+        // An empty room, a room that is not there, and one unshared.
+        let emptyKeys = try #require(ShareKeys(secret: Data(repeating: 9, count: 32)))
+        try await relay.create(emptyKeys.room, hashes: ["read": Sharing.hash(emptyKeys.readToken), "write": Sharing.hash(emptyKeys.writeToken), "owner": Sharing.hash(owner)])
+        do { _ = try await CloudShare.download(emptyKeys, from: relay) { _ in }; Self.log(t, "empty: downloaded") } catch { Self.log(t, "empty: \(error)") }
+        let nowhere = try #require(ShareKeys(secret: Data(repeating: 3, count: 32)))
+        do { _ = try await CloudShare.fetch(nowhere, from: relay, progress: CloudShare.Progress(), fully: true, replica: "zed"); Self.log(t, "nowhere: read") } catch { Self.log(t, "nowhere: \(error)") }
+        try await relay.unshare(keys.room, write: keys.writeToken, owner: owner)
+        do { _ = try await CloudShare.fetch(keys, from: relay, progress: unopened.progress, fully: false, replica: "zed"); Self.log(t, "unshared: read") } catch { Self.log(t, "unshared: \(error)") }
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     // MARK: A design shared through its folder
 
     /// Two Macs with one design open in a synced folder, as FolderSync reads and writes its parts
@@ -1330,4 +1443,109 @@ extension BezzleDocument {
             .sorted { ($0.1.minY, $0.1.minX) < ($1.1.minY, $1.1.minX) }
             .map(\.0)
     }
+}
+
+/// A relay kept in memory for the link scenario, as CloudShareTests keeps one: the same tokens,
+/// writers, write-once records and seqs as Relay/src/worker.js.
+private final class ParityRelay: ShareServer, @unchecked Sendable {
+    private struct Record {
+        var seq: Int64
+        var data: Data
+    }
+
+    private struct Room {
+        var hashes: [String: String]
+        var records: [String: Record] = [:]
+        var writers: [String: String] = [:]
+        var seq: Int64 = 0
+        var gone = false
+    }
+
+    private var rooms: [String: Room] = [:]
+    private let lock = NSLock()
+    /// How many times each record was fetched, to tell what was read again.
+    private(set) var fetched: [String: Int] = [:]
+    /// Records that are listed but not there when read.
+    var vanishing: Set<String> = []
+
+    private func room(_ id: String, _ token: String, _ kind: String) throws -> Room {
+        guard let room = rooms[id] else { throw ShareError.missing }
+        if room.gone { throw ShareError.gone }
+        guard room.hashes[kind] == Sharing.hash(token) else { throw ShareError.refused(403) }
+        return room
+    }
+
+    func create(_ id: String, hashes: [String: String]) async throws {
+        try lock.withLock {
+            guard rooms[id] == nil else { throw ShareError.refused(409) }
+            rooms[id] = Room(hashes: hashes)
+        }
+    }
+
+    func list(_ id: String, since: Int64, read: String) async throws -> ShareListing {
+        try lock.withLock {
+            let room = try room(id, read, "read")
+            let records = room.records.filter { $0.value.seq > since }.sorted { $0.value.seq < $1.value.seq }
+                .map { ShareListing.Entry(key: $0.key, seq: $0.value.seq, size: $0.value.data.count) }
+            return ShareListing(seq: room.seq, records: records)
+        }
+    }
+
+    func get(_ id: String, _ key: String, read: String) async throws -> Data? {
+        try lock.withLock {
+            let room = try room(id, read, "read")
+            fetched[key, default: 0] += 1
+            // Gone between being listed and being read, as when its copy folds meanwhile.
+            if vanishing.contains(key) { return nil }
+            return room.records[key]?.data
+        }
+    }
+
+    func put(_ id: String, _ key: String, _ body: Data, write: String, writer: String?, owner: String?) async throws {
+        try lock.withLock {
+            var room = try room(id, write, "write")
+            guard let record = ShareRecord(key: key) else { throw ShareError.refused(400) }
+            switch record {
+            case .meta:
+                guard let owner, room.hashes["owner"] == Sharing.hash(owner) else { throw ShareError.refused(403) }
+            case .person(let replica), .part(let replica, _):
+                guard let writer else { throw ShareError.refused(403) }
+                if let bound = room.writers[replica], bound != Sharing.hash(writer) { throw ShareError.refused(403) }
+                room.writers[replica] = Sharing.hash(writer)
+            default:
+                break
+            }
+            let once: Bool
+            switch record {
+            case .part, .picture, .versionDesign: once = true
+            default: once = false
+            }
+            // Taken: the same as done, as the relay's 409 is to the Mac.
+            if once, room.records[key] != nil { return }
+            room.seq += 1
+            room.records[key] = Record(seq: room.seq, data: body)
+            rooms[id] = room
+        }
+    }
+
+    func delete(_ id: String, _ key: String, write: String, writer: String) async throws {
+        try lock.withLock {
+            var room = try room(id, write, "write")
+            guard case .part(let replica, _)? = ShareRecord(key: key), room.writers[replica] == Sharing.hash(writer) else { throw ShareError.refused(403) }
+            guard room.records.removeValue(forKey: key) != nil else { return }
+            room.seq += 1
+            rooms[id] = room
+        }
+    }
+
+    func unshare(_ id: String, write: String, owner: String) async throws {
+        try lock.withLock {
+            var room = try room(id, write, "write")
+            guard room.hashes["owner"] == Sharing.hash(owner) else { throw ShareError.refused(403) }
+            room = Room(hashes: room.hashes, gone: true)
+            rooms[id] = room
+        }
+    }
+
+    func keys(of id: String) -> [String] { lock.withLock { rooms[id].map { Array($0.records.keys) } ?? [] } }
 }
