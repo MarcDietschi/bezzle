@@ -37,6 +37,7 @@
 #include "include/effects/SkImageFilters.h"
 #include "include/pathops/SkPathOps.h"
 #include "include/ports/SkFontMgr_empty.h"
+#include "modules/skcms/skcms.h"
 #include "modules/skparagraph/include/FontCollection.h"
 #include "modules/skparagraph/include/Paragraph.h"
 #include "modules/skparagraph/include/ParagraphBuilder.h"
@@ -170,6 +171,46 @@ struct Asset { sk_sp<SkImage> image; };
 std::vector<Asset> assets;                      // by number - 1
 std::map<std::string, int> assetsByName;
 
+/// What an AVIF file's colours mean, as the Mac's Image I/O reads them: by its ICC profile when it
+/// has one, else by its numbers (ITU-T H.273). Unspecified reads as sRGB, and so does the video
+/// transfer of BT.709 (1, 6, 14, 15) with sRGB's or Display P3's primaries, as Image I/O has it;
+/// with other primaries Image I/O takes that transfer for a plain gamma of 1.961, QuickTime's
+/// (measured on a BT.2020 picture: 47 dB from the Mac's reading, where BT.1886's 2.4 gave 24).
+sk_sp<SkColorSpace> avifColors(const avif::Picture& p) {
+    if (!p.icc.empty()) {
+        skcms_ICCProfile profile;
+        if (skcms_Parse(p.icc.data(), p.icc.size(), &profile)) {
+            if (auto colors = SkColorSpace::Make(profile)) return colors;
+        }
+    }
+    const int primaries = p.primaries == 0 || p.primaries == 2 ? 1 : p.primaries;
+    int transfer = p.transfer;
+    const bool video = transfer == 1 || transfer == 6 || transfer == 14 || transfer == 15;
+    if (transfer == 0 || transfer == 2 || (video && (primaries == 1 || primaries == 12))) transfer = 13;
+    if (primaries == 1 && transfer == 13) return SkColorSpace::MakeSRGB();
+    if (transfer != 13 && video) {
+        const float* c = p.chromaticities;
+        const SkColorSpacePrimaries chroma = {c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]};
+        skcms_Matrix3x3 gamut;
+        if (chroma.toXYZD50(&gamut)) return SkColorSpace::MakeRGB({1.961f, 1, 0, 0, 0, 0, 0}, gamut);
+    }
+    auto colors = SkColorSpace::MakeCICP(SkNamedPrimaries::CicpId(primaries), SkNamedTransferFn::CicpId(transfer));
+    return colors ? colors : SkColorSpace::MakeSRGB();
+}
+
+/// An AVIF file's picture (Skia's codecs read none here): upright as its rotation and mirror turn
+/// it, or as kept; null if it is none.
+sk_sp<SkImage> avifPicture(const void* data, size_t count, bool upright) {
+    avif::Picture p;
+    if (!avif::read(data, count, upright, p)) return nullptr;
+    const SkImageInfo info = SkImageInfo::Make(p.width, p.height, p.sixteen ? kR16G16B16A16_unorm_SkColorType : kRGBA_8888_SkColorType,
+                                               p.opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType, avifColors(p));
+    const size_t row = size_t(p.width) * (p.sixteen ? 8 : 4);
+    auto* pixels = new std::vector<uint8_t>(std::move(p.pixels));
+    auto bytes = SkData::MakeWithProc(pixels->data(), pixels->size(), [](const void*, void* kept) { delete static_cast<std::vector<uint8_t>*>(kept); }, pixels);
+    return SkImages::RasterFromData(info, std::move(bytes), row);
+}
+
 sk_sp<SkImage> decode(const void* data, size_t count) {
     static std::once_flag registered;
     std::call_once(registered, [] {
@@ -178,6 +219,11 @@ sk_sp<SkImage> decode(const void* data, size_t count) {
         SkCodecs::Register(SkWebpDecoder::Decoder());
     });
     if (!data || !count) return nullptr;
+    // Upright, as the Mac reads a design's pictures (Canvas/Assets.swift, with the transform).
+    if (avif::sniff(data, count)) {
+        auto image = avifPicture(data, count, true);
+        return image ? image->withDefaultMipmaps() : nullptr;
+    }
     auto image = SkImages::DeferredFromEncodedData(SkData::MakeWithCopy(data, count));
     // With mipmaps, as the page makes them, for pictures drawn smaller.
     auto raster = image ? image->makeRasterImage(nullptr) : nullptr;
@@ -185,6 +231,13 @@ sk_sp<SkImage> decode(const void* data, size_t count) {
 }
 
 extern "C" int32_t bz_image_size(const void* data, int32_t count, int32_t* width, int32_t* height) {
+    if (avif::sniff(data, size_t(count))) {
+        int w = 0, h = 0;
+        if (!avif::size(data, size_t(count), true, &w, &h)) return 0;
+        *width = w;
+        *height = h;
+        return 1;
+    }
     decode(nullptr, 0);  // the decoders, registered once
     auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
     if (!codec) return 0;
@@ -201,6 +254,14 @@ extern "C" int32_t bz_image_size(const void* data, int32_t count, int32_t* width
 // not turned by their orientation. On any thread.
 
 extern "C" int32_t bz_image_pixel_size(const void* data, int64_t count, int32_t* width, int32_t* height) {
+    // Cropped to its clean aperture, as Image I/O counts it, but not turned.
+    if (avif::sniff(data, size_t(count))) {
+        int w = 0, h = 0;
+        if (!avif::size(data, size_t(count), false, &w, &h)) return 0;
+        *width = w;
+        *height = h;
+        return 1;
+    }
     decode(nullptr, 0);
     auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
     if (!codec) return 0;
@@ -211,6 +272,13 @@ extern "C" int32_t bz_image_pixel_size(const void* data, int64_t count, int32_t*
 }
 
 extern "C" int32_t bz_image_decode(const void* data, int64_t count, int32_t width, int32_t height, void* pixels) {
+    if (avif::sniff(data, size_t(count))) {
+        auto image = avifPicture(data, size_t(count), false);
+        if (!image || image->width() != width || image->height() != height) return 1;
+        // In sRGB, as Skia's codecs give the others.
+        const SkImageInfo info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+        return image->readPixels(nullptr, info, pixels, size_t(width) * 4, 0, 0) ? 0 : 2;
+    }
     decode(nullptr, 0);
     auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
     if (!codec || codec->dimensions().width() != width || codec->dimensions().height() != height) return 1;

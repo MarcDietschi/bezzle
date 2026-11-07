@@ -62,7 +62,7 @@ nonisolated struct UTType: Hashable, Sendable {
 
     private static let known: [(String, String)] = [
         ("public.png", "png"), ("public.jpeg", "jpeg"), ("com.compuserve.gif", "gif"), ("org.webmproject.webp", "webp"),
-        ("public.tiff", "tiff"), ("com.microsoft.bmp", "bmp"), ("public.heic", "heic"), ("public.heif", "heif"),
+        ("public.tiff", "tiff"), ("com.microsoft.bmp", "bmp"), ("public.avif", "avif"), ("public.heic", "heic"), ("public.heif", "heif"),
         ("com.adobe.pdf", "pdf"), ("public.svg-image", "svg"), ("com.microsoft.ico", "ico"),
     ]
 
@@ -91,7 +91,7 @@ nonisolated let kCGImagePropertyPixelWidth: CFString = "PixelWidth"
 nonisolated let kCGImagePropertyPixelHeight: CFString = "PixelHeight"
 
 /// A picture file's bytes, as Image I/O reads them: what kind it is by its first bytes, and its
-/// pixels, which Skia reads (PNG, JPEG and WebP here).
+/// pixels, which Skia reads (PNG, JPEG and WebP here), and libavif AVIF (CBezzleHost/avif.cpp).
 nonisolated final class CGImageSource: @unchecked Sendable {
     let data: Data
     let type: String?
@@ -115,7 +115,15 @@ nonisolated final class CGImageSource: @unchecked Sendable {
         if starts(Array("RIFF".utf8)), starts(Array("WEBP".utf8), at: 8) { return "org.webmproject.webp" }
         if starts([0x49, 0x49, 0x2A, 0x00]) || starts([0x4D, 0x4D, 0x00, 0x2A]) { return "public.tiff" }
         if starts(Array("BM".utf8)) { return "com.microsoft.bmp" }
-        if starts(Array("ftyp".utf8), at: 4) { return "public.heic" }
+        if starts(Array("ftyp".utf8), at: 4) {
+            // An AVIF names "avif" or "avis" as its brand, first or among those it is compatible with.
+            let box = Int(b[0]) << 24 | Int(b[1]) << 16 | Int(b[2]) << 8 | Int(b[3])
+            let brands = [UInt8](data.prefix(min(max(box, 16), 256)))
+            let avif = stride(from: 8, to: brands.count - 3, by: 4).contains { k in
+                k != 12 && (Array(brands[k..<k + 4]) == Array("avif".utf8) || Array(brands[k..<k + 4]) == Array("avis".utf8))
+            }
+            return avif ? "public.avif" : "public.heic"
+        }
         if starts(Array("%PDF".utf8)) { return "com.adobe.pdf" }
         return nil
     }

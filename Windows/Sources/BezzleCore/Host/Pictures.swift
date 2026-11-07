@@ -7,8 +7,8 @@ import CBezzleHost
 // wherever the design does.
 
 extension WindowsCore {
-    /// The kinds of picture the drawing here reads.
-    static let pictureKinds: Set<String> = ["png", "jpg", "jpeg", "webp"]
+    /// The kinds of picture the drawing here reads (AVIF when the build has libavif).
+    static var pictureKinds: Set<String> { bz_avif_available() != 0 ? ["png", "jpg", "jpeg", "webp", "avif"] : ["png", "jpg", "jpeg", "webp"] }
 
     /// The pictures among some files, and those in any folders among them, by name.
     public static func pictureFiles(in urls: [URL]) -> [URL] {
