@@ -817,6 +817,17 @@ extension Glyphs {
 
 extension Glyphs {
     /// A framed picture of a hill under the sun, as the photo symbol.
+    /// A dropper, its bulb up at the right and its tip down at the left (the Mac's eyedropper symbol).
+    static func eyedropper(size s: Double = 14) -> [Part] {
+        // Drawn upright about the middle, then laid over at 45°.
+        let turn = Affine(tx: s / 2, ty: s / 2, angle: .pi / 4, scale: s / 14)
+        var bulb = PathData(place: turn), collar = PathData(place: turn), tube = PathData(place: turn)
+        bulb.rect(-2.1, -7, 4.2, 4.6, radius: 2)
+        collar.rect(-3.3, -2.4, 6.6, 1.7, radius: 0.7)
+        tube.move(-1.45, -0.7); tube.line(-1.45, 4.6); tube.line(0, 6.6); tube.line(1.45, 4.6); tube.line(1.45, -0.7)
+        return [Part(data: bulb.d, mode: .fill), Part(data: collar.d, mode: .fill), Part(data: tube.d, mode: .stroke, width: 1.1)]
+    }
+
     static func picture(size s: Double = 12) -> [Part] {
         var frame = PathData(), hill = PathData(), sun = PathData()
         frame.rect(s * 0.06, s * 0.14, s * 0.88, s * 0.72, radius: s * 0.12)

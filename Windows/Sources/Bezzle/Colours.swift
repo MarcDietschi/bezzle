@@ -297,7 +297,7 @@ enum Colours {
 
             let line = Grid()
             line.columnSpacing = 8
-            for w in [GridLength(value: 1, gridUnitType: .star), GridLength(value: 40, gridUnitType: .pixel)] {
+            for w in [GridLength(value: 1, gridUnitType: .star), GridLength(value: 40, gridUnitType: .pixel), GridLength(value: 26, gridUnitType: .pixel)] {
                 let column = ColumnDefinition()
                 column.width = w
                 line.columnDefinitions.append(column)
@@ -307,6 +307,28 @@ enum Colours {
             percent.horizontalAlignment = .right
             try? Grid.setColumn(percent, 1)
             line.children.append(percent)
+            // A dropper for any colour on the screen, as the Mac's NSColorSampler: it keeps how
+            // see-through the colour is.
+            let dropper = Pressable(radius: 13) { [weak self] in
+                Eyedropper.pick { picked in
+                    guard let self, let picked else { return }
+                    let c = picked.with(alpha: self.alpha)
+                    self.set(c)
+                    self.show()
+                    self.apply(c)
+                }
+            }
+            dropper.hoverWash = 0.08
+            dropper.box.width = 26
+            dropper.box.height = 26
+            let glyph = Glyphs.view(Glyphs.eyedropper(size: 14), size: 14, brush: Theme.ink(2))
+            glyph.horizontalAlignment = .center
+            glyph.verticalAlignment = .center
+            dropper.box.child = glyph
+            dropper.box.pointerPressed.addHandler { _, args in args?.handled = true }
+            try? ToolTipService.setToolTip(dropper.box, Words.t("Pick a colour from the screen"))
+            try? Grid.setColumn(dropper.box, 2)
+            line.children.append(dropper.box)
             root.children.append(line)
 
             if !used.isEmpty {
