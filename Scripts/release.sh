@@ -1,14 +1,14 @@
 #!/bin/bash
-# Releases Bezzle on its website, beside the Mac App Store. Builds the commit that is checked out as the
-# copy that updates itself (BEZZLE_DIRECT, see Bezzle/App/Updates.swift), puts Sparkle into it, signs it
-# with the Developer ID, has Apple notarize it, and publishes the zip, with delta updates from the last
+# Releases Bezzle on its website. Builds the commit that is checked out as the copy that updates
+# itself (BEZZLE_DIRECT, see Bezzle/App/Updates.swift), puts Sparkle into it, signs it with the
+# Developer ID, has Apple notarize it, and publishes the zip, with delta updates from the last
 # versions, as a GitHub release of mfrports/bezzle-web. Then it commits the new update feed and the release
 # notes to that repository, whose Deploy workflow rebuilds the website with them, waits until the feed is
 # live, and tags the commit v<version>.
 #
 # Usage: Scripts/release.sh [--dry-run]
-# The version is the one set in Xcode (MARKETING_VERSION), the same the App Store gets: raise it there
-# first, and write its entry in RELEASE_NOTES.md (CLAUDE.md › Releases). Both must be pushed.
+# The version is the one set in Xcode (MARKETING_VERSION): raise it there first, and write its entry
+# in RELEASE_NOTES.md (CLAUDE.md › Releases). Both must be pushed.
 # With --dry-run it stops once the notarized zip is on the Desktop and publishes nothing: the build to
 # try on another Mac first.
 #
@@ -16,7 +16,7 @@
 # - the commit pushed to origin/main, and Bezzle/Canvas/BiRefNet.mlpackage (Scripts/subject-matte/make.sh)
 # - a "Developer ID Application" certificate in the Keychain, and Xcode signed in to the team
 # - the notary credentials: the keychain profile BEZZLE_NOTARY_PROFILE (harness-notary, Gerty's, by
-#   default), or ASC_KEY_PATH, ASC_KEY_ID and ASC_ISSUER as for Scripts/appstore/publish.py
+#   default), or an App Store Connect API key: ASC_KEY_PATH, ASC_KEY_ID and ASC_ISSUER
 # - Sparkle's EdDSA key in the login Keychain, the one Gerty's releases sign with (one key serves every
 #   app; its public half is SPARKLE_PUBLIC_KEY below), or as a file in BEZZLE_SPARKLE_KEY_FILE
 # - gh, signed in with push access to mfrports/bezzle-web
@@ -125,9 +125,9 @@ PLIST="$APP/Contents/Info.plist"
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")"
 grep -aq SPUStandardUpdaterController "$APP/Contents/MacOS/Bezzle" || fail "This build has no updater: BEZZLE_DIRECT did not reach it"
 
-# The export's entitlements, and what the copy from the website needs beyond the App Store's: Sparkle's
+# The export's entitlements, and what the copy that updates itself needs beyond them: Sparkle's
 # installer, which a sandboxed app reaches through these two services
-# (sparkle-project.org/documentation/sandboxing). The App Store build never has them.
+# (sparkle-project.org/documentation/sandboxing). Builds from Xcode never have them.
 ENT="$WORK/Bezzle.entitlements"
 codesign -d --entitlements - --xml "$APP" > "$ENT" 2>/dev/null
 pb() { /usr/libexec/PlistBuddy -c "$1" "$ENT" 2>/dev/null; }

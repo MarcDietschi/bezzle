@@ -14,7 +14,7 @@ and makes none of its own, so it keeps no files of its own either.
 ## What it showed
 
 Measured against the Mac app itself (`tools/WebTruthTests.swift` dumps what Text Kit and the
-Core Graphics renderer make of the six App Store sample designs; `tools/compare.mjs` compares):
+Core Graphics renderer make of the six sample designs; `tools/compare.mjs` compares):
 
 | | Result |
 |---|---|

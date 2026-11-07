@@ -2,17 +2,15 @@
 
 ## Releases
 
-Bezzle ships in two places, always the same version (`MARKETING_VERSION` in Xcode):
+Bezzle ships from its website alone, https://mfrports.github.io/bezzle-web/download.html, at the
+version set in Xcode (`MARKETING_VERSION`); there is no App Store version (Erik, 2026-11-06).
+`Scripts/release.sh` builds it with the Swift condition `BEZZLE_DIRECT`, and Sparkle keeps it up to
+date (`Bezzle/App/Updates.swift`).
 
-- **Mac App Store**: archive, upload, then `Scripts/appstore/publish.py` (see its docstring).
-- **Website**, https://mfrports.github.io/bezzle-web/download.html: `Scripts/release.sh`. That copy is
-  the same app, built with the Swift condition `BEZZLE_DIRECT`, and Sparkle keeps it up to date
-  (`Bezzle/App/Updates.swift`).
-
-The App Store build must never contain an updater (App Review). So Sparkle is not in the Xcode
-project and its `SU…` keys are not in Info.plist: `release.sh` puts the framework, the keys and the
-installer's sandbox entitlements into the website's copy alone, and the app loads Sparkle at run
-time only when it is there. Keep it that way.
+Sparkle is not in the Xcode project and its `SU…` keys are not in Info.plist: `release.sh` puts the
+framework, the keys and the installer's sandbox entitlements into the released copy, and the app
+loads Sparkle at run time only when it is there. So builds from Xcode, tests and test copies never
+look for updates.
 
 Whenever the version is raised, or Erik asks for a release:
 

@@ -1,4 +1,4 @@
-"""Lists the App Store sample designs for the test page: site/samples.json."""
+"""Lists the sample designs for the test page: site/samples.json."""
 import json, os
 here = os.path.dirname(os.path.abspath(__file__))
 designs = os.path.join(here, '..', '..', 'AppStore', 'screenshots-src', 'designs')

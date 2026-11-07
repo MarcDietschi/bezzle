@@ -93,7 +93,7 @@ extension MCPTools {
         // In the sandbox, ~ is Bezzle's own folder and Downloads a link from it; the files are
         // named by where they really are.
         folder = folder.resolvingSymlinksInPath()
-        // The App Store's Bezzle may only write where the user has let it.
+        // Sandboxed, as released, Bezzle may only write where the user has let it.
         let sandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
         let hint = sandboxed ? " Bezzle can write to Downloads, and to folders once chosen in its Export panel." : ""
         do {

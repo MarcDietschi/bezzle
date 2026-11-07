@@ -1,12 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// Updates for the copy of Bezzle that comes from the website. The Mac App Store updates its own
-/// copy, so the App Store build has no updater at all: only a build made with `BEZZLE_DIRECT`
-/// (Scripts/release.sh) has this code. The script puts Sparkle into that copy's
-/// Contents/Frameworks, and the feed, the key and the sandbox's installer service into its
-/// Info.plist. Sparkle is loaded when Bezzle starts rather than linked, so the project needs no
-/// package for it and the App Store build carries no trace of it.
+/// Updates for the copy of Bezzle that comes from the website. Only a build made with
+/// `BEZZLE_DIRECT` (Scripts/release.sh) has this code, so builds from Xcode, tests and test copies
+/// never look for updates. The script puts Sparkle into that copy's Contents/Frameworks, and the
+/// feed, the key and the sandbox's installer service into its Info.plist. Sparkle is loaded when
+/// Bezzle starts rather than linked, so the project needs no package for it.
 ///
 /// Every launch looks for a new version in the background, and Sparkle once a day after that. A new
 /// version shows Sparkle's window with its notes, to install now or later. Release builds don't set

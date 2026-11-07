@@ -44,8 +44,8 @@ final class Library {
 
     private static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
 
-    /// Where designs are kept until another folder is chosen. In the App Store's sandbox, this is
-    /// the Documents folder of Bezzle's own container.
+    /// Where designs are kept until another folder is chosen. In the sandbox, this is the
+    /// Documents folder of Bezzle's own container.
     static var standardFolder: URL { documents.appendingPathComponent("Bezzle", isDirectory: true) }
 
     /// The folder chosen for designs, as a bookmark, which the sandbox needs to let Bezzle in

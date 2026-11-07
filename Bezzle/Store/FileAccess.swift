@@ -1,6 +1,6 @@
 import Foundation
 
-/// The files and folders outside its own that Bezzle may use, as the App Store's sandbox has it:
+/// The files and folders outside its own that Bezzle may use, as its sandbox has it:
 /// a design opened from the Finder or the Open panel, the folder chosen in the Export panel.
 /// Such a choice lets Bezzle in only until it quits, so a bookmark of each is kept and all are
 /// opened again at launch. Everything else then goes on using plain paths, as without a sandbox.
