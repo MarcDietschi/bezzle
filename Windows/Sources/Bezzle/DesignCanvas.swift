@@ -105,6 +105,8 @@ final class DesignCanvas {
         case develop
         /// Inspecting: a click picks what is under the pointer, a drag moves the view.
         case inspect(start: CGPoint, target: UUID?)
+        /// The design as a prototype: a thread pulled, the flag carried, a screen moved, the view moved.
+        case flow
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -169,6 +171,14 @@ final class DesignCanvas {
     var inspect: WindowsCore.InspectHand { session.inspect }
     private let inspectMarks = Canvas()
     private var inspecting: Bool { session.mode == 2 }
+    /// The design as a prototype (the Mac's FlowTool, ported): its threads and flags.
+    var flow: WindowsCore.FlowHand { session.flow }
+    private var prototyping: Bool { session.mode == 1 }
+    private let flowMarks = Canvas()
+    private var flowTicking = false
+    private let noteBox = TextBox()
+    /// The layer whose thread's note is being written.
+    private var noteFor: UUID?
     private var curveTicking = false
     /// The drawing aids' menu, for a click on the rulers' corner.
     var aidsMenu: (() -> [MenuHost.Entry])?
@@ -271,6 +281,14 @@ final class DesignCanvas {
         curveHand.redraw = { [weak self] in self?.drawCurves() }
         develop.redraw = { [weak self] in self?.drawDevelop() }
         inspect.redraw = { [weak self] in self?.drawInspect() }
+        flow.redraw = { [weak self] in self?.drawFlow() }
+        flow.titleHit = { [weak self] p in self?.titleHit(p) }
+        flow.pick = { [weak self] p in self.flatMap { WindowsCore.pick(p, selection: $0.session.selection, zoom: $0.zoom) } }
+        flow.select = { [weak self] ids in
+            guard let self else { return }
+            self.session.select(ids, on: ids.first.flatMap(WindowsCore.board(of:)) ?? ids.first.flatMap(WindowsCore.boardIndex(of:)))
+        }
+        flow.writeNote = { [weak self] id, at in self?.beginNote(on: id, at: at) }
         inspect.titleHit = { [weak self] p in self?.titleHit(p) }
         curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
         offerChip.height = 28
@@ -332,6 +350,7 @@ final class DesignCanvas {
                 self?.curveHand.hover(nil)
                 self?.develop.hover(nil)
                 self?.inspect.hover(nil)
+                self?.flow.hover(nil)
             }
         }
         stage.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args) }
@@ -355,6 +374,7 @@ final class DesignCanvas {
             // Into or out of Inspect: the paper and the measures come or go.
             self?.drawPaper()
             self?.drawInspect()
+            self?.drawFlow()
         }
         session.listenToHover { [weak self] in self?.placeOverlays() }
         session.listenToEdits { [weak self] board in
@@ -884,7 +904,7 @@ final class DesignCanvas {
             let lit = session.board == board.index
             sheets[k]?.name.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)
         }
-        if let id = hovered, !session.selection.contains(id), drag == nil, !inspecting,
+        if let id = hovered, !session.selection.contains(id), drag == nil, session.mode == 0,
            let line = WindowsCore.shown([id], zoom: zoom)?.outlines.first {
             trace(hover, line.points, closed: line.closed)
             hover.stroke = Theme.brush(line.copy ? Theme.linked : Theme.selection)
@@ -896,7 +916,7 @@ final class DesignCanvas {
         // A path whose points show has them in place of its frame and handles.
         let pointsShown = session.selection.count == 1 && session.selection.first == pen.shownPath
         // Shapes being built with show their pieces instead.
-        let shown = session.selection.isEmpty || pointsShown || builder.active || inspecting ? nil : WindowsCore.shown(session.selection, zoom: zoom)
+        let shown = session.selection.isEmpty || pointsShown || builder.active || session.mode != 0 ? nil : WindowsCore.shown(session.selection, zoom: zoom)
         let lines = shown?.outlines ?? []
         while outlines.count < lines.count {
             let path = WinUI.Path()
@@ -948,6 +968,7 @@ final class DesignCanvas {
         drawCurves()
         drawDevelop()
         drawInspect()
+        drawFlow()
         drawBuild()
         placeOffer()
         placeCopyOffer()
@@ -958,7 +979,7 @@ final class DesignCanvas {
     /// The depth tool sees the canvas as it is now.
     private func syncDepth() {
         depth.selection = session.selection
-        depth.free = session.tool == .select && editing == nil && pen.editingPath == nil && !inspecting
+        depth.free = session.tool == .select && editing == nil && pen.editingPath == nil && session.mode == 0
         depth.zoom = CGFloat(zoom)
         depth.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -966,7 +987,7 @@ final class DesignCanvas {
     /// The layout grid's handles see the canvas as it is now.
     private func syncLayout() {
         layoutHand.selection = session.selection
-        layoutHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !inspecting
+        layoutHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && session.mode == 0
         layoutHand.cardOpen = session.openCard == "Layout Grid"
         layoutHand.zoom = CGFloat(zoom)
         layoutHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
@@ -1014,7 +1035,7 @@ final class DesignCanvas {
             overlay.children.append(componentMarks)
         }
         componentMarks.children.clear()
-        guard session.tool == .select, !builder.active, !inspecting else { return }
+        guard session.tool == .select, !builder.active, session.mode == 0 else { return }
         var lines = PathData()
         for corners in WindowsCore.otherCopies(session.selection) {
             guard let first = corners.first else { continue }
@@ -1203,7 +1224,7 @@ final class DesignCanvas {
     /// The outline's dots and edge see the canvas as it is now.
     private func syncOutline() {
         outlineHand.selection = session.selection
-        outlineHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && !inspecting
+        outlineHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && session.mode == 0
         outlineHand.zoom = CGFloat(zoom)
         outlineHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -1313,6 +1334,279 @@ final class DesignCanvas {
         }
     }
 
+    /// The prototype's hand sees the canvas as it is now.
+    private func syncFlow() {
+        flow.selection = session.selection
+        flow.zoom = CGFloat(zoom)
+        flow.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// The prototype as the Mac's FlowTool draws it: threads in pencil over the paper's white edge,
+    /// brighter when picked or pointed at, dashed for going back, arrowheads, notes on paper tags,
+    /// the start flag, the layer a thread comes out of with its knob, and while a thread is pulled,
+    /// the screens it could go to and the well to go back.
+    private func drawFlow() {
+        if flowMarks.parent == nil {
+            flowMarks.isHitTestVisible = false
+            overlay.children.append(flowMarks)
+        }
+        flowMarks.children.clear()
+        guard prototyping else { return }
+        syncFlow()
+        let m = flow.marks()
+        let dark = Theme.dark
+        let thread: UInt32 = dark ? 0x8FA8F2 : 0x3A63D8, bright: UInt32 = dark ? 0xC2D1FF : 0x2347B8, cut: UInt32 = dark ? 0xE4705C : 0xB3402F
+        let casing: UInt32 = dark ? 0x101114 : 0xFFFFFF, plate: UInt32 = dark ? 0x2A2926 : 0xFFFEFB
+        func xamlPath(_ data: String, width: Double, dash: String? = nil) -> WinUI.Path? {
+            let dashes = dash.map { " StrokeDashArray='\($0)'" } ?? ""
+            let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(data)' StrokeThickness='\(width)' StrokeStartLineCap='Round' StrokeEndLineCap='Round' StrokeLineJoin='Round'\(dashes)/>"
+            return (try? XamlReader.load(xaml)) as? WinUI.Path
+        }
+        func add(_ e: UIElement) { flowMarks.children.append(e) }
+        func ring(_ r: CGRect, width: Double, ink: UInt32, alpha: Double, radius: Double, dash: String? = nil) {
+            let rect = Rectangle()
+            rect.width = Double(r.width)
+            rect.height = Double(r.height)
+            rect.radiusX = radius
+            rect.radiusY = radius
+            rect.stroke = Theme.brush(ink, alpha)
+            rect.strokeThickness = width
+            if let dash {
+                let d = DoubleCollection()
+                for part in dash.split(separator: " ") { d.append(Double(part) ?? 3) }
+                rect.strokeDashArray = d
+            }
+            try? Canvas.setLeft(rect, Double(r.minX))
+            try? Canvas.setTop(rect, Double(r.minY))
+            add(rect)
+        }
+        // The screens it could go to, lifting while a thread is pulled; the one picked, outlined.
+        for s in m.lifted {
+            if s.on { ring(s.rect.insetBy(dx: -3, dy: -3), width: 6, ink: thread, alpha: 0.18, radius: 9) }
+            ring(s.rect, width: s.on ? 2.5 : 1, ink: s.on ? bright : thread, alpha: s.on ? 1 : 0.4, radius: 7)
+        }
+        for s in m.screens { ring(s.rect, width: s.width, ink: thread, alpha: 1, radius: 5) }
+        for t in m.threads {
+            let width = t.bright ? 2.6 : 1.8
+            let dash = t.dashed ? "2.8 2.2" : nil
+            if let under = xamlPath(t.curve.data, width: width + 3) {
+                under.stroke = Theme.brush(casing, (dark ? 0.9 : 0.95) * t.alpha)
+                add(under)
+            }
+            if t.bright, let glow = xamlPath(t.curve.data, width: width + 6) {
+                glow.stroke = Theme.brush(thread, 0.18 * t.alpha)
+                add(glow)
+            }
+            if let line = xamlPath(t.curve.data, width: width, dash: dash) {
+                line.stroke = Theme.brush(t.cut ? cut : t.bright ? bright : thread, t.alpha)
+                add(line)
+            }
+        }
+        for a in m.arrows {
+            let l = a.bright ? 8.0 : 7.0, x = Double(a.at.x), y = Double(a.at.y)
+            var d = PathData()
+            d.move(x - l * cos(a.angle - 0.55), y - l * sin(a.angle - 0.55))
+            d.line(x, y)
+            d.line(x - l * cos(a.angle + 0.55), y - l * sin(a.angle + 0.55))
+            if let head = xamlPath(d.d, width: a.bright ? 2.6 : 2) {
+                head.stroke = Theme.brush(a.bright ? bright : thread)
+                add(head)
+            }
+        }
+        for dot in m.dots {
+            let e = Ellipse()
+            e.width = 6.4
+            e.height = 6.4
+            e.fill = Theme.brush(dot.bright ? bright : thread)
+            try? Canvas.setLeft(e, Double(dot.at.x) - 3.2)
+            try? Canvas.setTop(e, Double(dot.at.y) - 3.2)
+            add(e)
+        }
+        for n in m.notes {
+            let tag = Border()
+            tag.width = Double(n.rect.width)
+            tag.height = Double(n.rect.height)
+            tag.cornerRadius = Theme.corners(5)
+            tag.background = Theme.brush(plate)
+            tag.borderBrush = n.bright ? Theme.brush(thread) : Theme.brush(Theme.ink, dark ? 0.14 : 0.12)
+            tag.borderThickness = Theme.inset(n.bright ? 1 : 0.5)
+            let text = TextBlock()
+            text.text = n.text
+            text.fontFamily = FontFamily("Segoe Print")
+            text.fontSize = 12
+            text.foreground = Theme.brush(dark ? 0xB9C9FA : 0x2F4FB5)
+            text.textTrimming = .characterEllipsis
+            text.horizontalAlignment = .center
+            text.verticalAlignment = .center
+            text.margin = Theme.inset(9, 0, 9, 0)
+            tag.child = text
+            try? Canvas.setLeft(tag, Double(n.rect.minX))
+            try? Canvas.setTop(tag, Double(n.rect.minY))
+            add(tag)
+        }
+        for t in m.timers {
+            let pill = Border()
+            pill.height = 16
+            pill.cornerRadius = Theme.corners(8)
+            pill.background = Theme.brush(plate)
+            pill.padding = Theme.inset(6, 0, 6, 0)
+            let text = Theme.text("◷ " + t.text, size: 10, weight: 600)
+            text.foreground = Theme.brush(dark ? 0xB9C9FA : 0x2F4FB5)
+            text.verticalAlignment = .center
+            pill.child = text
+            try? Canvas.setLeft(pill, Double(t.at.x))
+            try? Canvas.setTop(pill, Double(t.at.y))
+            add(pill)
+        }
+        // The layer pointed at and those picked, with the knob a thread comes out of.
+        for o in m.outlines {
+            ring(o.rect, width: o.width, ink: thread, alpha: 1, radius: 4)
+            if o.knob {
+                let k = (x: Double(o.rect.maxX), y: Double(o.rect.midY))
+                let knob = Ellipse()
+                knob.width = 12
+                knob.height = 12
+                knob.fill = Theme.brush(thread)
+                try? Canvas.setLeft(knob, k.x - 6)
+                try? Canvas.setTop(knob, k.y - 6)
+                add(knob)
+                var plus = PathData()
+                plus.move(k.x - 2.6, k.y); plus.line(k.x + 2.6, k.y)
+                plus.move(k.x, k.y - 2.6); plus.line(k.x, k.y + 2.6)
+                if let p = xamlPath(plus.d, width: 1.6) {
+                    p.stroke = Theme.brush(0xFFFFFF)
+                    add(p)
+                }
+            }
+        }
+        // The flags: a ribbon of pencil out of a screen's side, notched at its free end, with the
+        // triangle of play; a ghost of one dashed.
+        for f in m.flags {
+            let r = f.rect, notch = 6.0
+            var d = PathData()
+            d.move(Double(r.minX), Double(r.minY))
+            d.line(Double(r.maxX) - 3, Double(r.minY))
+            d.quad(Double(r.maxX), Double(r.minY), Double(r.maxX), Double(r.minY) + 3)
+            d.line(Double(r.maxX), Double(r.maxY) - 3)
+            d.quad(Double(r.maxX), Double(r.maxY), Double(r.maxX) - 3, Double(r.maxY))
+            d.line(Double(r.minX), Double(r.maxY))
+            d.line(Double(r.minX) + notch, Double(r.midY))
+            d.close()
+            if let ribbon = xamlPath(d.d, width: f.ghost ? 1.2 : 0, dash: f.ghost ? "2.5 2" : nil) {
+                if f.ghost { ribbon.stroke = Theme.brush(thread, f.alpha) } else { ribbon.fill = Theme.brush(Theme.dark ? 0x8FA8F2 : 0x3A63D8, f.alpha) }
+                if f.lifted { ribbon.translation = Vector3(x: 0, y: -2, z: 0) }
+                add(ribbon)
+            }
+            let c = (x: Double(r.midX) + 2, y: Double(r.midY))
+            var tri = PathData()
+            tri.move(c.x - 3.5, c.y - 5); tri.line(c.x + 5, c.y); tri.line(c.x - 3.5, c.y + 5); tri.close()
+            if let play = xamlPath(tri.d, width: 0) {
+                play.fill = Theme.brush(f.ghost ? thread : 0xFFFFFF, f.alpha)
+                add(play)
+            }
+        }
+        // The well to drop a thread in to go back.
+        if let well = m.well {
+            let e = Ellipse()
+            e.width = Double(well.rect.width)
+            e.height = Double(well.rect.height)
+            e.fill = Theme.brush(plate)
+            e.stroke = Theme.brush(well.on ? bright : thread)
+            e.strokeThickness = well.on ? 2.2 : 1.3
+            if !well.on {
+                let d = DoubleCollection()
+                d.append(2.3)
+                d.append(2.3)
+                e.strokeDashArray = d
+            }
+            try? Canvas.setLeft(e, Double(well.rect.minX))
+            try? Canvas.setTop(e, Double(well.rect.minY))
+            add(e)
+            let c = (x: Double(well.rect.midX), y: Double(well.rect.midY)), u = Double(well.rect.width) / 40
+            var hook = PathData()
+            hook.move(c.x + 7 * u, c.y + 6 * u)
+            hook.cubic(c.x + 8 * u, c.y - 4 * u, c.x, c.y - 3 * u, c.x - 6 * u, c.y - 2 * u)
+            hook.move(c.x - 2 * u, c.y - 6.5 * u); hook.line(c.x - 6.5 * u, c.y - 2 * u); hook.line(c.x - 2 * u, c.y + 2.5 * u)
+            if let p = xamlPath(hook.d, width: 1.8) {
+                p.stroke = Theme.brush(well.on ? bright : thread)
+                add(p)
+            }
+        }
+        // Beads of light: the end of a thread in the hand.
+        for light in m.lights {
+            let s = light.size
+            let glow = Ellipse()
+            glow.width = s * 2.4
+            glow.height = s * 2.4
+            glow.fill = Theme.brush(thread, 0.22)
+            try? Canvas.setLeft(glow, Double(light.at.x) - s * 1.2)
+            try? Canvas.setTop(glow, Double(light.at.y) - s * 1.2)
+            add(glow)
+            let bead = Ellipse()
+            bead.width = s
+            bead.height = s
+            bead.fill = Theme.brush(thread)
+            try? Canvas.setLeft(bead, Double(light.at.x) - s / 2)
+            try? Canvas.setTop(bead, Double(light.at.y) - s / 2)
+            add(bead)
+            let core = Ellipse()
+            core.width = s * 0.38
+            core.height = s * 0.38
+            core.fill = Theme.brush(0xFFFFFF)
+            try? Canvas.setLeft(core, Double(light.at.x) - s * 0.19)
+            try? Canvas.setTop(core, Double(light.at.y) - s * 0.19)
+            add(core)
+        }
+        if flow.animating, !flowTicking {
+            flowTicking = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.flowTicking = false
+                    self?.drawFlow()
+                }
+            }
+        }
+    }
+
+    /// A note written on a thread, where it hangs: a field there, Enter keeps what is typed and
+    /// Escape lets it be.
+    private func beginNote(on id: UUID, at p: CGPoint) {
+        if noteBox.parent == nil {
+            noteBox.width = 220
+            noteBox.fontFamily = FontFamily("Segoe Print")
+            noteBox.fontSize = 13
+            noteBox.placeholderText = Words.t("Write a Note")
+            overlay.children.append(noteBox)
+            noteBox.keyDown.addHandler { [weak self] _, args in
+                guard let self, let args else { return }
+                if args.key == .enter {
+                    args.handled = true
+                    if let id = self.noteFor { WindowsCore.setFlowNote(self.noteBox.text, for: [id]) }
+                    self.endNote()
+                } else if args.key == .escape {
+                    args.handled = true
+                    self.endNote()
+                }
+            }
+            noteBox.lostFocus.addHandler { [weak self] _, _ in self?.endNote() }
+        }
+        noteFor = id
+        noteBox.text = WindowsCore.flowNote(id) ?? ""
+        noteBox.visibility = .visible
+        try? Canvas.setLeft(noteBox, Double(p.x) - 110)
+        try? Canvas.setTop(noteBox, Double(p.y) - 34)
+        _ = try? noteBox.focus(.programmatic)
+        try? noteBox.selectAll()
+    }
+
+    private func endNote() {
+        guard noteFor != nil else { return }
+        noteFor = nil
+        noteBox.visibility = .collapsed
+        session.edited(board: nil)
+        takeKeys()
+    }
+
     /// The inspecting hand sees the canvas as it is now.
     private func syncInspect() {
         inspect.selection = session.selection
@@ -1419,7 +1713,7 @@ final class DesignCanvas {
     /// The photo as the control sees the canvas as it is now.
     private func syncDevelop() {
         develop.selection = session.selection
-        develop.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && !inspecting
+        develop.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && session.mode == 0
         develop.zoom = CGFloat(zoom)
         develop.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -1487,7 +1781,7 @@ final class DesignCanvas {
     /// The curve hand sees the canvas as it is now.
     private func syncCurve() {
         curveHand.selection = session.selection
-        curveHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && !inspecting
+        curveHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && session.mode == 0
         curveHand.zoom = CGFloat(zoom)
         curveHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -1553,7 +1847,7 @@ final class DesignCanvas {
     /// The grid tool sees the canvas as it is now.
     private func syncGrid() {
         gridHand.selection = session.selection
-        gridHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !inspecting
+        gridHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && session.mode == 0
         gridHand.zoom = CGFloat(zoom)
         gridHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
     }
@@ -2067,6 +2361,16 @@ final class DesignCanvas {
             showPointer(.grab)
             return
         }
+        // The design as a prototype: threads, flags and screens take the press.
+        if prototyping {
+            syncFlow()
+            if flow.down(at: p, clicks: lastPress?.clicks ?? 1, shift: shift) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, -1, false, .flow)
+            }
+            drawFlow()
+            return
+        }
         // Inspecting: a click picks what is under the pointer, a drag moves the view, and nothing changes.
         if inspecting {
             syncInspect()
@@ -2290,6 +2594,25 @@ final class DesignCanvas {
             place()
             return
         }
+        if case .flow? = drag?.grab {
+            syncFlow()
+            flow.drag(to: p) { [weak self] to in
+                guard let self else { return }
+                self.pan = to
+                self.place()
+            }
+            drag?.moved = true
+            if !flow.panning { session.edited(board: nil) }
+            showPointer(pointer(at: p))
+            return
+        }
+        // As a prototype, the pointer finds threads, flags and what a thread comes out of.
+        if prototyping, drag == nil {
+            syncFlow()
+            flow.hover(p)
+            showPointer(pointer(at: p))
+            return
+        }
         // Inspecting, the pointer measures what it is on.
         if inspecting, drag == nil {
             syncInspect()
@@ -2466,7 +2789,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -2573,6 +2896,11 @@ final class DesignCanvas {
             curveHand.up()
             session.edited(board: nil)
             updatePointer(at: point(args))
+        case .flow:
+            syncFlow()
+            flow.up(at: point(args))
+            session.edited(board: nil)
+            updatePointer(at: point(args))
         case .inspect(_, let target):
             showPointer(.arrow)
             guard !d.moved else { return }
@@ -2654,6 +2982,14 @@ final class DesignCanvas {
         syncLayout()
         if let across = layoutHand.pointer(at: p) { return across ? .across : .upDown }
         if drag == nil, onOffer(p) || copyButtons.contains(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) { return .pointingHand }
+        if prototyping {
+            syncFlow()
+            switch flow.pointer(at: p) {
+            case .grab, .grabbing: return .grab
+            case .pointing: return .pointingHand
+            case .arrow: return .arrow
+            }
+        }
         if session.tool == .pen { return .pen(Self.penMark(pen.mark)) }
         syncDevelop()
         switch develop.pointer(at: p) {
@@ -2751,6 +3087,8 @@ final class DesignCanvas {
             _ = develop.cancel()
         case .inspect:
             break
+        case .flow:
+            _ = flow.cancel()
         }
         showGuides([])
         session.edited(board: nil)
@@ -3044,6 +3382,23 @@ final class DesignCanvas {
             menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), entries: entries)
             return
         }
+        // As a prototype: where what is under the pointer goes, as the Mac's FlowTool menu.
+        if prototyping {
+            syncFlow()
+            guard let made = flow.menuEntries(at: p), !made.isEmpty else { return }
+            var entries: [MenuHost.Entry] = []
+            for e in made {
+                if e.separated, !entries.isEmpty { entries.append(.separator) }
+                let action = e.action
+                entries.append(.item(e.title, enabled: e.enabled, checked: e.checked) { [weak self] in
+                    action()
+                    self?.session.edited(board: nil)
+                })
+            }
+            drawFlow()
+            menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), entries: entries)
+            return
+        }
         // Inspecting: copying what is under the pointer, never changing it, as the Mac's InspectTool menu.
         if inspecting {
             syncInspect()
@@ -3174,6 +3529,30 @@ final class DesignCanvas {
     func key(_ args: KeyRoutedEventArgs?) {
         // Keys typed into a text are the text's.
         guard let args, editing == nil else { return }
+        // As a prototype: Delete cuts the picked layers' threads, never the layers; Escape lets go.
+        if prototyping {
+            switch args.key {
+            case .escape:
+                args.handled = true
+                syncFlow()
+                if !flow.cancel() { session.select([], on: session.board) }
+                drawFlow()
+                return
+            case .delete, .back:
+                args.handled = true
+                syncFlow()
+                flow.deleteLinks()
+                session.edited(board: nil)
+                return
+            case .left, .right, .up, .down, .enter:
+                args.handled = true
+                return
+            case .x, .v, .d, .g, .r, .m, .l, .b, .k, .u, .i, .s:
+                if control { args.handled = true; return }
+            default:
+                break
+            }
+        }
         // Inspecting, nothing changes: Escape takes the next thing out, and the keys that would
         // change the design do nothing. Zooming, copying and undoing still work.
         if inspecting {

@@ -25,12 +25,15 @@ final class DesignSession {
     let develop = WindowsCore.DevelopHand()
     /// The design inspected (the Mac's InspectTool): read, never changed.
     let inspect = WindowsCore.InspectHand()
+    /// The design as a prototype (the Mac's FlowTool): threads pulled from layers to screens.
+    let flow = WindowsCore.FlowHand()
     /// Design, Prototype or Inspect (0, 1, 2), as the bar's switch says.
     var mode = 0 {
         didSet {
             guard mode != oldValue else { return }
             inspect.on = mode == 2
-            if mode == 2 { develop.on = false }
+            flow.on = mode == 1
+            if mode != 0 { develop.on = false }
             changed()
         }
     }

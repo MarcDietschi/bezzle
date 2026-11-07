@@ -52,6 +52,8 @@ final class Inspector {
     var photoPointed: (tone: String?, band: String?)?
     var photoIsolated: String?
     var photoPointing: (ids: [UUID], board: Int)?
+    /// What was picked when the prototype's cards were last opened by themselves.
+    var prototypePicked: [UUID] = []
     /// What the Inspect panel writes code for.
     var inspectPlatform: WindowsCore.InspectPlatform = .css
 
@@ -113,6 +115,8 @@ final class Inspector {
         cards.children.clear()
         // Inspecting: the specs of what is picked, read and copied, never changed.
         if session.mode == 2 { showInspect(); return }
+        // As a prototype: where what is picked goes.
+        if session.mode == 1 { showPrototype(); return }
         let layers = session.selectedLayers
         guard let layer = layers.first, let board = session.board else {
             cards.children.append(toolsCard())
