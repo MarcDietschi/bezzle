@@ -44,9 +44,9 @@ extension WindowsCore {
                 WindowsCore.measure = nil
             case .cells(let columns, let rows)?:
                 let cells = columns * rows
-                WindowsCore.measure = (cells > 1 ? "\(columns) × \(rows)  ·  \(cells) cells" : "\(columns) × \(rows)", box)
+                WindowsCore.measure = (cells > 1 ? WindowsCore.say("%lld × %lld  ·  %lld cells", columns, rows, cells) : "\(columns) × \(rows)", box)
             case .gap(let gap, let both)?:
-                WindowsCore.measure = ((both ? "Gaps " : "Gap ") + Self.number(Double(gap)), box)
+                WindowsCore.measure = (WindowsCore.say(both ? "Gaps %@" : "Gap %@", Self.number(Double(gap))), box)
             case .angle(let angle)?:
                 WindowsCore.measure = ("\(Self.number(angle))°", box)
             }

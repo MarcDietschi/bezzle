@@ -58,6 +58,7 @@ nonisolated enum TextHost {
             return ""
         }
         let runs = spec["runs"] as? [[String: Any]] ?? []
+        if spec["glyphs"] as? Bool == true { return glyphs(runs) }
         let width = (spec["width"] as? NSNumber)?.doubleValue ?? 100_000
         let align: Int32 = switch spec["align"] as? String {
             case "center": 1
@@ -65,6 +66,38 @@ nonisolated enum TextHost {
             case "justify": 3
             default: 0
         }
+        let capacity = 512
+        var lines = [Double](repeating: 0, count: capacity * 6)
+        var count: Int32 = 0
+        let id = given(runs) { runs in
+            lines.withUnsafeMutableBufferPointer { bz_text_lay(runs.baseAddress, Int32(runs.count), width, align, $0.baseAddress, Int32(capacity), &count) }
+        }
+        let laid = (0..<min(Int(count), capacity)).map { k in "[" + lines[k * 6..<k * 6 + 6].map { String($0) }.joined(separator: ",") + "]" }
+        return "{\"id\":\(id),\"lines\":[" + laid.joined(separator: ",") + "]}"
+    }
+
+    /// The runs as one line, for a text along a curve (WebCurvedText.swift): the line's id, its
+    /// width, ascent, descent and cap height, and ten numbers for each letter (BezzleHost.h).
+    private static func glyphs(_ runs: [[String: Any]]) -> String {
+        var capacity = 256
+        while true {
+            var glyphs = [Double](repeating: 0, count: capacity * 10)
+            var line = [Double](repeating: 0, count: 4)
+            var count: Int32 = 0
+            let id = given(runs) { runs in
+                glyphs.withUnsafeMutableBufferPointer { g in
+                    line.withUnsafeMutableBufferPointer { bz_text_glyphs(runs.baseAddress, Int32(runs.count), g.baseAddress, Int32(capacity), &count, $0.baseAddress) }
+                }
+            }
+            // More letters than there was room for: set again with room for all.
+            if Int(count) > capacity { capacity = Int(count); continue }
+            let each = (0..<Int(count)).map { k in "[" + glyphs[k * 10..<k * 10 + 10].map { String($0) }.joined(separator: ",") + "]" }
+            return "{\"id\":\(id),\"line\":[" + line.map { String($0) }.joined(separator: ",") + "],\"glyphs\":[" + each.joined(separator: ",") + "]}"
+        }
+    }
+
+    /// The runs as the host takes them, for as long as `body` runs.
+    private static func given<Result>(_ runs: [[String: Any]], _ body: (UnsafeBufferPointer<bz_text_run>) -> Result) -> Result {
         // The runs' strings, kept alive for the call: the system font's runs ask for "System",
         // which bz_font_add registered the system font's stand-in as.
         let strings = runs.map { run -> [UnsafeMutablePointer<CChar>] in
@@ -88,14 +121,7 @@ nonisolated enum TextHost {
                 color: color.count == 4 ? (color[0], color[1], color[2], color[3]) : (0, 0, 0, 1),
                 features: s[3], axes: s[4])
         }
-        let capacity = 512
-        var lines = [Double](repeating: 0, count: capacity * 6)
-        var count: Int32 = 0
-        let id = given.withUnsafeBufferPointer { runs in
-            lines.withUnsafeMutableBufferPointer { bz_text_lay(runs.baseAddress, Int32(runs.count), width, align, $0.baseAddress, Int32(capacity), &count) }
-        }
-        let laid = (0..<min(Int(count), capacity)).map { k in "[" + lines[k * 6..<k * 6 + 6].map { String($0) }.joined(separator: ",") + "]" }
-        return "{\"id\":\(id),\"lines\":[" + laid.joined(separator: ",") + "]}"
+        return given.withUnsafeBufferPointer(body)
     }
 }
 

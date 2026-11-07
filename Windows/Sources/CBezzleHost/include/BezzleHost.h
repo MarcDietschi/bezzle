@@ -47,6 +47,15 @@ int32_t bz_text_lay(const bz_text_run *runs, int32_t count, double width, int32_
                     double *lines, int32_t capacity, int32_t *lineCount);
 /// Where the core puts each line's baseline, from the text's top.
 void bz_text_place(int32_t id, const double *baselines, int32_t count);
+/// Sets `count` runs as one line, for a text laid along a curve, its letters drawn one by one
+/// (drawing call 13, by the line's id and a letter's place in it). Returns the line's id and
+/// writes, for up to `capacity` letters, ten numbers each to `glyphs`: the run it is of, where
+/// it is along the line, where it is from the baseline (y down), its advance, its font's ascent
+/// and descent, where its underline is (below the baseline) and how thick, and its font's x height
+/// and cap height. `*glyphCount` is how many letters there are, and `line` gets four numbers:
+/// the line's width, ascent and descent, and the first letter's cap height.
+int32_t bz_text_glyphs(const bz_text_run *runs, int32_t count, double *glyphs, int32_t capacity,
+                       int32_t *glyphCount, double *line);
 /// Forgets every text set, as when fonts were added.
 void bz_text_forget(void);
 

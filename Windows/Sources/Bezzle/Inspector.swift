@@ -151,6 +151,8 @@ final class Inspector {
         if kinds == ["text"], let text = WindowsCore.textCard(ids) {
             cards.children.append(textCard(text, ids: ids, board: board))
         }
+        // Words along a curve: bent ones, or ones riding a shape, but not both at once.
+        if kinds == ["text"], let curve = curveCard(ids, board: board) { cards.children.append(curve) }
         if kinds == ["artboard"], ids.count == 1, let artboard = artboardCard(ids[0], board: board) { cards.children.append(artboard) }
         if let component = componentCard(ids, board: board) { cards.children.append(component) }
         if let own = copyLayerCard(ids, board: board) { cards.children.append(own) }
@@ -223,7 +225,7 @@ final class Inspector {
             box.child = view
         }
         lead.children.append(box)
-        let heading = Theme.text(title, size: 12.5, weight: 600)
+        let heading = Theme.text(Words.t(title), size: 12.5, weight: 600)
         heading.textTrimming = .characterEllipsis
         lead.children.append(heading)
         line.children.append(lead)
@@ -231,7 +233,8 @@ final class Inspector {
         var reserved = 8.0
         if opened == key, remove != nil { reserved += 20 + 4 }
         if opened == key, more != nil { reserved += 20 + 4 }
-        let value = Theme.text(summary, size: 12, ink: 2)
+        // Its parts as Bezzle says them: "3.3 pt · Inside" is "3.3 pt · Innen".
+        let value = Theme.text(summary.components(separatedBy: " · ").map(Words.match).joined(separator: " · "), size: 12, ink: 2)
         value.horizontalAlignment = .right
         value.margin = Theme.inset(0, 0, reserved, 0)
         value.maxWidth = 140
@@ -281,7 +284,7 @@ final class Inspector {
                 more.preview(false)
             }
             plus.box.pointerPressed.addHandler { _, args in args?.handled = true }
-            try? ToolTipService.setToolTip(plus.box, more.help)
+            try? ToolTipService.setToolTip(plus.box, Words.t(more.help))
             line.children.append(plus.box)
             trailing += 20 + 4
         }
@@ -299,7 +302,7 @@ final class Inspector {
             cross.box.pointerExited.addHandler { _, _ in Glyphs.paint(glyph, Theme.ink(3)) }
             // Kept from the line under it, which would fold the card.
             cross.box.pointerPressed.addHandler { _, args in args?.handled = true }
-            try? ToolTipService.setToolTip(cross.box, removal)
+            try? ToolTipService.setToolTip(cross.box, Words.t(removal))
             line.children.append(cross.box)
         }
         stack.children.append(line)
@@ -339,7 +342,7 @@ final class Inspector {
             fill.width = f * Theme.cardWidth
             // Past nothing, one that can be taken away comes away when let go far enough on.
             tearing = remove != nil && -raw * Theme.cardWidth > 70
-            value.text = tearing ? "Release to remove" : dial.summary(f)
+            value.text = tearing ? Words.t("Release to remove") : dial.summary(f)
             value.foreground = tearing ? Theme.brush(Theme.warning) : Theme.ink(2)
             dial.set(f)
             self.session.edited(board: self.session.board)
@@ -575,8 +578,8 @@ final class Inspector {
             press.box.pointerEntered.addHandler { _, _ in for l in lines { l.stroke = Theme.ink(1) } }
             press.box.pointerExited.addHandler { _, _ in for l in lines { l.stroke = Theme.ink(2) } }
         }
-        try? ToolTipService.setToolTip(press.box, on ? "Done building  Enter"
-            : "Build: drag across the pieces the shapes make to join them, or wipe them away with Alt  Ctrl+Alt+B")
+        try? ToolTipService.setToolTip(press.box, Words.t(on ? "Done building  Enter"
+            : "Build: drag across the pieces the shapes make to join them, or wipe them away with Alt  Ctrl+Alt+B"))
         return press.box
     }
 
@@ -611,7 +614,7 @@ final class Inspector {
         press.box.child = canvas
         press.box.pointerEntered.addHandler { _, _ in for l in lines { l.stroke = Theme.ink(1) } }
         press.box.pointerExited.addHandler { _, _ in for l in lines { l.stroke = Theme.ink(2) } }
-        try? ToolTipService.setToolTip(press.box, WindowsCore.combineTitle(way))
+        try? ToolTipService.setToolTip(press.box, Words.t(WindowsCore.combineTitle(way)))
         return press.box
     }
 
@@ -873,13 +876,23 @@ final class Inspector {
         let wrap = StackPanel()
         wrap.spacing = 6
         var row: StackPanel?
-        for (k, item) in items.enumerated() {
-            if k % 3 == 0 {
+        var used = 0.0
+        for item in items {
+            let label = Theme.text("+ " + Words.t(item.0), size: 12, ink: 2)
+            label.margin = Theme.inset(10, 0, 10, 0)
+            try? label.measure(Size(width: 400, height: 28))
+            let width = Double(label.desiredSize.width)
+            // A new row when this chip would reach past the panel, as the Mac's flow of chips does:
+            // the words are longer in German.
+            if row == nil || used + 6 + width > Theme.cardWidth {
                 let r = StackPanel()
                 r.orientation = .horizontal
                 r.spacing = 6
                 wrap.children.append(r)
                 row = r
+                used = width
+            } else {
+                used += 6 + width
             }
             let chip = Grid()
             chip.height = 28
@@ -893,8 +906,6 @@ final class Inspector {
             dashes.append(2.5)
             edge.strokeDashArray = dashes
             chip.children.append(edge)
-            let label = Theme.text("+ \(item.0)", size: 12, ink: 2)
-            label.margin = Theme.inset(10, 0, 10, 0)
             chip.children.append(label)
             let press = Pressable(radius: 8) { [weak self] in
                 item.2()
@@ -921,13 +932,13 @@ final class Inspector {
             lead.spacing = 10
             lead.verticalAlignment = .center
             if let glyph { lead.children.append(Glyphs.view(glyph, size: 16, brush: Theme.ink(2))) }
-            lead.children.append(Theme.text(title, size: 12.5, ink: 1))
+            lead.children.append(Theme.text(Words.t(title), size: 12.5, ink: 1))
             row.children.append(lead)
             let cap = Theme.well(radius: 5)
             cap.height = 20
             cap.minWidth = 22
             cap.horizontalAlignment = .right
-            let letter = Theme.text(key, size: 11, weight: 500, ink: 2)
+            let letter = Theme.text(Words.t(key), size: 11, weight: 500, ink: 2)
             letter.horizontalAlignment = .center
             letter.margin = Theme.inset(6, 0, 6, 0)
             cap.child = letter

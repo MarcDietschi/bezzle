@@ -78,7 +78,7 @@ final class ExportSheet {
     private func show() {
         stack.children.clear()
         let head = Grid()
-        let title = Theme.text("Export", size: 22, weight: 500, serif: true)
+        let title = Theme.text(Words.t("Export"), size: 22, weight: 500, serif: true)
         head.children.append(title)
         let closer = Pressable(radius: 8) { [weak self] in self?.close() }
         closer.box.width = 26
@@ -90,7 +90,7 @@ final class ExportSheet {
 
         let scopes = scopes
         guard !scopes.isEmpty else {
-            let words = Theme.text("There is nothing to export yet. Draw an artboard with A.", size: 13, ink: 2)
+            let words = Theme.text(Words.t("There is nothing to export yet. Draw an artboard with A."), size: 13, ink: 2)
             words.textWrapping = .wrap
             stack.children.append(words)
             return
@@ -140,7 +140,7 @@ final class ExportSheet {
     private func section(_ title: String, _ control: FrameworkElement) -> UIElement {
         let s = StackPanel()
         s.spacing = 8
-        s.children.append(Theme.text(title, size: 12.5, weight: 600))
+        s.children.append(Theme.text(Words.t(title), size: 12.5, weight: 600))
         s.children.append(control)
         return s
     }
@@ -164,7 +164,7 @@ final class ExportSheet {
             fill.width = max(14, 352 * progress)
             box.children.append(fill)
         }
-        let label = Theme.text(title, size: 13, weight: 600)
+        let label = Theme.text(Words.t(title), size: 13, weight: 600)
         label.foreground = Theme.brush(Theme.paper, enabled ? 1 : 0.8)
         label.horizontalAlignment = .center
         label.verticalAlignment = .center
@@ -212,7 +212,7 @@ final class ExportSheet {
             let check = Glyphs.view(Glyphs.check(size: 11), size: 11, brush: Theme.ink(2))
             check.verticalAlignment = .center
             row.children.append(check)
-            let words = Theme.text("Saved in \(outcome.shown.lastPathComponent).", size: 12, ink: 2)
+            let words = Theme.text(Words.t("Saved in %@.", outcome.shown.lastPathComponent), size: 12, ink: 2)
             words.verticalAlignment = .center
             words.textTrimming = .characterEllipsis
             words.maxWidth = 220
@@ -237,7 +237,7 @@ final class ExportSheet {
         press.box.background = Theme.brush(Theme.card)
         press.box.borderBrush = Theme.hairline
         press.box.borderThickness = Theme.inset(0.5)
-        let label = Theme.text(title, size: 12, weight: 500)
+        let label = Theme.text(Words.t(title), size: 12, weight: 500)
         label.margin = Theme.inset(10, 0, 10, 0)
         label.verticalAlignment = .center
         press.box.child = label
@@ -247,7 +247,7 @@ final class ExportSheet {
     static func textButton(_ title: String, _ action: @escaping @MainActor () -> Void) -> UIElement {
         let press = Pressable(radius: 6, action: action)
         press.box.height = 26
-        let label = Theme.text(title, size: 12, weight: 500)
+        let label = Theme.text(Words.t(title), size: 12, weight: 500)
         label.foreground = Theme.brush(Theme.pencil)
         label.margin = Theme.inset(8, 0, 8, 0)
         label.verticalAlignment = .center

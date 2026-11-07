@@ -144,13 +144,13 @@ extension WindowsCore {
         case .corner(let id, let frame, let rotation, let corner, let radii)?:
             let (next, radius) = BezzleDocument.cornerRadii(at: p, frame: frame, rotation: rotation, corner: corner, original: radii, alone: option)
             edit { $0.update(id) { $0.radii = next } }
-            measure = ("Radius \(number(radius))", Geometry.bounds(of: frame, rotation: rotation))
+            measure = (say("Radius %@", number(radius)), Geometry.bounds(of: frame, rotation: rotation))
         case .shadow(let id, let slot, let start, let original)?:
             var dx = p.x - start.x, dy = p.y - start.y
             if shift { if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 } }
             let x = (original.x + dx).rounded(), y = (original.y + dy).rounded()
             edit { $0.update(id) { $0[shadow: slot].x = x; $0[shadow: slot].y = y } }
-            if let f = design?.absoluteFrame(of: id) { measure = ("Shadow \(number(x)), \(number(y))", f.offsetBy(dx: x, dy: y)) }
+            if let f = design?.absoluteFrame(of: id) { measure = (say("Shadow %@, %@", number(x), number(y)), f.offsetBy(dx: x, dy: y)) }
         case nil:
             return
         }

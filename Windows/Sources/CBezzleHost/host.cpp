@@ -393,7 +393,12 @@ TextStyle style(const Run& run) {
     s.setColor(run.hasColor ? run.color.toSkColor() : SK_ColorTRANSPARENT);
     // The font's OpenType features as the layer sets them, and its axes: the system font's weight
     // and optical size by its face and size, unless the layer sets them itself.
-    for (const auto& [tag, value] : tagged(run.features)) s.addFontFeature(SkString(tag.c_str()), int(value));
+    const auto features = tagged(run.features);
+    for (const auto& [tag, value] : features) s.addFontFeature(SkString(tag.c_str()), int(value));
+    // The Mac always sets letters' spacing (Text Kit's kern), and set to nought, Core Text leaves
+    // out the font's own kerning between pairs such as "Te"; set to anything else, it keeps it.
+    const bool kernSet = std::any_of(features.begin(), features.end(), [](const auto& f) { return f.first == "kern"; });
+    if (run.tracking == 0 && !kernSet) s.addFontFeature(SkString("kern"), 0);
     std::vector<SkFontArguments::VariationPosition::Coordinate> axes;
     const auto set = tagged(run.axes);
     auto has = [&](const char* tag) { for (const auto& a : set) if (a.first == tag) return true; return false; };
@@ -470,12 +475,30 @@ double leadingOf(const Run& run) {
 }
 
 struct Text {
-    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; };
+    /// Each line on its own, where Skia puts its baseline, and how far to the left it is drawn:
+    /// Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
+    /// lines set from the left (centred or set from the right, Skia's lines lie where the Mac's do).
+    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; double back; };
     std::vector<Line> lines;
     std::vector<double> baselines;
 };
 std::map<int, Text> texts;
 int nextText = 1;
+
+/// A text set as one line for a curve: its letters, each drawn on its own where the core places it.
+struct Glyph { SkFont font; SkGlyphID id; };
+std::map<int, std::vector<Glyph>> glyphLines;
+
+/// How many bytes UTF-8 takes for these letters, as Skia counts its clusters.
+size_t utf8Length(const std::u16string& s) {
+    size_t n = 0;
+    for (size_t k = 0; k < s.size(); k++) {
+        const char16_t c = s[k];
+        if (c >= 0xD800 && c < 0xDC00 && k + 1 < s.size()) { n += 4; k++; }
+        else n += c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
+    }
+    return n;
+}
 
 // MARK: Playing a recording (bezzle.mjs's look and play)
 
@@ -634,6 +657,21 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                 break;
             }
             case 11: canvas->restore(); break;
+            case 13: {
+                // One letter of a line set for a curve, its baseline's left end at the origin.
+                SkPaint paint;
+                paint.setAntiAlias(true);
+                const Look l = look(c, i, paint, canvas);
+                const int id = int(c[i]), k = int(c[i + 1]);
+                i += 2;
+                paint.setColor4f(color(c, i, l.alpha));
+                if (auto it = glyphLines.find(id); it != glyphLines.end() && k >= 0 && k < int(it->second.size())) {
+                    const Glyph& g = it->second[size_t(k)];
+                    const SkPoint origin = {0, 0};
+                    canvas->drawGlyphs({&g.id, 1}, {&origin, 1}, {0, 0}, g.font, paint);
+                }
+                break;
+            }
             case 12: {
                 SkPaint paint;
                 const Look l = look(c, i, paint, canvas);
@@ -648,7 +686,7 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                         auto& line = t.lines[k];
                         if (!line.paragraph) continue;
                         const double baseline = k < t.baselines.size() ? t.baselines[k] : 0;
-                        line.paragraph->paint(canvas, x, float(y + baseline - line.baseline));
+                        line.paragraph->paint(canvas, float(x - line.back), float(y + baseline - line.baseline));
                     }
                 }
                 if (layered) canvas->restore();
@@ -698,9 +736,8 @@ extern "C" int32_t bz_font_add(const char* family, const char* face, const void*
     return 1;
 }
 
-extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double width, int32_t align,
-                               double* lines, int32_t capacity, int32_t* lineCount) {
-    std::lock_guard<std::mutex> guard(lock);
+namespace {
+std::vector<Run> runsOf(const bz_text_run* given, int32_t count) {
     std::vector<Run> runs;
     for (int32_t k = 0; k < count; k++) {
         const auto& r = given[k];
@@ -710,6 +747,14 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
                         r.features ? r.features : "", r.axes ? r.axes : ""});
     }
     if (runs.empty()) runs.push_back({u"", "System", "", 12, 0, 400, 0, false, false, false, {0, 0, 0, 1}, "", ""});
+    return runs;
+}
+}  // namespace
+
+extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double width, int32_t align,
+                               double* lines, int32_t capacity, int32_t* lineCount) {
+    std::lock_guard<std::mutex> guard(lock);
+    const std::vector<Run> runs = runsOf(given, count);
     auto whole = paragraph(runs, runs[0], width, align);
     std::vector<LineMetrics> metrics;
     whole->getLineMetrics(metrics);
@@ -727,7 +772,8 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             line->getLineMetrics(lm);
             if (!lm.empty()) baseline = lm[0].fBaseline;
         }
-        text.lines.push_back({std::move(line), baseline});
+        const bool fromLeft = align == 0 || align == 3;
+        text.lines.push_back({std::move(line), baseline, part.empty() || !fromLeft ? 0 : part[0].tracking / 2});
         text.baselines.push_back(m.fBaseline);
         if (written < capacity) {
             // Skia shares the leading out above and below the line; Text Kit keeps it apart.
@@ -752,9 +798,86 @@ extern "C" void bz_text_place(int32_t id, const double* baselines, int32_t count
     if (auto it = texts.find(id); it != texts.end()) it->second.baselines.assign(baselines, baselines + std::max(count, 0));
 }
 
+extern "C" int32_t bz_text_glyphs(const bz_text_run* given, int32_t count, double* out, int32_t capacity,
+                                  int32_t* glyphCount, double* line) {
+    std::lock_guard<std::mutex> guard(lock);
+    const std::vector<Run> runs = runsOf(given, count);
+    auto p = paragraph(runs, runs[0], 1e7, 0);
+    std::vector<LineMetrics> metrics;
+    p->getLineMetrics(metrics);
+    // Where each run begins in the words' UTF-8, which is how Skia tells where a letter is from.
+    std::vector<size_t> starts;
+    size_t at = 0;
+    for (const auto& r : runs) { starts.push_back(at); at += utf8Length(r.text); }
+    struct Laid { SkFont font; SkGlyphID id; double x, y; size_t run; };
+    std::vector<Laid> laid;
+    p->visit([&](int lineNumber, const Paragraph::VisitorInfo* info) {
+        if (!info || lineNumber != 0) return;
+        for (int k = 0; k < info->count; k++) {
+            const size_t u = info->utf8Starts[k];
+            size_t run = size_t(std::upper_bound(starts.begin(), starts.end(), u) - starts.begin());
+            run = run > 0 ? run - 1 : 0;
+            // Along the line from its start; up or down from the baseline as the letter is set.
+            // Skia puts half the letters' spacing before each, Core Text all of it after.
+            const double spacing = run < runs.size() ? runs[run].tracking : 0;
+            laid.push_back({info->font, info->glyphs[k], double(info->origin.fX + info->positions[k].fX) - spacing / 2,
+                            double(info->positions[k].fY), run});
+        }
+    });
+    std::vector<Glyph> kept;
+    // As long as Skia sets the line, but for the half of the spacing it puts before the first letter.
+    double width = p->getMaxIntrinsicWidth() - runs[0].tracking / 2, capHeight = -1;
+    for (size_t k = 0; k < laid.size(); k++) {
+        const Laid& g = laid[k];
+        SkFontMetrics m;
+        g.font.getMetrics(&m);
+        // As far as the next letter, or for the last, its own width and the spacing after it.
+        double advance;
+        if (k + 1 < laid.size() && laid[k + 1].x >= g.x) {
+            advance = laid[k + 1].x - g.x;
+        } else {
+            SkScalar w = 0;
+            g.font.getWidths({&g.id, 1}, {&w, 1});
+            advance = double(w) + (g.run < runs.size() ? runs[g.run].tracking : 0);
+        }
+        width = std::max(width, g.x + advance);
+        if (capHeight < 0) capHeight = m.fCapHeight;
+        kept.push_back({g.font, g.id});
+        if (int32_t(k) < capacity) {
+            double* o = out + k * 10;
+            SkScalar underline = 0, thickness = 0;
+            if (!m.hasUnderlinePosition(&underline)) underline = -m.fAscent * 0.1f;
+            if (!m.hasUnderlineThickness(&thickness)) thickness = g.font.getSize() / 14;
+            o[0] = double(g.run);
+            o[1] = g.x;
+            o[2] = g.y;
+            o[3] = advance;
+            o[4] = -m.fAscent;
+            o[5] = m.fDescent;
+            o[6] = underline;
+            o[7] = thickness;
+            o[8] = m.fXHeight;
+            o[9] = m.fCapHeight;
+        }
+    }
+    if (glyphCount) *glyphCount = int32_t(laid.size());
+    const double ascent = metrics.empty() ? runs[0].size * 0.8 : metrics[0].fAscent;
+    const double descent = metrics.empty() ? runs[0].size * 0.2 : metrics[0].fDescent;
+    if (line) {
+        line[0] = width;
+        line[1] = ascent;
+        line[2] = descent;
+        line[3] = capHeight >= 0 ? capHeight : ascent * 0.7;
+    }
+    const int id = nextText++;
+    glyphLines[id] = std::move(kept);
+    return id;
+}
+
 extern "C" void bz_text_forget(void) {
     std::lock_guard<std::mutex> guard(lock);
     texts.clear();
+    glyphLines.clear();
 }
 
 extern "C" int32_t bz_asset_add(const char* name, const void* data, int32_t count) {

@@ -110,7 +110,7 @@ final class LayersPanel {
         let title = StackPanel()
         title.orientation = .horizontal
         title.spacing = 6
-        title.children.append(Theme.text("Layers", size: 13, weight: 600))
+        title.children.append(Theme.text(Words.t("Layers"), size: 13, weight: 600))
         if let board {
             title.children.append(Glyphs.view(Glyphs.chevron(open: false, size: 9.5), size: 9.5, brush: Theme.ink(4)))
             title.children.append(Theme.text(board.name, size: 13, weight: 600))

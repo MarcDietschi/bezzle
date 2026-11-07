@@ -23,7 +23,7 @@ final class ToolRail {
             button.box.width = 38
             button.box.height = 38
             buttons.append((tool, button, Glyphs.tool(tool)))
-            try? ToolTipService.setToolTip(button.box, "\(tool.title)  \(tool.key)")
+            try? ToolTipService.setToolTip(button.box, Words.t(tool.title) + "  " + tool.key)
             top.children.append(button.box)
         }
         root.children.append(top)
@@ -36,7 +36,7 @@ final class ToolRail {
         layers.box.horizontalAlignment = .center
         // As far from the bottom as from the left, level with the canvas's bottom edge.
         layers.box.margin = Theme.inset(0, 0, 0, 9)
-        try? ToolTipService.setToolTip(layers.box, "Layers  Ctrl+Y")
+        try? ToolTipService.setToolTip(layers.box, Words.t("Layers") + "  Ctrl+Y")
         buttons.append((nil, layers, Glyphs.layers()))
         root.children.append(layers.box)
 

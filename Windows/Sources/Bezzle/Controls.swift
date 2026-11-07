@@ -222,7 +222,7 @@ enum Controls {
             column.width = GridLength(value: Double(word.count) + 6, gridUnitType: .star)
             grid.columnDefinitions.append(column)
             let on = value == selection
-            let label = Theme.text(word, size: 12, weight: on ? 500 : 400, ink: on ? 1 : 2)
+            let label = Theme.text(Words.t(word), size: 12, weight: on ? 500 : 400, ink: on ? 1 : 2)
             let box = Border()
             box.height = height - 4
             box.cornerRadius = Theme.corners(7)
@@ -248,7 +248,7 @@ enum Controls {
 
     /// A line or two that says how something works, under its controls (the Mac's Caption).
     static func caption(_ words: String) -> FrameworkElement {
-        let text = Theme.text(words, size: 11, ink: 3)
+        let text = Theme.text(Words.t(words), size: 11, ink: 3)
         text.textWrapping = .wrap
         text.lineHeight = 16
         return text
@@ -266,7 +266,7 @@ enum Controls {
         let box = TextBox()
         box.allowFocusOnInteraction = true
         box.text = text
-        box.placeholderText = placeholder
+        box.placeholderText = Words.t(placeholder)
         box.fontFamily = Theme.ui
         box.fontSize = 12
         box.textWrapping = .wrap
@@ -323,7 +323,7 @@ enum Controls {
             column.width = w
             grid.columnDefinitions.append(column)
         }
-        let words = Theme.text(title, size: 12, ink: 2)
+        let words = Theme.text(Words.t(title), size: 12, ink: 2)
         words.verticalAlignment = .center
         words.textTrimming = .characterEllipsis
         grid.children.append(words)

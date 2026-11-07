@@ -44,6 +44,8 @@ enum Glyphs {
         var data: String
         var mode: Mode
         var width = 1.5
+        /// Round ends, or cut straight across, as dashes are.
+        var round = true
     }
 
     /// A picture `size` square in `brush`, as a WinUI element.
@@ -196,7 +198,7 @@ enum Glyphs {
 
     private static func shape(_ part: Part) -> WinUI.Path? {
         let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(part.data)' "
-            + "StrokeThickness='\(part.width)' StrokeStartLineCap='Round' StrokeEndLineCap='Round' StrokeLineJoin='Round'/>"
+            + "StrokeThickness='\(part.width)' StrokeStartLineCap='\(part.round ? "Round" : "Flat")' StrokeEndLineCap='\(part.round ? "Round" : "Flat")' StrokeLineJoin='Round'/>"
         return (try? XamlReader.load(xaml)) as? WinUI.Path
     }
 

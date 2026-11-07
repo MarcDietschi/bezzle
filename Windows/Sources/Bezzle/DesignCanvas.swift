@@ -99,6 +99,8 @@ final class DesignCanvas {
         /// A selected path's corner dot (rounding its corners), or a shape's edge with Alt (an
         /// outline pulled out or in).
         case outline
+        /// A selected text's bead, swung round the middle of its words to bend them.
+        case curve
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -150,6 +152,11 @@ final class DesignCanvas {
     /// A layout grid's gutters, margins and baselines (the shared LayoutHandles), while its card is open.
     let layoutHand = WindowsCore.LayoutHand()
     private let gridMarks = Canvas()
+    /// Words along curves (the Mac's CurveTool, ported): a selected text's beads bend it, and a
+    /// text held on a shape's edge catches on it and slides along it.
+    let curveHand = WindowsCore.CurveHand()
+    private let curveMarks = Canvas()
+    private var curveTicking = false
     /// The drawing aids' menu, for a click on the rulers' corner.
     var aidsMenu: (() -> [MenuHost.Entry])?
     private let depthMarks = Canvas()
@@ -248,6 +255,8 @@ final class DesignCanvas {
         gridHand.redraw = { [weak self] in self?.drawGrids() }
         builder.redraw = { [weak self] in self?.drawBuild() }
         outlineHand.redraw = { [weak self] in self?.drawOutline() }
+        curveHand.redraw = { [weak self] in self?.drawCurves() }
+        curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
         offerChip.height = 28
         offerChip.cornerRadius = Theme.corners(14)
         offerChip.background = Theme.brush(Theme.selection)
@@ -261,7 +270,7 @@ final class DesignCanvas {
         let offerGlyph = Glyphs.mask(size: 13, brush: Theme.brush(0xFFFFFF))
         offerGlyph.verticalAlignment = .center
         offerWords.children.append(offerGlyph)
-        let offerText = Theme.text("Mask", size: 11.5, weight: 600)
+        let offerText = Theme.text(Words.t("Mask"), size: 11.5, weight: 600)
         offerText.foreground = Theme.brush(0xFFFFFF)
         offerText.verticalAlignment = .center
         offerWords.children.append(offerText)
@@ -304,6 +313,7 @@ final class DesignCanvas {
                 self?.setHover(nil)
                 self?.gridHand.hover(nil)
                 self?.layoutHand.hover(nil)
+                self?.curveHand.hover(nil)
             }
         }
         stage.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args) }
@@ -706,7 +716,7 @@ final class DesignCanvas {
             }
             if h.leaving {
                 let q = onStage(h.pointer)
-                pill("Release to remove", at: CGPoint(x: Double(q.x) + 14 + 50, y: Double(q.y) + 14 + 9), solid: true, warning: true)
+                pill(Words.t("Release to remove"), at: CGPoint(x: Double(q.x) + 14 + 50, y: Double(q.y) + 14 + 9), solid: true, warning: true)
                 continue
             }
             // Each distance beside the pointer along the guide, solid toward the edge it keeps to.
@@ -871,6 +881,7 @@ final class DesignCanvas {
         drawDepth()
         drawGrids()
         drawOutline()
+        drawCurves()
         drawBuild()
         placeOffer()
         placeCopyOffer()
@@ -959,7 +970,9 @@ final class DesignCanvas {
         let diamond = Glyphs.view(Glyphs.diamond(size: 8), size: 8, brush: Theme.brush(Theme.linked))
         diamond.verticalAlignment = .center
         row.children.append(diamond)
-        let words = Theme.text(tag.text, size: 10.5, weight: 500)
+        // The variant's name after the dot, as the model made it (a default one in English).
+        let parts = tag.text.components(separatedBy: "  \u{00B7}  ")
+        let words = Theme.text(parts.count == 2 ? parts[0] + "  \u{00B7}  " + Words.match(parts[1]) : tag.text, size: 10.5, weight: 500)
         words.foreground = Theme.brush(Theme.linked)
         row.children.append(words)
         try? row.measure(Size(width: 600, height: 30))
@@ -1007,7 +1020,7 @@ final class DesignCanvas {
         row.spacing = 4
         row.margin = Theme.inset(12, 0, 4, 0)
         row.verticalAlignment = .center
-        let words = Theme.text(offer.words, size: 11.5, ink: 2)
+        let words = Theme.text(Words.match(offer.words), size: 11.5, ink: 2)
         words.verticalAlignment = .center
         words.margin = Theme.inset(0, 0, 6, 0)
         row.children.append(words)
@@ -1017,7 +1030,7 @@ final class DesignCanvas {
             pill.height = 20
             pill.cornerRadius = Theme.corners(10)
             pill.background = i == 0 ? Theme.brush(Theme.linked) : Theme.brush(Theme.linked, 0.08)
-            let label = Theme.text(title, size: 11.5, weight: 600)
+            let label = Theme.text(Words.match(title), size: 11.5, weight: 600)
             label.foreground = i == 0 ? Theme.brush(0xFFFFFF) : Theme.brush(Theme.linked)
             label.margin = Theme.inset(9, 0, 9, 0)
             label.verticalAlignment = .center
@@ -1231,6 +1244,72 @@ final class DesignCanvas {
             builder.start(session.selection)
         } else {
             MessageBeep(0)
+        }
+    }
+
+    /// The curve hand sees the canvas as it is now.
+    private func syncCurve() {
+        curveHand.selection = session.selection
+        curveHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active
+        curveHand.zoom = CGFloat(zoom)
+        curveHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// Words along curves as the Mac's CurveTool draws them: an edge being rested on and the
+    /// line running out along it, the glow of one just caught on or left, and a selected text's
+    /// line with its beads. Drawn again each frame while something on them is on its way.
+    private func drawCurves() {
+        if curveMarks.parent == nil {
+            curveMarks.isHitTestVisible = false
+            overlay.children.append(curveMarks)
+        }
+        curveMarks.children.clear()
+        syncCurve()
+        let m = curveHand.marks()
+        func stroke(_ d: String, width: Double, alpha: Double, glow: Double) {
+            guard alpha > 0.01 else { return }
+            var data = PathData()
+            data.d = d
+            // A soft wider line under it, for the Mac's glow.
+            if glow > 0.02, let halo = markPath(data, thickness: width + 4 + 8 * glow) {
+                halo.stroke = Theme.brush(Theme.pencil, min(0.95, glow) * 0.22)
+                halo.strokeStartLineCap = .round
+                halo.strokeEndLineCap = .round
+                halo.strokeLineJoin = .round
+                curveMarks.children.append(halo)
+            }
+            guard let path = markPath(data, thickness: width) else { return }
+            path.stroke = Theme.brush(Theme.pencil, min(alpha, 1))
+            path.strokeStartLineCap = .round
+            path.strokeEndLineCap = .round
+            path.strokeLineJoin = .round
+            curveMarks.children.append(path)
+        }
+        if let e = m.edge { stroke(e.path, width: 1.5, alpha: e.alpha, glow: e.glow) }
+        if let r = m.run { stroke(r.path, width: 3, alpha: r.alpha, glow: r.glow) }
+        if let f = m.flash { stroke(f.path, width: 2, alpha: f.alpha, glow: f.glow) }
+        if let line = m.line { stroke(line, width: 1, alpha: m.lineStrong ? 0.7 : 0.45, glow: 0) }
+        for bead in m.beads {
+            let size = bead.lit ? 9.0 : 7.0
+            let dot = Ellipse()
+            dot.width = size
+            dot.height = size
+            dot.fill = bead.lit ? Theme.brush(Theme.pencil) : Theme.brush(0xFFFFFF)
+            dot.stroke = Theme.brush(Theme.pencil)
+            dot.strokeThickness = 1
+            try? Canvas.setLeft(dot, Double(bead.at.x) - size / 2)
+            try? Canvas.setTop(dot, Double(bead.at.y) - size / 2)
+            curveMarks.children.append(dot)
+        }
+        // On its way: drawn again a frame from now.
+        if curveHand.animating, !curveTicking {
+            curveTicking = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.curveTicking = false
+                    self?.drawCurves()
+                }
+            }
         }
     }
 
@@ -1846,6 +1925,16 @@ final class DesignCanvas {
                 return
             }
         }
+        // A selected text's beads bend it.
+        if session.tool == .select {
+            syncCurve()
+            if curveHand.down(at: p, clicks: lastPress?.clicks ?? 1, command: control) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.board ?? -1, false, .curve)
+                showPointer(.grab)
+                return
+            }
+        }
         // A path's corner dots, and a shape's edge with Alt, unless a resize handle is in the way.
         if session.tool == .select, handle(at: p) == nil {
             syncOutline()
@@ -1979,6 +2068,8 @@ final class DesignCanvas {
                 builder.hover(p, option: option)
                 syncOutline()
                 outlineHand.hover(p, shift: shift, option: option)
+                syncCurve()
+                curveHand.hover(p)
                 // The word offered shows what it would do while it is pointed at.
                 let lit = onOffer(p)
                 if lit != offerLit, let offer = shownOffer {
@@ -2017,6 +2108,13 @@ final class DesignCanvas {
             syncBuild()
             builder.drag(to: p, option: option)
             showPointer(pointer(at: p))
+            return
+        }
+        if case .curve = d.grab {
+            syncCurve()
+            curveHand.drag(to: p, command: control)
+            drag?.moved = true
+            session.edited(board: nil)
             return
         }
         if case .grid = d.grab {
@@ -2062,8 +2160,25 @@ final class DesignCanvas {
                 let moving = WindowsCore.beginMove(session.selection, duplicate: duplicate)
                 if duplicate { session.select(moving, on: session.board) }
             }
+            syncCurve()
+            if case .handled = curveHand.moving(session.selection, from: inDesign(d.from), at: p) {
+                if dip?.opened == nil, dip != nil {
+                    dip = nil
+                    drawDip()
+                }
+                showGuides([])
+                session.edited(board: nil)
+                return
+            }
             showGuides(WindowsCore.move(by: CGPoint(x: dx, y: dy), constrain: shift, snapping: !control, zoom: zoom))
-            dipMoved(at: p)
+            if curveHand.claims {
+                if dip?.opened == nil, dip != nil {
+                    dip = nil
+                    drawDip()
+                }
+            } else {
+                dipMoved(at: p)
+            }
         case .handle(let k):
             showGuides(WindowsCore.resize(session.selection, handle: k, to: inDesign(p), keep: shift, fromCenter: option, snapping: !control, zoom: zoom))
             WindowsCore.measureSize(session.selection)
@@ -2072,7 +2187,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -2131,6 +2246,16 @@ final class DesignCanvas {
             session.edited(board: kind == "artboard" ? nil : board)
             if kind == "text", let board { beginEditing(id, board: board) }
         case .move:
+            // Dropped riding an edge, it stays on it, settled where it lies.
+            syncCurve()
+            if d.moved, curveHand.released().rides {
+                dip = nil
+                drawDip()
+                WindowsCore.endRide(session.selection)
+                session.select(session.selection, on: session.selection.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+                session.edited(board: nil)
+                return
+            }
             // Dropped, each goes onto the artboard its middle is over, or off onto the canvas.
             if d.moved {
                 // Into the shape it opened, the mask is what is picked; dragged wholly off the mask
@@ -2165,6 +2290,10 @@ final class DesignCanvas {
         case .grid:
             gridHand.up()
             session.edited(board: d.board >= 0 ? d.board : nil)
+        case .curve:
+            curveHand.up()
+            session.edited(board: nil)
+            updatePointer(at: point(args))
         case .layout:
             layoutHand.up()
             session.edited(board: d.board >= 0 ? d.board : nil)
@@ -2240,6 +2369,8 @@ final class DesignCanvas {
         case .turn(let a)?: return .rotate(a)
         case nil: break
         }
+        syncCurve()
+        if curveHand.grabs(at: p) { return .grab }
         if let b = builder.pointer { return b.onPiece ? .build(erase: b.erase) : .arrow }
         syncOutline()
         switch outlineHand.pointer(at: p) {
@@ -2289,6 +2420,7 @@ final class DesignCanvas {
         switch grab {
         case .move:
             if moved { WindowsCore.cancelMove() }
+            curveHand.cancel()
             dip = nil
             drawDip()
         case .handle:
@@ -2311,6 +2443,8 @@ final class DesignCanvas {
             _ = builder.key("escape")
         case .outline:
             outlineHand.cancel()
+        case .curve:
+            curveHand.cancel()
         }
         showGuides([])
         session.edited(board: nil)
@@ -2513,6 +2647,21 @@ final class DesignCanvas {
         session.edited(board: nil)
     }
 
+    /// The selected text laid along the selected shape, where it lies nearest it; the text is picked.
+    private func rideSelection() {
+        if WindowsCore.endPreview() { session.previewed(board: nil) }
+        guard let text = WindowsCore.ride(session.selection) else { MessageBeep(0); return }
+        session.select([text], on: WindowsCore.board(of: text) ?? session.board)
+        session.edited(board: nil)
+    }
+
+    /// The selected texts straight again, those riding a shape taken off it.
+    private func straightenSelection() {
+        let kept = WindowsCore.straighten(session.selection)
+        session.select(kept, on: kept.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+        session.edited(board: nil)
+    }
+
     /// A mask taken apart; what it held, and its shape, are picked.
     private func releaseMask(_ id: UUID) {
         let freed = WindowsCore.releaseMask(id)
@@ -2623,7 +2772,20 @@ final class DesignCanvas {
                 }
                 entries.append(.item("Release Mask", shortcut: "Ctrl+Shift+M") { [weak self] in self?.releaseMask(mask) })
             }
-            if canGroup || canUngroup || canMask || mask != nil { entries.append(.separator) }
+            // Words along a shape's outline, and straight again: pointed at, the words show laid along it.
+            let ridable = WindowsCore.ridePair(selection) != nil, straightens = WindowsCore.canStraighten(selection)
+            if ridable {
+                entries.append(.item("Put Text on Path", preview: { [weak self] on in
+                    WindowsCore.previewRide(selection, on)
+                    self?.session.previewed(board: nil)
+                }) { [weak self] in self?.rideSelection() })
+            }
+            if straightens {
+                entries.append(.item(WindowsCore.curveLook(selection)?.riding == true ? "Take Text off Path" : "Straighten Text") { [weak self] in
+                    self?.straightenSelection()
+                })
+            }
+            if canGroup || canUngroup || canMask || mask != nil || ridable || straightens { entries.append(.separator) }
             // Repeat grids, as the Mac's menu has them.
             if WindowsCore.canRepeat(selection) {
                 entries += [.item("Make Repeat Grid", shortcut: "Ctrl+R") { [weak self] in self?.makeRepeatGrid() }, .separator]
@@ -2740,6 +2902,14 @@ final class DesignCanvas {
                 let board = drag?.board ?? -1
                 drag = nil
                 session.edited(board: board >= 0 ? board : nil)
+                return
+            }
+            // Escape while a bead is swung: back as it was.
+            if penKey == "escape", curveHand.dragging {
+                args.handled = true
+                curveHand.cancel()
+                drag = nil
+                session.edited(board: nil)
                 return
             }
             // Escape while a grid's handle is dragged: back as it was.

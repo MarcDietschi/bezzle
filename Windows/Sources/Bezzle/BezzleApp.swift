@@ -77,6 +77,8 @@ final class BezzleApp: SwiftApplication {
 
     override func onLaunched(_ args: WinUI.LaunchActivatedEventArgs) {
         Trace.time("launched")
+        // The core's own words (what a drag measures) in the user's language too.
+        WindowsCore.say = { key, args in Words.t(key, arguments: args) }
         MainActor.assumeIsolated { Theme.readAppearance() }
         let window = Window()
         window.title = "Bezzle"

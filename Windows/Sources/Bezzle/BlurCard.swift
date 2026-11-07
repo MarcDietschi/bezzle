@@ -228,7 +228,7 @@ extension Inspector {
             self.dialing = false
             self.session.edited(board: self.session.board)
         }
-        try? ToolTipService.setToolTip(well, "Drag the ring, where it is sharp, or the dot, where the blur is whole; or drag across to draw it afresh. Double click to blur toward the bottom.")
+        try? ToolTipService.setToolTip(well, Words.t("Drag the ring, where it is sharp, or the dot, where the blur is whole; or drag across to draw it afresh. Double click to blur toward the bottom."))
         return well
     }
 }

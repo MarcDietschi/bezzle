@@ -33,6 +33,8 @@ try {
     Copy-Item "$products\swift-windowsappsdk_CWinAppSDK.bundle\Microsoft.WindowsAppRuntime.Bootstrap.dll" $app -Force
     # What the core needs beside it: ICU's data for Skia's text, and the open fonts that stand in
     # for the Mac's (Web/tools/openfonts.py makes them; git-ignored, so sync.sh brings them).
+    # The Mac's words in other languages (Resources/make-strings.py makes them on the Mac).
+    if (Test-Path 'Resources\Generated\strings.json') { Copy-Item 'Resources\Generated\strings.json' $app -Force }
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $app -Force
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $products -Force
     if (Test-Path '..\Web\site\openfonts\manifest.json') {

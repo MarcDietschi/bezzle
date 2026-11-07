@@ -141,7 +141,7 @@ final class Bar {
         row.margin = Theme.inset(10, 0, 12, 0)
         row.verticalAlignment = .center
         if let glyph { row.children.append(Glyphs.view(glyph, size: 14, brush: Theme.ink(1))) }
-        row.children.append(Theme.text(title, size: 12, weight: 500))
+        row.children.append(Theme.text(Words.t(title), size: 12, weight: 500))
         card.child = row
         return card
     }
@@ -155,7 +155,7 @@ final class Bar {
         row.orientation = .horizontal
         row.spacing = 2
         row.margin = Theme.inset(3)
-        for (k, title) in ["Design", "Prototype", "Inspect"].enumerated() {
+        for (k, title) in ["Design", "Prototype", "Inspect"].map(Words.t).enumerated() {
             let segment = Border()
             segment.height = 24
             segment.cornerRadius = Theme.corners(7)

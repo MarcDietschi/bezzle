@@ -46,9 +46,9 @@ extension WindowsCore {
         func measure(_ what: OutlineMeasure?, _ box: CGRect) {
             switch what {
             case nil: WindowsCore.measure = nil
-            case .radius(let r)?: WindowsCore.measure = ("Radius " + Self.number(Double(r)), box)
-            case .outset(let d)?: WindowsCore.measure = ("Outset " + Self.number(Double(d)), box)
-            case .inset(let d)?: WindowsCore.measure = ("Inset " + Self.number(Double(d)), box)
+            case .radius(let r)?: WindowsCore.measure = (WindowsCore.say("Radius %@", Self.number(Double(r))), box)
+            case .outset(let d)?: WindowsCore.measure = (WindowsCore.say("Outset %@", Self.number(Double(d))), box)
+            case .inset(let d)?: WindowsCore.measure = (WindowsCore.say("Inset %@", Self.number(Double(d))), box)
             }
         }
 

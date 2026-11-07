@@ -23,7 +23,7 @@ extension Inspector {
             }
         }
         let current = look.variants.firstIndex { $0 == look.current } ?? 0
-        let summary = look.variants.count > 1 ? look.names[current] : (look.count > 1 ? "" : look.name)
+        let summary = look.variants.count > 1 ? Words.match(look.names[current]) : (look.count > 1 ? "" : look.name)
         let mark = Glyphs.view(Glyphs.component(size: 13), size: 13, brush: Theme.brush(Theme.linked))
         return card("Component", summary, mark: mark, remove: unlink, removal: "Unlink from component",
                     accessory: look.count > 1 ? copyTurner(look, ids: ids) : nil) { [self] in
@@ -37,7 +37,7 @@ extension Inspector {
             })
             // Taken from another design: which, quietly.
             if let from = look.from {
-                let words = Theme.text("From \u{201C}\(from)\u{201D}", size: 11, ink: 3)
+                let words = Theme.text(Words.t("From “%@”", from), size: 11, ink: 3)
                 words.textTrimming = .characterEllipsis
                 rows.append(words)
             }
@@ -48,7 +48,7 @@ extension Inspector {
                     session.edited(board: nil)
                 }
                 try? ToolTipService.setToolTip(button as? DependencyObject,
-                                               "Lets this copy follow its component again in everything it keeps of its own, but its words and pictures")
+                                               Words.t("Lets this copy follow its component again in everything it keeps of its own, but its words and pictures"))
                 rows.append(button)
             }
             return rows
@@ -81,17 +81,17 @@ extension Inspector {
             session.select([next], on: WindowsCore.board(of: next))
         }
         let back = Controls.iconButton(Glyphs.back(size: 9), size: 22) { turn(-1) }
-        try? ToolTipService.setToolTip(back, "The copy before")
+        try? ToolTipService.setToolTip(back, Words.t("The copy before"))
         // Kept from the line under them, which would fold the card.
         back.pointerPressed.addHandler { _, args in args?.handled = true }
         row.children.append(back)
-        let place = Theme.text("\(look.index + 1) of \(look.count)", size: 12)
+        let place = Theme.text(Words.t("%lld of %lld", look.index + 1, look.count), size: 12)
         place.minWidth = 44
         place.textAlignment = .center
         place.verticalAlignment = .center
         row.children.append(place)
         let next = Controls.iconButton(Glyphs.chevron(open: false, size: 9), size: 22) { turn(1) }
-        try? ToolTipService.setToolTip(next, "The copy after")
+        try? ToolTipService.setToolTip(next, Words.t("The copy after"))
         next.pointerPressed.addHandler { _, args in args?.handled = true }
         row.children.append(next)
         return row
@@ -112,7 +112,7 @@ extension Inspector {
         for _ in 0..<((count + 2) / 3) { grid.rowDefinitions.append(RowDefinition()) }
         let session = session
         for (k, v) in look.variants.enumerated() {
-            let tile = variantTile(look, variant: v, name: look.names[k], chosen: v == look.current, ids: ids, board: board)
+            let tile = variantTile(look, variant: v, name: Words.match(look.names[k]), chosen: v == look.current, ids: ids, board: board)
             try? Grid.setColumn(tile, Int32(k % 3))
             try? Grid.setRow(tile, Int32(k / 3))
             grid.children.append(tile)
@@ -131,7 +131,7 @@ extension Inspector {
         plus.horizontalAlignment = .center
         plus.verticalAlignment = .center
         new.box.child = plus
-        try? ToolTipService.setToolTip(new.box, "New variant, of this copy as it looks")
+        try? ToolTipService.setToolTip(new.box, Words.t("New variant, of this copy as it looks"))
         try? Grid.setColumn(new.box, Int32(look.variants.count % 3))
         try? Grid.setRow(new.box, Int32(look.variants.count / 3))
         new.box.verticalAlignment = .top

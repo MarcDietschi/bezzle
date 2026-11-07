@@ -45,9 +45,9 @@ extension WindowsCore {
         func measure(_ what: LayoutMeasure?, _ box: CGRect) {
             switch what {
             case nil: WindowsCore.measure = nil
-            case .gutter(let v)?: WindowsCore.measure = ("Gutter " + Self.number(Double(v)), box)
-            case .margin(let v)?: WindowsCore.measure = ("Margin " + Self.number(Double(v)), box)
-            case .baseline(let v)?: WindowsCore.measure = ("Baseline " + Self.number(Double(v)), box)
+            case .gutter(let v)?: WindowsCore.measure = (WindowsCore.say("Gutter %@", Self.number(Double(v))), box)
+            case .margin(let v)?: WindowsCore.measure = (WindowsCore.say("Margin %@", Self.number(Double(v))), box)
+            case .baseline(let v)?: WindowsCore.measure = (WindowsCore.say("Baseline %@", Self.number(Double(v))), box)
             }
         }
 

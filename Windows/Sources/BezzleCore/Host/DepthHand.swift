@@ -45,7 +45,7 @@ extension WindowsCore {
         func measure(_ what: DepthMeasure?, _ box: CGRect) {
             switch what {
             case nil: WindowsCore.measure = nil
-            case .turning(let n)?: WindowsCore.measure = ("Turning \(n) layers", box)
+            case .turning(let n)?: WindowsCore.measure = (WindowsCore.say("Turning %lld layers", n), box)
             case .angles(let x, let y)?: WindowsCore.measure = ("X \(Self.number(x))°  Y \(Self.number(y))°", box)
             case .nearness(let z)?: WindowsCore.measure = ("Z \(Self.number(Double(z)))", box)
             }

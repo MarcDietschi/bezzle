@@ -184,7 +184,7 @@ extension Inspector {
             self.dialing = false
             self.session.edited(board: self.session.board)
         }
-        try? ToolTipService.setToolTip(well, "Drag to aim it: the card faces where you point. Double click to lay it flat.")
+        try? ToolTipService.setToolTip(well, Words.t("Drag to aim it: the card faces where you point. Double click to lay it flat."))
         return well
     }
 }

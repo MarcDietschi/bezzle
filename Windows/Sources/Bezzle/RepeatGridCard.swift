@@ -20,13 +20,13 @@ extension Inspector {
             let w = (Theme.cardWidth - 24 - Inspector.column - Inspector.columnGap - 6) / 2
             let across = field("↔", g.columnGap, range: -1000...10_000, scrub: 0.5, width: w) { WindowsCore.changeGrid(id, .columnGap($0)); edited() }
             let down = field("↕", g.rowGap, range: -1000...10_000, scrub: 0.5, width: w) { WindowsCore.changeGrid(id, .rowGap($0)); edited() }
-            try? ToolTipService.setToolTip(across, "Between columns")
-            try? ToolTipService.setToolTip(down, "Between rows")
+            try? ToolTipService.setToolTip(across, Words.t("Between columns"))
+            try? ToolTipService.setToolTip(down, Words.t("Between rows"))
             gaps.children.append(across)
             gaps.children.append(down)
             rows.append(Controls.row("Gaps", gaps))
             if !g.slots.isEmpty {
-                let heading = Theme.text("Content", size: 12.5, weight: 600)
+                let heading = Theme.text(Words.t("Content"), size: 12.5, weight: 600)
                 heading.margin = Theme.inset(0, 6, 0, 0)
                 rows.append(heading)
                 for slot in g.slots {
@@ -67,7 +67,7 @@ extension Inspector {
                 edited()
             } as? FrameworkElement
             ungroup?.horizontalAlignment = .right
-            try? ToolTipService.setToolTip(ungroup, "Make it a group of its cells, each a layer of its own  Ctrl+Shift+R")
+            try? ToolTipService.setToolTip(ungroup, Words.t("Make it a group of its cells, each a layer of its own  Ctrl+Shift+R"))
             if let ungroup { foot.children.append(ungroup) }
             rows.append(foot)
             return rows
@@ -151,8 +151,8 @@ extension Inspector {
         let more = Controls.iconButton(Glyphs.plus(size: 14), size: Controls.height) { set(value + 1) }
         more.opacity = value < range.upperBound ? 1 : 0.35
         more.isHitTestVisible = value < range.upperBound
-        try? ToolTipService.setToolTip(fewer, columns ? "One column fewer" : "One row fewer")
-        try? ToolTipService.setToolTip(more, columns ? "One column more" : "One row more")
+        try? ToolTipService.setToolTip(fewer, Words.t(columns ? "One column fewer" : "One row fewer"))
+        try? ToolTipService.setToolTip(more, Words.t(columns ? "One column more" : "One row more"))
         let count = field("", Double(value), range: Double(range.lowerBound)...Double(range.upperBound), scrub: 0.05,
                           width: Theme.cardWidth - 24 - Inspector.column - Inspector.columnGap - 2 * Controls.height - 8) { v in set(Int(v.rounded())) }
         let line = StackPanel()
@@ -179,13 +179,13 @@ extension Inspector {
         stack.children.append(well)
         let label = Grid()
         let size = Theme.text("\(g.columns) × \(g.rows)", size: 12, weight: 500)
-        let cells = Theme.text("  ·  " + (g.count == 1 ? "one cell" : "\(g.count) cells"), size: 12, ink: 3)
+        let cells = Theme.text("  ·  " + (g.count == 1 ? Words.t("one cell") : Words.t("%lld cells", g.count)), size: 12, ink: 3)
         let sizes = StackPanel()
         sizes.orientation = .horizontal
         sizes.children.append(size)
         sizes.children.append(cells)
         label.children.append(sizes)
-        let hint = Theme.text("Click to make it so", size: 11, ink: 3)
+        let hint = Theme.text(Words.t("Click to make it so"), size: 11, ink: 3)
         hint.horizontalAlignment = .right
         hint.visibility = .collapsed
         label.children.append(hint)

@@ -81,7 +81,7 @@ extension WindowsCore {
         public let field: CGRect?
     }
 
-    nonisolated(unsafe) private static var moving: (originals: [UUID: CGRect], bounds: CGRect, targets: SnapTargets, moved: CGPoint)?
+    nonisolated(unsafe) static var moving: (originals: [UUID: CGRect], bounds: CGRect, targets: SnapTargets, moved: CGPoint)?
     nonisolated(unsafe) private static var pulling: SnapTargets?
 
     /// Begins moving layers, as the Mac's canvas does once a drag has gone 3 points: inside the

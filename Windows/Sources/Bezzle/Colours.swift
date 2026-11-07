@@ -310,7 +310,7 @@ enum Colours {
             root.children.append(line)
 
             if !used.isEmpty {
-                let title = Theme.text("In this design", size: 11.5, weight: 500, ink: 3)
+                let title = Theme.text(Words.t("In this design"), size: 11.5, weight: 500, ink: 3)
                 root.children.append(title)
                 let grid = StackPanel()
                 grid.spacing = 6

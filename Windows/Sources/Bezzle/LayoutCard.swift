@@ -51,7 +51,7 @@ extension Inspector {
                     session.edited(board: nil)
                 } as? FrameworkElement
                 guides?.horizontalAlignment = .right
-                try? ToolTipService.setToolTip(guides, "Put guides where the columns and rows begin and end, to keep to once the grid is hidden")
+                try? ToolTipService.setToolTip(guides, Words.t("Put guides where the columns and rows begin and end, to keep to once the grid is hidden"))
                 if let guides { rows.append(guides) }
             }
             return rows
@@ -75,8 +75,8 @@ extension Inspector {
         line.orientation = .horizontal
         line.spacing = 4
         for e in [fewer, count, more] { line.children.append(e) }
-        try? ToolTipService.setToolTip(fewer, columns ? "One column fewer" : "One row fewer")
-        try? ToolTipService.setToolTip(more, columns ? "One column more" : "One row more")
+        try? ToolTipService.setToolTip(fewer, Words.t(columns ? "One column fewer" : "One row fewer"))
+        try? ToolTipService.setToolTip(more, Words.t(columns ? "One column more" : "One row more"))
         return [Controls.row(columns ? "Columns" : "Rows", line),
                 Controls.row("Gutter", field("", t.gutter, range: 0...10_000, scrub: 0.25) { change(.gutter(columns: columns, $0)) }),
                 Controls.row("Margin", field("", t.margin, range: 0...10_000, scrub: 0.25) { change(.margin(columns: columns, $0)) })]
@@ -255,7 +255,7 @@ extension Inspector {
                     edited()
                 }
                 cross.verticalAlignment = .center
-                try? ToolTipService.setToolTip(cross, "Remove guide")
+                try? ToolTipService.setToolTip(cross, Words.t("Remove guide"))
                 line.children.append(cross)
                 return line
             }

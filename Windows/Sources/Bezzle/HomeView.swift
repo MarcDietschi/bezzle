@@ -87,7 +87,7 @@ final class HomeView {
         search.width = 200
         search.height = 28
         let field = TextBox()
-        field.placeholderText = "Search"
+        field.placeholderText = Words.t("Search")
         field.fontFamily = Theme.ui
         field.fontSize = 12
         field.background = Theme.clear
@@ -98,7 +98,7 @@ final class HomeView {
         right.children.append(search)
         let openButton = Theme.card(radius: 8)
         openButton.height = 28
-        let label = Theme.text("Open…", size: 12, weight: 500)
+        let label = Theme.text(Words.t("Open…"), size: 12, weight: 500)
         label.margin = Theme.inset(12, 0, 12, 0)
         openButton.child = label
         openButton.tapped.addHandler { [weak self] _, _ in self?.chooseAndOpen() }
@@ -121,8 +121,8 @@ final class HomeView {
         line.spacing = 10
         let hour = Calendar.current.component(.hour, from: Date())
         let hello = hour >= 5 && hour < 12 ? "Good morning." : hour >= 12 && hour < 18 ? "Good afternoon." : "Good evening."
-        line.children.append(Theme.text(hello, size: 34, weight: 500, serif: true))
-        line.children.append(Theme.text("What are you designing today?", size: 34, weight: 500, ink: 3, serif: true))
+        line.children.append(Theme.text(Words.t(hello), size: 34, weight: 500, serif: true))
+        line.children.append(Theme.text(Words.t("What are you designing today?"), size: 34, weight: 500, ink: 3, serif: true))
         line.margin = Theme.inset(0, 18, 0, 0)
         return line
     }
@@ -194,7 +194,7 @@ final class HomeView {
             tab.background = on ? Theme.brush(Theme.card) : Theme.clear
             tab.borderBrush = on ? Theme.hairline : Theme.clear
             tab.borderThickness = Theme.inset(on ? 0.5 : 0)
-            let label = Theme.text(f.name, size: 12, weight: 500, ink: on ? 1 : 2)
+            let label = Theme.text(Words.t(f.name), size: 12, weight: 500, ink: on ? 1 : 2)
             label.margin = Theme.inset(12, 0, 12, 0)
             tab.child = label
             tab.tapped.addHandler { [weak self] _, _ in self?.family = k; self?.showFamily() }
@@ -280,7 +280,7 @@ final class HomeView {
 
         let words = StackPanel()
         words.spacing = 2
-        let title = Theme.text(size.name, size: 12, weight: 500)
+        let title = Theme.text(Words.t(size.name), size: 12, weight: 500)
         title.horizontalAlignment = .center
         title.maxWidth = max(room.width + 30, 90)
         let numbers = Theme.text("\(Int(size.width)) × \(Int(size.height))", size: 11, ink: 3)
@@ -308,7 +308,7 @@ final class HomeView {
             title.foreground = Theme.ink(1)
             numbers.foreground = Theme.ink(3)
         }
-        try? ToolTipService.setToolTip(pick.box, "Start a design \(Int(size.width)) by \(Int(size.height))")
+        try? ToolTipService.setToolTip(pick.box, Words.t("Start a design %lld by %lld", Int(size.width), Int(size.height)))
         return pick.box
     }
 
@@ -319,7 +319,7 @@ final class HomeView {
     // MARK: Your designs
 
     private func designsHeading() -> UIElement {
-        let heading = Theme.text("Your designs", size: 22, weight: 500, serif: true)
+        let heading = Theme.text(Words.t("Your designs"), size: 22, weight: 500, serif: true)
         heading.margin = Theme.inset(0, 12, 0, 0)
         return heading
     }

@@ -79,6 +79,9 @@ final class MenuHost {
         close()
         guard !entries.isEmpty else { return }
         self.closed = closed
+        // As wide as its widest entry needs, words and shortcut, as the Mac's menus are: the
+        // words are longer in German than in English.
+        let width = max(width, min(440, Self.fit(entries)))
         let card = Theme.card(radius: 12)
         card.width = width
         let list = StackPanel()
@@ -94,7 +97,7 @@ final class MenuHost {
                 list.children.append(line)
                 height += 8.5
             } else if entry.note {
-                let words = Theme.text(entry.title, size: 12, ink: 3)
+                let words = Theme.text(Words.t(entry.title), size: 12, ink: 3)
                 words.textWrapping = .wrap
                 words.margin = Theme.inset(8, 6, 8, 6)
                 words.width = width - 28
@@ -215,6 +218,25 @@ final class MenuHost {
         then?()
     }
 
+    /// How wide a menu of these entries has to be for none to be cut short: a row's margins, the
+    /// tick's column, its words, its shortcut, and the card's padding.
+    private static func fit(_ entries: [Entry]) -> Double {
+        var widest = 0.0
+        for entry in entries where !entry.separator && !entry.note {
+            let title = Theme.text(Words.t(entry.title), size: 13)
+            if let font = entry.font { title.fontFamily = font }
+            try? title.measure(Size(width: 1000, height: 40))
+            var w = 8 + 12 + 8 + Double(title.desiredSize.width) + 8
+            if let shortcut = entry.shortcut {
+                let keys = Theme.text(shortcut, size: 12)
+                try? keys.measure(Size(width: 400, height: 40))
+                w += 8 + Double(keys.desiredSize.width)
+            }
+            widest = max(widest, w)
+        }
+        return widest + 12 + 4
+    }
+
     private func row(_ entry: Entry, width: Double) -> UIElement {
         let press = Pressable(radius: 7) { [weak self] in
             self?.close()
@@ -240,7 +262,7 @@ final class MenuHost {
             check.verticalAlignment = .center
             grid.children.append(check)
         }
-        let title = Theme.text(entry.title, size: 13, ink: entry.enabled ? 1 : 4)
+        let title = Theme.text(Words.t(entry.title), size: 13, ink: entry.enabled ? 1 : 4)
         if let font = entry.font { title.fontFamily = font }
         title.verticalAlignment = .center
         title.textTrimming = .characterEllipsis
@@ -250,7 +272,7 @@ final class MenuHost {
             lines.verticalAlignment = .center
             lines.margin = Theme.inset(8, 0, 0, 0)
             lines.children.append(title)
-            let more = Theme.text(detail, size: 11, ink: entry.enabled ? 3 : 4)
+            let more = Theme.text(Words.t(detail), size: 11, ink: entry.enabled ? 3 : 4)
             more.textTrimming = .characterEllipsis
             lines.children.append(more)
             try? Grid.setColumn(lines, 1)

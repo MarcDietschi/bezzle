@@ -74,6 +74,8 @@ extension Inspector {
         if WindowsCore.exportMarked(ids) != false, let export = exportCard(ids, board: board) { cards.append(export) }
         // What the layers have not got yet, as the Mac's AddBar offers it.
         var missing: [(String, String, () -> Void)] = []
+        // Straight texts can be bent, offered first.
+        if kinds == ["text"], WindowsCore.canCurve(ids) { missing.append(("Curve", "Curve", { WindowsCore.bend(ids, to: 0.25) })) }
         if fills && !kinds.contains("text") && looks.fillOn == false { missing.append(("Fill", "Fill", { change(.addFill) })) }
         if borders && !kinds.contains("line") && looks.borderOn == false { missing.append(("Border", "Border", { change(.addBorder) })) }
         // A shadow under the layers; once they have one, a shadow inside them as well, so that
@@ -234,7 +236,7 @@ extension Inspector {
         row.children.append(swatch)
         let well = Theme.well(radius: 7)
         well.height = Controls.height
-        let name = Theme.text(paint.kind == "linear" ? "Linear gradient" : paint.kind == "radial" ? "Radial gradient" : "Picture", size: 12)
+        let name = Theme.text(Words.t(paint.kind == "linear" ? "Linear gradient" : paint.kind == "radial" ? "Radial gradient" : "Picture"), size: 12)
         name.verticalAlignment = .center
         name.margin = Theme.inset(9, 0, 9, 0)
         well.child = name
@@ -253,7 +255,7 @@ extension Inspector {
     private func blendRow(_ l: WindowsCore.Looks, change: @escaping @MainActor (WindowsCore.LookChange) -> Void,
                           preview: @escaping @MainActor (WindowsCore.LookChange?) -> Void) -> UIElement {
         let groups = WindowsCore.blendModes
-        let title = l.blendSeveral ? "Several" : groups.joined().first { $0.raw == l.blend }?.name ?? "Normal"
+        let title = Words.t(l.blendSeveral ? "Several" : groups.joined().first { $0.raw == l.blend }?.name ?? "Normal")
         let unpreview: () -> Void = { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { if WindowsCore.endPreview() { self?.session.previewed(board: self?.session.board) } } }
         }
@@ -324,7 +326,7 @@ extension Inspector {
         let dial = Dial(fraction: s.elevation / top, set: { WindowsCore.change(ids, .elevation(slot, ($0 * top).rounded())) },
                         summary: { f in
                             let e = Int((f * top).rounded())
-                            return e == 0 ? "None" : presets[min(e, presets.count) - 1].name
+                            return Words.t(e == 0 ? "None" : presets[min(e, presets.count) - 1].name)
                         }, stops: (1...Int(top)).map { Double($0) / top })
         let mark = Self.shadowMark(y: s.first.y, blur: s.first.blur, inset: inset)
         let next = Self.cardID("Shadow", l.shadows.count)

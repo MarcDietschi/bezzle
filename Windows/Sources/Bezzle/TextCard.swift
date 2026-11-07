@@ -103,7 +103,7 @@ extension Inspector {
     private func caseMenu(_ t: WindowsCore.TextCard, change: @escaping @MainActor (WindowsCore.TextChange) -> Void,
                           preview: @escaping @MainActor (WindowsCore.TextChange?) -> Void, closed: @escaping () -> Void) -> FrameworkElement {
         let options: [(String, String)] = [("", "As Typed"), ("upper", "Uppercase"), ("lower", "Lowercase"), ("title", "Title Case"), ("smallCaps", "Small Caps")]
-        let title = t.letterCase.map { now in options.first { $0.0 == now }?.1 ?? "As Typed" } ?? "Several"
+        let title = Words.t(t.letterCase.map { now in options.first { $0.0 == now }?.1 ?? "As Typed" } ?? "Several")
         return Controls.menuButton(title, menus: menus, menuWidth: 180, entries: {
             options.map { value, name in
                 let raw: String? = value.isEmpty ? nil : value
@@ -142,7 +142,7 @@ extension Inspector {
             column.width = w
             head.columnDefinitions.append(column)
         }
-        let title = Theme.text("Variable Font", size: 12, ink: 2)
+        let title = Theme.text(Words.t("Variable Font"), size: 12, ink: 2)
         title.verticalAlignment = .center
         head.children.append(title)
         let names = Theme.text(t.axes.map(\.name).joined(separator: ", "), size: 11, ink: 3)
