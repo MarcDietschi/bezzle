@@ -24,6 +24,8 @@ final class DesignWindow {
     private lazy var ruler = TimeRulerView(session: session)
     /// Ready-made parts and icons, in the layers list's place while it is out.
     private lazy var resources = ResourcesPanel(session: session)
+    /// What changed in other designs since this one took from them, at the top of the canvas.
+    private lazy var news = LibraryNewsChip(session: session)
 
     init(name: String, onClose: @escaping () -> Void) {
         session = DesignSession(name: name)
@@ -58,7 +60,14 @@ final class DesignWindow {
         resources.carry = { [weak self] thing, args in self?.canvas.carryResource(thing, args) }
         resources.drop = { [weak self] thing, args in self?.canvas.dropResource(thing, args) }
         resources.pick = { [weak self] thing in self?.canvas.pickResource(thing) }
-        session.listenToEdits { [weak self] _ in self?.resources.edited() }
+        session.listenToEdits { [weak self] _ in
+            self?.resources.edited()
+            self?.news.refresh()
+        }
+        resources.libraryRead = { [weak self] in self?.news.refresh() }
+        session.listen { [weak self] in self?.news.refresh() }
+        // Other designs, as libraries, read as this one opens.
+        resources.readLibraries()
 
         // The canvas sits in the paper like a table top: radius 12, clipped, a hairline round it.
         let table = Border()
@@ -73,6 +82,9 @@ final class DesignWindow {
         // The ruler of time, floating at the canvas's foot.
         try? Grid.setColumn(ruler.root, 2)
         body.children.append(ruler.root)
+        // News from other designs, floating at the canvas's top.
+        try? Grid.setColumn(news.root, 2)
+        body.children.append(news.root)
         WindowsCore.versions.changed = { [weak self] in
             guard let self else { return }
             self.ruler.refresh()

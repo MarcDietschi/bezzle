@@ -19,7 +19,7 @@ final class ResourcesPanel {
     private let scroll = ScrollView()
     private let content = StackPanel()
 
-    enum Page: Equatable { case kit(String), icons(String) }
+    enum Page: Equatable { case kit(String), icons(String), library(URL) }
     private var page: Page?
     private var query = ""
     /// Whether the artboard parts would go onto is dark, so they show dark.
@@ -116,7 +116,28 @@ final class ResourcesPanel {
             dark = darkNow
             show()
         }
+        // Other designs, as libraries, as they were last saved.
+        if out, !wasOut { readLibraries() }
         wasOut = out
+    }
+
+    /// The designs in the designs folder, newest first, as home shows them.
+    static func designs() -> [URL] {
+        let folder = BezzleApp.designsFolder
+        func date(_ url: URL) -> Date? { (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate }
+        return ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+            .filter { $0.pathExtension == "bezzle" }
+            .sorted { (date($0) ?? .distantPast) > (date($1) ?? .distantPast) }
+    }
+
+    /// Reads the other designs again where they changed, then shows what they hold.
+    var libraryRead: (() -> Void)?
+    func readLibraries() {
+        WindowsCore.readLibraries(Self.designs()) { [weak self] in
+            guard let self else { return }
+            if self.session.showsResources, self.page == nil || { if case .library = self.page { return true }; return false }() { self.show() }
+            self.libraryRead?()
+        }
     }
 
     /// The design changed: its own components may have.
@@ -126,6 +147,12 @@ final class ResourcesPanel {
     }
 
     // MARK: Pages
+
+    /// Runs once the event that asked for it is over: what it does may rebuild the panel, and the
+    /// element the event is on with it, which WinUI does not survive mid-event.
+    private func later(_ f: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { f() } }
+    }
 
     private func open(_ target: Page?) {
         page = target
@@ -144,6 +171,8 @@ final class ResourcesPanel {
             kitPage(id)
         case .icons(let id):
             iconPage(id)
+        case .library(let url):
+            libraryPage(url)
         }
     }
 
@@ -157,7 +186,7 @@ final class ResourcesPanel {
             back.child = title
             back.pointerEntered.addHandler { _, _ in title.foreground = Theme.ink(1) }
             back.pointerExited.addHandler { _, _ in title.foreground = Theme.ink(3) }
-            back.tapped.addHandler { [weak self] _, _ in self?.open(nil) }
+            back.tapped.addHandler { [weak self] _, _ in self?.later { self?.open(nil) } }
             header.children.append(back)
             let chevron = Glyphs.view(Glyphs.chevron(open: false, size: 9), size: 9, brush: Theme.ink(4))
             chevron.verticalAlignment = .center
@@ -172,6 +201,7 @@ final class ResourcesPanel {
         switch page {
         case .kit(let id): return WindowsCore.kits().first { $0.id == id }.map { Words.t($0.title) } ?? id
         case .icons(let id): return WindowsCore.iconSets().first { $0.id == id }?.name ?? id
+        case .library(let url): return url.deletingPathExtension().lastPathComponent
         case nil: return ""
         }
     }
@@ -214,6 +244,29 @@ final class ResourcesPanel {
         let own = WindowsCore.ownComponents()
         if !own.isEmpty {
             content.children.append(pairs(own.map { ownTile($0.id, name: $0.name, copies: $0.copies) }))
+            content.children.append(hairline())
+        }
+        // The other designs with components or styles of their own, to take from.
+        let libraries = WindowsCore.libraries()
+        if !libraries.isEmpty {
+            content.children.append(pairs(libraries.map { lib in
+                let c = card(lib.name, count: lib.components + lib.styles, coverHeight: 76, cover: libraryCover(lib.url)) { [weak self] in self?.open(.library(lib.url)) }
+                guard lib.news else { return c }
+                // What was taken from it changed there since: a dot at its corner.
+                let holder = Grid()
+                holder.children.append(c)
+                let dot = Ellipse()
+                dot.width = 10
+                dot.height = 10
+                dot.fill = Theme.brush(Theme.linked)
+                dot.stroke = Theme.brush(Theme.paper)
+                dot.strokeThickness = 1.5
+                dot.horizontalAlignment = .right
+                dot.verticalAlignment = .top
+                dot.margin = Theme.inset(0, -3, -3, 0)
+                holder.children.append(dot)
+                return holder
+            }))
             content.children.append(hairline())
         }
         content.children.append(pairs(WindowsCore.kits().map { kit in
@@ -261,7 +314,7 @@ final class ResourcesPanel {
         hit.child = stack
         hit.pointerEntered.addHandler { _, _ in lift.scaleX = 1.03; lift.scaleY = 1.03 }
         hit.pointerExited.addHandler { _, _ in lift.scaleX = 1; lift.scaleY = 1 }
-        hit.tapped.addHandler { _, _ in action() }
+        hit.tapped.addHandler { [weak self] _, _ in self?.later(action) }
         return hit
     }
 
@@ -444,9 +497,10 @@ final class ResourcesPanel {
             look(hovering, false)
             if carried {
                 carried = false
+                // Where it was let go, read now, while the event is live; done once it is over.
                 self.drop?(thing, args)
             } else {
-                self.pick?(thing)
+                self.later { self.pick?(thing) }
             }
         }
         element.pointerCaptureLost.addHandler { [weak self] _, _ in
@@ -584,8 +638,10 @@ final class ResourcesPanel {
             cell.pointerEntered.addHandler { _, _ in if !on { cell.background = Theme.brush(Theme.ink, 0.06) } }
             cell.pointerExited.addHandler { _, _ in if !on { cell.background = Theme.clear } }
             cell.tapped.addHandler { [weak self] _, _ in
-                self?.save((c.index, c.weight), for: set)
-                self?.show()
+                self?.later {
+                    self?.save((c.index, c.weight), for: set)
+                    self?.show()
+                }
             }
             try? ToolTipService.setToolTip(cell, c.title)
             row.children.append(cell)
@@ -647,16 +703,272 @@ final class ResourcesPanel {
         return holder
     }
 
+    // MARK: Another design
+
+    /// Another design on the shelf: a few of its components, and its colours along the foot.
+    private func libraryCover(_ url: URL) -> FrameworkElement {
+        let holder = Grid()
+        holder.background = Theme.brush(Theme.card)
+        let masters = WindowsCore.libraryCoverComponents(url)
+        let colours = WindowsCore.libraryColours(url)
+        let r0 = RowDefinition(), r1 = RowDefinition()
+        r0.height = GridLength(value: 1, gridUnitType: .star)
+        r1.height = GridLength(value: 1, gridUnitType: .auto)
+        holder.rowDefinitions.append(r0)
+        holder.rowDefinitions.append(r1)
+        if !masters.isEmpty {
+            let row = StackPanel()
+            row.orientation = .horizontal
+            row.spacing = 6
+            row.horizontalAlignment = .center
+            row.verticalAlignment = .center
+            for id in masters {
+                row.children.append(picture(CGSize(width: 46, height: 34)) { scale, fill in
+                    WindowsCore.libraryPicture(url, master: id, size: CGSize(width: 46, height: 34), scale: scale, into: fill)
+                })
+            }
+            holder.children.append(row)
+        }
+        if !colours.isEmpty {
+            let strip = Grid()
+            strip.height = masters.isEmpty ? 76 : 14
+            for (i, c) in colours.enumerated() {
+                let col = ColumnDefinition()
+                col.width = GridLength(value: 1, gridUnitType: .star)
+                strip.columnDefinitions.append(col)
+                let swatch = Rectangle()
+                swatch.fill = Theme.brush(c.colour, c.alpha)
+                try? Grid.setColumn(swatch, Int32(i))
+                strip.children.append(swatch)
+            }
+            try? Grid.setRow(strip, masters.isEmpty ? 0 : 1)
+            if masters.isEmpty { try? Grid.setRowSpan(strip, 2) }
+            holder.children.append(strip)
+        }
+        return holder
+    }
+
+    /// Another design's styles and components, to take into this one: its styles first, as small
+    /// chips, a click giving one to the selection (or, with nothing selected, to the design); then
+    /// its components, a click or a drag putting a copy onto the canvas.
+    private func libraryPage(_ url: URL) {
+        let styles = WindowsCore.libraryStyles(url, query: query)
+        let masters = WindowsCore.libraryComponents(url, query: query)
+        if let news = WindowsCore.news().first(where: { $0.url.standardizedFileURL.path.lowercased() == url.standardizedFileURL.path.lowercased() }) {
+            content.children.append(newsRow(news))
+        }
+        if !styles.isEmpty {
+            let chips = pairs(styles.map { styleChip($0, of: url) }, spacing: 6)
+            (chips as? FrameworkElement)?.margin = Theme.inset(0, 0, 0, 14)
+            content.children.append(chips)
+        }
+        if !masters.isEmpty { content.children.append(libraryComponents(url, masters)) }
+        if styles.isEmpty && masters.isEmpty { content.children.append(nothingFound()) }
+    }
+
+    private func libraryComponents(_ url: URL, _ masters: [(id: UUID, name: String, taken: Bool)]) -> UIElement {
+        let width = (Self.inner - Self.gap) / 2
+        return pairs(masters.map { m in
+            let face = Grid()
+            face.background = Theme.brush(Theme.card)
+            let image = picture(CGSize(width: width - 12, height: 64)) { scale, fill in
+                WindowsCore.libraryPicture(url, master: m.id, size: CGSize(width: width - 12, height: 64), scale: scale, into: fill)
+            }
+            image.horizontalAlignment = .center
+            image.verticalAlignment = .center
+            face.children.append(image)
+            let caption = StackPanel()
+            caption.orientation = .horizontal
+            caption.spacing = 4
+            // Taken already, it is this design's own too, and marked so.
+            if m.taken {
+                let mark = Glyphs.view(Glyphs.component(size: 9), size: 9, brush: Theme.brush(Theme.linked))
+                mark.verticalAlignment = .center
+                caption.children.append(mark)
+            }
+            let words = Theme.text(m.name, size: 11, ink: 2)
+            words.maxWidth = width - 20
+            caption.children.append(words)
+            return tileFrame(face, width: width, height: 76, caption: caption, ring: Theme.linked, thing: .library(url, m.id))
+        })
+    }
+
+    /// One style of another design. Pointing at it shows it on the selection; a click gives it to
+    /// the selection, bringing it into this design, or with nothing selected only brings it in.
+    private func styleChip(_ style: WindowsCore.LibraryStyleLook, of url: URL) -> FrameworkElement {
+        let row = Grid()
+        row.height = 32
+        row.cornerRadius = Theme.corners(8)
+        row.background = Theme.clear
+        row.padding = Theme.inset(5, 0, 5, 0)
+        for w in [GridLength(value: 1, gridUnitType: .auto), GridLength(value: 1, gridUnitType: .star), GridLength(value: 1, gridUnitType: .auto)] {
+            let c = ColumnDefinition()
+            c.width = w
+            row.columnDefinitions.append(c)
+        }
+        row.columnSpacing = 7
+        let pic = stylePicture(style, size: 22)
+        pic.verticalAlignment = .center
+        row.children.append(pic)
+        let words = Theme.text(style.name, size: 11, ink: 2)
+        try? Grid.setColumn(words, 1)
+        row.children.append(words)
+        if style.taken {
+            let dot = Ellipse()
+            dot.width = 4
+            dot.height = 4
+            dot.fill = Theme.brush(Theme.pencil)
+            dot.verticalAlignment = .center
+            try? Grid.setColumn(dot, 2)
+            row.children.append(dot)
+        }
+        let session = session
+        row.pointerEntered.addHandler { _, _ in
+            row.background = Theme.brush(Theme.ink, 0.05)
+            words.foreground = Theme.ink(1)
+            WindowsCore.previewStyle(style.id, of: url, on: session.selection)
+            session.previewed(board: nil)
+        }
+        row.pointerExited.addHandler { _, _ in
+            row.background = Theme.clear
+            words.foreground = Theme.ink(2)
+            WindowsCore.previewStyle(nil, of: url, on: [])
+            session.previewed(board: nil)
+        }
+        row.tapped.addHandler { [weak self] _, _ in
+            self?.later {
+                WindowsCore.previewStyle(nil, of: url, on: [])
+                WindowsCore.useStyle(style.id, of: url, on: session.selection)
+                session.edited(board: nil)
+                self?.show()
+            }
+        }
+        try? ToolTipService.setToolTip(row, style.name)
+        return row
+    }
+
+    /// What a style looks like, small: a colour as a chip, type in itself, a shadow under a card,
+    /// corners as one corner drawn.
+    private func stylePicture(_ style: WindowsCore.LibraryStyleLook, size: Double) -> FrameworkElement {
+        switch style.kind {
+        case "colour":
+            let chip = Border()
+            chip.width = size
+            chip.height = size
+            chip.cornerRadius = Theme.corners(size * 0.3)
+            chip.borderBrush = Theme.hairline
+            chip.borderThickness = Theme.inset(0.5)
+            if style.gradient.count > 1 {
+                let brush = LinearGradientBrush()
+                brush.startPoint = Point(x: 0, y: 0)
+                brush.endPoint = Point(x: 1, y: 1)
+                for (i, c) in style.gradient.enumerated() {
+                    let stop = GradientStop()
+                    stop.color = Theme.color(c)
+                    stop.offset = Double(i) / Double(style.gradient.count - 1)
+                    brush.gradientStops.append(stop)
+                }
+                chip.background = brush
+            } else {
+                chip.background = Theme.brush(style.colour, style.alpha)
+            }
+            return chip
+        case "text":
+            let well = Theme.well(radius: size * 0.3)
+            well.width = size
+            well.height = size
+            let aa = Theme.text("Aa", size: size * 0.5, weight: 500)
+            aa.horizontalAlignment = .center
+            well.child = aa
+            return well
+        case "shadow":
+            let holder = Grid()
+            holder.width = size
+            holder.height = size
+            if let s = style.shadow {
+                let under = Border()
+                under.width = size * 0.7
+                under.height = size * 0.58
+                under.cornerRadius = Theme.corners(4)
+                under.background = Theme.brush(s.colour, min(1, s.alpha * 3))
+                under.horizontalAlignment = .center
+                under.verticalAlignment = .center
+                under.margin = Theme.inset(max(s.x / 4, 0), min(max(s.y / 4, 1), 3) + 1, 0, 0)
+                holder.children.append(under)
+            }
+            let card = Border()
+            card.width = size * 0.7
+            card.height = size * 0.58
+            card.cornerRadius = Theme.corners(4)
+            card.background = Theme.brush(0xFFFFFF)
+            card.horizontalAlignment = .center
+            card.verticalAlignment = .center
+            holder.children.append(card)
+            return holder
+        default:
+            let holder = Canvas()
+            holder.width = size
+            holder.height = size
+            let r = min(style.radius / 2, size * 0.5)
+            var p = PathData()
+            let x0 = size * 0.27, y0 = size * 0.27, w = size * 0.7
+            p.move(x0, y0 + w)
+            p.line(x0, y0 + r)
+            if r > 0 { p.quad(x0, y0, x0 + r, y0) }
+            p.line(x0 + w, y0)
+            let g = Glyphs.view([Glyphs.Part(data: p.d, mode: .stroke, width: 1.6)], size: size, brush: Theme.ink(1))
+            holder.children.append(g)
+            return holder
+        }
+    }
+
+    /// What changed in this library since the design took from it, on its page: the same offer as
+    /// on the canvas, for when that was set aside.
+    private func newsRow(_ news: WindowsCore.NewsLook) -> FrameworkElement {
+        let row = Grid()
+        row.cornerRadius = Theme.corners(10)
+        row.background = Theme.brush(Theme.linked, 0.08)
+        row.padding = Theme.inset(10, 4, 4, 4)
+        row.margin = Theme.inset(0, 0, 0, 14)
+        let c0 = ColumnDefinition(), c1 = ColumnDefinition()
+        c0.width = GridLength(value: 1, gridUnitType: .star)
+        c1.width = GridLength(value: 1, gridUnitType: .auto)
+        row.columnDefinitions.append(c0)
+        row.columnDefinitions.append(c1)
+        row.columnSpacing = 8
+        let words = Theme.text(news.words, size: 11.5, ink: 2)
+        words.textWrapping = .wrap
+        words.maxLines = 2
+        row.children.append(words)
+        let update = LibraryNewsChip.updateButton(news.url, session: session) { [weak self] in self?.show() }
+        try? Grid.setColumn(update, 1)
+        row.children.append(update)
+        return row
+    }
+
     // MARK: Found
 
     private func found() {
+        // The components of other designs called so, first: the user's own.
+        var anyTheirs = false
+        for lib in WindowsCore.libraries() {
+            let found = WindowsCore.libraryComponents(lib.url, query: query)
+            guard !found.isEmpty else { continue }
+            anyTheirs = true
+            let title = Theme.text(lib.name, size: 11.5, weight: 600, ink: 3)
+            title.margin = Theme.inset(0, 0, 0, 8)
+            content.children.append(title)
+            let tiles = libraryComponents(lib.url, found)
+            (tiles as? FrameworkElement)?.margin = Theme.inset(0, 0, 0, 14)
+            content.children.append(tiles)
+        }
         let parts = WindowsCore.foundParts(query)
         if !parts.isEmpty {
             let rows = partRows(parts, showsKit: true)
             rows.margin = Theme.inset(0, 0, 0, 14)
             content.children.append(rows)
         }
-        var any = !parts.isEmpty
+        var any = !parts.isEmpty || anyTheirs
         for set in WindowsCore.iconSets() {
             let names = WindowsCore.icons(set.id, query: query)
             guard !names.isEmpty else { continue }
@@ -677,7 +989,7 @@ final class ResourcesPanel {
                 more.child = Theme.text("\(names.count)", size: 11, ink: 3)
                 more.pointerEntered.addHandler { _, _ in more.background = Theme.brush(Theme.pencil, Theme.pencilWash) }
                 more.pointerExited.addHandler { _, _ in more.background = Theme.brush(Theme.ink, 0.05) }
-                more.tapped.addHandler { [weak self] _, _ in self?.open(.icons(set.id)) }
+                more.tapped.addHandler { [weak self] _, _ in self?.later { self?.open(.icons(set.id)) } }
                 try? Grid.setColumn(more, 1)
                 line.children.append(more)
             }

@@ -4422,14 +4422,20 @@ extension DesignCanvas {
     }
 
     func dropResource(_ thing: WindowsCore.Thing, _ args: PointerRoutedEventArgs?) {
-        defer { clearGhost() }
+        clearGhost()
         guard session.mode == 0, let p = overStage(args) else { return }
-        let c = inDesign(p)
-        let target = WindowsCore.pick(c, selection: [], zoom: zoom)
-        guard let made = WindowsCore.place(thing, at: c, over: target, focused: session.board, visible: visibleOnCanvas) else { return }
-        session.select([made], on: WindowsCore.board(of: made) ?? WindowsCore.boardIndex(of: made))
-        session.edited(board: nil)
-        takeKeys()
+        // Put in once the release is over: the step redraws the panel the press began in.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let c = self.inDesign(p)
+                let target = WindowsCore.pick(c, selection: [], zoom: self.zoom)
+                guard let made = WindowsCore.place(thing, at: c, over: target, focused: self.session.board, visible: self.visibleOnCanvas) else { return }
+                self.session.select([made], on: WindowsCore.board(of: made) ?? WindowsCore.boardIndex(of: made))
+                self.session.edited(board: nil)
+                self.takeKeys()
+            }
+        }
     }
 
     /// A click in the panel: the thing onto the artboard in view, in the middle of what shows of

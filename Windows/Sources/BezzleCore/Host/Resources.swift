@@ -12,6 +12,8 @@ extension WindowsCore {
         case icon(set: String, name: String, style: Int, weight: Double)
         /// One of the design's own components: another copy of it.
         case own(UUID)
+        /// A component of another design, by its file and its id: taken in, a copy of it.
+        case library(URL, UUID)
 
         var resource: Resource? {
             switch self {
@@ -20,6 +22,7 @@ extension WindowsCore {
                 guard let set = IconSetID(rawValue: set) else { return nil }
                 return .icon(set, name, IconStyle(index: style, weight: CGFloat(weight)))
             case .own(let id): return .design(id)
+            case .library(let url, let id): return .library(url, id)
             }
         }
     }
@@ -248,7 +251,7 @@ extension WindowsCore {
             let r = shown.isNull || shown.isEmpty ? usable.frame : shown
             return CGPoint(x: r.midX, y: r.midY)
         }()
-        return doc.placing(resource, center: center, on: usable, over: target, dark: Kits.isDark(usable), width: nil, library: { _ in nil })
+        return doc.placing(resource, center: center, on: usable, over: target, dark: Kits.isDark(usable), width: nil, library: { library($0) })
     }
 
     public static func plan(_ thing: Thing, at point: CGPoint?, over target: UUID?, focused: Int?, visible: CGRect) -> PlanLook? {
@@ -285,6 +288,8 @@ extension WindowsCore {
     @discardableResult
     public static func place(_ thing: Thing, at point: CGPoint?, over target: UUID?, focused: Int?, visible: CGRect) -> UUID? {
         guard let plan = placing(thing, at: point, over: target, focused: focused, visible: visible) else { return nil }
+        // Pictures a component of another design shows come into this one's package first.
+        if let take = plan.brings { bringPictures(take) }
         var made: UUID?
         edit { made = $0.place(plan) }
         return made
