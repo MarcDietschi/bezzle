@@ -22,6 +22,8 @@ void bz_host_take(void *into);
 /// Adds a font face, by family and face as the core names them ("System" for the system font,
 /// with an empty face). Returns 0 if Skia cannot read it.
 int32_t bz_font_add(const char *family, const char *face, const void *data, int32_t count);
+/// The same for the `index`th font of a file that holds several (a .ttc collection; 0 for any other).
+int32_t bz_font_add_at(const char *family, const char *face, const void *data, int32_t count, int32_t index);
 
 typedef struct bz_text_run {
     const char *text;           // UTF-8

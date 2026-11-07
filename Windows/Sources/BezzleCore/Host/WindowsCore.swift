@@ -59,6 +59,8 @@ public enum WindowsCore {
         var standIns = Set((manifest["standsIn"] as? [String: Any] ?? [:]).keys)
         if (manifest["system"] as? [String: Any])?["standsIn"] != nil { standIns.insert(TextStyle.system) }
         MacFonts.standIns = standIns
+        // Windows' own fonts too, but where only the open ones are wanted (measuring them).
+        if ProcessInfo.processInfo.environment["BEZZLE_OPEN_FONTS_ONLY"] == nil { readInstalledFonts() }
         bz_text_forget()
         TextLayout.forget()
     }

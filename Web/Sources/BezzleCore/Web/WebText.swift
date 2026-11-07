@@ -11,6 +11,10 @@ import AppKit
 nonisolated enum Fonts {
     static let systemFaces = ["Ultralight", "Thin", "Light", "Regular", "Medium", "Semibold", "Bold", "Heavy", "Black"]
 
+    /// Asked for a face just before a text is set in it, so a host that has fonts of its own can
+    /// give it to Skia then (Windows' installed fonts); nothing in the browser.
+    nonisolated(unsafe) static var need: (@Sendable (String, String) -> Void)?
+
     static var families: [String] { [TextStyle.system] + NSFontManager.shared.availableFontFamilies }
 
     static func faces(of family: String) -> [String] {
@@ -130,6 +134,7 @@ nonisolated enum TextLayout {
         let axes = (style.axes ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         return zip(runs, texts).map { run, text in
             let letters = run.look.resolved(over: style, color: color ?? .black)
+            if letters.family != TextStyle.system { Fonts.need?(letters.family, letters.face) }
             // The Mac always sets letters' spacing (Text Kit's kern), and set to nought, Core Text
             // leaves out the font's own kerning between pairs such as "Te"; set to anything else,
             // it keeps it. Said here, as the letters' spacing below also has what makes a

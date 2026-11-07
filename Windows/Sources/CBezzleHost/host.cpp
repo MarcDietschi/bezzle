@@ -1022,6 +1022,18 @@ extern "C" int32_t bz_font_add(const char* family, const char* face, const void*
     return 1;
 }
 
+extern "C" int32_t bz_font_add_at(const char* family, const char* face, const void* data, int32_t count, int32_t index) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto typeface = fontManager()->makeFromData(SkData::MakeWithCopy(data, size_t(count)), index);
+    if (!typeface) return 0;
+    const std::string name = std::string(family) + "|" + face;
+    provider->registerTypeface(typeface, SkString(name.c_str()));
+    faces[name] = typeface;
+    leadings.clear();
+    if (collection) collection->clearCaches();
+    return 1;
+}
+
 namespace {
 std::vector<Run> runsOf(const bz_text_run* given, int32_t count) {
     std::vector<Run> runs;
