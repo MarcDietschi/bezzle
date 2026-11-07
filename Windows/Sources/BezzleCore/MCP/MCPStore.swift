@@ -77,6 +77,12 @@ import Foundation
 
     func zoomToFit() { MCPHost.shared.zoomToFit() }
 
+    /// Whether two addresses are the same design, told apart by path as Windows compares them.
+    static func same(_ a: URL, _ b: URL) -> Bool {
+        a.standardizedFileURL.path.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+            == b.standardizedFileURL.path.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+    }
+
     /// Windows opens no design to look at only.
     var isReadOnly: Bool { false }
     func node(_ id: UUID) -> Node? { doc.node(id) }

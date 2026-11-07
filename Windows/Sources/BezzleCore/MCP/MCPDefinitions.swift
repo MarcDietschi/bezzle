@@ -1,8 +1,8 @@
 import Foundation
 
 // From Bezzle/MCP/MCPDefinitions.swift, for Windows: the tools as the assistant is told of them, in
-// the Mac's words; those Windows has no way to do yet are left out: importing a website, renaming,
-// copying and deleting designs, converting to a path, placing a picture and removing a background.
+// the Mac's words; those Windows has no way to do yet are left out: importing a website, converting
+// to a path and removing a background.
 
 /// The tools as the assistant is told of them: each one's name, what it does, and what it takes.
 extension MCPTools {
@@ -47,6 +47,18 @@ extension MCPTools {
             Definition(name: "close_design", title: "Close a design",
                        description: "Closes a design's tab. It is saved; designs always are.",
                        properties: .object([design]), run: { [unowned self] in try await self.closeDesign($0) }),
+            Definition(name: "rename_design", title: "Rename a design",
+                       description: "Gives a design a new name, renaming its file.",
+                       properties: .object([design, ("name", Self.text("The new name."))]), required: ["name"],
+                       run: { [unowned self] in try await self.renameDesign($0) }),
+            Definition(name: "duplicate_design", title: "Duplicate a design",
+                       description: "Makes a copy of a design beside it, called \"… copy\". The copy is not opened.",
+                       properties: .object([("design", Self.text("The design to copy, by name or path."))]), required: ["design"],
+                       run: { [unowned self] in try await self.duplicateDesign($0) }),
+            Definition(name: "delete_design", title: "Delete a design",
+                       description: "Closes a design if it is open and moves it to the Recycle Bin.",
+                       properties: .object([("design", Self.text("The design to delete, by name or path."))]), required: ["design"], destructive: true,
+                       run: { [unowned self] in try await self.deleteDesign($0) }),
             Definition(name: "get_design", title: "Get a design",
                        description: "What is in a design: its artboards and layers as a tree, bottom first, with ids, kinds, names, positions, sizes, fills and text; and what is selected, the zoom, and what Undo would undo. get_layers has everything about particular layers.",
                        properties: .object([
@@ -136,6 +148,21 @@ extension MCPTools {
                        description: "Makes two or more rectangles, ellipses and paths one path, styled as the one at the back. union: all of them. subtract: the back one less those in front. intersect: only where all overlap. exclude: only where an odd number overlap.",
                        properties: .object([design, layers, ("operation", Self.choice(["union", "subtract", "intersect", "exclude"], "How."))]),
                        required: ["operation"], run: { [unowned self] in try await self.combineShapes($0) }),
+            Definition(name: "place_image", title: "Place a picture",
+                       description: "Puts a picture file into the design: as a new rectangle filled with it, at its own size unless that is too big; or into an existing rectangle, ellipse or path's fill, the letters of a text, or a layer's first border. The file is copied into the design.",
+                       properties: .object([
+                           design,
+                           ("file", Self.text("The picture's path: PNG, JPEG, GIF, WebP, BMP…")),
+                           ("layer", Self.text("A rectangle, ellipse, path or text to fill with it, in place of a new layer; or with into: border, a shape or line whose border it paints.")),
+                           ("into", Self.choice(["fill", "border"], "With layer: fill (the usual) or its first border, which comes on if it was off.")),
+                           ("mode", Self.choice(["cover", "fit", "stretch"], "cover fills the layer and crops what overflows (the usual); fit shows it whole; stretch squeezes it to the layer.")),
+                           ("parent", Self.text("For a new layer: the artboard or group it goes in, or \"canvas\".")),
+                           ("name", Self.text("For a new layer: its name; the file's otherwise.")),
+                           ("x", Self.number("For a new layer: its left, in the parent. In the middle otherwise.")),
+                           ("y", Self.number("For a new layer: its top.")),
+                           ("width", Self.number("For a new layer: its width. Given one side only, the other keeps the picture's proportions.")),
+                           ("height", Self.number("For a new layer: its height.")),
+                       ]), required: ["file"], run: { [unowned self] in try await self.placeImage($0) }),
             Definition(name: "develop_photo", title: "Develop a photo",
                        description: "Develops the photos filling layers, as a photo editor such as Lightroom does: their light (exposure, contrast, highlights, shadows, whites, blacks), colour (temperature, tint, vibrance, saturation, and each colour on its own) and detail (clarity, texture, dehaze, sharpness). Only what is given changes; 0 takes a setting away. The photo itself is kept, so reset brings it back as taken. get_layers shows a photo's settings as fill.image.develop; render shows the result.",
                        properties: .object(Self.developDefinitionProperties), run: { [unowned self] in try await self.developPhoto($0) }),

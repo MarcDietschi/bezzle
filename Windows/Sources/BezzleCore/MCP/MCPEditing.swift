@@ -206,6 +206,98 @@ extension MCPTools {
     }
 
 
+    func placeImage(_ args: Arguments) async throws -> [Content] {
+        let store = try await store(args)
+        guard let path = try args.string("file") else { throw MCPError("Give the picture's file.") }
+        let file = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: file.path) else { throw MCPError("There is no file at \(file.path).") }
+        var mode = ImageFill.Mode.cover
+        if let m = try args.string("mode") {
+            guard let found = ImageFill.Mode(rawValue: m.lowercased()) else { throw MCPError("mode is cover, fit or stretch.") }
+            mode = found
+        }
+        let doc = store.doc
+        var target: UUID?
+        let into = try args.string("into")?.lowercased() ?? "fill"
+        guard ["fill", "border"].contains(into) else { throw MCPError("into is fill or border.") }
+        if let ref = try args.string("layer") {
+            let id = try Self.layer(ref, in: doc)
+            guard let n = doc.node(id) else { throw MCPError("There is no layer \(ref).") }
+            if into == "border" {
+                guard [.rectangle, .ellipse, .path, .line].contains(n.kind) else { throw MCPError("Pictures paint the borders of rectangles, ellipses, paths and lines.") }
+            } else {
+                guard [.rectangle, .ellipse, .path, .text].contains(n.kind) else { throw MCPError("Pictures fill rectangles, ellipses, paths and the letters of text.") }
+            }
+            target = id
+        } else if into == "border" {
+            throw MCPError("Give the layer whose border the picture paints.")
+        }
+
+        // Into the design's own images, so it goes wherever the design does.
+        guard var image = WindowsCore.importPicture(file) else { throw MCPError("\(file.lastPathComponent) is not a picture Bezzle can read.") }
+        image.mode = mode
+        let w = Int(image.size.width), h = Int(image.size.height)
+
+        if let target {
+            try change(store, "Add Picture") { doc in
+                doc.update(target) { n in
+                    if into == "border" {
+                        n.border.on = true
+                        if n.border.width == 0 { n.border.width = 1 }
+                        n.border.image = image
+                    } else {
+                        n.fill.on = true
+                        n.fill.image = image
+                        // Every letter of a text shows it.
+                        n.clearLetterColors()
+                    }
+                }
+            }
+            store.selection = [target]
+            return described([target], in: store, full: true)
+        }
+
+        var parent: UUID?
+        if let ref = try args.string("parent") {
+            if ref.lowercased() != "canvas" {
+                let id = try Self.layer(ref, in: doc)
+                guard doc.node(id)?.isContainer == true else { throw MCPError("Pictures go on an artboard, into a group, or on the canvas.") }
+                parent = id
+            }
+        } else {
+            parent = store.focusedArtboard?.id ?? (doc.artboards.count == 1 ? doc.artboards[0].id : nil)
+        }
+        let room = parent.flatMap { doc.node($0)?.frame.size }
+        // Its own size, in points, unless it is bigger than where it goes; given one side, the
+        // other keeps its proportions.
+        let aspect = CGFloat(h) / CGFloat(w)
+        var size = CGSize(width: w, height: h)
+        if let room, size.width > room.width * 0.8 {
+            let fitted = (room.width * 0.8).rounded()
+            size = CGSize(width: fitted, height: (fitted * aspect).rounded())
+        }
+        let width = try args.number("width").map { CGFloat($0) }, height = try args.number("height").map { CGFloat($0) }
+        switch (width, height) {
+        case let (width?, height?): size = CGSize(width: width, height: height)
+        case let (width?, nil): size = CGSize(width: width, height: (width * aspect).rounded())
+        case let (nil, height?): size = CGSize(width: (height / aspect).rounded(), height: height)
+        default: break
+        }
+        let x = try args.number("x").map { CGFloat($0) } ?? room.map { (($0.width - size.width) / 2).rounded() } ?? 0
+        let y = try args.number("y").map { CGFloat($0) } ?? room.map { (($0.height - size.height) / 2).rounded() } ?? 0
+        var node = Node(kind: .rectangle, name: try args.string("name") ?? file.deletingPathExtension().lastPathComponent, frame: CGRect(x: x, y: y, width: size.width, height: size.height))
+        node.fill = Fill(color: .shape, image: image)
+        try change(store, "Add Picture") { doc in
+            if let parent, let path = doc.path(of: parent) {
+                doc.insert(node, at: NodePath(indices: path.indices + [doc[path].children.count]))
+            } else {
+                doc.nodes.append(node)
+            }
+        }
+        store.selection = [node.id]
+        return described([node.id], in: store, full: true)
+    }
+
     func updateLayers(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         guard let updates = try args.objects("updates"), !updates.isEmpty else { throw MCPError("Give updates: a list of {layer, and what to change}.") }

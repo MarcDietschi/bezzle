@@ -210,6 +210,58 @@ import Foundation
         return [.text("Closed \(name). It was saved.")]
     }
 
+    func renameDesign(_ args: Arguments) async throws -> [Content] {
+        let store = try await store(args)
+        guard let name = try args.string("name")?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { throw MCPError("Give the new name.") }
+        let clean = String(name.map { "\\/:*?\"<>|".contains($0) ? "-" : $0 })
+        let old = store.url
+        let new = old.deletingLastPathComponent().appendingPathComponent("\(clean).bezzle")
+        guard !DocumentStore.same(new, old) else { return [.text(summary(of: store).text)] }
+        guard !FileManager.default.fileExists(atPath: new.path) else { throw MCPError("There is a design called \(clean) there already.") }
+        // Let go, renamed, and opened again under its new name.
+        MCPHost.shared.endEditing()
+        MCPHost.shared.close()
+        do {
+            try FileManager.default.moveItem(at: old, to: new)
+        } catch {
+            _ = MCPHost.shared.open(old)
+            throw MCPError("\(old.lastPathComponent) could not be renamed: \(error)")
+        }
+        return [.text(summary(of: try open(new)).text)]
+    }
+
+    func duplicateDesign(_ args: Arguments) async throws -> [Content] {
+        guard let ref = try args.string("design") else { throw MCPError("Say which design to copy.") }
+        let open = DocumentStore.open
+        let url = open.isOpen && (open.name.caseInsensitiveCompare(ref) == .orderedSame || Self.fileURL(ref).map(open.isAt) == true) ? open.url : try locate(ref)
+        if open.isAt(url) { open.save() }
+        let folder = url.deletingLastPathComponent(), base = url.deletingPathExtension().lastPathComponent + " copy"
+        var copy = folder.appendingPathComponent("\(base).bezzle")
+        var i = 2
+        while FileManager.default.fileExists(atPath: copy.path) {
+            copy = folder.appendingPathComponent("\(base) \(i).bezzle")
+            i += 1
+        }
+        do {
+            try FileManager.default.copyItem(at: url, to: copy)
+        } catch {
+            throw MCPError("The copy could not be made: \(error)")
+        }
+        return [.text(JSONValue.object([("name", .string(copy.deletingPathExtension().lastPathComponent)), ("path", .string(copy.path))]).text)]
+    }
+
+    func deleteDesign(_ args: Arguments) async throws -> [Content] {
+        guard let ref = try args.string("design") else { throw MCPError("Say which design to delete.") }
+        let open = DocumentStore.open
+        let url = open.isOpen && (open.name.caseInsensitiveCompare(ref) == .orderedSame || Self.fileURL(ref).map(open.isAt) == true) ? open.url : try locate(ref)
+        if open.isAt(url) {
+            MCPHost.shared.endEditing()
+            MCPHost.shared.close()
+        }
+        guard WindowsCore.recycle(url) else { throw MCPError("\(url.lastPathComponent) could not be moved to the Recycle Bin.") }
+        return [.text("Moved \(url.lastPathComponent) to the Recycle Bin.")]
+    }
+
     /// What a design is, how it is looked at, and its layers.
     func getDesign(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
