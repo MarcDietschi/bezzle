@@ -19,7 +19,9 @@ extension Inspector {
 
     /// The family's own letters, for the fonts menu and the card's mark.
     static func font(of family: String) -> FontFamily? {
-        WindowsCore.fontLook(of: family).map { FontFamily("ms-appx:///fonts/\($0.file)#\($0.family)") }
+        // One of Windows' own by its name; an open one from its file beside Bezzle.
+        if WindowsCore.isInstalled(family) { return FontFamily(family) }
+        return WindowsCore.fontLook(of: family).map { FontFamily("ms-appx:///fonts/\($0.file)#\($0.family)") }
     }
 
     func textCard(_ t: WindowsCore.TextCard, ids: [UUID], board: Int) -> UIElement {
@@ -49,7 +51,7 @@ extension Inspector {
         return card("Text", summary, mark: mark, dial: dial, style: "text", body: { [self] in
             var rows: [UIElement] = []
             // The family, in the face of it most like the one the letters have.
-            rows.append(Controls.menuButton(t.familyShown, width: Self.content, menus: menus, entries: {
+            rows.append(Controls.menuButton(t.familyShown, width: Self.content, menus: menus, searchable: true, entries: {
                 WindowsCore.fontFamilies.map { f in
                     .item(WindowsCore.displayName(f), checked: f == t.family, font: f == "System" ? Theme.ui : Self.font(of: f),
                           preview: { on in preview(on ? .family(f) : nil) }) { change(.family(f)) }

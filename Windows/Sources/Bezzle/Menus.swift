@@ -65,17 +65,19 @@ final class MenuHost {
 
     /// Opens a menu below `anchor` (or above it, where there is no room), as wide as `width`
         /// or the anchor, its left edge in line with the anchor's: the Mac's MenuButton menus.
-    func show(below anchor: FrameworkElement, width: Double? = nil, entries: [Entry], closed: (() -> Void)? = nil) {
+    func show(below anchor: FrameworkElement, width: Double? = nil, entries: [Entry], searchable: Bool = false, closed: (() -> Void)? = nil) {
         guard let t = try? anchor.transformToVisual(layer), let p = try? t.transformPoint(Point(x: 0, y: 0)) else { return }
         let w = max(width ?? 0, anchor.actualWidth)
         show(at: CGPoint(x: Double(p.x), y: Double(p.y) + anchor.actualHeight + 2), width: w, entries: entries,
-             above: Double(p.y) - 2, reveal: entries.firstIndex(where: \.checked), closed: closed)
+             above: Double(p.y) - 2, reveal: entries.firstIndex(where: \.checked), searchable: searchable, closed: closed)
     }
 
     /// Opens a menu at `point` in the window: below it, or ending at `above` (the point itself
     /// unless given) when there is no room. Taller than the window, it scrolls, to `reveal` first.
+    /// Searchable (the fonts menu), typing narrows it to the entries whose titles hold what was
+    /// typed, in a field at its top, as on the Mac; Enter takes the first of them.
     func show(at point: CGPoint, width: Double = 220, entries: [Entry], above: Double? = nil, reveal: Int? = nil,
-              closed: (() -> Void)? = nil) {
+              searchable: Bool = false, closed: (() -> Void)? = nil) {
         close()
         guard !entries.isEmpty else { return }
         self.closed = closed
@@ -86,6 +88,69 @@ final class MenuHost {
         card.width = width
         let list = StackPanel()
         list.padding = Theme.inset(6)
+        var (height, revealAt) = fill(list, entries, width: width, reveal: reveal)
+        let field = TextBox()
+        if searchable {
+            field.placeholderText = Words.t("Search")
+            field.fontFamily = Theme.ui
+            field.fontSize = 12.5
+            field.minHeight = 0
+            field.padding = Theme.inset(10, 5, 10, 0)
+            field.margin = Theme.inset(6, 6, 6, 0)
+            field.height = 28
+            height += 34
+        }
+        // Below the pointer when it fits there or there is more room below than above, as the Mac's.
+        let room = (w: layer.actualWidth, h: layer.actualHeight), gap = 2.0
+        let top = above ?? Double(point.y)
+        let roomBelow = room.h - 12 - Double(point.y) - gap, roomAbove = top - gap - 12
+        let below = height <= roomBelow || roomBelow >= roomAbove
+        let shown = min(height, below ? roomBelow : roomAbove)
+        let body: UIElement
+        if shown < height || searchable {
+            let scroll = ScrollView()
+            scroll.content = list
+            scroll.height = shown - (searchable ? 34 : 0)
+            body = scroll
+            if revealAt > 0 {
+                let to = max(0, min(revealAt - shown / 2 + 14, height - shown))
+                scroll.loaded.addHandler { _, _ in _ = try? scroll.scrollTo(0, to) }
+            }
+        } else {
+            body = list
+        }
+        if searchable {
+            let stack = StackPanel()
+            stack.children.append(field)
+            stack.children.append(body)
+            card.child = stack
+            var matching = entries
+            field.textChanged.addHandler { [weak self] _, _ in
+                guard let self else { return }
+                let words = field.text.trimmingCharacters(in: .whitespaces)
+                matching = words.isEmpty ? entries : entries.filter { !$0.separator && !$0.note && Words.t($0.title).localizedCaseInsensitiveContains(words) }
+                list.children.clear()
+                _ = self.fill(list, matching, width: width, reveal: nil)
+            }
+            field.keyDown.addHandler { [weak self] _, args in
+                guard let self, let args else { return }
+                if args.key == .escape { args.handled = true; self.close() }
+                if args.key == .enter, let first = matching.first(where: { !$0.separator && !$0.note && $0.enabled }) {
+                    args.handled = true
+                    self.close()
+                    first.action?()
+                }
+            }
+            field.loaded.addHandler { sender, _ in _ = try? (sender as? TextBox)?.focus(.programmatic) }
+        } else {
+            card.child = body
+        }
+        let y = below ? Double(point.y) + gap : top - gap - shown
+        present(card, x: Double(point.x), y: y, width: width, height: shown)
+    }
+
+    /// The entries' rows into `list`: how tall they are, and where the one to `reveal` begins.
+    private func fill(_ list: StackPanel, _ entries: [Entry], width: Double, reveal: Int?) -> (height: Double, revealAt: Double) {
         var height = 12.0, revealAt = 0.0
         for (k, entry) in entries.enumerated() {
             if k == reveal { revealAt = height - 6 }
@@ -108,26 +173,7 @@ final class MenuHost {
                 height += entry.detail == nil ? 28 : 40
             }
         }
-        // Below the pointer when it fits there or there is more room below than above, as the Mac's.
-        let room = (w: layer.actualWidth, h: layer.actualHeight), gap = 2.0
-        let top = above ?? Double(point.y)
-        let roomBelow = room.h - 12 - Double(point.y) - gap, roomAbove = top - gap - 12
-        let below = height <= roomBelow || roomBelow >= roomAbove
-        let shown = min(height, below ? roomBelow : roomAbove)
-        if shown < height {
-            let scroll = ScrollView()
-            scroll.content = list
-            scroll.height = shown
-            card.child = scroll
-            if revealAt > 0 {
-                let to = max(0, min(revealAt - shown / 2 + 14, height - shown))
-                scroll.loaded.addHandler { _, _ in _ = try? scroll.scrollTo(0, to) }
-            }
-        } else {
-            card.child = list
-        }
-        let y = below ? Double(point.y) + gap : top - gap - shown
-        present(card, x: Double(point.x), y: y, width: width, height: shown)
+        return (height, revealAt)
     }
 
     /// A panel of Bezzle's own hanging from `anchor` (below it, or above it where there is no

@@ -18,6 +18,7 @@ enum Controls {
     /// The Mac's MenuButton: its value and a chevron at the far end, in a wash of ink (4%, 6.5%
     /// under the pointer, 9% while its menu is open), radius 8, 28 tall; the menu opens under it.
     static func menuButton(_ title: String, width: Double? = nil, font: FontFamily? = nil, menus: MenuHost?, menuWidth: Double? = nil,
+                           searchable: Bool = false,
                            entries: @escaping @MainActor () -> [MenuHost.Entry], closed: (() -> Void)? = nil) -> FrameworkElement {
         let box = Border()
         box.height = height
@@ -53,7 +54,7 @@ enum Controls {
                 guard let menus else { return }
                 isOpen = true
                 box.background = open
-                menus.show(below: box, width: menuWidth, entries: entries()) {
+                menus.show(below: box, width: menuWidth, entries: entries(), searchable: searchable) {
                     isOpen = false
                     box.background = rest
                     closed?()
