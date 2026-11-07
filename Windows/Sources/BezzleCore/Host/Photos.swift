@@ -1,4 +1,5 @@
 import Foundation
+import CBezzleHost
 
 // Developing photos on Windows, as the Mac's Photo card and its store do it (Views/PhotoCard.swift,
 // Store/DevelopOperations.swift): each picture layer's `Develop`, shared, its settings and its
@@ -101,23 +102,142 @@ extension WindowsCore {
         develop(ids) { $0[b][p] = value }
     }
 
+    /// A colour's whole shift set at once: hue, saturation and luminance (the wheel's drag).
+    public static func setPhotoShift(_ ids: [UUID], _ band: String, hue: Double, saturation: Double, luminance: Double) {
+        guard let b = Develop.Band(rawValue: band) else { return }
+        develop(ids) { $0[b] = Develop.Shift(hue: hue, saturation: saturation, luminance: luminance) }
+    }
+
+    /// An angle in degrees, brought to −180…180.
+    public static func turn(_ degrees: Double) -> Double { Develop.turn(degrees) }
+
     /// Back to the photo as it was taken.
     public static func resetPhoto(_ ids: [UUID]) {
         develop(ids) { $0 = Develop() }
     }
 
     /// How much of the development there is, as a share of what there was as the drag began, from
-    /// nothing to twice as much (the folded card's drag). A photo not yet developed has nothing to
-    /// make more of yet: it stays as it is until Auto is here.
+    /// nothing to twice as much (the folded card's drag). A photo not yet developed starts from
+    /// nothing and goes towards what would suit it best, as on the Mac.
     public static func photoStrength(_ ids: [UUID], _ k: Double) {
         let start = Editing.gestureStart ?? design
+        var bases: [UUID: Develop] = [:]
+        for id in ids {
+            guard let n = start?.node(id), develops(n) else { continue }
+            let was = n.fill.image?.develop ?? Develop()
+            bases[id] = was.isNeutral ? autoDevelop(n) : was
+        }
         edit { doc in
-            for id in ids {
-                guard let n = doc.node(id), develops(n) else { continue }
-                let was = start?.node(id)?.fill.image?.develop ?? Develop()
-                guard !was.isNeutral else { continue }
-                doc.update(id) { $0.fill.image?.develop = was.scaled(by: k).kept }
-            }
+            for (id, base) in bases { doc.update(id) { $0.fill.image?.develop = base.scaled(by: k).kept } }
         }
     }
+
+    /// Each picture developed as suits it best, as one step (the card's Auto).
+    public static func autoPhoto(_ ids: [UUID]) {
+        guard let doc = design else { return }
+        var targets: [UUID: Develop] = [:]
+        for id in ids { if let n = doc.node(id), develops(n) { targets[id] = autoDevelop(n) } }
+        edit { doc in
+            for (id, d) in targets { doc.update(id) { $0.fill.image?.develop = d.kept } }
+        }
+    }
+
+    // MARK: Reading pictures
+
+    nonisolated(unsafe) private static var autoKept: [String: Develop] = [:]
+    nonisolated(unsafe) private static var looksKept: [String: PhotoTones] = [:]
+
+    /// What would suit a layer's picture best, worked out once for each picture.
+    private static func autoDevelop(_ n: Node) -> Develop {
+        guard let image = n.fill.image else { return Develop() }
+        if let known = autoKept[image.asset] { return known }
+        let d = pixels(of: { assets.image(image.asset, pixels: 256) }, longest: 160).map(Develop.auto(pixels:)) ?? Develop()
+        autoKept[image.asset] = d
+        return d
+    }
+
+    /// A picture read small, as the Mac's `Pixels` reads it with Core Graphics: drawn `longest`
+    /// across into a recording, made by Skia, and its pixels read back. The picture is made here,
+    /// so that Skia is given what it is made from, such as a photo developed just now.
+    static func pixels(of made: () -> CGImage?, longest: Int) -> Pixels? {
+        let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+        guard let picture = made() else { return nil }
+        let s = min(1, Double(longest) / Double(max(picture.width, picture.height, 1)))
+        let w = max(1, Int((Double(picture.width) * s).rounded())), h = max(1, Int((Double(picture.height) * s).rounded()))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .medium
+        ctx.draw(picture, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let image = ctx.makeImage() else { return nil }
+        for p in Images.shared.list where p.id >= first { send(p) }
+        defer { forget(before: first) }
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let done = bytes.withUnsafeMutableBytes { bz_picture_read(Int32(image.id), Int32(w), Int32(h), 0, $0.baseAddress) }
+        return done == 0 ? Pixels(width: w, height: h, bytes: bytes) : nil
+    }
+
+    /// The first picture's tones as the card's landscape shows them (the Mac's PictureLook): how
+    /// much of it is at each tone, dark to light, and in red, green and blue alone, the fullest
+    /// being 1, and how much is lost to black and to white.
+    public struct PhotoTones: Sendable {
+        public let tones: [Double]
+        public let reds: [Double]
+        public let greens: [Double]
+        public let blues: [Double]
+        public let crushed: Double
+        public let blown: Double
+        public let colors: [Double]
+    }
+
+    /// How much of the first picture is of each colour: `hueSteps` hues round the wheel from red,
+    /// each `strengthSteps` strengths from grey out to full, the most being 1 (PictureLook.colors).
+    public static func photoColours(_ ids: [UUID]) -> (colors: [Double], hues: Int, strengths: Int)? {
+        photoTones(ids).map { ($0.colors, PictureLook.hueSteps, PictureLook.strengthSteps) }
+    }
+
+    /// The picture's own colours as the Mac's wheel shows them, a soft cloud inside a ring
+    /// `ring` round: each hue round the wheel, stronger further out, blurred by 4. Into pixels a
+    /// `size` box at `scale`.
+    public static func colourCloud(_ colors: [Double], hues: Int, strengths: Int, size: CGSize, ring: Double, scale: Double,
+                                   into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
+        var dots: [Node] = []
+        for i in 0..<hues {
+            for j in 0..<strengths {
+                let v = colors[i * strengths + j]
+                guard v > 0.03 else { continue }
+                let a = Double(i) / Double(hues) * 2 * .pi
+                let r = (Double(j) + 0.6) / Double(strengths) * (ring - 12)
+                let d = 5 + v * 9
+                let p = CGPoint(x: size.width / 2 + CGFloat(sin(a) * r), y: size.height / 2 - CGFloat(cos(a) * r))
+                var n = Node(kind: .ellipse, name: "", frame: CGRect(x: p.x - CGFloat(d) / 2, y: p.y - CGFloat(d) / 2, width: CGFloat(d), height: CGFloat(d)))
+                n.fill.on = true
+                n.fill.color = RGBA(h: Double(i) / Double(hues), s: (Double(j) + 0.5) / Double(strengths), b: 0.92, a: 0.25 + v * 0.7)
+                n.border.on = false
+                n.blur = Blur(radius: 4)
+                dots.append(n)
+            }
+        }
+        return drawGlyph(dots, size: size, scale: scale, into: fill)
+    }
+
+    public static func photoTones(_ ids: [UUID]) -> PhotoTones? {
+        guard let id = ids.first, let n = design?.node(id), develops(n), let image = n.fill.image else { return nil }
+        let key = image.shown + "|" + String(describing: image.develop)
+        if let known = looksKept[key] { return known }
+        let px = pixels(of: {
+            (assets.image(image.shown, pixels: 256) ?? assets.image(image.asset, pixels: 256)).map { Developer.developed($0, image.develop) }
+        }, longest: 200)
+        guard let px, let look = PictureLook(pixels: px) else { return nil }
+        let tones = PhotoTones(tones: look.tones, reds: look.reds, greens: look.greens, blues: look.blues, crushed: look.crushed, blown: look.blown,
+                               colors: look.colors)
+        if looksKept.count > 40 { looksKept.removeAll() }
+        looksKept[key] = tones
+        return tones
+    }
+
+    /// The landscape's zones: the setting a sideways drag moves in each, and where each lies across
+    /// it, 0…1, as the Mac's ToneTerrain has them.
+    public static let toneZones: [(setting: String, from: Double, to: Double)] = [
+        ("blacks", 0, 0.12), ("shadows", 0.12, 0.38), ("exposure", 0.38, 0.62), ("highlights", 0.62, 0.88), ("whites", 0.88, 1),
+    ]
 }

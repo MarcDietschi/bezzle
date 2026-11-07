@@ -20,6 +20,8 @@ extension Inspector {
                             summary: { _ in c.shape ?? several }, stops: [0, 0.25, 0.5, 0.75, 1])
             let flip = Controls.iconButton(Glyphs.bothWays(across: false), size: 22) { WindowsCore.flipCurves(ids); edited() }
             try? ToolTipService.setToolTip(flip, Words.t("To the other side"))
+            // Its press is its own, not the card's line's, which would fold the card.
+            flip.pointerPressed.addHandler { _, args in args?.handled = true }
             return card("On Path", c.shape ?? several, mark: Glyphs.view(Glyphs.riding(), size: 15, brush: Theme.ink(2)), dial: dial,
                         remove: { WindowsCore.straighten(ids); edited() }, removal: "Take off path", accessory: flip)
         }

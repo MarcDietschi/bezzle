@@ -44,6 +44,8 @@ final class Inspector {
     /// The Photo card's tab (light, color, detail), and the colour whose rows show, as on the Mac.
     var photoGroup = "light"
     var photoBand: String?
+    /// Draws the open Photo card's landscape again, as a row changes the picture.
+    var photoTerrainRefresh: (() -> Void)?
 
     init(session: DesignSession) {
         self.session = session
