@@ -34,7 +34,23 @@ do {
     // A file from Adobe XD, Figma, Sketch or Photoshop is brought in first, as a new design in
     // the out folder (or BEZZLE_IMPORT_TO), as Bezzle brings it in; what came across is said.
     var design = URL(fileURLWithPath: arguments[2])
-    if WindowsCore.imports(design) {
+    // A web page (http:, https: or file:) is brought in first as Bezzle brings a website in, read
+    // at BEZZLE_WEB_WIDTHS (1440 otherwise, separated by commas), its cookie banners hidden unless
+    // BEZZLE_WEB_BANNERS is set; BEZZLE_WEB_SCALE reads it at that many pixels to a CSS pixel.
+    let typed = arguments[2].lowercased()
+    if typed.hasPrefix("http://") || typed.hasPrefix("https://") || typed.hasPrefix("file:"), let page = WindowsCore.webAddress(arguments[2]) {
+        let into = ProcessInfo.processInfo.environment["BEZZLE_IMPORT_TO"].map { URL(fileURLWithPath: $0) } ?? URL(fileURLWithPath: arguments[3])
+        let widths = (ProcessInfo.processInfo.environment["BEZZLE_WEB_WIDTHS"] ?? "").split(separator: ",").compactMap { Double($0) }
+        let started = Date()
+        var said = ""
+        let (made, summary) = try await WindowsCore.importWebsite(page, widths: widths.map(WindowsCore.WebWidth.init), hideBanners: ProcessInfo.processInfo.environment["BEZZLE_WEB_BANNERS"] == nil, into: into) { what, done in
+            if what != said { print("  \(Int(done * 100))% \(what)"); said = what }
+        }
+        print("brought in from \(summary.source) in \(Int(Date().timeIntervalSince(started) * 1000)) ms: \(summary.artboards) artboards, \(summary.layers) layers → \(made.lastPathComponent)")
+        for line in summary.lines { print("  \(line)") }
+        if !summary.missingFonts.isEmpty { print("  fonts not here: \(summary.missingFonts.joined(separator: ", "))") }
+        design = made
+    } else if WindowsCore.imports(design) {
         let into = ProcessInfo.processInfo.environment["BEZZLE_IMPORT_TO"].map { URL(fileURLWithPath: $0) } ?? URL(fileURLWithPath: arguments[3])
         let started = Date()
         let (made, summary) = try WindowsCore.importDesign(design, into: into)

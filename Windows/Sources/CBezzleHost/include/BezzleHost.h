@@ -174,6 +174,33 @@ int32_t bz_gcm(int32_t seal, const uint8_t *key, const uint8_t *nonce, const uin
 /// HMAC-SHA256 of `data` with `key` into the 32 bytes at `out`. Returns 0 when done.
 int32_t bz_hmac_sha256(const uint8_t *key, int32_t keyCount, const uint8_t *data, int64_t count, uint8_t *out);
 
+// MARK: Web pages (webview.cpp)
+//
+// Each a WebView2 of its own, out of sight, on a thread of its own: every call waits there for
+// WebView2, so none is made on a thread that must keep answering (the window's). Text is UTF-8.
+
+/// Opens a web view laid out `width` by `height` CSS pixels, at `scale` device pixels each (0 for
+/// the screen's), telling pages it is `agent` (empty for WebView2's own), with `awake` run in
+/// every page before its own scripts. Returns its number, 0 when it could not be (bz_web_error).
+int32_t bz_web_open(int32_t width, int32_t height, double scale, const char *agent, const char *awake);
+/// Lays it out at another size, telling pages it is `agent` from the next one loaded. 0 when done.
+int32_t bz_web_resize(int32_t view, int32_t width, int32_t height, const char *agent);
+/// Starts loading the page at the address `text`, or `text` itself as a page with `isHTML`. 0 when begun.
+int32_t bz_web_load(int32_t view, const char *text, int32_t isHTML);
+/// How loading goes: 0 loading, 1 loaded, 2 failed (`error` says how, as WebView2's
+/// COREWEBVIEW2_WEB_ERROR_STATUS), 3 the page stopped working. `status` the page's HTTP status
+/// (0 unknown), `navigations` how many loads have begun, redirects and the page's own included.
+int32_t bz_web_state(int32_t view, int32_t *status, int32_t *error, int32_t *navigations);
+/// Calls the DevTools protocol's `method` with `params` (JSON), waiting up to `timeout`
+/// milliseconds: 0 answered, 1 refused, -1 not asked, -2 no answer in time. `answer` gets the
+/// answer's JSON (or why not), to be let go with bz_web_free.
+int32_t bz_web_call(int32_t view, const char *method, const char *params, int32_t timeout, char **answer);
+/// Lets the view go, and its window.
+void bz_web_close(int32_t view);
+/// Why the last view could not be opened, to be let go with bz_web_free.
+char *bz_web_error(void);
+void bz_web_free(void *pointer);
+
 #ifdef __cplusplus
 }
 #endif

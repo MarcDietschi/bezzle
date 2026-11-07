@@ -46,6 +46,19 @@ if (-not (Test-Path $sdkDir)) {
 Copy-Item "$sdkDir\runtimes\win-$arch\native\Microsoft.WindowsAppRuntime.Bootstrap.dll" `
     "$packages\swift-windowsappsdk\Sources\CWinAppSDK\nuget\bin\Microsoft.WindowsAppRuntime.Bootstrap.dll" -Force
 
+# WebView2's SDK, of the release that Windows App SDK release was made with: its header and the
+# loader that finds the WebView2 runtime (part of Windows 11), for reading web pages.
+$webView2 = '1.0.2903.40'
+$webView2Package = Join-Path $packages "microsoft.web.webview2.$webView2.nupkg"
+if (-not (Test-Path $webView2Package)) {
+    Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$webView2/microsoft.web.webview2.$webView2.nupkg" -OutFile $webView2Package -UseBasicParsing
+}
+if (-not (Test-Path "$packages\webview2\build\native\include\WebView2.h")) {
+    Copy-Item $webView2Package "$webView2Package.zip"
+    Expand-Archive "$webView2Package.zip" "$packages\webview2" -Force
+    Remove-Item "$webView2Package.zip"
+}
+
 # The Windows App Runtime itself, which an unpackaged app finds through the bootstrapper.
 $installed = Get-AppxPackage -Name "Microsoft.WindowsAppRuntime.1.7" -ErrorAction SilentlyContinue | Where-Object Architecture -eq $arch
 if (-not $installed) {

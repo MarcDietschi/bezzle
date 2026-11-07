@@ -20,5 +20,14 @@
   "Show in Explorer": {"de": "Im Explorer zeigen", "fr": "Afficher dans l’Explorateur", "it": "Mostra in Esplora file"},
   "Windows has no spellings to offer for this word.": {"de": "Windows hat für dieses Wort keine Vorschläge.", "fr": "Windows n’a aucune suggestion pour ce mot.", "it": "Windows non ha suggerimenti per questa parola."},
   "OK": {"de": "OK", "fr": "OK", "it": "OK"},
-  "Move “%@” to the Recycle Bin and stop sharing it?": {"de": "„%@“ in den Papierkorb verschieben und nicht mehr teilen?", "fr": "Placer « %@ » dans la Corbeille et arrêter de le partager ?", "it": "Spostare “%@” nel Cestino e interrompere la condivisione?"}
+  "Move “%@” to the Recycle Bin and stop sharing it?": {"de": "„%@“ in den Papierkorb verschieben und nicht mehr teilen?", "fr": "Placer « %@ » dans la Corbeille et arrêter de le partager ?", "it": "Spostare “%@” nel Cestino e interrompere la condivisione?"},
+  "The certificate for this server is invalid.": {"de": "Das Zertifikat dieses Servers ist ungültig.", "fr": "Le certificat de ce serveur n’est pas valide.", "it": "Il certificato di questo server non è valido."},
+  "The network connection was lost.": {"de": "Die Netzwerkverbindung wurde unterbrochen.", "fr": "La connexion réseau a été perdue.", "it": "La connessione di rete si è interrotta."},
+  "The Internet connection appears to be offline.": {"de": "Die Internetverbindung scheint getrennt zu sein.", "fr": "La connexion Internet semble interrompue.", "it": "La connessione a Internet sembra non attiva."},
+  "Could not connect to the server.": {"de": "Es konnte keine Verbindung zum Server hergestellt werden.", "fr": "Impossible de se connecter au serveur.", "it": "Impossibile connettersi al server."},
+  "A server with the specified hostname could not be found.": {"de": "Ein Server mit diesem Namen wurde nicht gefunden.", "fr": "Aucun serveur portant ce nom n’a été trouvé.", "it": "Non è stato trovato alcun server con questo nome."},
+  "There were too many redirects.": {"de": "Es gab zu viele Weiterleitungen.", "fr": "Il y a eu trop de redirections.", "it": "Ci sono stati troppi reindirizzamenti."},
+  "The page asks for a password.": {"de": "Die Seite verlangt ein Passwort.", "fr": "La page demande un mot de passe.", "it": "La pagina chiede una password."},
+  "The request timed out.": {"de": "Die Anfrage hat zu lange gedauert.", "fr": "La requête a expiré.", "it": "La richiesta è scaduta."},
+  "An unknown error occurred.": {"de": "Ein unbekannter Fehler ist aufgetreten.", "fr": "Une erreur inconnue s’est produite.", "it": "Si è verificato un errore sconosciuto."}
 }

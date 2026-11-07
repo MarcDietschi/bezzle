@@ -52,7 +52,20 @@ nonisolated public final class NSFontManager: @unchecked Sendable {
     public static let shared = NSFontManager()
     public nonisolated(unsafe) var families: [String: [String]] = [:]
     public var availableFontFamilies: [String] { families.keys.sorted() }
+    /// Each face as the Mac's font manager lists it: its name, the face, how heavy it is (5 regular,
+    /// 9 bold) and its traits (italic 1, bold 2, narrow 0x10, expanded 0x20, condensed 0x40,
+    /// compressed 0x200), here read from the face's name.
     public func availableMembers(ofFontFamily family: String) -> [[Any]]? {
-        families[family].map { $0.map { [family + "-" + $0, $0, 5, 0] } }
+        families[family].map { $0.map { face in
+            let (weight, italic) = Fonts.traits(named: face)
+            let words = face.lowercased()
+            var traits = italic ? 0x1 : 0
+            if weight >= 9 { traits |= 0x2 }
+            if words.contains("narrow") { traits |= 0x10 }
+            if words.contains("expanded") || words.contains("extended") || words.contains("wide") { traits |= 0x20 }
+            if words.contains("condensed") { traits |= 0x40 }
+            if words.contains("compressed") { traits |= 0x200 }
+            return [family + "-" + face, face, weight, traits]
+        } }
     }
 }

@@ -54,10 +54,20 @@ and `VM/input.ps1` there moves the mouse and presses keys (real input, as WinUI 
 `BEZZLE_HOST_TRACE` for drawing twice, after other designs, and tracing what is missing). Given a
 file from Adobe XD, Figma, Sketch or Photoshop instead, it brings it in first, as the app does
 (into the out folder, or `BEZZLE_IMPORT_TO`), says what came across, and draws the new design.
+Given a web page's address (`https://…` or `file:///…`), it brings the page in as Import from a
+Website does (`BEZZLE_WEB_WIDTHS=1440,390`, `BEZZLE_WEB_BANNERS` keeps cookie banners,
+`BEZZLE_WEB_SCALE` the pixels to a CSS pixel). WebView2 refuses SSH's session 0, so run it in the
+signed-in session (a scheduled task); its window is cloaked and never in front.
 `BEZZLE_TEXTS=<file>` writes instead how the core measures the design's texts and probe texts in
 every family the open fonts stand in for (lines, baselines, widths, fitted frames;
 `Host/TextReport.swift`), to compare with Text Kit on the Mac; `BEZZLE_INK=<file>` where letters
 are drawn against their baselines.
+
+Web pages are read in WebView2, the Edge engine Windows 11 has (`CBezzleHost/webview.cpp`, its
+SDK fetched by `winrt.ps1` into `Packages\webview2`), by the Mac's own page reader
+(`Bezzle/Import/WebPageReader.js` and `WebPageAwake.js`, built into the core) and the Mac's
+converter (`WebImporter.swift`, `WebPage.swift`, `CSSValues.swift`, linked); `Import/WebCapture.swift`
+is the Mac's WebCapture with WebKit's calls asked of the DevTools protocol instead.
 
 Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O

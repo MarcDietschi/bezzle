@@ -51,6 +51,17 @@ let skiaLibraries = [
     "raw_ptr", "allocator_core", "allocator_base",
 ]
 
+// WebView2's SDK (winrt.ps1 fetches it into Packages\webview2): its header and its loader, linked
+// in, which finds the WebView2 runtime Windows 11 has. Built without it, bringing a website in
+// says it cannot be done (CBezzleHost/webview.cpp).
+let webView2 = Context.packageDirectory + "\\Packages\\webview2\\build\\native"
+let hasWebView2 = FileManager.default.fileExists(atPath: webView2 + "\\include\\WebView2.h")
+let webView2Settings: [CXXSetting] = hasWebView2
+    ? [.headerSearchPath("../../Packages/webview2/build/native/include"), .define("BEZZLE_WEBVIEW2", to: "1")] : []
+let webView2Linking: [LinkerSetting] = hasWebView2
+    ? [.unsafeFlags(["-L" + webView2 + "\\" + (arch == "aarch64" ? "arm64" : "x64")]), .linkedLibrary("WebView2LoaderStatic"), .linkedLibrary("version")]
+    : []
+
 let package = Package(
     name: "BezzleWindows",
     dependencies: [
@@ -69,9 +80,10 @@ let package = Package(
             cxxSettings: [.headerSearchPath("../../Packages/skia")] + skiaDefines.map { define in
                 let parts = define.split(separator: "=", maxSplits: 1).map(String.init)
                 return .define(parts[0], to: parts.count > 1 ? parts[1] : nil)
-            } + avifCxx,
+            } + avifCxx + webView2Settings,
             linkerSettings: [.unsafeFlags(["-L" + skiaOut])] + skiaLibraries.map { .linkedLibrary($0) } + avifLinking
-                + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt"].map { .linkedLibrary($0) }
+                + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt", "dwmapi", "shell32", "oleaut32"].map { .linkedLibrary($0) }
+                + webView2Linking
         ),
         .target(
             name: "BezzleCore",
@@ -81,6 +93,9 @@ let package = Package(
             // Host/Sealing.swift stands in for with Windows' own cryptography. Which picture files
             // can be written is Host/PictureFormats.swift's to say (AVIF with avif.ps1's libraries).
             exclude: ["Platform/WebHost.swift", "Platform/ImageIO.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],
+            // The Mac's web page reader and what runs before a page's scripts (Bezzle/Import), in
+            // the core itself, for the app and the command-line tools alike.
+            resources: [.embedInCode("Import/WebPageReader.js"), .embedInCode("Import/WebPageAwake.js")],
             swiftSettings: [.defaultIsolation(MainActor.self), .unsafeFlags(["-Xfrontend", "-disable-availability-checking"])]
         ),
         .executableTarget(
