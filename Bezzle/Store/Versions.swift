@@ -12,60 +12,22 @@ import Observation
 /// a file of its own, never written over, stay where they are. Each Mac sees its own and the
 /// versions everyone named.
 nonisolated enum VersionFiles {
-    static let folderName = "versions"
+    static let folderName = FolderShare.versionsFolder
 
     static func folder(of design: URL) -> URL { design.appendingPathComponent(folderName, isDirectory: true) }
-    private static func indexFile(_ design: URL) -> URL { folder(of: design).appendingPathComponent("index.json") }
-    static func file(_ id: UUID, of design: URL) -> URL { folder(of: design).appendingPathComponent("\(id.uuidString).lzfse") }
+    static func file(_ id: UUID, of design: URL) -> URL { FolderShare.versionFile(id, of: design) }
 
-    /// The list a Mac with `replica` keeps of a design shared through its folder.
-    private static func ownIndexFile(_ design: URL, _ replica: String) -> URL {
-        FolderSync.folder(of: replica, in: design).appendingPathComponent(FolderShare.versionsFile)
-    }
+    static func index(of design: URL, replica: String) -> [DesignVersion] { FolderShare.versions(of: design, replica: replica) }
 
-    static func index(of design: URL, replica: String) -> [DesignVersion] {
-        guard FolderSync.isShared(design) else { return list(at: indexFile(design)) }
-        let fm = FileManager.default
-        let mine = ownIndexFile(design, replica)
-        let others = ((try? fm.contentsOfDirectory(at: FolderSync.peopleFolder(of: design), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
-            .filter { $0.lastPathComponent != replica }
-            .map { $0.appendingPathComponent(FolderShare.versionsFile) }
-            .filter { fm.fileExists(atPath: $0.path) }
-        var out = list(at: mine)
-        // The design's versions from before it was shared through its folder are the first
-        // Mac's to share it, to keep on as its own.
-        if !fm.fileExists(atPath: mine.path), others.isEmpty { out = list(at: indexFile(design)) }
-        var at: [UUID: Int] = [:]
-        for (i, v) in out.enumerated() { at[v.id] = i }
-        for file in others {
-            for v in list(at: file) where v.isNamed && v.shared == true {
-                if let i = at[v.id] {
-                    // Its name as the one who took it last gave it.
-                    if v.replica == file.deletingLastPathComponent().lastPathComponent { out[i].name = v.name }
-                } else {
-                    at[v.id] = out.count
-                    out.append(v)
-                }
-            }
-        }
-        return out.sorted { $0.date < $1.date }
-    }
+    static func list(at file: URL) -> [DesignVersion] { FolderShare.versionList(at: file) }
 
-    static func list(at file: URL) -> [DesignVersion] {
-        guard let data = try? Data(contentsOf: file) else { return [] }
-        return VersionKeeping.list(from: data)
-    }
-
+    /// Writes the list the Mac with `replica` keeps: in a design shared through its folder, in
+    /// its own folder of files there; otherwise the design's.
     static func writeIndex(_ list: [DesignVersion], to design: URL, replica: String) throws {
         let data = try VersionKeeping.data(of: list)
-        if FolderSync.isShared(design) {
-            let file = ownIndexFile(design, replica)
-            try DesignFile.makeFolder(file.deletingLastPathComponent(), in: design)
-            try data.write(to: file, options: .atomic)
-            return
-        }
-        try DesignFile.makeFolder(folder(of: design), in: design)
-        try data.write(to: indexFile(design), options: .atomic)
+        let file = FolderShare.versionIndex(of: design, replica: replica)
+        try DesignFile.makeFolder(file.deletingLastPathComponent(), in: design)
+        try data.write(to: file, options: .atomic)
     }
 
     /// The design packed as a version keeps it (`VersionKeeping.pack`).

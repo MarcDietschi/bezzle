@@ -75,7 +75,7 @@ enum SharingMark: Equatable {
 /// Where a design keeps what ties it to its share: a folder in its package, holding the link and
 /// the parts everyone's changes are kept in (see `FolderShare`).
 nonisolated enum SharingFiles {
-    static let folderName = "sharing"
+    static let folderName = FolderShare.sharingFolder
 
     static func folder(of design: URL) -> URL { design.appendingPathComponent(folderName, isDirectory: true) }
     private static func linkFile(_ design: URL) -> URL { folder(of: design).appendingPathComponent("share.json") }

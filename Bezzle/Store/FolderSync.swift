@@ -93,28 +93,9 @@ final class FolderSync {
     @ObservationIgnored private(set) lazy var roomKeys: ShareKeys = Self.keys(of: room)
 
     /// What has been read of everyone else's files, so that each is read once.
-    struct Seen: Sendable {
-        var read: [String: Set<String>] = [:]
-        var failed: [String: Set<String>] = [:]
-        var people: [String: FolderShare.Person] = [:]
-        var room: FolderShare.Room?
-        var pictures: Set<String> = []
-        /// When each person's list of versions was last read, as its file was then.
-        var versions: [String: Date] = [:]
-    }
-
+    typealias Seen = FolderShare.Seen
     /// What a look through the folder found.
-    struct Found: Sendable {
-        var seen: Seen
-        var changes: [SharedDesign] = []
-        var peopleChanged = false
-        var pictures: [String] = []
-        var versions: [(DesignVersion, Data)] = []
-        /// How many of everyone's files of changes and wholes there are, this Mac's own among them.
-        var parts = 0
-        /// This Mac's own, by name.
-        var own: [String] = []
-    }
+    typealias Found = FolderShare.Found
 
     private init(url: URL, replica: String, room: FolderShare.Room, seen: Seen, own: [String], writtenUpTo: Int64) {
         self.url = url
@@ -133,22 +114,14 @@ final class FolderSync {
 
     // MARK: Where everything is
 
-    nonisolated static func peopleFolder(of design: URL) -> URL {
-        SharingFiles.folder(of: design).appendingPathComponent(FolderShare.peopleFolder, isDirectory: true)
-    }
+    nonisolated static func peopleFolder(of design: URL) -> URL { FolderShare.people(of: design) }
 
-    nonisolated static func folder(of replica: String, in design: URL) -> URL {
-        peopleFolder(of: design).appendingPathComponent(replica, isDirectory: true)
-    }
+    nonisolated static func folder(of replica: String, in design: URL) -> URL { FolderShare.folder(of: replica, in: design) }
 
-    private nonisolated static func roomFile(_ design: URL) -> URL {
-        SharingFiles.folder(of: design).appendingPathComponent(FolderShare.roomFile)
-    }
+    private nonisolated static func roomFile(_ design: URL) -> URL { FolderShare.roomURL(of: design) }
 
     /// The folder room the design at `design` is shared in, if any.
-    nonisolated static func room(of design: URL) -> FolderShare.Room? {
-        (try? Data(contentsOf: roomFile(design))).flatMap { FolderShare.decode(FolderShare.Room.self, from: $0) }
-    }
+    nonisolated static func room(of design: URL) -> FolderShare.Room? { FolderShare.room(of: design) }
 
     /// Whether a design keeps its changes in parts: one in a synced folder, or one that has been
     /// or is shared, whose parts go on being written wherever it is, so that none of what is done
@@ -159,9 +132,7 @@ final class FolderSync {
     }
 
     /// Whether the design has people's files in it.
-    nonisolated static func isShared(_ design: URL) -> Bool {
-        FileManager.default.fileExists(atPath: peopleFolder(of: design).path)
-    }
+    nonisolated static func isShared(_ design: URL) -> Bool { FolderShare.isShared(design) }
 
     // MARK: Opening
 
@@ -177,31 +148,18 @@ final class FolderSync {
             return nil
         }
         let found = look(url, replica: replica, seen: Seen(), opening: true)
-        var state = SharedDesign()
-        for design in found.changes { state.merge(design) }
-        var own = found.own
-        var writtenUpTo = FolderShare.parts(files: own).last?.upTo ?? 0
-        if found.parts == 0 {
-            // The first to share it, or the first since it came into the folder.
-            if let seed, !seed.isEmpty {
-                state.merge(seed)
-            } else if let doc = try? DesignFile.read(url) {
-                let file = url.appendingPathComponent(DesignFile.documentName)
-                let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
-                state.merge(FolderShare.first(doc, modified: Int64(modified.timeIntervalSince1970 * 1000), by: replica))
-            }
-            let whole = FolderShare.Part(.whole, upTo: FolderShare.nextUpTo(state.clock.time, after: []))
+        let opened = FolderShare.opening(found, seed: seed, file: {
+            guard let doc = try? DesignFile.read(url) else { return nil }
+            let file = url.appendingPathComponent(DesignFile.documentName)
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
+            return (doc, Int64(modified.timeIntervalSince1970 * 1000))
+        }, by: replica)
+        let state = opened.state, own = opened.own, writtenUpTo = opened.writtenUpTo
+        if let whole = opened.first {
             guard let data = FolderShare.pack(state), (try? data.write(to: mine.appendingPathComponent(whole.fileName), options: .atomic)) != nil else {
                 NSLog("Bezzle could not write the first of its files in %@", url.path)
                 return nil
             }
-            own = [whole.fileName]
-            writtenUpTo = state.clock.time
-        } else if state.isEmpty, let doc = try? DesignFile.read(url) {
-            // Everyone's files are there, but none would open yet: the design opens as its own
-            // file last had it, at the earliest of times, so that each change in theirs wins once
-            // it comes, and what is done here meanwhile is kept as anything done here is.
-            state.merge(FolderShare.first(doc, modified: 1, by: replica))
         }
         var room = found.seen.room
         if room?.isValid != true || !claim(room!, at: url) {
@@ -352,38 +310,15 @@ final class FolderSync {
     /// design is saved on and ahead of its own file.
     func persist(_ state: SharedDesign, keeping kept: [SharedDesign] = []) {
         introduce()
-        var changes = state.changes(by: replica, after: writtenUpTo)
-        for design in kept { changes.merge(design) }
-        let parts = FolderShare.parts(files: own)
-        let upTo = FolderShare.nextUpTo(state.clock.time, after: parts)
-        var names = own
-        var writes: [(String, SharedDesign)] = []
-        if !changes.isEmpty {
-            let part = FolderShare.Part(.changes, upTo: upTo)
-            names.append(part.fileName)
-            writes.append((part.fileName, changes))
-        }
-        var gone: [String] = []
-        if !writes.isEmpty, FolderShare.shouldFold(FolderShare.parts(files: names)) {
-            let whole = FolderShare.Part(.whole, upTo: upTo)
-            names.append(whole.fileName)
-            writes.append((whole.fileName, state))
-            gone = FolderShare.folded(FolderShare.parts(files: names), into: upTo).map(\.fileName)
-            names.removeAll { gone.contains($0) }
-        }
-        guard !writes.isEmpty else { return }
+        guard let writing = FolderShare.writing(state, by: replica, since: writtenUpTo, keeping: kept, own: own) else { return }
         let from = writtenUpTo
         writtenUpTo = state.clock.time
-        own = names
-        let design = url, folder = Self.folder(of: replica, in: url), writing = writes, deleting = gone
+        own = writing.names
+        let design = url, folder = Self.folder(of: replica, in: url)
         DocumentStore.saving.async {
             do {
                 try DesignFile.makeFolder(folder, in: design)
-                for (name, design) in writing {
-                    guard let data = FolderShare.pack(design) else { throw CocoaError(.fileWriteUnknown) }
-                    try data.write(to: folder.appendingPathComponent(name), options: .atomic)
-                }
-                for name in deleting { try? FileManager.default.removeItem(at: folder.appendingPathComponent(name)) }
+                try FolderShare.write(writing, into: folder)
             } catch {
                 NSLog("Bezzle could not write its changes to %@: %@", folder.path, error.localizedDescription)
                 // Written again with the next save.
@@ -425,13 +360,7 @@ final class FolderSync {
     }
 
     /// A design not open as everyone's files in it have it; nil when none would open.
-    nonisolated static func document(of url: URL) -> BezzleDocument? {
-        let found = look(url, replica: "", seen: Seen(), opening: true)
-        guard !found.changes.isEmpty else { return nil }
-        var state = SharedDesign()
-        for design in found.changes { state.merge(design) }
-        return state.flatDesign().document()
-    }
+    nonisolated static func document(of url: URL) -> BezzleDocument? { FolderShare.document(of: url) }
 
     private static func sorted(_ people: [String: FolderShare.Person]) -> [FolderShare.Person] {
         people.values.sorted { $0.since != $1.since ? $0.since < $1.since : $0.replica < $1.replica }
@@ -443,70 +372,7 @@ final class FolderSync {
     /// pictures that came, and versions others named. Opening, this Mac's own files are read too,
     /// as the design is made from everyone's.
     nonisolated static func look(_ url: URL, replica: String, seen: Seen, opening: Bool) -> Found {
-        let fm = FileManager.default
-        var found = Found(seen: seen)
-        let dirs = (try? fm.contentsOfDirectory(at: peopleFolder(of: url), includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
-        for dir in dirs where (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-            let who = dir.lastPathComponent
-            let names = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).filter { FolderShare.Part(fileName: $0) != nil }
-            found.parts += names.count
-            if who == replica {
-                found.own = names
-                if !opening { continue }
-            } else if let data = try? Data(contentsOf: dir.appendingPathComponent(FolderShare.personFile)),
-                      let person = FolderShare.decode(FolderShare.Person.self, from: data), found.seen.people[who] != person {
-                found.seen.people[who] = person
-                found.peopleChanged = true
-            }
-            let read = Set((found.seen.read[who] ?? []).compactMap(FolderShare.Part.init(fileName:)))
-            let failed = Set((found.seen.failed[who] ?? []).compactMap(FolderShare.Part.init(fileName:)))
-            for part in FolderShare.toRead(FolderShare.parts(files: names), read: read, failed: failed) {
-                // Reading it brings it down, if the service keeps it in the cloud until wanted.
-                if let data = try? Data(contentsOf: dir.appendingPathComponent(part.fileName)), let design = FolderShare.unpack(data) {
-                    found.changes.append(design)
-                    found.seen.read[who, default: []].insert(part.fileName)
-                    found.seen.failed[who]?.remove(part.fileName)
-                } else {
-                    // Still on its way, most likely: tried again next time.
-                    found.seen.failed[who, default: []].insert(part.fileName)
-                }
-            }
-            if who != replica { lookAtVersions(in: dir, of: who, design: url, found: &found, opening: opening) }
-        }
-        if let data = try? Data(contentsOf: roomFile(url)), let room = FolderShare.decode(FolderShare.Room.self, from: data), room.isValid {
-            found.seen.room = room
-        }
-        let images = url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
-        let pictures = Set(((try? fm.contentsOfDirectory(atPath: images.path)) ?? []).filter { !$0.hasPrefix(".") })
-        if opening {
-            found.seen.pictures = pictures
-        } else {
-            for name in pictures.subtracting(found.seen.pictures) {
-                // Read once here, so it is on this Mac before it is drawn.
-                guard (try? Data(contentsOf: images.appendingPathComponent(name)))?.isEmpty == false else { continue }
-                found.pictures.append(name)
-                found.seen.pictures.insert(name)
-            }
-        }
-        return found
-    }
-
-    /// Versions someone else named since their list was last read, with what each holds.
-    private nonisolated static func lookAtVersions(in dir: URL, of who: String, design: URL, found: inout Found, opening: Bool) {
-        let file = dir.appendingPathComponent(FolderShare.versionsFile)
-        guard let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
-              found.seen.versions[who] != date else { return }
-        found.seen.versions[who] = date
-        // An open design's shelf reads everyone's when it first shows them.
-        guard !opening else { return }
-        for version in VersionFiles.list(at: file) where version.isNamed && version.shared == true {
-            guard let data = try? Data(contentsOf: VersionFiles.file(version.id, of: design)) else {
-                // Its file is not here yet: looked for again next time.
-                found.seen.versions[who] = nil
-                continue
-            }
-            found.versions.append((version, data))
-        }
+        FolderShare.look(url, replica: replica, seen: seen, opening: opening)
     }
 }
 

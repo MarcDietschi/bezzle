@@ -1184,6 +1184,114 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: A design shared through its folder
+
+    /// Two Macs with one design open in a synced folder, as FolderSync reads and writes its parts
+    /// (moved into Model/FolderParts.swift for Windows): each one's files, by kind, never by time;
+    /// what each has after looking; folding; someone new; a design come with a seed; files there
+    /// that will not open; the versions list; the design as read when it is not open.
+    @Test func folderSharing() throws {
+        let t = "folder"
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleParityDrive-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        SyncedFolders.forTests[folder.path] = "Google Drive"
+        defer {
+            SyncedFolders.forTests[folder.path] = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        func files(_ url: URL, _ who: String) -> String {
+            // Who each is goes to their me.json on the saving queue.
+            DocumentStore.finishSaving()
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: FolderSync.folder(of: who, in: url).path)) ?? []
+            let parts = FolderShare.parts(files: names)
+            let others = names.filter { FolderShare.Part(fileName: $0) == nil }.sorted()
+            return "\(who): \(parts.filter { $0.kind == .changes }.count) changes, \(parts.filter { $0.kind == .whole }.count) wholes, \(others.joined(separator: " "))"
+        }
+        func layers(_ session: Collaboration) -> String {
+            session.state.flatDesign().document().allNodes.map { n in
+                "\(n.name) \(Self.r(n.frame)) \(Self.n(n.fill.color.r)) \(Self.n(n.opacity))"
+            }.joined(separator: "; ")
+        }
+        func edit(_ session: Collaboration, _ name: String, _ change: (inout Node) -> Void) {
+            var doc = session.state.flatDesign().document()
+            guard let id = doc.allNodes.first(where: { $0.name == name })?.id else { Self.log(t, "no layer \(name)"); return }
+            doc.update(id, change)
+            session.takeIn(doc)
+            session.persist()
+            DocumentStore.finishSaving()
+        }
+        var doc = BezzleDocument()
+        doc.nodes = [CanvasTests.rect("R", CGRect(x: 10, y: 10, width: 50, height: 50)), CanvasTests.rect("S", CGRect(x: 100, y: 10, width: 50, height: 50))]
+        let url = folder.appendingPathComponent("Poster.bezzle")
+        try DesignFile.write(doc, to: url)
+
+        let anna = try #require(Collaboration.open(url, replica: "anna"))
+        Self.log(t, "anna opened: " + files(url, "anna") + " | " + layers(anna))
+        let ben = try #require(Collaboration.open(url, replica: "ben"))
+        Self.log(t, "ben opened: " + files(url, "ben") + " | " + layers(ben) + " | shared \(FolderSync.isShared(url)) room same \(anna.liveKeys.room == ben.liveKeys.room)")
+        edit(anna, "R") { $0.frame.origin.x = 300 }
+        edit(ben, "R") { $0.fill.color = .black }
+        edit(ben, "S") { $0.name = "S, renamed" }
+        Self.log(t, "before looking: anna " + layers(anna) + " | ben " + layers(ben))
+        anna.folder?.lookForTesting(for: anna)
+        ben.folder?.lookForTesting(for: ben)
+        Self.log(t, "after looking: anna " + layers(anna) + " | ben " + layers(ben) + " | same \(anna.state == ben.state)")
+        Self.log(t, "people: anna knows \(anna.folder?.people.map(\.replica) ?? []), ben knows \(ben.folder?.people.map(\.replica) ?? []), mark \(String(describing: anna.mark))")
+        Self.log(t, files(url, "anna") + " | " + files(url, "ben"))
+        for i in 1...60 {
+            edit(anna, "R") { $0.frame.origin.y = CGFloat(i) }
+            if i % 20 == 0 { Self.log(t, "after \(i) more: " + files(url, "anna")) }
+        }
+        ben.folder?.lookForTesting(for: ben)
+        Self.log(t, "ben followed along: " + layers(ben))
+        // Versions: Anna names one and shares it; Ben keeps one of his own.
+        var named = DesignVersion(date: Date(timeIntervalSince1970: 1_000), name: "For the client", by: "Anna", replica: "anna", layers: 2)
+        named.shared = true
+        let own = DesignVersion(date: Date(timeIntervalSince1970: 2_000), name: nil, by: "Anna", replica: "anna", layers: 2)
+        let bens = DesignVersion(date: Date(timeIntervalSince1970: 1_500), name: "Ben's", by: "Ben", replica: "ben", layers: 2)
+        let packed = try #require(VersionFiles.pack(anna.state.flatDesign().document()))
+        for v in [named, own, bens] { try VersionFiles.write(packed, as: v.id, to: url) }
+        try VersionFiles.writeIndex([named, own], to: url, replica: "anna")
+        try VersionFiles.writeIndex([bens], to: url, replica: "ben")
+        func versions(_ who: String) -> String { VersionFiles.index(of: url, replica: who).map { "\($0.name ?? "-") by \($0.replica ?? "-")" }.joined(separator: ", ") }
+        Self.log(t, "versions: anna sees \(versions("anna")); ben sees \(versions("ben")); carl sees \(versions("carl"))")
+        ben.folder?.lookForTesting(for: ben)
+        anna.close()
+        ben.close()
+        DocumentStore.finishSaving()
+
+        let carl = try #require(Collaboration.open(url, replica: "carl"))
+        Self.log(t, "carl came: " + layers(carl) + " | " + files(url, "carl"))
+        carl.close()
+        let read = FolderSync.document(of: url)
+        Self.log(t, "read while not open: " + (read?.allNodes.map { "\($0.name) \(Self.r($0.frame))" }.joined(separator: "; ") ?? "nil"))
+
+        // A design come from a link: the first of its files is the seed.
+        let seeded = folder.appendingPathComponent("Seeded.bezzle")
+        try DesignFile.write(BezzleDocument(), to: seeded)
+        var seed = SharedDesign()
+        var seedDoc = BezzleDocument()
+        seedDoc.nodes = [CanvasTests.rect("From the room", CGRect(x: 5, y: 5, width: 20, height: 20))]
+        seed.absorb(FlatDesign(seedDoc), since: FlatDesign(), by: "owner", at: 5)
+        let opened = try #require(FolderSync.open(seeded, replica: "anna", seed: seed))
+        Self.log(t, "seeded: \(opened.state.flatDesign().document().allNodes.map(\.name)) | " + files(seeded, "anna"))
+        DocumentStore.finishSaving()
+
+        // Someone's files there, none of which open yet: the design as its own file has it.
+        let early = folder.appendingPathComponent("Early.bezzle")
+        var earlyDoc = BezzleDocument()
+        earlyDoc.nodes = [CanvasTests.rect("Own file", CGRect(x: 1, y: 2, width: 3, height: 4))]
+        try DesignFile.write(earlyDoc, to: early)
+        let theirs = FolderSync.folder(of: "dora", in: early)
+        try FileManager.default.createDirectory(at: theirs, withIntermediateDirectories: true)
+        try Data("not yet".utf8).write(to: theirs.appendingPathComponent(FolderShare.Part(.whole, upTo: 7).fileName))
+        let waiting = try #require(Collaboration.open(early, replica: "anna"))
+        Self.log(t, "early: " + layers(waiting) + " | " + files(early, "anna"))
+        waiting.close()
+        DocumentStore.finishSaving()
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.
