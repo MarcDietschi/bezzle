@@ -4,7 +4,9 @@ import AppKit
 // Text in the browser: the same questions the Mac's TextLayout answers (how wide, how tall,
 // where the lines break, where the first baseline is), answered by Skia's paragraphs in the page
 // instead of Text Kit. Skia breaks the lines and shapes their letters; where each line sits is
-// worked out here, the way Text Kit places it (see `place`), so a design measures alike on both.
+// worked out here, the way Text Kit places it (see `place`), from the Mac's own fonts' measures
+// where they are known (MacFonts.swift), so a design measures alike on both, whatever fonts stand
+// in for the Mac's here.
 
 nonisolated enum Fonts {
     static let systemFaces = ["Ultralight", "Thin", "Light", "Regular", "Medium", "Semibold", "Bold", "Heavy", "Black"]
@@ -125,13 +127,20 @@ nonisolated enum TextLayout {
         // "tag=value" lists, as the Mac's Fonts.font sets them.
         var wanted = style.features ?? [:]
         if style.letterCase == .smallCaps, wanted["smcp"] == nil { wanted["smcp"] = 1 }
-        let features = wanted.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         let axes = (style.axes ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         return zip(runs, texts).map { run, text in
             let letters = run.look.resolved(over: style, color: color ?? .black)
+            // The Mac always sets letters' spacing (Text Kit's kern), and set to nought, Core Text
+            // leaves out the font's own kerning between pairs such as "Te"; set to anything else,
+            // it keeps it. Said here, as the letters' spacing below also has what makes a
+            // stand-in as wide as the Mac's face.
+            var own = wanted
+            if letters.tracking == 0, own["kern"] == nil { own["kern"] = 0 }
+            let features = own.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+            let spacing = letters.tracking / 1000 * letters.size + MacFonts.spacing(family: letters.family, face: letters.face, size: letters.size)
             var r: [String: Any] = [
                 "text": text, "family": letters.family, "face": letters.face, "size": Double(letters.size),
-                "tracking": Double(letters.tracking / 1000 * letters.size),
+                "tracking": Double(spacing),
                 "underline": letters.underline, "strike": letters.strikethrough,
             ]
             if color != nil { r["color"] = [letters.color.r, letters.color.g, letters.color.b, letters.color.a] }
@@ -156,43 +165,96 @@ nonisolated enum TextLayout {
         }
         let id = reply["id"] as? Int ?? 0
         let metrics = (reply["lines"] as? [[Double]]) ?? []
-        let lines = place(metrics, style: style)
-        // Text Kit counts a line's width without the spaces that end it, and the text as tall as its lines.
-        let used = CGSize(width: lines.map(\.width).max() ?? 0, height: lines.last.map { $0.top + $0.height } ?? 0)
-        let laid = Laid(id: id, lines: lines, usedSize: used, string: runs.compactMap { $0["text"] as? String }.joined())
+        let string = runs.compactMap { $0["text"] as? String }.joined()
+        let lines = place(metrics, runs: runs, string: string, style: style)
+        // Text Kit counts a line's width without the spaces that end it, and the text as tall as its
+        // lines; an empty text, which has none, as tall as a line of its font.
+        let used = CGSize(width: lines.map(\.width).max() ?? 0, height: lines.last.map { $0.top + $0.height } ?? emptyHeight(style))
+        let laid = Laid(id: id, lines: lines, usedSize: used, string: string)
         // The page draws each line where it is placed here.
         _ = Host.call(.textLayout, string: "{\"place\":\(id),\"baselines\":\(Recording.json(lines.map { Double($0.drawn) }))}")
         return laid
     }
 
-    /// Where each line lies, as Text Kit sets lines: as tall as the font's ascent and descent,
-    /// each rounded to whole points, and its leading, which is not; the baseline the ascent down.
-    /// Lines set apart by a line spacing are exactly that tall, the baseline the descent and
-    /// leading up from their bottom, raised by `lift` when they are set further apart than the
-    /// font's own lines, and not lowered when they are set closer: as Text Kit measured the
-    /// sample designs (Bodoni 72 at 132 on 124, Avenir Next at 28 on 40, SF Pro at 15 on 22).
-    /// `metrics` per line: start, end, width, ascent, descent, leading, the font's own.
-    private static func place(_ metrics: [[Double]], style: TextStyle) -> [Line] {
+    /// Where each line lies, as Text Kit sets lines (measured on the Mac for every face the open
+    /// fonts stand in for, at sizes from 4 to 132 points): as tall as its fonts' ascent and
+    /// descent, each rounded to whole points, and their leading, which is not, below; the
+    /// baseline the ascent down. With several fonts on a line, as tall as the most any of them
+    /// has above the baseline and the most below. A few old faces have a fifth more room above
+    /// (MacFonts.Face.fifth). A line of nothing but its paragraph's end is as tall rounded. Lines
+    /// set apart by a line spacing are that tall and their leading, the baseline the descent up
+    /// from the spacing, raised by `lift` when they are set further apart than the font's own
+    /// lines, and not lowered when they are set closer. The last line of each paragraph but the
+    /// last has the paragraph spacing below it.
+    ///
+    /// The fonts' measures are the Mac's own where they are known (MacFonts), for the faces the
+    /// open fonts stand in for, else the host's. `metrics` per line: start, end, width, ascent,
+    /// descent, leading, the host font's own; `runs` as `runs(_:)` makes them, `string` their words.
+    private static func place(_ metrics: [[Double]], runs: [[String: Any]], string: String, style: TextStyle) -> [Line] {
+        // Where each run lies in the words (UTF-16), and its face on the Mac.
+        var spans: [(start: Int, end: Int, face: MacFonts.Face?, size: CGFloat)] = []
+        var at = 0
+        for r in runs {
+            let n = (r["text"] as? String ?? "").utf16.count
+            let face = MacFonts.face(family: r["family"] as? String ?? TextStyle.system, face: r["face"] as? String ?? "")
+            spans.append((at, at + n, face, CGFloat((r["size"] as? Double) ?? Double(style.size))))
+            at += n
+        }
+        let units = Array(string.utf16)
+        func ends(_ u: UInt16) -> Bool { u == 0x0A || u == 0x0D || u == 0x2029 || u == 0x2028 }
+        let natural = Fonts.naturalLineHeight(style)
         var y: CGFloat = 0
-        return metrics.map { m in
-            let ascent = CGFloat(m[3]), descent = CGFloat(m[4]), leading = CGFloat(m[5])
-            let a = ascent.rounded(), d = descent.rounded()
-            var height = a + d + leading
-            var baseline = a, drawn = a
+        return metrics.enumerated().map { k, m in
+            let start = Int(m[0]), end = Int(m[1])
+            // The runs on the line; on one with no letters, the run its end is in.
+            var on = spans.filter { $0.end > start && $0.start < max(end, start + 1) }
+            if on.isEmpty, let last = spans.last(where: { $0.start <= start }) ?? spans.last { on = [last] }
+            var above: CGFloat = 0, below: CGFloat = 0, descent: CGFloat = 0
+            if !on.isEmpty, on.allSatisfy({ $0.face != nil }) {
+                for s in on {
+                    let r = s.face!.rise(at: s.size)
+                    above = max(above, r.above)
+                    below = max(below, r.below)
+                    descent = max(descent, r.descent)
+                }
+            } else {
+                descent = CGFloat(m[4]).rounded()
+                above = CGFloat(m[3]).rounded()
+                below = descent + CGFloat(m[5])
+            }
+            let letters = units[min(start, units.count)..<min(max(end, start), units.count)]
+            let blank = letters.allSatisfy(ends)
+            var height = above + below, baseline = above
             if let spacing = style.lineSpacing, spacing > 0 {
-                let natural = (ascent + descent + leading).rounded(.up)
-                height = spacing
+                height = spacing + below - descent
                 // Raised into the middle of lines set further apart; set closer, not lowered.
-                baseline = spacing - d - leading - max(lift(style, natural: natural), 0)
-                drawn = baseline
+                baseline = spacing - descent - max(lift(style, natural: natural), 0)
+            }
+            if blank {
+                // Its end, which is all it has, Text Kit puts at the line's bottom.
+                height = height.rounded()
+                baseline = height
+            }
+            if k < metrics.count - 1, let after = style.paragraphSpacing, after > 0, let last = letters.last, last != 0x2028, ends(last) {
+                height += after
             }
             defer { y += height }
-            return Line(start: Int(m[0]), end: Int(m[1]), top: y, height: height, width: CGFloat(m[2]), baseline: y + baseline, drawn: y + drawn)
+            return Line(start: start, end: end, top: y, height: height, width: CGFloat(m[2]), baseline: y + baseline, drawn: y + baseline)
         }
     }
 
-    /// The first line's own height, as the font sets it: for `Fonts.naturalLineHeight`.
+    /// How tall an empty text is: a line of its font, rounded, as Text Kit's default line height.
+    private static func emptyHeight(_ style: TextStyle) -> CGFloat {
+        guard let face = MacFonts.face(family: style.family, face: style.face) else { return Fonts.naturalLineHeight(style) }
+        let r = face.rise(at: max(style.size, 1))
+        return (r.above + r.below).rounded()
+    }
+
+    /// The first line's own height, as the font sets it: for `Fonts.naturalLineHeight`. The Mac's
+    /// font's where it is known.
     static func ownLineHeight(_ node: Node) -> CGFloat {
+        let style = node.style ?? TextStyle()
+        if let face = MacFonts.face(family: style.family, face: style.face) { return face.naturalLineHeight(at: style.size) }
         let spec: [String: Any] = ["width": 100_000.0, "align": "left", "lineSpacing": 0.0, "paragraphSpacing": 0.0, "runs": runs(node)]
         let json = (try? JSONSerialization.data(withJSONObject: spec)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         let answer = Host.call(.textLayout, string: json)
@@ -234,7 +296,13 @@ nonisolated enum TextLayout {
     }
 
     static func firstBaseline(_ node: Node) -> CGFloat {
-        (layout(node).lines.first?.baseline ?? 0) + offset(node)
+        let laid = layout(node)
+        // An empty text has no letters to set on a line: its font's ascent down, as on the Mac.
+        let style = node.style ?? TextStyle()
+        if laid.string.isEmpty, let face = MacFonts.face(family: style.family, face: style.face) {
+            return CGFloat(face.ascent) * max(style.size, 1) + offset(node)
+        }
+        return (laid.lines.first?.baseline ?? 0) + offset(node)
     }
 
     static func fittedFrame(_ node: Node) -> CGRect {

@@ -261,12 +261,21 @@ nonisolated enum CurvedText {
         if let data = answer.data(using: .utf8), let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let id = reply["id"] as? Int, let metrics = reply["line"] as? [Double], metrics.count >= 4,
            let glyphs = reply["glyphs"] as? [[Double]] {
-            line = Line(id: id, width: CGFloat(metrics[0]), ascent: CGFloat(metrics[1]), descent: CGFloat(metrics[2]),
+            // The Mac's fonts' ascent and descent where they are known (MacFonts), which the
+            // letters' boxes are made of there, rather than their stand-ins'.
+            func mac(_ run: Int) -> (ascent: CGFloat, descent: CGFloat)? {
+                guard run >= 0, run < runs.count,
+                      let face = MacFonts.face(family: runs[run]["family"] as? String ?? TextStyle.system, face: runs[run]["face"] as? String ?? "") else { return nil }
+                let size = CGFloat(runs[run]["size"] as? Double ?? 12)
+                return (CGFloat(face.ascent) * size, CGFloat(face.descent) * size)
+            }
+            line = Line(id: id, width: CGFloat(metrics[0]), ascent: mac(0)?.ascent ?? CGFloat(metrics[1]), descent: mac(0)?.descent ?? CGFloat(metrics[2]),
                         capHeight: CGFloat(metrics[3]),
                         glyphs: glyphs.filter { $0.count >= 10 }.map {
-                            Line.Glyph(run: Int($0[0]), x: CGFloat($0[1]), y: CGFloat($0[2]), advance: CGFloat($0[3]),
-                                       ascent: CGFloat($0[4]), descent: CGFloat($0[5]), underline: CGFloat($0[6]),
-                                       thickness: CGFloat($0[7]), xHeight: CGFloat($0[8]))
+                            let own = mac(Int($0[0]))
+                            return Line.Glyph(run: Int($0[0]), x: CGFloat($0[1]), y: CGFloat($0[2]), advance: CGFloat($0[3]),
+                                              ascent: own?.ascent ?? CGFloat($0[4]), descent: own?.descent ?? CGFloat($0[5]), underline: CGFloat($0[6]),
+                                              thickness: CGFloat($0[7]), xHeight: CGFloat($0[8]))
                         },
                         runs: runs)
         }

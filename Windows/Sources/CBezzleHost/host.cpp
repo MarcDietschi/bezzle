@@ -699,6 +699,9 @@ std::unique_ptr<Paragraph> paragraph(const std::vector<Run>& runs, const Run& fi
     const TextAlign aligns[] = {TextAlign::kLeft, TextAlign::kCenter, TextAlign::kRight, TextAlign::kJustify};
     ps.setTextAlign(aligns[std::clamp(align, 0, 3)]);
     ps.setTextStyle(style(first));
+    // Set at the width given, as Text Kit sets lines: Skia otherwise narrows it to whole points
+    // and rounds lines' heights and widths, as Flutter wants.
+    ps.setApplyRoundingHack(false);
     // fonts() first: it makes `unicode` too, and arguments are evaluated in no set order.
     auto collection = fonts();
     auto builder = ParagraphBuilder::make(ps, collection, unicode);
@@ -1053,7 +1056,9 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
         if (line) {
             std::vector<LineMetrics> lm;
             line->getLineMetrics(lm);
-            if (!lm.empty()) baseline = lm[0].fBaseline;
+            // Where Skia paints the line's letters: its ascent down, rounded to a whole point
+            // (TextLine::paint), which is not where its line metrics put the baseline.
+            if (!lm.empty()) baseline = std::floor(lm[0].fAscent + 0.5);
         }
         const bool fromLeft = align == 0 || align == 3;
         std::u16string words;

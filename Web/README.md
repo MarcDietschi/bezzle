@@ -41,6 +41,21 @@ What made text match:
 Still open: a few SF Pro and Avenir words come out up to 0.2 pt a letter narrower. The difference
 follows kerning pairs (Yo, Ly, "1,") at some sizes, not tracking.
 
+With the open fonts (the published page, and Windows, which shares this code), lines are placed
+from the Mac's own fonts' measures, not the stand-ins' (`Web/MacFonts.swift`: ascent, descent and
+leading of every face the open fonts stand in for, measured with Text Kit; numbers only). So
+lines are as tall and baselines where they are on the Mac (Inter's ascent put SF Pro's 16 pt
+baseline a point lower, for one). Text Kit's rules, checked at every face and size from 4 to 132
+pt: a line is `round(ascent) + round(descent) + leading` with the baseline `round(ascent)` down;
+Helvetica, Times, Courier (and Didot and Futura Bold while their leading is under half a point)
+get a fifth of that more above; with a line spacing the leading still comes below it; a line of
+only a break is rounded; paragraph spacing goes below each paragraph's last line. Skia paints a
+line's letters at its ascent rounded to a whole point, not where its line metrics say, and
+narrows the layout width to whole points unless its rounding hack is off: both are allowed for.
+The stand-ins' letters are spaced to the Mac's widths, by size for Inter (SF Pro is tracked by
+size, Inter is not) and once per face for the others, at most 0.03 em (`MacFonts.spacing`); the
+page tells the core which families it has stand-ins for (`bz_stand_ins`).
+
 ## Shared designs
 
 The browser opens a shared design with the Mac's own code: its records are JSON of

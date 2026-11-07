@@ -35,6 +35,18 @@ nonisolated func bz_fonts(_ p: UnsafeRawPointer, _ n: Int32) {
     }
 }
 
+/// The Mac's families the page draws in fonts that stand in for them (the open fonts' manifest),
+/// whose letters are spaced to the Mac's widths (MacFonts.spacing): ["System", "Avenir Next", …].
+@_expose(wasm, "bz_stand_ins")
+nonisolated func bz_stand_ins(_ p: UnsafeRawPointer, _ n: Int32) {
+    let data = Data(bytes: p, count: Int(n))
+    let families = (try? JSONSerialization.jsonObject(with: data) as? [String]) ?? []
+    MainActor.assumeIsolated {
+        MacFonts.standIns = Set(families)
+        TextLayout.forget()
+    }
+}
+
 /// The page has fonts it had not: texts are set again with them.
 @_expose(wasm, "bz_forget_text")
 nonisolated func bz_forget_text() {

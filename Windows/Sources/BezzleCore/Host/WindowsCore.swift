@@ -54,6 +54,11 @@ public enum WindowsCore {
             Fonts.files["\(family)/\(name)"] = folder.appendingPathComponent(file)
         }
         NSFontManager.shared.families = manifest["families"] as? [String: [String]] ?? [:]
+        // The Mac's families drawn here in fonts that stand in for them, whose letters are spaced
+        // to the Mac's widths (MacFonts.spacing).
+        var standIns = Set((manifest["standsIn"] as? [String: Any] ?? [:]).keys)
+        if (manifest["system"] as? [String: Any])?["standsIn"] != nil { standIns.insert(TextStyle.system) }
+        MacFonts.standIns = standIns
         bz_text_forget()
         TextLayout.forget()
     }

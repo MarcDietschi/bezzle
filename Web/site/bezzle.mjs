@@ -1,7 +1,7 @@
 // Bezzle in a page: the WebAssembly core, which is Bezzle's own model and renderer, and
 // CanvasKit, which makes what the renderer records. Runs alike in a browser and in Node.
 //
-//   const bz = await createBezzle({ CanvasKit, wasm, fonts })
+//   const bz = await createBezzle({ CanvasKit, wasm, fonts })   // fonts.standsIn: the Mac families drawn in open stand-ins
 //   const { boards } = bz.open(documentJSON, pictures)   // pictures: Map of name → encoded bytes
 //   const image = bz.render(boards[0].index, 2)          // a CanvasKit Image of the artboard
 //
@@ -143,9 +143,15 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     } else {
       s.fontFamilies = [`${run.family}|${run.face}`, 'System']
     }
-    // The Mac always sets letters' spacing (Text Kit's kern), and set to nought, Core Text leaves
-    // out the font's own kerning between pairs such as "Te"; set to anything else, it keeps it.
-    if (!run.tracking && !/(^|,)kern=/.test(run.features ?? '')) s.fontFeatures = [{ name: 'kern', value: 0 }]
+    // The layer's OpenType features, as the core lists them ("liga=0,kern=0"): kern=0 among them
+    // where the Mac's letters are not spaced, as Core Text then leaves out the font's own kerning
+    // between pairs such as "Te". A core that does not say so has it left out here when unspaced.
+    const features = (run.features ?? '').split(',').filter((f) => f.includes('=')).map((f) => {
+      const [name, value] = f.split('=')
+      return { name, value: Number(value) }
+    })
+    if (!run.tracking && !features.some((f) => f.name === 'kern')) features.push({ name: 'kern', value: 0 })
+    if (features.length) s.fontFeatures = features
     let d = 0
     if (run.underline) d |= CK.UnderlineDecoration
     if (run.strike) d |= CK.LineThroughDecoration
@@ -156,7 +162,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   const aligns = { left: 'Left', center: 'Center', right: 'Right', justify: 'Justify' }
 
   function paragraph(spec, runs, width) {
-    const ps = new CK.ParagraphStyle({ textAlign: CK.TextAlign[aligns[spec.align] ?? 'Left'], textStyle: style(runs[0] ?? spec.runs[0]) })
+    // Set at the width given, as Text Kit sets lines: Skia otherwise narrows it to whole points
+    // and rounds lines' heights and widths, as Flutter wants.
+    const ps = new CK.ParagraphStyle({ textAlign: CK.TextAlign[aligns[spec.align] ?? 'Left'], textStyle: style(runs[0] ?? spec.runs[0]), applyRoundingHack: false })
     const b = CK.ParagraphBuilder.MakeFromFontProvider(ps, provider)
     for (const r of runs) { b.pushStyle(style(r)); b.addText(r.text); b.pop() }
     const p = b.build()
@@ -249,7 +257,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       // Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
       // lines set from the left: drawn that much to the left (centred or from the right, they lie where the Mac's do).
       const fromLeft = spec.align !== 'center' && spec.align !== 'right'
-      lines.push({ paragraph: line, baseline: lm?.baseline ?? m.baseline, back: runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0 })
+      // Where Skia paints the line's letters: its ascent down, rounded to a whole point, which is
+      // not where its line metrics put the baseline.
+      lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back: runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0 })
       // Skia shares the leading out above and below the line; Text Kit keeps it apart.
       out.push([m.startIndex, end, m.width, m.ascent - leading / 2, m.descent - leading / 2, leading])
     }
@@ -664,6 +674,8 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   const reply = (n) => JSON.parse(decoder.decode(bytes().slice(x.bz_outbox(), x.bz_outbox() + n)))
 
   send(x.bz_fonts, JSON.stringify(fonts.families))
+  // The Mac's families the page has stand-ins for (the open fonts), spaced to the Mac's widths.
+  if (fonts.standsIn && x.bz_stand_ins) send(x.bz_stand_ins, JSON.stringify(fonts.standsIn))
 
   // The design's pictures, decoded once: name → encoded bytes.
   function take(pictures) {
