@@ -1109,6 +1109,81 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    @Test func svgWriting() throws {
+        /// The same for the same words in every run of the tests.
+        func print(_ s: String) -> String {
+            var h: UInt64 = 0xcbf29ce484222325
+            for b in s.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+            return String(h, radix: 16)
+        }
+        func write(_ item: ExportItem, _ assets: Assets?, _ label: String) {
+            let svg = SVGWriter.document(for: item, bounds: item.bounds(assets: assets), assets: assets)
+            let lines = svg.split(separator: "\n", omittingEmptySubsequences: false)
+            Self.log("svg", "\(label): \(svg.utf8.count) bytes, \(lines.count) lines, print \(print(svg))")
+            // The lines without pictures in them, for seeing where two runs part.
+            for (k, line) in lines.enumerated() where !line.contains("base64,") && line.count < 1200 {
+                Self.log("svg", "\(label) \(k): \(line)")
+            }
+        }
+        // The sample designs, every artboard, with their pictures.
+        let designs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("AppStore/screenshots-src/designs")
+        for name in ["Wander", "Wander Night", "Ember & Oat", "Adoption Day"] {
+            let url = designs.appendingPathComponent("\(name).bezzle")
+            guard let doc = try? DesignFile.read(url) else { Self.log("svg", "\(name): unreadable"); continue }
+            let assets = Assets(design: url)
+            for board in doc.artboards { write(ExportItem(artboard: board), assets, "\(name)/\(board.name)") }
+        }
+        // What the samples have little of: words on a curve, a list, justified and centred words,
+        // a layer turned in depth, a blur of what lies behind, a mask, an inner shadow.
+        func text(_ words: String, _ name: String, _ frame: CGRect, _ change: (inout Node) -> Void = { _ in }) -> Node {
+            var t = Node(kind: .text, name: name, frame: frame)
+            t.text = words
+            change(&t)
+            t.refit()
+            return t
+        }
+        var board = Node(kind: .artboard, name: "Odd", frame: CGRect(x: 0, y: 0, width: 600, height: 500))
+        board.fill.color = RGBA(r: 0.96, g: 0.95, b: 0.92)
+        var ring = CanvasTests.rect("Ring", CGRect(x: 40, y: 40, width: 160, height: 160))
+        ring.kind = .ellipse
+        var round = text("Words that go round a ring of type", "Round", CGRect(x: 40, y: 40, width: 160, height: 160))
+        round.curve = TextCurve(bend: 0.8)
+        var list = text("First thing\nSecond thing\nThird", "List", CGRect(x: 240, y: 40, width: 200, height: 0))
+        list.restyleLetters(in: NSRange(location: 0, length: 5)) { $0.list = .bullet }
+        list.restyleLetters(in: NSRange(location: 6, length: 5)) { $0.face = "Bold"; $0.color = RGBA(r: 0.8, g: 0.2, b: 0.1) }
+        var justified = text("Words set from edge to edge across a narrow column, which wraps onto lines", "Justified", CGRect(x: 240, y: 140, width: 160, height: 0)) {
+            $0.style?.sizing = .autoHeight
+            $0.style?.align = .justify
+        }
+        justified.refit()
+        let centred = text("In the middle", "Centred", CGRect(x: 240, y: 300, width: 200, height: 0)) {
+            $0.style?.sizing = .autoHeight
+            $0.style?.align = .center
+            $0.style?.tracking = 40
+            $0.style?.underline = true
+        }
+        var tilted = CanvasTests.rect("Tilted", CGRect(x: 40, y: 260, width: 140, height: 90))
+        tilted.fill.color = RGBA(r: 0.2, g: 0.4, b: 0.8)
+        tilted.transform3D = Transform3D(x: 12, y: -18, z: 0)
+        let stripes0 = CanvasTests.rect("Stripes", CGRect(x: 40, y: 380, width: 240, height: 80))
+        var stripes = stripes0
+        stripes.fill.color = RGBA(r: 0.9, g: 0.5, b: 0.1)
+        var glass = CanvasTests.rect("Glass", CGRect(x: 120, y: 400, width: 200, height: 70))
+        glass.fill.color = RGBA(r: 1, g: 1, b: 1, a: 0.3)
+        glass.blur = Blur(radius: 12, background: true, brightness: 0.1, fillOpacity: 0.3)
+        var sunk = CanvasTests.rect("Sunk", CGRect(x: 360, y: 380, width: 160, height: 80))
+        sunk.cornerRadius = 12
+        sunk.shadow.on = true
+        sunk.shadow.inset = true
+        board.children = [ring, round, list, justified, centred, tilted, stripes, glass, sunk]
+        var doc = BezzleDocument()
+        doc.nodes = [board]
+        write(ExportItem(artboard: doc.nodes[0]), nil, "Odd")
+        if let id = doc.nodes[0].children.first(where: { $0.name == "Round" })?.id, let item = ExportItem(layer: id, in: doc) { write(item, nil, "Odd/Round alone") }
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.

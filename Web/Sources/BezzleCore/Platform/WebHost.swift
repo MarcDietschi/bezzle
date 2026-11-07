@@ -17,6 +17,9 @@ nonisolated public enum Host {
         case image = 2
         case textLayout = 3
         case log = 4
+        /// A picture as a PNG or JPEG file: its number, width, height, format (0 PNG, 1 JPEG) and
+        /// quality as five doubles; the file's bytes back.
+        case encodePicture = 5
     }
 
     public static func call(_ function: Function, bytes: [UInt8]) -> [UInt8] {
