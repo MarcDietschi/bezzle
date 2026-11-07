@@ -747,7 +747,7 @@ struct Text {
     /// Each line on its own, where Skia puts its baseline, and how far to the left it is drawn:
     /// Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
     /// lines set from the left (centred or set from the right, Skia's lines lie where the Mac's do).
-    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; double back; };
+    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; double back; size_t start = 0; };
     std::vector<Line> lines;
     std::vector<double> baselines;
 };
@@ -1042,7 +1042,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             if (!lm.empty()) baseline = lm[0].fBaseline;
         }
         const bool fromLeft = align == 0 || align == 3;
-        text.lines.push_back({std::move(line), baseline, part.empty() || !fromLeft ? 0 : part[0].tracking / 2});
+        text.lines.push_back({std::move(line), baseline, part.empty() || !fromLeft ? 0 : part[0].tracking / 2, m.fStartIndex});
         text.baselines.push_back(m.fBaseline);
         if (written < capacity) {
             // Skia shares the leading out above and below the line; Text Kit keeps it apart.
@@ -1065,6 +1065,36 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
 extern "C" void bz_text_place(int32_t id, const double* baselines, int32_t count) {
     std::lock_guard<std::mutex> guard(lock);
     if (auto it = texts.find(id); it != texts.end()) it->second.baselines.assign(baselines, baselines + std::max(count, 0));
+}
+
+extern "C" int32_t bz_text_boxes(int32_t id, int32_t start, int32_t end, double* boxes, int32_t capacity) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = texts.find(id);
+    if (it == texts.end() || end <= start) return 0;
+    int32_t written = 0;
+    const auto& t = it->second;
+    for (size_t k = 0; k < t.lines.size(); k++) {
+        const auto& line = t.lines[k];
+        if (!line.paragraph) continue;
+        const size_t from = line.start;
+        const size_t to = k + 1 < t.lines.size() ? t.lines[k + 1].start : SIZE_MAX;
+        const size_t s = std::max(size_t(start), from), e = std::min(size_t(end), to);
+        if (s >= e) continue;
+        auto rects = line.paragraph->getRectsForRange(unsigned(s - from), unsigned(e - from),
+                                                      RectHeightStyle::kTight, RectWidthStyle::kTight);
+        if (rects.empty()) continue;
+        // One box a line, as Text Kit's enclosing rects are.
+        double left = rects[0].rect.left(), right = rects[0].rect.right();
+        for (const auto& r : rects) { left = std::min(left, double(r.rect.left())); right = std::max(right, double(r.rect.right())); }
+        if (written < capacity) {
+            double* out = boxes + written * 3;
+            out[0] = double(k);
+            out[1] = left - line.back;
+            out[2] = right - line.back;
+        }
+        written++;
+    }
+    return written;
 }
 
 extern "C" int32_t bz_text_glyphs(const bz_text_run* given, int32_t count, double* out, int32_t capacity,

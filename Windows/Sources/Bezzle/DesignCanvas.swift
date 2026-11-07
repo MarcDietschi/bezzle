@@ -219,6 +219,8 @@ final class DesignCanvas {
     private let slideMarks = Canvas()
     /// The artboards' layout grids and guides.
     private let aidMarks = Canvas()
+    /// What the find bar finds.
+    private let foundMarks = Canvas()
     /// The last press, for telling a double click from two: when, and where on the stage.
     private var lastPress: (at: CGPoint, time: UInt32, clicks: Int)?
     private var hovered: UUID? { session.hovered }
@@ -640,6 +642,7 @@ final class DesignCanvas {
     private func place() {
         drawPaper()
         margin.draw()
+        drawFound()
         for (k, board) in boards.enumerated() {
             guard let sheet = sheets[k] else { continue }
             let at = onStage(board.frame.origin)
@@ -675,6 +678,84 @@ final class DesignCanvas {
             sheet.image.height = Double(item.reach.height) * zoom
         }
         placeOverlays()
+    }
+
+    /// The letters picked out in the text being typed into, if any.
+    var typedSelection: String? {
+        guard let editor, editor.selectionLength > 0 else { return nil }
+        return editor.selectedText
+    }
+
+    /// Marks what the find bar finds, as the Mac's CanvasView.drawFound: each found word lit as a
+    /// highlighter would, the one picked out brighter and ringed, or for misspelt words a wavy
+    /// line under each.
+    func drawFound() {
+        if foundMarks.parent == nil {
+            foundMarks.isHitTestVisible = false
+            overlay.children.insertAt(0, foundMarks)
+        }
+        foundMarks.children.clear()
+        guard let finder = WindowsCore.finder, session.mode == 0, !WindowsCore.versions.lookingBack else { return }
+        let marks = finder.marks(in: visibleOnCanvas, editing: editing?.id)
+        guard !marks.isEmpty else { return }
+        func n(_ v: Double) -> String { String(format: "%.2f", v) }
+        func shape(_ quad: [CGPoint]) -> String {
+            let points = quad.map(onStage)
+            return "M" + points.map { n(Double($0.x)) + "," + n(Double($0.y)) }.joined(separator: " L") + " Z "
+        }
+        var lit = "", picked = "", waves = "", pickedWaves = ""
+        for mark in marks {
+            for quad in mark.quads where quad.count == 4 {
+                if finder.spelling {
+                    let line = Self.squiggle(under: quad.map(onStage))
+                    if mark.picked { picked += shape(quad); pickedWaves += line } else { waves += line }
+                } else if mark.picked {
+                    picked += shape(quad)
+                } else {
+                    lit += shape(quad)
+                }
+            }
+        }
+        func path(_ data: String, fill: Brush? = nil, stroke: Brush? = nil, width: Double = 1) {
+            guard !data.isEmpty, let p = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='F1 \(data)'/>")) as? WinUI.Path else { return }
+            p.fill = fill
+            p.stroke = stroke
+            p.strokeThickness = width
+            p.strokeStartLineCap = .round
+            p.strokeEndLineCap = .round
+            p.strokeLineJoin = .round
+            foundMarks.children.append(p)
+        }
+        if finder.spelling {
+            path(picked, fill: Theme.brush(0xE63333, 0.14))
+            path(waves, stroke: Theme.brush(0xE02929, 0.8), width: 1.2)
+            path(pickedWaves, stroke: Theme.brush(0xE02929), width: 1.6)
+        } else {
+            path(lit, fill: Theme.brush(0xFFD61A, 0.28))
+            path(picked, fill: Theme.brush(0xFFD61A, 0.55), stroke: Theme.brush(0xEE9900, 0.95), width: 1.5)
+        }
+    }
+
+    /// A wavy line along the bottom of a word (its quad on the stage), the way a misspelt word is
+    /// marked as it is typed: as path data.
+    private static func squiggle(under quad: [CGPoint]) -> String {
+        let a = quad[3], b = quad[2]
+        let length = hypot(Double(b.x - a.x), Double(b.y - a.y))
+        guard length > 1 else { return "" }
+        let ux = Double(b.x - a.x) / length, uy = Double(b.y - a.y) / length
+        let wave = 3.0, height = 1.6
+        func n(_ v: Double) -> String { String(format: "%.2f", v) }
+        var d = "M" + n(Double(a.x)) + "," + n(Double(a.y)) + " "
+        var t = 0.0
+        while t < length {
+            let next = min(t + wave, length)
+            let up = (Int(t / wave) % 2 == 0 ? 1.0 : -1.0) * height
+            let mid = (t + next) / 2
+            let cx = Double(a.x) + ux * mid - uy * up * 2, cy = Double(a.y) + uy * mid + ux * up * 2
+            d += "Q" + n(cx) + "," + n(cy) + " " + n(Double(a.x) + ux * next) + "," + n(Double(a.y) + uy * next) + " "
+            t = next
+        }
+        return d
     }
 
     /// Layout grids, as the Mac's LayoutTool draws them at rest: columns and rows washed in the red

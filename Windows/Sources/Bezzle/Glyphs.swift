@@ -739,6 +739,53 @@ extension Glyphs {
         return [Part(data: p.d, mode: .stroke, width: 1.2)]
     }
 
+    /// The find bar's spelling choice, as the Mac's textformat.abc.dottedunderline: "abc" with
+    /// dots under it, 14 square.
+    static func spelling(size s: Double = 14) -> [Part] {
+        var p = PathData(), dots = PathData()
+        let base = s * 0.62, x = s * 0.13
+        let r = s * 0.11
+        // a: a bowl and its stem on the right.
+        p.ellipse(x, base - 2 * r, 2 * r, 2 * r)
+        p.move(x + 2 * r, base - 2 * r); p.line(x + 2 * r, base)
+        // b: a tall stem and its bowl.
+        let bx = x + 2 * r + s * 0.08
+        p.move(bx, base - s * 0.42); p.line(bx, base)
+        p.ellipse(bx, base - 2 * r, 2 * r, 2 * r)
+        // c: a bowl open to the right.
+        let cx = bx + 2 * r + s * 0.08 + r, cy = base - r
+        for k in 0...16 {
+            // From the upper right round the left to the lower right.
+            let a = -Double.pi / 4 - Double(k) / 16 * 1.5 * Double.pi
+            if k == 0 { p.move(cx + r * cos(a), cy + r * sin(a)) } else { p.line(cx + r * cos(a), cy + r * sin(a)) }
+        }
+        for k in 0..<5 {
+            dots.ellipse(s * 0.14 + Double(k) * s * 0.17, s * 0.8, s * 0.07, s * 0.07)
+        }
+        return [Part(data: p.d, mode: .stroke, width: 1.1), Part(data: dots.d, mode: .fill)]
+    }
+
+    /// Match case, as the Mac's textformat: a capital A and a small a, 14 square.
+    static func matchCase(size s: Double = 14) -> [Part] {
+        var p = PathData()
+        let base = s * 0.76
+        p.move(s * 0.08, base); p.line(s * 0.27, s * 0.22); p.line(s * 0.46, base)
+        p.move(s * 0.15, base - s * 0.2); p.line(s * 0.39, base - s * 0.2)
+        let r = s * 0.13, x = s * 0.56
+        p.ellipse(x, base - 2 * r, 2 * r, 2 * r)
+        p.move(x + 2 * r, base - 2 * r - s * 0.02); p.line(x + 2 * r, base)
+        return [Part(data: p.d, mode: .stroke, width: 1.15)]
+    }
+
+    /// Whole words only, as the Mac's text.word.spacing: a word between two upright marks, 14 square.
+    static func wholeWords(size s: Double = 14) -> [Part] {
+        var marks = PathData(), word = PathData()
+        marks.move(s * 0.12, s * 0.3); marks.line(s * 0.12, s * 0.7)
+        marks.move(s * 0.88, s * 0.3); marks.line(s * 0.88, s * 0.7)
+        word.rect(s * 0.25, s * 0.42, s * 0.5, s * 0.16, radius: s * 0.08)
+        return [Part(data: marks.d, mode: .stroke, width: 1.2), Part(data: word.d, mode: .fill)]
+    }
+
     /// A chevron pointing down, 9 square, as the Mac's Chevron; up, as it is turned when open.
     static func chevron(up: Bool = false, size s: Double = 9) -> [Part] {
         var p = PathData()

@@ -26,6 +26,8 @@ final class DesignWindow {
     private lazy var resources = ResourcesPanel(session: session)
     /// What changed in other designs since this one took from them, at the top of the canvas.
     private lazy var news = LibraryNewsChip(session: session)
+    /// Looking through the design's words, at the top of the canvas while it is open.
+    private lazy var find = FindBar(session: session)
 
     init(name: String, onClose: @escaping () -> Void) {
         session = DesignSession(name: name)
@@ -63,6 +65,7 @@ final class DesignWindow {
         session.listenToEdits { [weak self] _ in
             self?.resources.edited()
             self?.news.refresh()
+            if self?.find.isOpen == true { self?.find.refresh() }
         }
         resources.libraryRead = { [weak self] in self?.news.refresh() }
         session.listen { [weak self] in self?.news.refresh() }
@@ -85,6 +88,15 @@ final class DesignWindow {
         // News from other designs, floating at the canvas's top.
         try? Grid.setColumn(news.root, 2)
         body.children.append(news.root)
+        // The find bar, there too: the news waits while it is open, as on the Mac.
+        WindowsCore.closeFind()
+        try? Grid.setColumn(find.root, 2)
+        body.children.append(find.root)
+        find.changed = { [weak self] in
+            self?.canvas.drawFound()
+            self?.news.refresh()
+        }
+        find.returnFocus = { [weak canvas] in canvas?.takeKeys() }
         WindowsCore.versions.changed = { [weak self] in
             guard let self else { return }
             self.ruler.refresh()
@@ -134,6 +146,7 @@ final class DesignWindow {
         root.children.append(menus.layer)
         canvas.menus = menus
         inspector.menus = menus
+        find.menus = menus
         bar.menus = menus
         bar.zoomEntries = { [weak self] in self?.zoomEntries() ?? [] }
         canvas.aidsMenu = { [weak self] in self?.aidsEntries() ?? [] }
@@ -191,6 +204,24 @@ final class DesignWindow {
             if args.key == .e, GetKeyState(Int32(VK_CONTROL)) < 0 {
                 args.handled = true
                 self.export.open()
+                return
+            }
+            // Ctrl+F finds, with the letters picked out while typing; F3 and Shift+F3 go on and
+            // back; F7 checks spelling (⌘F, ⌘G and ⇧⌘G, ⌘; on the Mac).
+            let ctrl = GetKeyState(Int32(VK_CONTROL)) < 0, shift = GetKeyState(Int32(VK_SHIFT)) < 0
+            if args.key == .f, ctrl, !shift {
+                args.handled = true
+                self.find.open(looking: self.canvas.typedSelection)
+                return
+            }
+            if args.key == .f3 {
+                args.handled = true
+                if self.find.isOpen { self.find.next(forward: !shift) } else { self.find.open() }
+                return
+            }
+            if args.key == .f7 {
+                args.handled = true
+                self.find.open(spelling: true)
                 return
             }
             let focused = try? FocusManager.getFocusedElement(self.root.xamlRoot)

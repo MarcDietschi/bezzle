@@ -47,6 +47,10 @@ int32_t bz_text_lay(const bz_text_run *runs, int32_t count, double width, int32_
                     double *lines, int32_t capacity, int32_t *lineCount);
 /// Where the core puts each line's baseline, from the text's top.
 void bz_text_place(int32_t id, const double *baselines, int32_t count);
+/// Where some letters of a text set by `bz_text_lay` are (`start` to `end`, UTF-16): for each
+/// line they are on, up to `capacity`, three numbers to `boxes`: the line's number and where
+/// the letters begin and end along it. Returns how many lines they are on.
+int32_t bz_text_boxes(int32_t id, int32_t start, int32_t end, double *boxes, int32_t capacity);
 /// Sets `count` runs as one line, for a text laid along a curve, its letters drawn one by one
 /// (drawing call 13, by the line's id and a letter's place in it). Returns the line's id and
 /// writes, for up to `capacity` letters, ten numbers each to `glyphs`: the run it is of, where
@@ -58,6 +62,21 @@ int32_t bz_text_glyphs(const bz_text_run *runs, int32_t count, double *glyphs, i
                        int32_t *glyphCount, double *line);
 /// Forgets every text set, as when fonts were added.
 void bz_text_forget(void);
+
+// MARK: Spelling (spelling.cpp)
+
+/// The languages Windows checks spelling in, as tags separated by commas ("en-US,de-CH"), UTF-8
+/// to `out`. Returns how many bytes the list takes.
+int32_t bz_spell_languages(char *out, int32_t capacity);
+/// The misspelt words of `count` UTF-16 units of `text`, checked in `language`: for up to
+/// `capacity` words, where each begins and how long it is, to `ranges`. Returns how many there
+/// are, or -1 when Windows cannot check that language.
+int32_t bz_spell_check(const char *language, const uint16_t *text, int32_t count, int32_t *ranges, int32_t capacity);
+/// How a word might be spelt, likeliest first, one a line, UTF-8 to `out`. Returns how many
+/// bytes they take.
+int32_t bz_spell_guesses(const char *language, const uint16_t *word, int32_t count, char *out, int32_t capacity);
+/// Adds a word to the dictionary of the person signed in.
+void bz_spell_learn(const char *language, const uint16_t *word, int32_t count);
 
 // MARK: Pictures
 

@@ -30,10 +30,10 @@ final class LibraryNewsChip {
         root.children.append(capsule)
     }
 
-    /// Shows the first news there is, as the design is now; none while prototyping, inspecting or
-    /// looking back.
+    /// Shows the first news there is, as the design is now; none while prototyping, inspecting,
+    /// looking back or finding.
     func refresh() {
-        guard session.mode == 0, !WindowsCore.versions.lookingBack, let news = WindowsCore.news().first else {
+        guard session.mode == 0, !WindowsCore.versions.lookingBack, WindowsCore.finder == nil, let news = WindowsCore.news().first else {
             root.visibility = .collapsed
             shownFor = nil
             return
