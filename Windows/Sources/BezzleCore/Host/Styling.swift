@@ -416,3 +416,32 @@ extension WindowsCore {
         return made
     }
 }
+
+// MARK: - The wave
+
+extension WindowsCore {
+    /// A change carried to every layer that has a style, as the Mac's StyleShow.Wave: shown as
+    /// light running out over them from where it was made (nil: from the inspector's side).
+    nonisolated public struct StyleWave: Sendable {
+        public let origin: CGPoint?
+        public let layers: [UUID]
+        /// Dragged in, it was seen coming all along: glow only.
+        public let dragged: Bool
+    }
+
+    /// What the last step settled did to the design's styles, as the Mac's noteStyles: a wave
+    /// over every layer it reached, when it reached more than one, or came from the list. Each
+    /// step is looked at once.
+    public static func considerStyleWave(selection: [UUID]) -> StyleWave? {
+        guard let step = Editing.lastSettled, let doc = design else { return nil }
+        Editing.lastSettled = nil
+        guard doc.styles != nil || step.before.styles != nil else { return nil }
+        let changed = BezzleDocument.stylesChanged(from: step.before, to: doc).filter { doc.style($0) != nil }
+        guard !changed.isEmpty else { return nil }
+        let users = doc.styleUsers()
+        let reached = Array(Set(changed.flatMap { users[$0] ?? [] }))
+        guard reached.count > 1 || step.fromList else { return nil }
+        let origin = step.fromList ? nil : doc.bounds(of: selection).map { CGPoint(x: $0.midX, y: $0.midY) }
+        return StyleWave(origin: origin, layers: reached, dragged: step.dragged)
+    }
+}

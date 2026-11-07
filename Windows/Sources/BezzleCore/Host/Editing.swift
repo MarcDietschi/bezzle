@@ -20,6 +20,9 @@ enum Editing {
     /// offer to make of it, as the Mac's store does after such a step (considerComponentOffer).
     static var lastStep: (before: BezzleDocument, echo: ComponentEcho?)?
     static var redos: [(before: BezzleDocument, after: BezzleDocument)] = []
+    /// The design before the last step settled, whether that step was dragged in, and whether it
+    /// was made from the design's list of styles: for the wave a change to a style runs.
+    static var lastSettled: (before: BezzleDocument, dragged: Bool, fromList: Bool)?
 
     /// `change` made to `doc`, followed as DocumentStore.edit follows every change.
     static func edited(_ doc: BezzleDocument, start: BezzleDocument?, _ change: (inout BezzleDocument) -> Void) -> BezzleDocument {
@@ -45,6 +48,7 @@ enum Editing {
         if gestureStart == nil {
             record(before: doc, after: next)
             lastStep = (doc, lastEcho)
+            lastSettled = (doc, false, WindowsCore.stylesFromList)
         }
         return next
     }
@@ -60,7 +64,10 @@ enum Editing {
         settled.relayoutGrids(since: start)
         settled.remakeCopies(since: doc)
         settled.fitGroups(since: doc)
-        if settled != start { record(before: start, after: settled) }
+        if settled != start {
+            record(before: start, after: settled)
+            lastSettled = (start, true, WindowsCore.stylesFromList)
+        }
         return settled
     }
 

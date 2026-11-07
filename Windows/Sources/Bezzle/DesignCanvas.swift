@@ -121,6 +121,9 @@ final class DesignCanvas {
     /// pointed at, the mask shows made; pressed, it is made.
     private let offerChip = Border()
     private let styleMarks = Canvas()
+    private let waveMarks = Canvas()
+    private var waveTick: EventCleanup?
+    private var waveToken = 0
     private var shownOffer: WindowsCore.MaskOffer?
     private var offerLit = false
     /// What is offered for a moment after a change to a copy (the Mac's ComponentTool offer): a
@@ -386,6 +389,8 @@ final class DesignCanvas {
             self.place()
             // A step made at once to a copy offers what can be made of it; any other step takes
             // what was offered away.
+            // A change to a style runs out as light over every layer that has it.
+            if self.drag == nil, let wave = WindowsCore.considerStyleWave(selection: self.session.selection) { self.startWave(wave) }
             if self.drag == nil, let considered = WindowsCore.considerCopyOffer(selection: self.session.selection) {
                 if let offer = considered { self.showCopyOffer(offer) } else if self.copyOffer != nil {
                     self.copyOffer = nil
@@ -1033,6 +1038,92 @@ final class DesignCanvas {
     /// As the Mac's ComponentTool: with a copy picked, every other copy of its component faintly
     /// dashed in violet, so what will change with it is in sight; and over the copy, at its top
     /// left, a diamond and the component's name, with the variant it shows.
+    /// A change to a style running out as light over every layer that has it, as the Mac's
+    /// WaveView: a faint front from where the change was made (or from the inspector's side), and
+    /// each layer lighting up as it reaches it, the nearest first, then fading; a glow round the
+    /// layer, not over it, so the change itself is what is seen.
+    private func startWave(_ w: WindowsCore.StyleWave) {
+        if waveMarks.parent == nil {
+            waveMarks.isHitTestVisible = false
+            overlay.children.append(waveMarks)
+        }
+        waveMarks.children.clear()
+        waveTick?.dispose()
+        waveTick = nil
+        let width = Double(stage.actualWidth), height = Double(stage.actualHeight)
+        let o = w.origin.map { onStage($0) }
+        let origin = (x: o.map { Double($0.x) } ?? width + 40, y: o.map { Double($0.y) } ?? height / 2)
+        var glows: [(paths: [WinUI.Path], distance: Double)] = []
+        for corners in WindowsCore.layerOutlines(w.layers) {
+            let points = corners.map { onStage($0) }
+            guard let first = points.first else { continue }
+            var d = PathData()
+            d.move(Double(first.x), Double(first.y))
+            for p in points.dropFirst() { d.line(Double(p.x), Double(p.y)) }
+            d.close()
+            let xs = points.map { Double($0.x) }, ys = points.map { Double($0.y) }
+            let x = min(max(origin.x, xs.min()!), xs.max()!), y = min(max(origin.y, ys.min()!), ys.max()!)
+            var paths: [WinUI.Path] = []
+            for (stroke, alpha) in [(12.0, 0.14), (5.0, 0.22), (1.5, 0.9)] {
+                guard let path = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(d.d)' StrokeThickness='\(stroke)' StrokeLineJoin='Round'/>")) as? WinUI.Path else { continue }
+                path.stroke = Theme.brush(Theme.pencil, alpha)
+                path.opacity = 0
+                waveMarks.children.append(path)
+                paths.append(path)
+            }
+            glows.append((paths, hypot(x - origin.x, y - origin.y)))
+        }
+        // However far apart the layers lie, the last is reached within 0.55 seconds.
+        let speed = 1500.0, longest = 0.55, rise = 0.11, fall = 0.62
+        let far = glows.map(\.distance).max() ?? 0
+        let k = far / speed > longest ? longest / (far / speed) : 1
+        let delays = glows.map { $0.distance / speed * k }
+        let pace = speed * (far > 0 ? max(1, far / speed / longest) : 1)
+        let end = (delays.max() ?? 0) + rise + fall
+        let reach = hypot(max(origin.x, width - origin.x), max(origin.y, height - origin.y))
+        var rings: [Ellipse] = []
+        for (stroke, alpha) in [(14.0, 0.05), (1.5, 0.16)] {
+            let ring = Ellipse()
+            ring.stroke = Theme.brush(Theme.pencil, alpha)
+            ring.strokeThickness = stroke
+            ring.isHitTestVisible = false
+            waveMarks.children.append(ring)
+            rings.append(ring)
+        }
+        func glow(_ t: Double) -> Double {
+            if t <= 0 { return 0 }
+            if t < rise { let u = t / rise; return 1 - (1 - u) * (1 - u) }
+            let u = (t - rise) / fall
+            return u >= 1 ? 0 : pow(1 - u, 2.2)
+        }
+        waveToken += 1
+        let token = waveToken, start = WindowsCore.now
+        func step() {
+            guard token == waveToken else { return }
+            let t = WindowsCore.now - start
+            let r = max(t, 0) * pace
+            for ring in rings {
+                ring.visibility = r < reach ? .visible : .collapsed
+                ring.width = 2 * r
+                ring.height = 2 * r
+                ring.opacity = max(0, 1 - r / reach)
+                try? Canvas.setLeft(ring, origin.x - r)
+                try? Canvas.setTop(ring, origin.y - r)
+            }
+            for (g, delay) in zip(glows, delays) {
+                let lit = glow(t - delay)
+                for path in g.paths { path.opacity = lit }
+            }
+            if t > end + 0.05 {
+                waveMarks.children.clear()
+                waveTick?.dispose()
+                waveTick = nil
+            }
+        }
+        step()
+        waveTick = CompositionTarget.rendering.addHandler { _, _ in MainActor.assumeIsolated { step() } }
+    }
+
     /// Every layer that uses the style pointed at in the inspector, outlined in pencil.
     private func drawStyleUsers() {
         if styleMarks.parent == nil {
