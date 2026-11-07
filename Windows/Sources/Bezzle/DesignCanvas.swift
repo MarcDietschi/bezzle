@@ -134,8 +134,20 @@ final class DesignCanvas {
         case note(start: CGPoint)
         /// Decks: scrubbing along the row under a stack, or a post taken up in the spread.
         case deck
+        /// A picture being placed inside its layer: moved, or sized by a corner.
+        case picture
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
+    /// A picture being placed inside its layer (the Mac's PictureTool, ported): the whole of it
+    /// past the layer's outline, faded, in a picture of its own (one more for one fading out),
+    /// and its edges, the outline and the crop marks over it.
+    var pictures: WindowsCore.PictureHand { session.pictures }
+    private let pictureMarks = Canvas()
+    private var pictureGhosts: [(image: Image, bitmap: WriteableBitmap?, key: String?)] = []
+    private var pictureTicking: EventCleanup?
+    private var drawingPictures = false
+    /// Whether placing took the last press: the double click WinUI tells of after it is then placing's.
+    private var pictureTookPress = false
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
     var pen: WindowsCore.Pen { session.pen }
     /// Building with pieces (the shared PieceBuilding), started from the Arrange card.
@@ -349,6 +361,11 @@ final class DesignCanvas {
             shade.isHitTestVisible = false
         }
 
+        pictures.redraw = { [weak self] in
+            self?.drawPictures()
+            self?.session.changed()
+        }
+        pictures.changed = { [weak self] in self?.session.edited(board: nil) }
         pen.redraw = { [weak self] in self?.drawPen() }
         knife.redraw = { [weak self] in self?.drawPen() }
         depth.redraw = { [weak self] in self?.drawDepth() }
@@ -1187,8 +1204,10 @@ final class DesignCanvas {
         showRulers()
         // A path whose points show has them in place of its frame and handles.
         let pointsShown = session.selection.count == 1 && session.selection.first == pen.shownPath
+        // A picture being placed has its own edges and corners instead.
+        let placing = session.selection.count == 1 && session.selection.first == pictures.editing
         // Shapes being built with show their pieces instead.
-        let shown = session.selection.isEmpty || pointsShown || builder.active || session.mode != 0 ? nil : WindowsCore.shown(session.selection, zoom: zoom)
+        let shown = session.selection.isEmpty || pointsShown || placing || builder.active || session.mode != 0 ? nil : WindowsCore.shown(session.selection, zoom: zoom)
         let lines = shown?.outlines ?? []
         while outlines.count < lines.count {
             let path = WinUI.Path()
@@ -1245,8 +1264,135 @@ final class DesignCanvas {
         placeOffer()
         placeCopyOffer()
         drawComponents()
+        drawPictures()
         gradients.draw()
         if drag == nil, let p = lastPoint { updatePointer(at: p) }
+    }
+
+    // MARK: Placing a picture
+
+    /// Placing sees the canvas as it is now.
+    private func syncPictures() {
+        pictures.zoom = CGFloat(zoom)
+        pictures.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// The picture being placed, as the Mac's PictureTool draws it: the whole of it past the
+    /// layer's outline at 42%, its edge white on a dark line, the layer's outline in pencil, a
+    /// guide through the middle it caught on, and white crop marks at its corners on a dark edge;
+    /// fading in as placing begins and out as it ends.
+    private func drawPictures() {
+        if pictureMarks.parent == nil {
+            pictureMarks.isHitTestVisible = false
+            // Over the selection, under the measure.
+            var at: UInt32 = 0
+            if (try? overlay.children.indexOf(measurePill, &at)) == true { try? overlay.children.insertAt(at, pictureMarks) } else { overlay.children.append(pictureMarks) }
+            for _ in 0..<2 {
+                let image = Image()
+                image.isHitTestVisible = false
+                image.stretch = .fill
+                image.visibility = .collapsed
+                pictureMarks.children.append(image)
+                pictureGhosts.append((image, nil, nil))
+            }
+        }
+        // Drawn once at a time: what placing ending does draws the canvas again.
+        guard !drawingPictures else { return }
+        drawingPictures = true
+        defer { drawingPictures = false }
+        // Building, prototyping or inspecting leave placing, as on the Mac.
+        if pictures.editing != nil, builder.active || session.mode != 0 { pictures.editing = nil }
+        syncPictures()
+        let all = pictures.marks()
+        while pictureMarks.children.size > UInt32(pictureGhosts.count) { pictureMarks.children.removeAt(UInt32(pictureGhosts.count)) }
+        var used: Set<Int> = []
+        for m in all {
+            // The picture past the outline, drawn again only when it has moved: in the picture
+            // that shows it already, or one that shows nothing wanted now.
+            let keys = all.map(\.key)
+            var slot: Int?
+            for k in pictureGhosts.indices where !used.contains(k) && pictureGhosts[k].key == m.key { slot = k; break }
+            if slot == nil {
+                for k in pictureGhosts.indices where !used.contains(k) && !keys.contains(where: { $0 == pictureGhosts[k].key }) { slot = k; break }
+            }
+            if slot == nil { slot = pictureGhosts.indices.first { !used.contains($0) } }
+            if let k = slot {
+                used.insert(k)
+                let image = pictureGhosts[k].image
+                if pictureGhosts[k].key != m.key {
+                    var bitmap = pictureGhosts[k].bitmap
+                    let covered = pictures.ghost(m, scale: pixelScale, stage: CGSize(width: stage.actualWidth, height: stage.actualHeight)) { width, height in
+                        if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
+                            bitmap = WriteableBitmap(Int32(width), Int32(height))
+                        }
+                        return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+                    }
+                    if let covered {
+                        try? bitmap?.invalidate()
+                        if pictureGhosts[k].bitmap !== bitmap { image.source = bitmap }
+                        try? Canvas.setLeft(image, Double(covered.minX))
+                        try? Canvas.setTop(image, Double(covered.minY))
+                        image.width = Double(covered.width)
+                        image.height = Double(covered.height)
+                        pictureGhosts[k].bitmap = bitmap
+                        pictureGhosts[k].key = m.key
+                    } else {
+                        pictureGhosts[k].key = nil
+                    }
+                }
+                image.opacity = m.alpha * WindowsCore.PictureHand.ghost
+                image.visibility = pictureGhosts[k].key == nil ? Visibility.collapsed : Visibility.visible
+            }
+            let group = Canvas()
+            group.isHitTestVisible = false
+            group.opacity = m.alpha
+            func line(_ data: String, _ brush: Brush, _ width: Double, round: Bool = false) {
+                guard !data.isEmpty, let path = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(data)'/>")) as? WinUI.Path else { return }
+                path.stroke = brush
+                path.strokeThickness = width
+                path.strokeLineJoin = .round
+                if round {
+                    path.strokeStartLineCap = .round
+                    path.strokeEndLineCap = .round
+                }
+                group.children.append(path)
+            }
+            // The picture's edge: a fine white line on a dark one, to show over anything.
+            var edge = ""
+            for (i, c) in m.edge.enumerated() { edge += (i == 0 ? "M" : "L") + String(format: "%.2f,%.2f ", Double(c.x), Double(c.y)) }
+            edge += "Z"
+            line(edge, Theme.brush(0, 0.28), 2)
+            line(edge, Theme.brush(0xFFFFFF, 0.9), 1)
+            // The layer's own outline, which cuts the picture off.
+            line(m.outline, Theme.brush(Theme.selection), 1.5)
+            // Where the picture's middle caught on the layer's.
+            if let guides = m.guides { line(guides, Theme.brush(Theme.selection), 1) }
+            // Crop marks: white on a dark edge, with a soft shadow, over a light table and a dark
+            // picture alike.
+            line(m.crops, Theme.brush(0, 0.1), 8, round: true)
+            line(m.crops, Theme.brush(0, 0.3), 5, round: true)
+            line(m.crops, Theme.brush(0xFFFFFF), 3, round: true)
+            pictureMarks.children.append(group)
+        }
+        for k in pictureGhosts.indices where !used.contains(k) { pictureGhosts[k].image.visibility = .collapsed }
+        tickPictures()
+    }
+
+    /// Frame by frame while placing fades in or out, or the picture springs back to rest.
+    private func tickPictures() {
+        guard pictureTicking == nil, pictures.animating else { return }
+        pictureTicking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pictures.step()
+                self.drawPictures()
+                if !self.pictures.animating {
+                    self.pictureTicking?.dispose()
+                    self.pictureTicking = nil
+                    self.drawPictures()
+                }
+            }
+        }
     }
 
     /// The depth tool sees the canvas as it is now.
@@ -2448,7 +2594,7 @@ final class DesignCanvas {
         let holding: Grab? = drag?.grab
         let rounding: Bool = if case .corner? = holding { true } else { false }
         let moving: Bool = if case .shadow? = holding { drag?.moved == true } else { false }
-        let dots = session.tool == .select && (dotsShown || rounding) ? WindowsCore.cornerDots(session.selection, zoom: zoom, pan: pan) : []
+        let dots = session.tool == .select && pictures.editing == nil && (dotsShown || rounding) ? WindowsCore.cornerDots(session.selection, zoom: zoom, pan: pan) : []
         for (k, dot) in cornerDots.enumerated() {
             guard k < dots.count else { dot.visibility = .collapsed; continue }
             try? Canvas.setLeft(dot, Double(dots[k].x).rounded() - 3.5)
@@ -2875,6 +3021,23 @@ final class DesignCanvas {
             _ = try? stage.capturePointer(args?.pointer)
             return
         }
+        // Placing a picture: a press on it moves it, on a corner sizes it; anywhere else placing
+        // ends, and the press goes on as any.
+        pictureTookPress = false
+        if session.tool == .select, pictures.editing != nil {
+            syncPictures()
+            if pictures.down(at: p, clicks: lastPress?.clicks ?? 1) {
+                pictureTookPress = true
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.board ?? -1, false, .picture)
+                drawPictures()
+                session.changed()
+                return
+            }
+            pictures.editing = nil
+            drawPictures()
+            session.changed()
+        }
         // The knife, cutting what its line runs across.
         if session.tool == .knife {
             syncPen()
@@ -3033,6 +3196,21 @@ final class DesignCanvas {
                 return
             }
         }
+        // A double click on a layer filled with a picture places the picture inside it, and a
+        // drag straight on moves it, as on the Mac (a text's letters are typed into instead).
+        if session.tool == .select, (lastPress?.clicks ?? 1) == 2, !shift, let id = pick(p), !WindowsCore.isText(id),
+           WindowsCore.PictureHand.canPlace([id]) {
+            session.select([id], on: WindowsCore.board(of: id))
+            session.placePicture()
+            syncPictures()
+            if pictures.down(at: p, clicks: 1) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.board ?? -1, false, .picture)
+            }
+            pictureTookPress = true
+            drawPictures()
+            return
+        }
         if let id = pick(p) {
             let board = WindowsCore.board(of: id)
             if shift {
@@ -3188,6 +3366,14 @@ final class DesignCanvas {
             updatePointer(at: p)
             return
         }
+        if case .picture = d.grab {
+            syncPictures()
+            pictures.drag(to: p, shift: shift, option: option, command: control)
+            drag?.moved = true
+            placeHolds()
+            showPointer(pointer(at: p))
+            return
+        }
         if case .depth = d.grab {
             syncDepth()
             depth.drag(to: p, shift: shift, option: option)
@@ -3294,7 +3480,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note, .deck:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note, .deck, .picture:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -3408,6 +3594,12 @@ final class DesignCanvas {
             updatePointer(at: point(args))
         case .deck:
             decks.up(at: point(args))
+        case .picture:
+            // Let go past covering, it springs back to rest.
+            pictures.up()
+            placeHolds()
+            drawPictures()
+            updatePointer(at: point(args))
         case .note(let start):
             let c = inDesign(point(args))
             if d.moved, let circle = margin.notes.circle, circle.width > 0 || circle.height > 0 {
@@ -3515,6 +3707,13 @@ final class DesignCanvas {
         case nil: break
         }
         if session.tool == .select, pen.editingPath != nil { return pen.mark == "add" ? .pen(1) : .arrow }
+        // Over a picture being placed: a corner sizes it, the rest moves it.
+        syncPictures()
+        switch pictures.pointer(at: p) {
+        case .resize(let a)?: return .resize(a)
+        case .hand?: return .grab
+        case nil: break
+        }
         syncDepth()
         if depth.turnsPointer { return .turn }
         syncGrid()
@@ -3609,6 +3808,9 @@ final class DesignCanvas {
             margin.notes.circle = nil
         case .deck:
             _ = decks.cancel()
+        case .picture:
+            pictures.cancelDrag()
+            placeHolds()
         }
         showGuides([])
         session.edited(board: nil)
@@ -3638,6 +3840,11 @@ final class DesignCanvas {
 
     /// A double click goes into a group, one level each time; on a text, it starts typing.
     private func doubleTapped(_ args: DoubleTappedRoutedEventArgs?) {
+        // A double click that began placing a picture, or ended it, is placing's alone.
+        if pictureTookPress {
+            pictureTookPress = false
+            return
+        }
         guard let q = try? args?.getPosition(stage) else { return }
         let p = CGPoint(x: Double(q.x), y: Double(q.y))
         guard let id = pick(p), let board = WindowsCore.board(of: id) else { return }
@@ -4082,6 +4289,20 @@ final class DesignCanvas {
             } else {
                 entries.append(.item("Hide", shortcut: "Ctrl+Shift+H") { [weak self] in self?.setHidden(true) })
             }
+            // Enter places a picture, as on the Mac.
+            if WindowsCore.PictureHand.canPlace(session.selection) {
+                let placing = pictures.editing == session.selection.first
+                entries += [.separator, .item(placing ? "Done Placing Picture" : "Place Picture", shortcut: "Enter") { [weak self] in
+                    guard let self else { return }
+                    if placing {
+                        self.pictures.editing = nil
+                        self.drawPictures()
+                        self.session.changed()
+                    } else {
+                        self.session.placePicture()
+                    }
+                }]
+            }
         } else {
             entries += [
                 .item("Paste", shortcut: "Ctrl+V", enabled: Clipboard.canPaste) { [weak self] in self?.paste() },
@@ -4181,6 +4402,22 @@ final class DesignCanvas {
         }
         if let penKey {
             syncPen()
+            // A picture first, as on the Mac: Enter on one places it, where on a path it would
+            // open its points; while placing, Enter and Escape end it and the arrows move it.
+            syncPictures()
+            let wasPlacing = pictures.editing != nil
+            if pictures.key(penKey, shift: shift, selection: session.selection,
+                            free: session.tool == .select && pen.editingPath == nil && drag == nil && !builder.active) {
+                args.handled = true
+                if case .picture? = drag?.grab, penKey == "escape" {
+                    drag = nil
+                    placeHolds()
+                }
+                if !wasPlacing, pictures.editing != nil { session.showCard?("Fill") }
+                drawPictures()
+                session.changed()
+                return
+            }
             // Enter on a mask picks what it holds, as on the Mac.
             if penKey == "enter", session.tool == .select, pen.editingPath == nil, drag == nil,
                let held = WindowsCore.maskHeld(session.selection) {

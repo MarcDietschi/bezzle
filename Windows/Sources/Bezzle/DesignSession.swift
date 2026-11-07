@@ -11,6 +11,8 @@ final class DesignSession {
         didSet {
             // The pen works on the points being edited; any other drawing tool leaves them.
             if tool != .select && tool != .pen { pen.editingPath = nil }
+            // Placing a picture is done with the select tool alone.
+            if tool != .select { pictures.editing = nil }
             // With the note tool out, ticked-off threads show as faint flags.
             notes.showDone = tool == .note
             changed()
@@ -31,6 +33,19 @@ final class DesignSession {
     let inspect = WindowsCore.InspectHand()
     /// The design as a prototype (the Mac's FlowTool): threads pulled from layers to screens.
     let flow = WindowsCore.FlowHand()
+    /// A picture being placed inside the layer it fills (the Mac's PictureTool and
+    /// store.editingPicture): the canvas works it, the Fill card says how.
+    let pictures = WindowsCore.PictureHand()
+
+    /// Starts placing the one selected layer's picture inside it (the Mac's editPicture).
+    func placePicture() {
+        guard WindowsCore.PictureHand.canPlace(selection) else { return }
+        tool = .select
+        pen.editingPath = nil
+        pictures.editing = selection[0]
+        showCard?("Fill")
+        changed()
+    }
     /// Design, Prototype or Inspect (0, 1, 2), as the bar's switch says.
     var mode = 0 {
         didSet {
@@ -135,6 +150,7 @@ final class DesignSession {
         if WindowsCore.fronts != fronts { previewed(board: nil) }
         pen.selection = ids
         if let editing = pen.editingPath, ids != [editing] { pen.editingPath = nil }
+        if let placing = pictures.editing, ids != [placing] { pictures.editing = nil }
         self.board = board
         changed()
     }

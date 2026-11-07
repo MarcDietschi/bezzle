@@ -213,6 +213,10 @@ extension Inspector {
         return card("Fill", paint.summary, id: Self.cardID("Fill", slot), mark: Colours.swatch(paint, size: 15, radius: 4), dial: dial,
                     remove: remove, removal: l.isText ? "Remove colour" : "Remove fill", more: more, style: "fill:\(slot)", body: { [self] in
             var rows: [UIElement] = [paintField(paint, target: .fill(slot), ids: ids, board: board, suggest: true, change: change, preview: preview)]
+            // Placing its picture, the card says how, as the Mac's does.
+            if slot == 0, session.pictures.editing != nil {
+                rows.append(Controls.caption("Drag the picture to move it in its frame, or a corner to resize it. Alt keeps its middle, and Enter ends placing."))
+            }
             if !l.isText && slot == 0 { rows.append(blendRow(l, change: change, preview: preview)) }
             return rows
         })
