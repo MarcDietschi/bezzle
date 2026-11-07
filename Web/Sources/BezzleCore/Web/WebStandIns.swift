@@ -22,6 +22,10 @@ nonisolated final class Assets: @unchecked Sendable {
     }
 
     func image(_ name: String, pixels: CGFloat, later: Bool) -> CGImage? { image(name, pixels: pixels) }
+
+    /// A picture that has no file yet, drawn in its place (the app's: a Photoshop document's
+    /// smart object drawn from its layers while it is brought in).
+    func standIn(_ name: String, _ image: CGImage) { kept[name] = image }
 }
 
 

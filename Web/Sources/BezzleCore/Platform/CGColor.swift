@@ -13,8 +13,12 @@ nonisolated public final class CGColorSpace: @unchecked Sendable, Equatable {
     public static let genericGrayGamma2_2: CFString = "kCGColorSpaceGenericGrayGamma2_2"
     public static let linearGray: CFString = "kCGColorSpaceLinearGray"
     public static let genericRGBLinear: CFString = "kCGColorSpaceGenericRGBLinear"
+    /// Printing's ink, as a Photoshop document can keep its colours.
+    public static let genericCMYK: CFString = "kCGColorSpaceGenericCMYK"
 
-    public var numberOfComponents: Int { name == Self.genericGrayGamma2_2 || name == Self.linearGray ? 1 : 3 }
+    public var numberOfComponents: Int {
+        name == Self.genericGrayGamma2_2 || name == Self.linearGray ? 1 : name == Self.genericCMYK ? 4 : 3
+    }
 }
 
 nonisolated public func CGColorSpaceCreateDeviceRGB() -> CGColorSpace { CGColorSpace(named: CGColorSpace.sRGB) }

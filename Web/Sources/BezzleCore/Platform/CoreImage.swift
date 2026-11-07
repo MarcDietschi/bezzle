@@ -54,6 +54,11 @@ nonisolated public final class CIImage: @unchecked Sendable {
     public func cropped(to r: CGRect) -> CIImage { CIImage(source, changes, extent: extent.intersection(r), clamped: false) }
 
     public func applyingFilter(_ name: String, parameters: [String: Any] = [:]) -> CIImage {
+        if name == "CIMorphologyMaximum" || name == "CIMorphologyMinimum" {
+            let radius = Double(parameters["inputRadius"] as? CGFloat ?? 0)
+            let wider = name == "CIMorphologyMaximum" ? extent.insetBy(dx: -radius, dy: -radius) : extent
+            return CIImage(source, changes + [.spread(radius: name == "CIMorphologyMaximum" ? radius : -radius)], extent: wider, clamped: clamped)
+        }
         guard name == "CIPerspectiveTransform", let source,
               let tl = parameters["inputTopLeft"] as? CIVector, let tr = parameters["inputTopRight"] as? CIVector,
               let br = parameters["inputBottomRight"] as? CIVector, let bl = parameters["inputBottomLeft"] as? CIVector else { return self }

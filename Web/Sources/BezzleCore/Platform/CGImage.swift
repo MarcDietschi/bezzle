@@ -20,6 +20,11 @@ nonisolated public final class CGImage: @unchecked Sendable, Equatable, Hashable
         case pixels([UInt8], bytesPerRow: Int, gray: Bool)
     }
     public let source: Source
+    /// The pictures a drawing draws, kept as long as it is (`CGContext.drawn`).
+    public internal(set) var uses: [CGImage] = []
+    /// Pixels made here whose colours are not multiplied by how solid they are, as Core
+    /// Graphics' `.last` keeps them.
+    public internal(set) var straightAlpha = false
 
     public init(width: Int, height: Int, source: Source) {
         self.width = width
@@ -56,7 +61,29 @@ nonisolated public final class CGImage: @unchecked Sendable, Equatable, Hashable
                              space: CGColorSpace, bitmapInfo: CGBitmapInfo, provider: CGDataProvider,
                              decode: UnsafePointer<CGFloat>?, shouldInterpolate: Bool, intent: CGColorRenderingIntent) {
         guard width > 0, height > 0, bitsPerComponent == 8 else { return nil }
-        self.init(width: width, height: height, source: .pixels(Array(provider.data), bytesPerRow: bytesPerRow, gray: bitsPerPixel == 8))
+        guard space.numberOfComponents == 4, bitsPerPixel == 32 else {
+            self.init(width: width, height: height, source: .pixels(Array(provider.data), bytesPerRow: bytesPerRow, gray: bitsPerPixel == 8))
+            let alpha = CGImageAlphaInfo(rawValue: bitmapInfo.rawValue & 0x1F)
+            straightAlpha = alpha == .last || alpha == .first
+            return
+        }
+        // Ink, as printing keeps it: shown here in plain sRGB, without the paper's profile.
+        var rgb = [UInt8](repeating: 255, count: width * height * 4)
+        provider.data.withUnsafeBytes { (ink: UnsafeRawBufferPointer) in
+            rgb.withUnsafeMutableBufferPointer { out in
+                guard let p = ink.baseAddress?.assumingMemoryBound(to: UInt8.self), ink.count >= bytesPerRow * (height - 1) + width * 4 else { return }
+                for y in 0..<height {
+                    var x = 0
+                    while x < width {
+                        let at = y * bytesPerRow + x * 4, to = (y * width + x) * 4
+                        let k = 255 - Int(p[at + 3])
+                        for c in 0..<3 { out[to + c] = UInt8((255 - Int(p[at + c])) * k / 255) }
+                        x += 1
+                    }
+                }
+            }
+        }
+        self.init(width: width, height: height, source: .pixels(rgb, bytesPerRow: width * 4, gray: false))
     }
 }
 
@@ -93,6 +120,9 @@ nonisolated public final class Images: @unchecked Sendable {
         /// `size` steps a side (red changing fastest, then green, then blue, three numbers each),
         /// then clarity, texture and sharpness, each −1…1 as the Mac's kernels take them.
         case develop(cube: [Float], size: Int, dehaze: Double, clarity: Double, texture: Double, sharpness: Double)
+        /// Each pixel the lightest (or, below nought, the darkest) within `radius` of it, as Core
+        /// Image's morphology filters make it. Worked out here, for pixels made here (Import/).
+        case spread(radius: Double)
     }
 
     /// The pictures from `first` on, as the page reads them.
@@ -117,6 +147,7 @@ nonisolated public final class Images: @unchecked Sendable {
                     case .develop(let cube, let size, let dehaze, let clarity, let texture, let sharpness):
                         return "{\"develop\":{\"cube\":\(Recording.json(cube.map(Double.init))),\"size\":\(size),\"dehaze\":\(dehaze),"
                             + "\"clarity\":\(clarity),\"texture\":\(texture),\"sharpness\":\(sharpness)}}"
+                    case .spread(let radius): return "{\"spread\":\(radius)}"
                     }
                 }.joined(separator: ",") + "]"
             case .pixels(let bytes, let row, let gray):

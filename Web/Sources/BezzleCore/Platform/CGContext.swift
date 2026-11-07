@@ -48,6 +48,30 @@ nonisolated public final class CGContext: @unchecked Sendable {
                              space: CGColorSpace, bitmapInfo: UInt32) {
         guard width > 0, height > 0 else { return nil }
         self.init(width: width, height: height)
+        if let data {
+            bitmap = Bitmap(data: data, bytesPerRow: bytesPerRow, gray: space.numberOfComponents == 1,
+                            alpha: CGImageAlphaInfo(rawValue: bitmapInfo & 0x1F) ?? .premultipliedLast)
+        }
+    }
+
+    /// The memory a context was given for its pixels, as Core Graphics' bitmap contexts are, rows
+    /// top first: drawn into by `Bitmap.draw` once the context is let go, where a host can (Bezzle
+    /// for Windows, with Skia); the browser leaves it as it is.
+    public struct Bitmap: @unchecked Sendable {
+        public let data: UnsafeMutableRawPointer
+        public let bytesPerRow: Int
+        /// One byte a pixel, its grey; otherwise four, RGBA.
+        public let gray: Bool
+        public let alpha: CGImageAlphaInfo
+        public nonisolated(unsafe) static var draw: ((CGContext, Bitmap) -> Void)?
+    }
+    public private(set) var bitmap: Bitmap?
+
+    /// The pictures drawn into it, which a picture made of it draws too (`CGImage.uses`).
+    public private(set) var drawn: [CGImage] = []
+
+    deinit {
+        if let bitmap { Bitmap.draw?(self, bitmap) }
     }
 
     // MARK: Commands, as the page reads them
@@ -272,6 +296,7 @@ nonisolated public final class CGContext: @unchecked Sendable {
     /// Draws the picture into `r` as Core Graphics does: its top row at the rectangle's top in
     /// Core Graphics' space, which is y up.
     public func draw(_ image: CGImage, in r: CGRect, byTiling: Bool = false) {
+        drawn.append(image)
         put(.image)
         putLook()
         put(Double(image.id))
@@ -320,7 +345,9 @@ nonisolated public final class CGContext: @unchecked Sendable {
 
     /// What has been drawn so far, as a picture.
     public func makeImage() -> CGImage? {
-        CGImage(width: width, height: height, source: .picture(commands))
+        let image = CGImage(width: width, height: height, source: .picture(commands))
+        image.uses = drawn
+        return image
     }
 
     public func flush() {}

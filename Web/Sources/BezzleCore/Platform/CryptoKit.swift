@@ -1,8 +1,10 @@
 import Foundation
 
-// SHA-256, which is all Bezzle's shared code takes from CryptoKit: for a library's fingerprint.
-nonisolated public enum SHA256 {
-    public struct Digest: Sequence {
+// SHA-256, which is all Bezzle's shared code takes from CryptoKit: for a library's fingerprint,
+// and the names of the pictures a Photoshop document brings in. As CryptoKit's, it is told the
+// data in parts (`update`) or all at once (`hash`).
+nonisolated public struct SHA256: Sendable {
+    public struct Digest: Sequence, Sendable {
         public let bytes: [UInt8]
         public func makeIterator() -> IndexingIterator<[UInt8]> { bytes.makeIterator() }
         public func prefix(_ n: Int) -> ArraySlice<UInt8> { bytes.prefix(n) }
@@ -19,32 +21,87 @@ nonisolated public enum SHA256 {
         0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
     ]
 
+    private var h: [UInt32] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+    /// What is told but not yet a whole block of 64 bytes.
+    private var waiting: [UInt8] = []
+    private var length: UInt64 = 0
+
+    public init() {}
+
+    public mutating func update<D: DataProtocol>(data: D) {
+        length &+= UInt64(data.count)
+        for region in data.regions {
+            if region.withContiguousStorageIfAvailable({ feed($0) }) == nil { feed(Array(region)) }
+        }
+    }
+
+    private mutating func feed(_ bytes: [UInt8]) { bytes.withUnsafeBufferPointer { feed($0) } }
+
+    private mutating func feed(_ bytes: UnsafeBufferPointer<UInt8>) {
+        guard var p = bytes.baseAddress else { return }
+        var n = bytes.count
+        if !waiting.isEmpty {
+            let take = min(64 - waiting.count, n)
+            waiting.append(contentsOf: UnsafeBufferPointer(start: p, count: take))
+            p += take
+            n -= take
+            guard waiting.count == 64 else { return }
+            waiting.withUnsafeBufferPointer { block($0.baseAddress!) }
+            waiting.removeAll(keepingCapacity: true)
+        }
+        while n >= 64 {
+            block(p)
+            p += 64
+            n -= 64
+        }
+        if n > 0 { waiting.append(contentsOf: UnsafeBufferPointer(start: p, count: n)) }
+    }
+
+    public func finalize() -> Digest {
+        var copy = self
+        var tail: [UInt8] = [0x80]
+        while (copy.waiting.count + tail.count) % 64 != 56 { tail.append(0) }
+        let bits = length &* 8
+        for i in (0..<8).reversed() { tail.append(UInt8(truncatingIfNeeded: bits >> (UInt64(i) * 8))) }
+        copy.feed(tail)
+        return Digest(bytes: copy.h.flatMap { v in (0..<4).map { UInt8(truncatingIfNeeded: v >> (24 - $0 * 8)) } })
+    }
+
     public static func hash<D: DataProtocol>(data: D) -> Digest {
-        var m = [UInt8](data)
-        let length = UInt64(m.count) * 8
-        m.append(0x80)
-        while m.count % 64 != 56 { m.append(0) }
-        for i in (0..<8).reversed() { m.append(UInt8(truncatingIfNeeded: length >> (UInt64(i) * 8))) }
-        var h: [UInt32] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
-        func r(_ x: UInt32, _ n: UInt32) -> UInt32 { (x >> n) | (x << (32 - n)) }
-        for chunk in stride(from: 0, to: m.count, by: 64) {
-            var w = [UInt32](repeating: 0, count: 64)
-            for i in 0..<16 {
-                w[i] = (0..<4).reduce(UInt32(0)) { $0 << 8 | UInt32(m[chunk + i * 4 + $1]) }
+        var hasher = SHA256()
+        hasher.update(data: data)
+        return hasher.finalize()
+    }
+
+    /// One block of 64 bytes.
+    private mutating func block(_ m: UnsafePointer<UInt8>) {
+        @inline(__always) func r(_ x: UInt32, _ n: UInt32) -> UInt32 { (x >> n) | (x << (32 - n)) }
+        withUnsafeTemporaryAllocation(of: UInt32.self, capacity: 64) { w in
+            var i = 0
+            while i < 16 {
+                w[i] = UInt32(m[i * 4]) << 24 | UInt32(m[i * 4 + 1]) << 16 | UInt32(m[i * 4 + 2]) << 8 | UInt32(m[i * 4 + 3])
+                i += 1
             }
-            for i in 16..<64 {
+            while i < 64 {
                 let s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >> 3)
                 let s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >> 10)
                 w[i] = w[i - 16] &+ s0 &+ w[i - 7] &+ s1
+                i += 1
             }
-            var (a, b, c, d, e, f, g, hh) = (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7])
-            for i in 0..<64 {
-                let t1 = hh &+ (r(e, 6) ^ r(e, 11) ^ r(e, 25)) &+ ((e & f) ^ (~e & g)) &+ k[i] &+ w[i]
-                let t2 = (r(a, 2) ^ r(a, 13) ^ r(a, 22)) &+ ((a & b) ^ (a & c) ^ (b & c))
-                (hh, g, f, e, d, c, b, a) = (g, f, e, d &+ t1, c, b, a, t1 &+ t2)
+            Self.k.withUnsafeBufferPointer { k in
+                h.withUnsafeMutableBufferPointer { h in
+                    var (a, b, c, d, e, f, g, hh) = (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7])
+                    var j = 0
+                    while j < 64 {
+                        let t1 = hh &+ (r(e, 6) ^ r(e, 11) ^ r(e, 25)) &+ ((e & f) ^ (~e & g)) &+ k[j] &+ w[j]
+                        let t2 = (r(a, 2) ^ r(a, 13) ^ r(a, 22)) &+ ((a & b) ^ (a & c) ^ (b & c))
+                        (hh, g, f, e, d, c, b, a) = (g, f, e, d &+ t1, c, b, a, t1 &+ t2)
+                        j += 1
+                    }
+                    h[0] &+= a; h[1] &+= b; h[2] &+= c; h[3] &+= d
+                    h[4] &+= e; h[5] &+= f; h[6] &+= g; h[7] &+= hh
+                }
             }
-            for (i, v) in [a, b, c, d, e, f, g, hh].enumerated() { h[i] = h[i] &+ v }
         }
-        return Digest(bytes: h.flatMap { v in (0..<4).map { UInt8(truncatingIfNeeded: v >> (24 - $0 * 8)) } })
     }
 }
