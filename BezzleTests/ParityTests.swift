@@ -911,6 +911,80 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: Libraries
+
+    /// Another design's component and colour style taken into a design: a style given to the
+    /// selection, with nothing selected only brought in, at an open shadow place and on text;
+    /// several components taken at once; news when the other design changes, and the update.
+    @Test func libraryTaking() {
+        func rect(_ name: String, _ x: CGFloat) -> Node {
+            var n = CanvasTests.rect(name, CGRect(x: x, y: 20, width: 60, height: 40))
+            n.fill.color = RGBA(r: 0.2, g: 0.35, b: 0.8)
+            return n
+        }
+        // The library: a component "Card" and a style "Brand".
+        let source = Bench(extra: [rect("Card", 20), rect("Badge", 120), rect("Swatch", 220)])
+        source.store.selection = [source.node("Card")!.id]
+        source.step { source.store.makeComponent() }
+        source.store.selection = [source.node("Badge")!.id]
+        source.step { source.store.makeComponent() }
+        source.store.selection = [source.node("Swatch")!.id]
+        var brand: UUID?
+        source.step { brand = source.store.nameLook(at: .fill(0), "Brand") }
+        let url = URL(fileURLWithPath: "/parity/Library.bezzle")
+        let library = LibraryContent(url: url, name: "Library", modified: Date(timeIntervalSince1970: 1_800_000_000),
+                                     masters: source.store.doc.masters, styles: source.store.doc.styles ?? [])
+        Self.log("libraries", "library: masters " + library.ownMasters.map(\.name).sorted().joined(separator: ",") + " styles " + library.ownStyles.map(\.name).joined(separator: ","))
+
+        var words = Node(kind: .text, name: "Words", frame: CGRect(x: 20, y: 120, width: 0, height: 0))
+        words.text = "Hello"
+        words.refit()
+        let bench = Bench(extra: [CanvasTests.rect("Box", CGRect(x: 20, y: 20, width: 80, height: 50)), words])
+        let store = bench.store
+        func line(_ what: String) {
+            let doc = store.doc
+            let styles = (doc.styles ?? []).map { "\($0.name) \($0.library.map { "from \($0.design)" } ?? "own")" }.sorted()
+            let masters = doc.masters.map { "\($0.name) \($0.master?.library.map { "from \($0.design)" } ?? "own")" }.sorted()
+            let layers = doc.allNodes.filter { !$0.isArtboard }.map { n in
+                "\(n.name) fill \(Inspect.hex(n.fill.color)) on \(n.fill.on) shadow \(n.shadow.on) styles \(StylePlace.all(in: n).compactMap { p in p.named(in: n).flatMap { doc.style($0)?.name }.map { "\(p)=\($0)" } }.joined(separator: "+"))"
+            }.sorted()
+            Self.log("libraries", "\(what): styles [\(styles.joined(separator: ", "))] masters [\(masters.joined(separator: ", "))] layers \(layers.joined(separator: " ; "))")
+        }
+        if let brand {
+            store.selection = [bench.node("Box")!.id]
+            bench.step { store.use(brand, of: library) }
+            line("used on box")
+            store.selection = []
+            bench.step { store.use(brand, of: library) }
+            line("brought alone")
+        }
+        let take = library.taking(library.ownMasters.map(\.id))
+        Self.log("libraries", "taking all: masters \(take.masters.map(\.name).sorted()) styles \(take.styles.map(\.name).sorted()) url \(take.url?.lastPathComponent ?? "-")")
+        bench.step { store.edit("Bring") { _ = $0.bring(take) } }
+        line("brought components")
+        var shown = bench.node("Box")!
+        if let s = library.ownStyles.first {
+            DocumentStore.give(s, to: &shown, at: .shadow(0), dark: false)
+            Self.log("libraries", "given at shadow: fill \(Inspect.hex(shown.fill.color)) shadow \(shown.shadow.on)")
+            var text = bench.node("Words")!
+            DocumentStore.give(s, to: &text, at: nil, dark: true, naming: false)
+            Self.log("libraries", "given to text: fill \(Inspect.hex(text.fill.color)) named \(StylePlace.all(in: text).compactMap { $0.named(in: text) }.count)")
+        }
+        // The library changes: its style is redder and the card wider; the design has news, and takes it.
+        var changed = source.store.doc
+        if let i = changed.styles?.firstIndex(where: { $0.name == "Brand" }) { changed.styles?[i].look = .colour(ColourLook(color: RGBA(r: 0.9, g: 0.2, b: 0.1))) }
+        if let i = changed.components?.firstIndex(where: { $0.name == "Card" }) { changed.components?[i].frame.size.width = 90 }
+        let later = LibraryContent(url: url, name: "Library", modified: Date(timeIntervalSince1970: 1_800_000_100), masters: changed.masters, styles: changed.styles ?? [])
+        let news = store.doc.libraryNews(in: [later])
+        Self.log("libraries", "news: " + news.map { "\($0.name) masters \($0.masters.compactMap { store.doc.master($0)?.name }.sorted()) styles \($0.styles.compactMap { store.doc.style($0)?.name })" }.joined(separator: "; "))
+        if let n = news.first {
+            bench.step { store.edit("Update") { $0.update(from: later, masters: n.masters, styles: n.styles) } }
+            line("updated")
+            Self.log("libraries", "news after: \(store.doc.libraryNews(in: [later]).count)")
+        }
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.

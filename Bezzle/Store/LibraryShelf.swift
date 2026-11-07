@@ -107,13 +107,7 @@ extension DocumentStore {
         guard !take.styles.isEmpty else { return }
         let targets = selection
         let open = openAspect?.stylePlace
-        edit(targets.isEmpty ? "Add Style" : "Use Style") { doc in
-            let map = doc.bring(take)
-            guard let style = doc.style(map[styleID] ?? styleID) else { return }
-            for id in targets {
-                doc.update(id) { n in Self.give(style, to: &n, at: open, dark: false) }
-            }
-        }
+        edit(targets.isEmpty ? "Add Style" : "Use Style") { $0.use(styleID, taking: take, on: targets, at: open) }
         // On a dark artboard a layer shows the style's dark look; `syncStyles` sees to that.
     }
 
@@ -133,27 +127,7 @@ extension DocumentStore {
     /// that kind, else the first fill (a text's letters), its type, its first shadow or its
     /// corners. What it goes on is turned on, so it shows.
     static func give(_ style: Style, to n: inout Node, at open: StylePlace?, dark: Bool, naming: Bool = true) {
-        let place: StylePlace
-        if let open, open.kind == style.kind {
-            place = open
-        } else {
-            switch style.kind {
-            case .colour: place = .fill(0)
-            case .text: place = .text
-            case .shadow: place = .shadow(0)
-            case .corners: place = .corners
-            }
-        }
-        let look = style.look(dark: dark)
-        guard !n.locked, place.look(of: n) != nil, place.takes(look, in: n) else { return }
-        if naming { place.name(style.id, in: &n) }
-        place.apply(look, to: &n)
-        switch place {
-        case .fill(let i) where n.kind != .text: n[fill: i].on = true
-        case .shadow(let i): n[shadow: i].on = true
-        default: break
-        }
-        if place == .text { n.refit() }
+        n.give(style, at: open, dark: dark, naming: naming)
     }
 
     /// Brings components and styles taken from another design up to date with it.
@@ -168,12 +142,7 @@ extension DocumentStore {
     /// on the offer.
     func updating(from news: LibraryNews) -> ((inout BezzleDocument) -> Void)? {
         guard let library = LibraryShelf.shared.content(news.url) else { return nil }
-        return { doc in
-            let before = doc
-            doc.update(from: library, masters: news.masters, styles: news.styles)
-            doc.syncComponents(since: before)
-            doc.syncStyles(since: before)
-        }
+        return { $0.updating(from: library, masters: news.masters, styles: news.styles) }
     }
 
     /// The copies of the components, and the layers named after the styles, news is about.
@@ -212,19 +181,5 @@ extension DocumentStore {
                 NSLog("Bezzle could not copy the picture %@ into the design: %@", name, error.localizedDescription)
             }
         }
-    }
-}
-
-nonisolated extension LibraryContent {
-    /// What bringing several components up to date brings along.
-    func taking(_ ids: [UUID]) -> LibraryTake {
-        var take = LibraryTake(url: url, name: name)
-        var seen = Set<UUID>()
-        for id in ids {
-            let t = taking(id)
-            for m in t.masters where seen.insert(m.id).inserted { take.masters.append(m) }
-            for s in t.styles where !take.styles.contains(where: { $0.id == s.id }) { take.styles.append(s) }
-        }
-        return take
     }
 }
