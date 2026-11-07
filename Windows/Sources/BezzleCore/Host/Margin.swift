@@ -20,22 +20,9 @@ extension WindowsCore {
         return colours[hash % colours.count]
     }
 
-    /// Who writes here, kept with Bezzle's own settings: a name, and this computer's replica,
-    /// made once.
-    static let noteAuthor: (name: String, replica: String) = {
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Bezzle", isDirectory: true)
-        let file = folder?.appendingPathComponent("replica.txt")
-        var replica = file.flatMap { try? String(contentsOf: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if replica.isEmpty, let folder, let file {
-            replica = UUID().uuidString
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try? replica.write(to: file, atomically: true, encoding: .utf8)
-        }
-        let full = ProcessInfo.processInfo.fullUserName
-        let name = full.isEmpty ? ProcessInfo.processInfo.userName : full
-        return (name.isEmpty ? "Me" : name, replica)
-    }()
+    /// Who writes here: the name this computer goes by, and its replica, as everything shared
+    /// carries them (the Mac's store.noteAuthor).
+    static var noteAuthor: (name: String, replica: String) { (myName, replica) }
 
     /// When each thread of a design was last read here: what is new is new to each reader.
     final class NotesSeen {
@@ -204,7 +191,8 @@ extension WindowsCore {
         }
 
         /// Whether a note was written here, so it may be changed or taken away here.
-        func wrote(_ note: MarginNote) -> Bool { note.replica == author.replica }
+        /// Written here: the first Windows copies wrote their replica as a UUID.
+        func wrote(_ note: MarginNote) -> Bool { note.replica.map(WindowsCore.shareReplica(of:)) == author.replica }
 
         // MARK: Reading
 

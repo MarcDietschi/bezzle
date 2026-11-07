@@ -90,6 +90,25 @@ final class DesignSession {
     init(name: String) {
         self.name = name
         notes.opened(WindowsCore.designPath ?? name)
+        // A shared design: what the others did comes in as their files come into its folder.
+        // The Mac is told by the folder; here it is looked at every few seconds.
+        shareTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.lookAtShare() }
+        }
+    }
+
+    deinit { shareTimer?.invalidate() }
+
+    nonisolated(unsafe) private var shareTimer: Timer?
+
+    /// Shows what others sharing the design changed since the last look, if anything: what they
+    /// took away is no longer selected, and the design is saved with their changes in it, as the
+    /// Mac's showChangesFromOthers saves.
+    func lookAtShare() {
+        guard WindowsCore.lookAtShare() else { return }
+        let kept = selection.filter { WindowsCore.has(layer: $0) }
+        if kept != selection { select(kept, on: board) }
+        edited(board: nil)
     }
 
     func select(_ ids: [UUID], on board: Int?) {

@@ -103,24 +103,23 @@ extension WindowsCore {
             newest = nil
         }
 
-        /// Where they are kept: the design's package, not one shared through its folder, which
-        /// Bezzle for Windows does not write to.
+        /// Where they are kept: the design's package. In one shared through its folder, each
+        /// computer keeps a list of its own (`FolderShare.versions`), as the Mac's VersionFiles do.
         private var url: URL? {
-            guard let url = WindowsCore.designURL, !WindowsCore.isSharedThroughFolder else { return nil }
+            guard let url = WindowsCore.designURL else { return nil }
             var isFolder: ObjCBool = false
             return FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && isFolder.boolValue ? url : nil
         }
 
-        private func folder(_ url: URL) -> URL { url.appendingPathComponent("versions", isDirectory: true) }
-        private func file(_ id: UUID, _ url: URL) -> URL { folder(url).appendingPathComponent("\(id.uuidString).lzfse") }
+        private func folder(_ url: URL) -> URL { url.appendingPathComponent(FolderShare.versionsFolder, isDirectory: true) }
+        private func file(_ id: UUID, _ url: URL) -> URL { FolderShare.versionFile(id, of: url) }
 
-        /// Reads the versions kept with the design, once. One whose file is missing is left out:
-        /// there would be nothing to show for it.
+        /// Reads the versions kept with the design, once. One whose file is missing, as when its
+        /// copy never arrived, is left out: there would be nothing to show for it.
         public func load() {
             guard let url, loaded != url else { return }
             loaded = url
-            let data = try? Data(contentsOf: folder(url).appendingPathComponent("index.json"))
-            all = (data.map(VersionKeeping.list(from:)) ?? []).filter { FileManager.default.fileExists(atPath: file($0.id, url).path) }
+            all = FolderShare.versions(of: url, replica: WindowsCore.replica).filter { FileManager.default.fileExists(atPath: file($0.id, url).path) }
         }
 
         private func makeRoom() -> URL? {
@@ -136,7 +135,7 @@ extension WindowsCore {
         /// The design was just saved: a version is taken if there is none yet, or the newest is
         /// old enough and the design has changed since; at once on closing, if it changed at all.
         public func saved(closing: Bool = false) {
-            guard travel == nil, let doc = present, makeRoom() != nil else { return }
+            guard travel == nil, !WindowsCore.isReadOnly, let doc = present, makeRoom() != nil else { return }
             if let last = all.last {
                 guard closing || clock().timeIntervalSince(last.date) >= Self.every else { return }
                 guard differs(doc, from: last) else { return }
@@ -158,7 +157,9 @@ extension WindowsCore {
         func take(_ doc: BezzleDocument, name: String?) -> DesignVersion? {
             guard let url = makeRoom() else { return nil }
             let author = WindowsCore.noteAuthor
-            let version = DesignVersion(date: clock(), name: name, by: author.name, replica: author.replica, layers: doc.layerCount)
+            var version = DesignVersion(date: clock(), name: name, by: author.name, replica: author.replica, layers: doc.layerCount)
+            // Named in a shared design, it is everyone's.
+            if name != nil, WindowsCore.sharing != nil { version.shared = true }
             let keep = VersionKeeping.kept(all + [version], now: clock())
             let dropped = (all + [version]).filter { v in !keep.contains { $0.id == v.id } }.map(\.id)
             all = keep
@@ -169,7 +170,7 @@ extension WindowsCore {
             for id in dropped { cache[id] = nil }
             do {
                 guard let data = VersionKeeping.pack(bare) else { return version }
-                try FileManager.default.createDirectory(at: folder(url), withIntermediateDirectories: true)
+                try WindowsCore.makeFolder(folder(url), in: url)
                 try data.write(to: file(version.id, url), options: .atomic)
                 try writeIndex(url)
                 for id in dropped { try? FileManager.default.removeItem(at: file(id, url)) }
@@ -180,9 +181,34 @@ extension WindowsCore {
             return version
         }
 
+        /// This computer's list: in a design shared through its folder, in its own folder of files there.
         private func writeIndex(_ url: URL) throws {
-            try FileManager.default.createDirectory(at: folder(url), withIntermediateDirectories: true)
-            try VersionKeeping.data(of: all).write(to: folder(url).appendingPathComponent("index.json"), options: .atomic)
+            let index = FolderShare.versionIndex(of: url, replica: WindowsCore.replica)
+            try WindowsCore.makeFolder(index.deletingLastPathComponent(), in: url)
+            try VersionKeeping.data(of: all).write(to: index, options: .atomic)
+        }
+
+        /// A named version someone sharing the design kept, from its folder or the live room.
+        func arrived(_ version: DesignVersion, data: Data) {
+            guard let url else { return }
+            load()
+            var version = version
+            version.shared = true
+            if let i = all.firstIndex(where: { $0.id == version.id }) {
+                // Renamed elsewhere.
+                guard all[i].name != version.name else { return }
+                all[i].name = version.name
+            } else {
+                guard let doc = VersionKeeping.unpack(data) else { return }
+                all = (all + [version]).sorted { $0.date < $1.date }
+                cache[version.id] = doc
+            }
+            if !FileManager.default.fileExists(atPath: file(version.id, url).path) {
+                try? WindowsCore.makeFolder(folder(url), in: url)
+                try? data.write(to: file(version.id, url), options: .atomic)
+            }
+            try? writeIndex(url)
+            changed()
         }
 
         /// Gives the design as it is now a name, as a version kept for good.
@@ -200,6 +226,7 @@ extension WindowsCore {
             let named = words.isEmpty ? nil : words
             guard all[i].name != named else { return }
             all[i].name = named
+            if WindowsCore.sharing != nil, named != nil { all[i].shared = true }
             try? writeIndex(url)
             changed()
         }

@@ -10,6 +10,7 @@ import PackageDescription
 //   does with CanvasKit. The modules named after Apple's frameworks are the web core's empty ones.
 // - Bezzle: the app, with WinUI 3 bindings that winrt.ps1 fetches into Packages/.
 // - bezzle-render: draws a design's artboards to PNG files, to compare with the Mac.
+// - bezzle-share: works on shared designs headless, for the Mac's tests to check.
 
 let arch = Context.environment["PROCESSOR_ARCHITECTURE"] == "ARM64" ? "aarch64" : "x86_64"
 let skiaOut = Context.packageDirectory + "\\Packages\\skia\\out\\" + (arch == "aarch64" ? "arm64" : "x64")
@@ -76,6 +77,13 @@ let package = Package(
             name: "bezzle-render",
             dependencies: ["BezzleCore"],
             path: "Sources/BezzleRender",
+            linkerSettings: [.unsafeFlags([swiftrt])]
+        ),
+        // Works on shared designs headless, for the Mac's tests to check (Sources/BezzleShare).
+        .executableTarget(
+            name: "bezzle-share",
+            dependencies: ["BezzleCore"],
+            path: "Sources/BezzleShare",
             linkerSettings: [.unsafeFlags([swiftrt])]
         ),
         .executableTarget(

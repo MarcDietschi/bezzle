@@ -1,0 +1,472 @@
+import Foundation
+import CBezzleHost
+
+// A shared design on Windows, as the Mac's Collaboration and FolderSync keep one: what is done
+// here is taken in as changes of this computer's own (`SharedDesign.absorb`), written to files
+// only it writes in the design's package (sharing/people/<replica>/), and everyone else's files
+// are read and merged in, property by property, never put over the design whole. The files are
+// read and written by the same shared code as on the Mac (Model/FolderParts.swift); what is here
+// is the Mac's bookkeeping around it, ported: which design shows, when others' changes show, and
+// telling a copy of a design made in Explorer.
+
+extension WindowsCore {
+    /// This computer's name among those sharing a design, which its changes, its files, its notes
+    /// and its versions carry: lowercase letters and digits, as `FolderShare.isReplica` wants,
+    /// made once and kept with Bezzle's own settings (the Mac's Sharing.replica).
+    public static let replica: String = {
+        #if DEBUG
+        // Two test copies on one computer share their settings; each says who it is.
+        if let id = ProcessInfo.processInfo.environment["BEZZLE_REPLICA"], FolderShare.isReplica(id) { return id }
+        #endif
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Bezzle", isDirectory: true)
+        let file = folder?.appendingPathComponent("replica.txt")
+        var id = file.flatMap { try? String(contentsOf: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if id.isEmpty, let folder, let file {
+            id = UUID().uuidString
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? id.write(to: file, atomically: true, encoding: .utf8)
+        }
+        return shareReplica(of: id)
+    }()
+
+    /// A replica as sharing writes it: the first Windows copies made theirs a UUID, as typed.
+    static func shareReplica(of id: String) -> String {
+        String(id.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(32))
+    }
+
+    /// The name this computer goes by among those sharing a design: the person's first name, as
+    /// the Mac's LiveRoom.myName gives the short form of theirs.
+    public static let myName: String = {
+        #if DEBUG
+        if let name = ProcessInfo.processInfo.environment["BEZZLE_LIVE_NAME"], !name.isEmpty { return name }
+        #endif
+        let full = ProcessInfo.processInfo.fullUserName.trimmingCharacters(in: .whitespaces)
+        let name = full.isEmpty ? ProcessInfo.processInfo.userName : full
+        return name.split(separator: " ").first.map(String.init) ?? (name.isEmpty ? "Me" : name)
+    }()
+
+    /// The open design's share, while it is shared.
+    nonisolated(unsafe) static var sharing: SharedSession?
+
+    /// How the open design is shared, for the window to show (the Mac's SharingMark).
+    nonisolated public enum ShareMark: Equatable, Sendable {
+        /// Kept in a folder that OneDrive, Google Drive or the like keeps in step, where others work on it too.
+        case inFolder(String)
+    }
+
+    public static var shareMark: ShareMark? { sharing?.mark }
+
+    /// Whether the design is shared through the folder it is kept in, with its files in it.
+    public static var isSharedThroughFolder: Bool { sharing?.folder != nil }
+
+    /// Whether it can only be looked at: someone else's design no longer shared with this computer.
+    public static var isReadOnly: Bool { sharing?.isReadOnly == true }
+
+    /// Whether the open design has a layer, as after others' changes came, which may take some away.
+    public static func has(layer id: UUID) -> Bool { design?.path(of: id) != nil }
+
+    /// The open design as it is shared, which its own file may lag behind: a design in a synced
+    /// folder, or one with people's files in it.
+    static func openShared(_ url: URL, file doc: BezzleDocument) -> BezzleDocument {
+        sharing = nil
+        guard let session = SharedSession.open(url, replica: replica, file: doc) else { return doc }
+        var shown = session.document()
+        shown.viewport = doc.viewport
+        session.takeIn(shown)
+        sharing = session
+        return shown
+    }
+
+    /// Looks for what the others did since the last look: in the design's folder, everyone's files.
+    /// True when the design shown changed (to draw it again, and save it a moment later), as it
+    /// does once nothing is being dragged.
+    @discardableResult public static func lookAtShare() -> Bool {
+        guard let session = sharing else { return false }
+        // Only a design in a folder others write in too has anything to look for.
+        if let folder = session.folder, folder.watched {
+            // Renamed or moved, as by someone else in the folder: the design goes on where it is now.
+            if !FileManager.default.fileExists(atPath: session.url.appendingPathComponent("document.json").path) { follow() }
+            let found = FolderShare.look(folder.url, replica: session.replica, seen: folder.seen, opening: false)
+            let took = folder.take(found)
+            if !took.changes.isEmpty {
+                session.receive(took.changes, from: .folder, current: previewBase ?? design)
+                session.persist()
+            }
+            for name in took.pictures { pictureArrived(name, in: folder.url) }
+            for (version, data) in took.versions { versions.arrived(version, data: data) }
+        }
+        return showOthersIfIdle()
+    }
+
+    /// Shows what others changed, if that waited for a drag or a preview to end and they have.
+    @discardableResult public static func showOthersIfIdle() -> Bool {
+        guard let session = sharing, Editing.gestureStart == nil, previewBase == nil, let doc = design,
+              let next = session.toShow(current: doc) else { return false }
+        return showChangesFromOthers(next)
+    }
+
+    /// Shows the design with what others changed: `next` holds everything done here as well. It is
+    /// not a step of the undo history, and undoing afterwards leaves it in place (DocumentStore's
+    /// showChangesFromOthers).
+    static func showChangesFromOthers(_ next: BezzleDocument) -> Bool {
+        guard let old = design else { return false }
+        var next = next
+        next.viewport = old.viewport
+        next.keepMasks(since: old)
+        next.reconcileComponents()
+        next.fitGroups(since: old)
+        // Artboards nobody changed stay as they were, sharing their storage.
+        var kept: [UUID: Node] = [:]
+        for n in old.nodes { kept[n.id] = n }
+        next.nodes = next.nodes.map { n in kept[n.id].flatMap { $0 == n ? $0 : nil } ?? n }
+        guard next != old else { return false }
+        if let start = Editing.gestureStart { Editing.gestureStart = FlatDesign.apply(from: old, to: next, onto: start) }
+        design = next
+        return true
+    }
+
+    /// A picture someone else added came through the folder: Skia learns it, to draw it.
+    static func pictureArrived(_ name: String, in design: URL) {
+        let file = design.appendingPathComponent("images").appendingPathComponent(name)
+        guard let data = try? Data(contentsOf: file) else { return }
+        // Asked for again the next time it is drawn: one not there yet is not kept as missing.
+        _ = data.withUnsafeBytes { bz_asset_add(name, $0.baseAddress, Int32($0.count)) }
+    }
+
+    /// Finds the design's package again when it is no longer where it was, as when someone else in
+    /// the synced folder renamed it: in the same folder, the one design with the same room (the
+    /// Mac's DocumentStore.follow, without its bookmark). True when it was found elsewhere.
+    @discardableResult static func follow() -> Bool {
+        guard let session = sharing, let url = designURL,
+              !FileManager.default.fileExists(atPath: url.appendingPathComponent("document.json").path) else { return false }
+        let folder = url.deletingLastPathComponent()
+        let seed = session.folder?.room.seed
+        let found = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []).filter { candidate in
+            guard candidate.pathExtension.lowercased() == "bezzle",
+                  FileManager.default.fileExists(atPath: candidate.appendingPathComponent("document.json").path) else { return false }
+            if let seed, FolderShare.room(of: candidate)?.seed == seed { return true }
+            return false
+        }
+        guard found.count == 1, let there = found.first else { return false }
+        designURL = there
+        assets = Assets(folder: there.appendingPathComponent("images"))
+        session.moved(to: there)
+        return true
+    }
+
+    /// Makes a folder in the package of a design that is there, never the package itself: a design
+    /// moved away while open must not begin again where it was (the Mac's DesignFile.makeFolder).
+    static func makeFolder(_ folder: URL, in design: URL) throws {
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: design.path, isDirectory: &isFolder), isFolder.boolValue else { throw CoreError("\(design.path) is gone") }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    static var nowMilliseconds: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+}
+
+// MARK: - The design as everyone has it
+
+/// Where changes taken in came from (the Mac's Collaboration.Source).
+enum ShareSource {
+    /// The synced folder, which keeps them in their own files already.
+    case folder
+    /// The room's records on the relay.
+    case cloud
+    /// Someone in the live room, a moment after they made them.
+    case relay
+}
+
+/// An open design that is shared, as the Mac's Collaboration keeps it: it takes in what is done
+/// here, and shows what the others did, keeping everything done here.
+final class SharedSession {
+    private(set) var url: URL
+    let replica: String
+    private(set) var state: SharedDesign
+    /// Where the design keeps its parts.
+    let folder: FolderCopy?
+    /// The layers as this computer last showed them, to tell what was changed here since.
+    private var base = FlatDesign()
+    /// The design `base` was made from, while it is (see the Mac's Collaboration.baseDoc).
+    private var baseDoc: BezzleDocument?
+    private var decoded: [UUID: (layer: SharedLayer, node: Node)] = [:]
+    /// Others' changes taken in but not shown yet, while a drag or a preview is going on.
+    private var unshown = false
+    /// Others' changes from elsewhere than the folder, to keep with this computer's parts.
+    private var toKeep: [SharedDesign] = []
+    /// The latest change made here.
+    private(set) var changedUpTo: Int64 = 0
+
+    init(url: URL, state: SharedDesign, folder: FolderCopy?, replica: String) {
+        self.url = url
+        self.state = state
+        self.folder = folder
+        self.replica = replica
+        changedUpTo = state.clock.time
+    }
+
+    /// The shared design at `url`, if it is one: kept in a synced folder, or with people's files.
+    static func open(_ url: URL, replica: String, file: BezzleDocument) -> SharedSession? {
+        guard FolderCopy.isPackage(url), FolderCopy.applies(to: url),
+              let opened = FolderCopy.open(url, replica: replica, file: file) else { return nil }
+        return SharedSession(url: url, state: opened.state, folder: opened.copy, replica: replica)
+    }
+
+    var mark: WindowsCore.ShareMark? { folder?.mark }
+
+    /// Whether it can only be looked at: someone else's design this computer no longer shares.
+    var isReadOnly: Bool { false }
+
+    func moved(to url: URL) {
+        self.url = url
+        folder?.moved(to: url)
+    }
+
+    /// The design as it is shared, which is what this computer shows.
+    func document() -> BezzleDocument {
+        base = state.flatDesign(reusing: &decoded)
+        baseDoc = nil
+        return base.document()
+    }
+
+    /// Takes in what was changed here since last time: only the artboards and loose layers that
+    /// changed, while the layers as last shown are known to be those of the design taken in last.
+    func takeIn(_ doc: BezzleDocument) {
+        if let before = baseDoc {
+            let (old, new) = FlatDesign.changes(from: before, to: doc)
+            absorb(new, since: old)
+            base.replace(old, with: new)
+        } else {
+            let now = FlatDesign(doc)
+            absorb(now, since: base)
+            base = now
+        }
+        baseDoc = doc
+    }
+
+    private func absorb(_ now: FlatDesign, since was: FlatDesign) {
+        if state.absorb(now, since: was, by: replica, at: WindowsCore.nowMilliseconds) { changedUpTo = state.clock.time }
+    }
+
+    /// Takes in changes from the others; what was done here (`current`) is taken in first, so it
+    /// is kept as it is. They show once nothing holds them back (`toShow`).
+    func receive(_ changes: [SharedDesign], from source: ShareSource, current: BezzleDocument?) {
+        if let current { takeIn(current) }
+        for c in changes where !c.isEmpty {
+            let layers = state.merge(c)
+            if source != .folder { toKeep.append(c) }
+            if !layers.isEmpty { unshown = true }
+        }
+    }
+
+    /// The design with what others changed, if there is anything not shown yet.
+    func toShow(current doc: BezzleDocument) -> BezzleDocument? {
+        guard unshown else { return nil }
+        unshown = false
+        takeIn(doc)
+        let map = state.flatDesign(reusing: &decoded)
+        base = map
+        baseDoc = nil
+        return map.document()
+    }
+
+    /// Writes what changed to the design's parts, ahead of its own file.
+    func persist() {
+        folder?.persist(state, keeping: toKeep)
+        toKeep = []
+    }
+}
+
+// MARK: - This computer's files in the folder
+
+/// A shared design's parts in its package, as the Mac's FolderSync keeps them: this computer's
+/// own changes in files in its own folder there, now and then the whole design, and everyone
+/// else's files read as the folder brings them.
+final class FolderCopy {
+    /// Everyone else whose files are in the design, as their files say who they are.
+    private(set) var people: [FolderShare.Person] = []
+    /// The secret of the folder's live room, which everyone with the folder has.
+    private(set) var room: FolderShare.Room
+    /// The service keeping the folder in step, by name; nil on this computer alone.
+    private(set) var service: String?
+    private(set) var url: URL
+    let replica: String
+    /// The latest of this computer's changes its files hold.
+    private(set) var writtenUpTo: Int64
+    /// This computer's own files of changes and wholes, by name.
+    private var own: [String]
+    private(set) var seen: FolderShare.Seen
+    /// Who this computer last said it was, in its `me.json`.
+    private var introduced: FolderShare.Person?
+
+    private init(url: URL, replica: String, room: FolderShare.Room, seen: FolderShare.Seen, own: [String], writtenUpTo: Int64) {
+        self.url = url
+        self.replica = replica
+        self.room = room
+        self.seen = seen
+        self.own = own
+        self.writtenUpTo = writtenUpTo
+        service = SyncedPlaces.service(of: url)
+        people = Self.sorted(seen.people)
+    }
+
+    static func isPackage(_ url: URL) -> Bool {
+        var isFolder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && isFolder.boolValue
+    }
+
+    /// Whether a design keeps its changes in parts: one in a synced folder, or one that has been
+    /// or is shared, whose parts go on being written wherever it is.
+    static func applies(to design: URL) -> Bool {
+        guard isPackage(design) else { return false }
+        return FolderShare.isShared(design) || SyncedPlaces.service(of: design) != nil
+    }
+
+    /// The design's own file as it is, with when it was written, for the first of the parts.
+    private static func ownFile(_ url: URL, _ doc: BezzleDocument) -> (doc: BezzleDocument, modified: Int64)? {
+        let file = url.appendingPathComponent("document.json")
+        let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
+        return (doc, Int64(modified.timeIntervalSince1970 * 1000))
+    }
+
+    /// The design as everyone's files have it, with what is needed to keep it in step; the first
+    /// time, from `seed` or its own file (`FolderShare.opening`).
+    static func open(_ url: URL, replica: String, seed: SharedDesign? = nil, file: BezzleDocument?) -> (copy: FolderCopy, state: SharedDesign)? {
+        let mine = FolderShare.folder(of: replica, in: url)
+        do {
+            try FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+        } catch {
+            NSLog("Bezzle could not make room for its files in %@: %@", url.path, "\(error)")
+            return nil
+        }
+        let found = FolderShare.look(url, replica: replica, seen: FolderShare.Seen(), opening: true)
+        let opened = FolderShare.opening(found, seed: seed, file: { file.flatMap { ownFile(url, $0) } }, by: replica)
+        if let whole = opened.first {
+            guard let data = FolderShare.pack(opened.state), (try? data.write(to: mine.appendingPathComponent(whole.fileName), options: .atomic)) != nil else {
+                NSLog("Bezzle could not write the first of its files in %@", url.path)
+                return nil
+            }
+        }
+        var room = found.seen.room
+        if room?.isValid != true || !claim(room!, at: url) {
+            // None yet, or this is a copy of the design made in Explorer, which is a design of its
+            // own, with a room of its own.
+            let fresh = FolderShare.Room.fresh(at: WindowsCore.nowMilliseconds)
+            try? FolderShare.encode(fresh)?.write(to: FolderShare.roomURL(of: url), options: .atomic)
+            _ = claim(fresh, at: url)
+            room = fresh
+        }
+        var seen = found.seen
+        seen.room = room
+        let copy = FolderCopy(url: url, replica: replica, room: room!, seen: seen, own: opened.own, writtenUpTo: opened.writtenUpTo)
+        copy.introduce(since: WindowsCore.nowMilliseconds)
+        return (copy, opened.state)
+    }
+
+    // MARK: Telling a copy
+
+    /// Each folder room's design on this computer, by its secret, to tell a copy made in Explorer.
+    private static var rooms: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: "folderRooms") as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "folderRooms") }
+    }
+
+    /// A path to compare: Windows does not tell capitals from small letters in its paths.
+    private static func key(_ url: URL) -> String { url.standardizedFileURL.path.lowercased() }
+
+    /// Whether the design at `url` is this computer's design with `room`, rather than a copy of
+    /// one that is still there.
+    private static func claim(_ room: FolderShare.Room, at url: URL) -> Bool {
+        let path = key(url)
+        if let known = rooms[room.seed], known != path, FileManager.default.fileExists(atPath: known),
+           FileManager.default.fileExists(atPath: FolderShare.roomURL(of: URL(fileURLWithPath: known)).path) { return false }
+        rooms[room.seed] = path
+        return true
+    }
+
+    // MARK: Who is who
+
+    /// Says who works on the design from this computer, when that is new or has changed.
+    private func introduce(since: Int64? = nil) {
+        let file = FolderShare.folder(of: replica, in: url).appendingPathComponent(FolderShare.personFile)
+        if introduced == nil {
+            introduced = (try? Data(contentsOf: file)).flatMap { FolderShare.decode(FolderShare.Person.self, from: $0) }
+        }
+        let me = Self.me(replica: replica, since: introduced?.since ?? since ?? WindowsCore.nowMilliseconds)
+        guard introduced != me, let data = FolderShare.encode(me) else { return }
+        introduced = me
+        try? data.write(to: file, options: .atomic)
+    }
+
+    static func me(replica: String, since: Int64 = 0) -> FolderShare.Person {
+        FolderShare.Person(replica: replica, name: WindowsCore.myName, app: "windows", since: since)
+    }
+
+    /// The others, apart from this person's other computers.
+    var others: [FolderShare.Person] {
+        let me = Self.me(replica: replica)
+        return people.filter { !$0.isSamePerson(as: me) }
+    }
+
+    var mark: WindowsCore.ShareMark? {
+        guard let service, !others.isEmpty else { return nil }
+        return .inFolder(service)
+    }
+
+    private static func sorted(_ people: [String: FolderShare.Person]) -> [FolderShare.Person] {
+        people.values.sorted { $0.since != $1.since ? $0.since < $1.since : $0.replica < $1.replica }
+    }
+
+    func moved(to url: URL) {
+        self.url = url
+        _ = Self.claim(room, at: url)
+        service = SyncedPlaces.service(of: url)
+    }
+
+    // MARK: Keeping in step
+
+    /// What a look through the folder found that is new, the rest kept for the next look.
+    struct Took {
+        var changes: [SharedDesign] = []
+        var pictures: [String] = []
+        var versions: [(DesignVersion, Data)] = []
+        var roomChanged = false
+    }
+
+    func take(_ found: FolderShare.Found) -> Took {
+        seen = found.seen
+        if found.peopleChanged { people = Self.sorted(seen.people) }
+        var took = Took(changes: found.changes, pictures: found.pictures, versions: found.versions)
+        if let room = found.seen.room, room.isValid, room != self.room {
+            self.room = room
+            _ = Self.claim(room, at: url)
+            took.roomChanged = true
+        }
+        return took
+    }
+
+    /// Writes what was changed here since this computer's last file, with what came from
+    /// elsewhere than the folder (`kept`), and now and then the whole design, ahead of the
+    /// design's own file.
+    func persist(_ state: SharedDesign, keeping kept: [SharedDesign] = []) {
+        introduce()
+        guard let writing = FolderShare.writing(state, by: replica, since: writtenUpTo, keeping: kept, own: own) else { return }
+        let from = writtenUpTo
+        writtenUpTo = state.clock.time
+        own = writing.names
+        let folder = FolderShare.folder(of: replica, in: url)
+        do {
+            try WindowsCore.makeFolder(folder, in: url)
+            try FolderShare.write(writing, into: folder)
+        } catch {
+            NSLog("Bezzle could not write its changes to %@: %@", folder.path, "\(error)")
+            // Written again with the next save.
+            writtenUpTo = min(writtenUpTo, from)
+            own = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).filter { FolderShare.Part(fileName: $0) != nil }
+        }
+    }
+
+    /// Whether anyone else writes in the folder, so that it is worth looking through.
+    var watched: Bool { service != nil || !people.isEmpty }
+}

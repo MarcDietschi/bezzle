@@ -33,7 +33,7 @@ public enum WindowsCore {
     nonisolated(unsafe) static var design: BezzleDocument?
     nonisolated(unsafe) static var assets = Assets(folder: nil)
     /// Where the open design is kept: its package, or its file.
-    nonisolated(unsafe) public private(set) static var designURL: URL?
+    nonisolated(unsafe) public internal(set) static var designURL: URL?
 
     /// The open fonts that stand in for the Mac's (Web/tools/openfonts.py): `manifest.json` and
     /// the faces it lists, in `folder`. The system font's stand-in is registered as "System".
@@ -79,7 +79,8 @@ public enum WindowsCore {
         previewBase = nil
         showingVersion = false
         fronts = [:]
-        design = doc
+        // A shared design opens as it is shared, which its own file may lag behind.
+        design = openShared(folder, file: doc)
         designURL = folder
         Editing.undos = []
         Editing.redos = []
@@ -89,6 +90,7 @@ public enum WindowsCore {
 
     /// Lets the open design go, once it is saved: a save that comes later has nothing to write.
     public static func close() {
+        sharing = nil
         fronts = [:]
         versions.reset()
         timeTable.forget()
@@ -254,19 +256,19 @@ extension WindowsCore {
 }
 
 extension WindowsCore {
-    /// Whether the design is shared through the folder it is kept in (Google Drive, Dropbox, OneDrive
-    /// and the like): each computer then writes only records of its own (`FolderShare`), which this
-    /// Windows copy does not write yet, so it does not save over such a design.
-    public static var isSharedThroughFolder: Bool {
-        guard let url = designURL else { return false }
-        return FileManager.default.fileExists(atPath: url.appendingPathComponent("sharing").appendingPathComponent(FolderShare.peopleFolder).path)
-    }
-
-    /// Saves the design where it is kept, as the Mac's DesignFile.write does: its document.json
-    /// (sorted keys), written whole; a package gone meanwhile is made again, so nothing is lost.
+    /// Saves the design where it is kept, as the Mac's DocumentStore.save does: a shared design's
+    /// changes first, in this computer's own files in it (`SharedSession.persist`), then its
+    /// document.json (sorted keys), written whole; a package gone meanwhile is looked for (a shared
+    /// design renamed by someone else) and otherwise made again, so nothing is lost.
     public static func save() throws {
+        follow()
         guard let url = designURL, let doc = previewBase ?? design else { return }
-        guard !isSharedThroughFolder else { throw CoreError("This design is shared through its folder, which Bezzle for Windows does not save to yet.") }
+        if let sharing {
+            var shared = doc
+            shared.viewport = nil
+            sharing.takeIn(shared)
+            sharing.persist()
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(doc)
