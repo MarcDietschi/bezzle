@@ -826,7 +826,7 @@ final class ResourcesPanel {
         row.pointerEntered.addHandler { _, _ in
             row.background = Theme.brush(Theme.ink, 0.05)
             words.foreground = Theme.ink(1)
-            WindowsCore.previewStyle(style.id, of: url, on: session.selection)
+            WindowsCore.previewStyle(style.id, of: url, on: session.selection, at: session.openStylePlace?())
             session.previewed(board: nil)
         }
         row.pointerExited.addHandler { _, _ in
@@ -838,7 +838,7 @@ final class ResourcesPanel {
         row.tapped.addHandler { [weak self] _, _ in
             self?.later {
                 WindowsCore.previewStyle(nil, of: url, on: [])
-                WindowsCore.useStyle(style.id, of: url, on: session.selection)
+                WindowsCore.useStyle(style.id, of: url, on: session.selection, at: session.openStylePlace?())
                 session.edited(board: nil)
                 self?.show()
             }

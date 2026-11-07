@@ -17,6 +17,9 @@ final class Inspector {
     let root = Grid()
     let session: DesignSession
     let cards = StackPanel()
+    /// The place a style goes, for each card that has one, by the card's name (`card(style:)`).
+    private var styleKeys: [String: String] = [:]
+
     /// The card that is open, one at a time as on the Mac (store.openAspect): Frame to begin with.
     var opened: String? = "Frame" {
         // The shadow whose card is open is the one a drag on the canvas moves, as on the Mac.
@@ -75,6 +78,10 @@ final class Inspector {
     init(session: DesignSession) {
         self.session = session
         session.showCard = { [weak self] key in self?.opened = key }
+        session.openStylePlace = { [weak self] in
+            guard let self, let opened = self.opened else { return nil }
+            return self.styleKeys[opened]
+        }
         // A colour pressed on in the photo shows its rows.
         session.pickPhotoBand = { [weak self] band in
             guard let self, self.photoBand != band else { return }
@@ -223,6 +230,7 @@ final class Inspector {
               accessory: FrameworkElement? = nil, more: (help: String, preview: @MainActor (Bool) -> Void, add: @MainActor () -> Void)? = nil,
               style: String? = nil, body: (@MainActor () -> [UIElement])? = nil) -> UIElement {
         let key = id ?? title
+        if let style { styleKeys[key] = style }
         let card = Theme.card(radius: 12)
         card.width = Theme.cardWidth
         let stack = StackPanel()

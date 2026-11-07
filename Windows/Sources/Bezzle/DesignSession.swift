@@ -62,6 +62,9 @@ final class DesignSession {
     var zoom = 0.5 { didSet { if zoom != oldValue { changed() } } }
     /// The inspector's open card, which the canvas lights what belongs to it for (a layout grid).
     var openCard: String? { didSet { if openCard != oldValue { openCardChanged?() } } }
+    /// Where the open card holds a style ("fill:0", "text"), which a style taken goes to, as on
+    /// the Mac it goes to the open aspect's place; the inspector says.
+    var openStylePlace: (() -> String?)?
     var openCardChanged: (() -> Void)?
     /// Opens a card in the inspector, by its name, as the Mac's store.openAspect is set.
     var showCard: ((String) -> Void)?

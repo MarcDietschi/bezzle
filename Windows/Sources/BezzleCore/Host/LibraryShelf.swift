@@ -177,16 +177,17 @@ extension WindowsCore {
     // MARK: Taking
 
     /// Gives the selection a style of another design, which comes into this one with it; with
-    /// nothing selected, only brings it in.
-    public static func useStyle(_ id: UUID, of url: URL, on targets: [UUID]) {
+    /// nothing selected, only brings it in. It goes where the open card holds one of its kind
+    /// (`open`, as `stylePlace` reads it), else where a style of its kind goes.
+    public static func useStyle(_ id: UUID, of url: URL, on targets: [UUID], at open: String? = nil) {
         guard let lib = library(url) else { return }
         let take = lib.taking(style: id)
         guard !take.styles.isEmpty else { return }
-        edit { $0.use(id, taking: take, on: targets, at: nil) }
+        edit { $0.use(id, taking: take, on: targets, at: open.flatMap(stylePlace)) }
     }
 
     /// A style shown on the selection without being given, while the pointer is on it.
-    public static func previewStyle(_ id: UUID?, of url: URL, on targets: [UUID]) {
+    public static func previewStyle(_ id: UUID?, of url: URL, on targets: [UUID], at open: String? = nil) {
         endPreview()
         guard let id, !targets.isEmpty, let style = library(url)?.style(id), let doc = design else { return }
         preview { d in
@@ -194,7 +195,7 @@ extension WindowsCore {
                 d.update(t) { n in
                     var shown = style
                     shown.look = style.look(dark: doc.isDark(n.id))
-                    n.give(shown, at: nil, dark: false, naming: false)
+                    n.give(shown, at: open.flatMap(stylePlace), dark: false, naming: false)
                 }
             }
         }
