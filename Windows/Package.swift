@@ -21,6 +21,10 @@ let skiaOut = Context.packageDirectory + "\\Packages\\skia\\out\\" + (arch == "a
 // linked in by hand, from the Swift SDK (SDKROOT, which Swift's installer sets).
 let swiftrt = (Context.environment["SDKROOT"] ?? "") + "\\usr\\lib\\swift\\windows\\\(arch)\\swiftrt.obj"
 
+// The main thread's stack as big as the Mac's (8 MB; Windows gives 1 MB): what a web page is
+// read into nests as deeply as its elements do, and is decoded and laid out there.
+let mainStack = ["-Xlinker", "/STACK:8388608"]
+
 // The Mac's pointers, as cursor resources (build.ps1 compiles Resources/Generated/Bezzle.rc).
 let resources = Context.packageDirectory + "\\Resources\\Generated\\Bezzle.res"
 let resourceFlags = FileManager.default.fileExists(atPath: resources) ? ["-Xlinker", resources] : []
@@ -102,7 +106,7 @@ let package = Package(
             name: "bezzle-render",
             dependencies: ["BezzleCore"],
             path: "Sources/BezzleRender",
-            linkerSettings: [.unsafeFlags([swiftrt])]
+            linkerSettings: [.unsafeFlags([swiftrt] + mainStack)]
         ),
         // Works on shared designs headless, for the Mac's tests to check (Sources/BezzleShare).
         .executableTarget(
@@ -123,7 +127,7 @@ let package = Package(
             ],
             path: "Sources/Bezzle",
             swiftSettings: [.unsafeFlags(["-parse-as-library"]), .swiftLanguageMode(.v5)],
-            linkerSettings: [.unsafeFlags([swiftrt, "-Xlinker", "/SUBSYSTEM:WINDOWS", "-Xlinker", "/ENTRY:mainCRTStartup"] + resourceFlags)]
+            linkerSettings: [.unsafeFlags([swiftrt, "-Xlinker", "/SUBSYSTEM:WINDOWS", "-Xlinker", "/ENTRY:mainCRTStartup"] + resourceFlags + mainStack)]
         ),
     ],
     swiftLanguageModes: [.v6],

@@ -187,9 +187,11 @@ int32_t bz_web_open(int32_t width, int32_t height, double scale, const char *age
 int32_t bz_web_resize(int32_t view, int32_t width, int32_t height, const char *agent);
 /// Starts loading the page at the address `text`, or `text` itself as a page with `isHTML`. 0 when begun.
 int32_t bz_web_load(int32_t view, const char *text, int32_t isHTML);
-/// How loading goes: 0 loading, 1 loaded, 2 failed (`error` says how, as WebView2's
-/// COREWEBVIEW2_WEB_ERROR_STATUS), 3 the page stopped working. `status` the page's HTTP status
-/// (0 unknown), `navigations` how many loads have begun, redirects and the page's own included.
+/// How loading goes: 0 loading, 1 loaded, 2 failed, 3 the page stopped working. Failed, `error`
+/// says why: 1 the server's certificate, 2 the connection was lost, 3 offline, 4 the server not
+/// reached, 5 no server of that name, 6 too many redirects, 7 a password asked for, 8 too slow, 0
+/// anything else. `status` the page's HTTP status (0 unknown), `navigations` how many loads have
+/// begun, redirects and the page's own included.
 int32_t bz_web_state(int32_t view, int32_t *status, int32_t *error, int32_t *navigations);
 /// Calls the DevTools protocol's `method` with `params` (JSON), waiting up to `timeout`
 /// milliseconds: 0 answered, 1 refused, -1 not asked, -2 no answer in time. `answer` gets the

@@ -272,10 +272,33 @@ struct View {
     std::mutex lock;
     int state = 0;       // 0 loading, 1 loaded, 2 failed, 3 the page's process went
     int status = 0;      // the HTTP status of the page
-    int error = 0;       // COREWEBVIEW2_WEB_ERROR_STATUS, when it failed
+    int error = 0;       // why it failed, as bz_web_state says it
     int navigations = 0; // how many have begun
     UINT64 latest = 0;   // the one begun last
 };
+
+/// Why a page could not be loaded, as bz_web_state says it.
+int reason(COREWEBVIEW2_WEB_ERROR_STATUS error) {
+    switch (error) {
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CLIENT_CERTIFICATE_CONTAINS_ERRORS:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID: return 1;
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_ABORTED:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_RESET:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_ERROR_HTTP_INVALID_SERVER_RESPONSE: return 2;
+    case COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED: return 3;
+    case COREWEBVIEW2_WEB_ERROR_STATUS_SERVER_UNREACHABLE:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT: return 4;
+    case COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED: return 5;
+    case COREWEBVIEW2_WEB_ERROR_STATUS_REDIRECT_FAILED: return 6;
+    case COREWEBVIEW2_WEB_ERROR_STATUS_VALID_AUTHENTICATION_CREDENTIALS_REQUIRED:
+    case COREWEBVIEW2_WEB_ERROR_STATUS_VALID_PROXY_AUTHENTICATION_REQUIRED: return 7;
+    case COREWEBVIEW2_WEB_ERROR_STATUS_TIMEOUT: return 8;
+    default: return 0;
+    }
+}
 
 using Reply = std::pair<int32_t, std::string>;
 
@@ -397,7 +420,7 @@ void settle(std::shared_ptr<View> view) {
                     view->state = 1;
                 } else {
                     view->state = 2;
-                    view->error = int(error);
+                    view->error = reason(error);
                 }
                 return S_OK;
             }),
@@ -616,7 +639,7 @@ extern "C" int32_t bz_web_load(int32_t id, const char* text, int32_t isHTML) {
             if (FAILED(hr)) {
                 std::lock_guard<std::mutex> guard(view->lock);
                 view->state = 2;
-                view->error = int(COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN);
+                view->error = 0;
             }
             done->say(FAILED(hr) ? -1 : 0);
         },

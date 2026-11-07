@@ -110,6 +110,10 @@ final class WebCapture {
 
     /// Reads the page at `url` at one size: what it is made of, and the pictures it shows.
     func read(_ url: URL, size: Size) async throws -> (WebRead, [String: Data]) {
+        // WebView2 says only that something went wrong where WebKit says the file is not there.
+        if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) {
+            throw Failure.load(String(localized: "There is no such file."))
+        }
         try await webView(for: size)
         say(String(localized: "Loading the page…"), 0.02)
         try await load(url.absoluteString, html: false)
@@ -191,18 +195,18 @@ final class WebCapture {
         }
     }
 
-    /// Why a page could not be loaded, as WebView2 says it (COREWEBVIEW2_WEB_ERROR_STATUS), in the
-    /// words the Mac's are.
+    /// Why a page could not be loaded, as bz_web_state says it, in the words the Mac's system says
+    /// it in.
     private static func why(_ error: Int32) -> String {
         switch error {
-        case 1, 2, 3, 4, 5, 6: String(localized: "The certificate for this server is invalid.")
-        case 7, 13: String(localized: "The network connection was lost.")
-        case 8: String(localized: "The Internet connection appears to be offline.")
-        case 9: String(localized: "Could not connect to the server.")
-        case 10: String(localized: "A server with the specified hostname could not be found.")
-        case 12: String(localized: "There were too many redirects.")
-        case 14, 15: String(localized: "The page asks for a password.")
-        case 16: String(localized: "The request timed out.")
+        case 1: String(localized: "The certificate for this server is invalid.")
+        case 2: String(localized: "The network connection was lost.")
+        case 3: String(localized: "The Internet connection appears to be offline.")
+        case 4: String(localized: "Could not connect to the server.")
+        case 5: String(localized: "A server with the specified hostname could not be found.")
+        case 6: String(localized: "There were too many redirects.")
+        case 7: String(localized: "The page asks for a password.")
+        case 8: String(localized: "The request timed out.")
         default: String(localized: "An unknown error occurred.")
         }
     }
@@ -216,11 +220,12 @@ final class WebCapture {
         say(String(localized: "Taking the page apart…"), 0.4)
         guard let json = try await call("return await __bezzle.capture(opts)", ["opts": options]) as? String,
               let data = json.data(using: .utf8) else { throw Failure.unreadable(String(localized: "nothing came back.")) }
-        let page: WebPage
+        var page: WebPage
         do { page = try JSONDecoder().decode(WebPage.self, from: data) } catch {
             throw Failure.unreadable(error.localizedDescription)
         }
-        guard page.root != nil else { throw Failure.empty }
+        guard let root = page.root else { throw Failure.empty }
+        page.root = Self.clippedAsInWebKit(root)
         var assets = WebAssets()
         var held: [String: Data] = [:]
         try await fetchPictures(page, into: &assets, held: &held)
@@ -229,6 +234,17 @@ final class WebCapture {
         var name = size.name
         if let status, status >= 400 { name += " (\(status))" }
         return (WebRead(name: name, page: page, assets: assets), held)
+    }
+
+    /// Edge's own style sheet cuts pictures, videos and canvases off at their boxes (overflow:
+    /// clip), where Safari's lets them be: what they show is in their box either way, so they are
+    /// read as unclipped, as on the Mac, and come in as pictures with their corners rather than
+    /// as masks.
+    nonisolated static func clippedAsInWebKit(_ item: WebItem) -> WebItem {
+        var item = item
+        if item.clip == true, ["img", "video", "canvas"].contains(item.tag ?? ""), item.kids?.isEmpty ?? true { item.clip = nil }
+        item.kids = item.kids?.map(clippedAsInWebKit)
+        return item
     }
 
     // MARK: The page's scripts
