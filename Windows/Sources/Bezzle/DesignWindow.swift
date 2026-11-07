@@ -200,6 +200,18 @@ final class DesignWindow {
                 default: if versions.lookingBack, GetKeyState(Int32(VK_CONTROL)) >= 0 { return }
                 }
             }
+            // Ctrl+N and Ctrl+W go home, Ctrl+Shift+S saves a copy, as ⌘N, ⌘W and ⇧⌘S on the Mac.
+            if GetKeyState(Int32(VK_CONTROL)) < 0, args.key == .n || args.key == .w || (args.key == .s && GetKeyState(Int32(VK_SHIFT)) < 0) {
+                args.handled = true
+                let key = args.key
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.canvas.finishTyping()
+                        if key == .s { self.session.onSaveCopy?() } else { self.session.onHome?() }
+                    }
+                }
+                return
+            }
             // Ctrl+E exports, as ⌘E does on the Mac.
             if args.key == .e, GetKeyState(Int32(VK_CONTROL)) < 0 {
                 args.handled = true

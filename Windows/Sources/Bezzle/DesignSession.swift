@@ -125,6 +125,10 @@ final class DesignSession {
 
     /// Asks for a design to open (Ctrl+O).
     var onOpen: (() -> Void)?
+    /// Back to the home screen, the design saved (Ctrl+N, Ctrl+W: the Mac's New… and Close).
+    var onHome: (() -> Void)?
+    /// A copy of the design saved beside the others and opened (Ctrl+Shift+S, the Mac's Save a Copy).
+    var onSaveCopy: (() -> Void)?
 
     /// Why the design could not be saved, if it could not; shown by the window.
     private(set) var unsaved: String?

@@ -74,6 +74,7 @@ enum Words {
         "Curve": "curve.title", "On Path": "curve.on-path", "Dip": "curve.dip", "Arch": "curve.arch", "Half circle": "curve.half",
         "Goes To": "flow.card", "Screen": "screen.card", "States": "states.card",
         "Put Text on Path": "undo.text-on-path", "Straighten Text": "undo.straighten-text", "Take Text off Path": "undo.take-text-off-path",
+        "Release Mask": "undo.release-mask", "Take Out of Mask": "undo.take-out-of-mask",
     ]
 
     /// One of Bezzle's words, as it reads in the language.

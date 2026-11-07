@@ -3537,6 +3537,14 @@ final class DesignCanvas {
         session.edited(board: nil)
     }
 
+    /// Each selected layer's border made a shape of its own (Ctrl+Alt+O, the Mac's ⌥⌘O).
+    private func outlineBorders() {
+        let made = WindowsCore.outlineBorders(session.selection)
+        guard !made.isEmpty else { MessageBeep(0); return }
+        session.select(made, on: session.board)
+        session.edited(board: nil)
+    }
+
     /// The tools that draw a layer, and the kind each draws; the others are to come.
     private func drawn(_ tool: Glyphs.Tool) -> String? {
         switch tool {
@@ -3912,6 +3920,10 @@ final class DesignCanvas {
                 })
             }
             if canGroup || canUngroup || canMask || mask != nil || ridable || straightens { entries.append(.separator) }
+            // Borders as shapes of their own, as the Mac's Object menu has it.
+            if WindowsCore.canOutlineBorders(selection) {
+                entries += [.item(selection.count == 1 ? "Outline Border" : "Outline Borders", shortcut: "Ctrl+Alt+O") { [weak self] in self?.outlineBorders() }, .separator]
+            }
             // Repeat grids, as the Mac's menu has them.
             if WindowsCore.canRepeat(selection) {
                 entries += [.item("Make Repeat Grid", shortcut: "Ctrl+R") { [weak self] in self?.makeRepeatGrid() }, .separator]
@@ -4181,6 +4193,7 @@ final class DesignCanvas {
         case .s where control && option: combine("subtract"); args.handled = true; return
         case .i where control && option: combine("intersect"); args.handled = true; return
         case .x where control && option: combine("exclude"); args.handled = true; return
+        case .o where control && option: outlineBorders(); args.handled = true; return
         case .m where control && shift:
             if let mask = WindowsCore.selectedMask(selection) { releaseMask(mask) } else { MessageBeep(0) }
             args.handled = true
@@ -4210,6 +4223,7 @@ final class DesignCanvas {
         case .o where control: session.onOpen?(); args.handled = true; return
         case .number0 where control: fit(); args.handled = true; return
         case .number1 where control: zoom(to: 1, around: CGPoint(x: root.actualWidth / 2, y: root.actualHeight / 2)); args.handled = true; return
+        case .number2 where control: fitSelection(); args.handled = true; return
         default:
             let raw = args.key.rawValue
             if control, raw == 187 || raw == 107 { self.step(in: true); args.handled = true; return }   // = and the keypad's +

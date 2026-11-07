@@ -291,6 +291,31 @@ extension WindowsCore {
         return url
     }
 
+    /// Writes a copy of the open design into `folder`, as the Mac's Save a Copy does: its
+    /// document and pictures (not its versions or sharing), named `name` or, when that is taken,
+    /// "name 2" and on. Returns where it is.
+    public static func saveCopy(named name: String, in folder: URL) throws -> URL {
+        guard let doc = previewBase ?? design else { throw CoreError("No design is open.") }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var url = folder.appendingPathComponent("\(name).bezzle")
+        var i = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(name) \(i).bezzle")
+            i += 1
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let images = url.appendingPathComponent("images", isDirectory: true)
+        if let from = assets.folder, FileManager.default.fileExists(atPath: from.path) {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: from, to: images)
+        } else {
+            try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+        }
+        try encoder.encode(doc).write(to: url.appendingPathComponent("document.json"), options: .atomic)
+        return url
+    }
+
     /// Draws the first artboard of the design at `url` for a thumbnail, `width` pixels wide,
     /// into BGRA pixels `fill` gives once it has the size; opens the design to do it.
     public static func thumbnail(of url: URL, width: Double, height: Double, scale: Double, into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
