@@ -162,6 +162,15 @@ extension WindowsCore {
                            type: type, words: node.kind == .text ? node.text : nil, looks: looks, isText: node.kind == .text)
     }
 
+    /// The layers from the screen down to this one, by id.
+    public static func inspectPath(_ id: UUID) -> [UUID] {
+        guard let seen = design else { return [] }
+        return Inspect.path(of: id, in: seen).map(\.id)
+    }
+
+    /// A layer's name.
+    public static func layerName(_ id: UUID) -> String? { design?.node(id)?.name }
+
     /// The layer written as code for the platform (CSS, or SwiftUI), its looks by the names the design gives them.
     public static func inspectCode(_ id: UUID, platform: InspectPlatform) -> String {
         guard let seen = design, let node = seen.node(id) else { return "" }

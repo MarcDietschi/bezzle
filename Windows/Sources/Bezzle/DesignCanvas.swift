@@ -163,6 +163,8 @@ final class DesignCanvas {
     /// The photo as the control (the Mac's DevelopTool, ported), with what it shows.
     var develop: WindowsCore.DevelopHand { session.develop }
     private let developMarks = Canvas()
+    /// The millimetre paper under the screens while prototyping or inspecting.
+    private let paper = Canvas()
     /// The design inspected (the Mac's InspectTool, ported): its measures.
     var inspect: WindowsCore.InspectHand { session.inspect }
     private let inspectMarks = Canvas()
@@ -350,6 +352,9 @@ final class DesignCanvas {
         session.listen { [weak self] in
             self?.placeOverlays()
             self?.drawPen()
+            // Into or out of Inspect: the paper and the measures come or go.
+            self?.drawPaper()
+            self?.drawInspect()
         }
         session.listenToHover { [weak self] in self?.placeOverlays() }
         session.listenToEdits { [weak self] board in
@@ -511,7 +516,50 @@ final class DesignCanvas {
     }
 
     /// Everything where the zoom and pan put it.
+    /// The canvas seen as a prototype or inspected: a sheet of millimetre paper, ruled in the
+    /// pencil's blue under the screens, as the Mac's FlowTool draws it: the fine ruling never
+    /// closer than 9 points on screen nor further apart than 45, every fifth line a stronger one,
+    /// fixed to the canvas as it moves.
+    private func drawPaper() {
+        if paper.parent == nil {
+            paper.isHitTestVisible = false
+            try? stage.children.insertAt(0, paper)
+        }
+        paper.children.clear()
+        guard session.mode != 0 else { return }
+        let w = Double(stage.actualWidth), h = Double(stage.actualHeight)
+        guard w > 0, h > 0 else { return }
+        var step = 8.0
+        while step * zoom < 9 { step *= 5 }
+        while step * zoom > 45 { step /= 5 }
+        var minor = PathData(), major = PathData()
+        let ox = -Double(pan.x) / zoom, oy = -Double(pan.y) / zoom
+        var i = Int(floor(ox / step))
+        while true {
+            let x = (Double(i) * step - ox) * zoom
+            if x > w { break }
+            let c = x.rounded() + 0.5
+            if i % 5 == 0 { major.move(c, 0); major.line(c, h) } else { minor.move(c, 0); minor.line(c, h) }
+            i += 1
+        }
+        var j = Int(floor(oy / step))
+        while true {
+            let y = (Double(j) * step - oy) * zoom
+            if y > h { break }
+            let c = y.rounded() + 0.5
+            if j % 5 == 0 { major.move(0, c); major.line(w, c) } else { minor.move(0, c); minor.line(w, c) }
+            j += 1
+        }
+        let ink = Theme.dark ? 0x8FA8F2 as UInt32 : 0x3A63D8
+        for (d, alpha) in [(minor, Theme.dark ? 0.07 : 0.075), (major, Theme.dark ? 0.14 : 0.17)] {
+            guard let path = markPath(d) else { continue }
+            path.stroke = Theme.brush(ink, alpha)
+            paper.children.append(path)
+        }
+    }
+
     private func place() {
+        drawPaper()
         for (k, board) in boards.enumerated() {
             guard let sheet = sheets[k] else { continue }
             let at = onStage(board.frame.origin)
@@ -2993,6 +3041,28 @@ final class DesignCanvas {
                 WindowsCore.guidesLocked.toggle()
                 self?.drawAids()
             }]
+            menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), entries: entries)
+            return
+        }
+        // Inspecting: copying what is under the pointer, never changing it, as the Mac's InspectTool menu.
+        if inspecting {
+            syncInspect()
+            guard let d = inspect.deepest(at: p) else { return }
+            // What is picked stays picked when the menu opens on it, or on something in it.
+            if !(session.selection.count == 1 && WindowsCore.inspectPath(d).contains(session.selection[0])) {
+                session.select([d], on: WindowsCore.board(of: d) ?? WindowsCore.boardIndex(of: d))
+            }
+            guard let id = session.selection.first else { return }
+            var entries: [MenuHost.Entry] = [
+                .item("Copy CSS") { Clipboard.copyText(WindowsCore.inspectCode(id, platform: .css)) },
+                .item("Copy SwiftUI") { Clipboard.copyText(WindowsCore.inspectCode(id, platform: .swiftui)) },
+                .separator,
+                .item("Copy Name") { Clipboard.copyText(WindowsCore.layerName(id) ?? "") },
+            ]
+            if let words = WindowsCore.inspectSpec(id, platform: .css)?.words, !words.isEmpty {
+                entries.append(.item("Copy Text") { Clipboard.copyText(words) })
+            }
+            drawInspect()
             menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), entries: entries)
             return
         }
