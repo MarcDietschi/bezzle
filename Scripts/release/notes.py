@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PATH = os.path.join(ROOT, "RELEASE_NOTES.md")
 # English first: it is also the feed's description without a language, for every other Mac.
 LANGS = ("en", "de", "fr", "it")
-SITE = "https://mfrports.github.io/bezzle-web/"
+SITE = "https://bezzle.ch/"
 
 
 def version_key(version):

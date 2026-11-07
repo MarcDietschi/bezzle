@@ -1,7 +1,8 @@
 #!/bin/zsh
-# Puts the browser version on Bezzle's website, at /bezzle-web/app/: the page a design's link opens
-# (site/shared.html), its modules, the core and CanvasKit gzipped (GitHub Pages does not compress
-# WebAssembly; the page unpacks them), and the open fonts in place of Apple's (tools/openfonts.py).
+# Puts the browser version on Bezzle's website, at bezzle.ch/app/: the page a design's link opens
+# (site/shared.html), its modules, the core and CanvasKit gzipped (the page unpacks them, and the
+# website's .htaccess serves them as they are), and the open fonts in place of Apple's
+# (tools/openfonts.py).
 # It writes into the website's repository and leaves committing and pushing to whoever runs it.
 #
 #   ./publish.sh [~/Sites/bezzle-web]

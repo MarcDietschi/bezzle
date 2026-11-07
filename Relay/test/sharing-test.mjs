@@ -103,7 +103,7 @@ const now = Date.now();
 const preflight = await fetch(`${relay}${base}/meta`, {
   method: "OPTIONS",
   headers: {
-    origin: "https://mfrports.github.io",
+    origin: "https://bezzle.ch",
     "access-control-request-method": "PUT",
     "access-control-request-headers": "authorization,content-type,x-bezzle-owner,x-bezzle-writer",
   },

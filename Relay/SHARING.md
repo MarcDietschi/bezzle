@@ -10,7 +10,7 @@ Anyone with the link can work on the design. No accounts: a person is the name t
 
 ## The link
 
-    https://mfrports.github.io/bezzle-web/open.html#2.<secret>
+    https://bezzle.ch/open.html#2.<secret>
     bezzle://share/2.<secret>
 
 `<secret>` is 32 random bytes, base64url without padding (43 characters). The fragment never

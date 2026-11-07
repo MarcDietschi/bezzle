@@ -249,6 +249,10 @@ final class Sharing {
 
     // MARK: Opening a link
 
+    /// Where Bezzle's website is, and was until 7 November 2026: links made before then lead to
+    /// mfrports.github.io/bezzle-web, which sends them on to bezzle.ch.
+    nonisolated static let websites: Set<String> = ["bezzle.ch", "www.bezzle.ch", "mfrports.github.io"]
+
     /// The secret in a design's link: `bezzle://share/2.<secret>`, or Bezzle's page on the web with
     /// it after the #. Anything else is not a design's link.
     nonisolated static func secret(from url: URL) -> String? {
@@ -258,7 +262,7 @@ final class Sharing {
             guard url.host()?.lowercased() == "share" else { return nil }
             token = url.path(percentEncoded: false).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         case "https":
-            guard url.host()?.lowercased() == "mfrports.github.io", let fragment = url.fragment(percentEncoded: false) else { return nil }
+            guard let host = url.host()?.lowercased(), websites.contains(host), let fragment = url.fragment(percentEncoded: false) else { return nil }
             token = fragment
         default:
             return nil

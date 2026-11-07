@@ -110,19 +110,21 @@ struct SharingTests {
 
     /// A design's link is Bezzle's page on the web with its secret after the #, which the page hands
     /// Bezzle as `bezzle://share/2.<secret>`; both give the secret back, and nothing else is taken
-    /// for a link.
+    /// for a link. Links made before the website moved to bezzle.ch still lead to the design.
     @Test func aLinkCarriesItsSecretAfterTheHash() throws {
         let secret = ShareKeys.newSecret().base64URL
         let link = ShareLink(secret: secret)
         let page = try #require(link.page)
-        #expect(page.absoluteString == "https://mfrports.github.io/bezzle-web/open.html#2.\(secret)")
+        #expect(page.absoluteString == "https://bezzle.ch/open.html#2.\(secret)")
         #expect(Sharing.secret(from: page) == secret)
-        for given in ["bezzle://share/2.\(secret)", "bezzle://share/2.\(secret)/", "BEZZLE://Share/2.\(secret)"] {
+        for given in ["bezzle://share/2.\(secret)", "bezzle://share/2.\(secret)/", "BEZZLE://Share/2.\(secret)",
+                      "https://www.bezzle.ch/de/open.html#2.\(secret)", "https://mfrports.github.io/bezzle-web/open.html#2.\(secret)"] {
             #expect(Sharing.secret(from: URL(string: given)!) == secret, "\(given)")
         }
         for given in ["bezzle://share/", "bezzle://share/\(secret)", "bezzle://share/2.abc", "bezzle://open/2.\(secret)",
                       "https://example.com/bezzle-web/open.html#2.\(secret)", "https://www.icloud.com/share/0bjtbTTaM5b7bG1ff6dnKFbmg",
-                      "http://mfrports.github.io/bezzle-web/open.html#2.\(secret)", "file:///Users/someone/Design.bezzle"] {
+                      "http://mfrports.github.io/bezzle-web/open.html#2.\(secret)", "http://bezzle.ch/open.html#2.\(secret)",
+                      "https://bezzle.ch.example.com/open.html#2.\(secret)", "file:///Users/someone/Design.bezzle"] {
             #expect(Sharing.secret(from: URL(string: given)!) == nil, "\(given)")
         }
         #expect(ShareLink(secret: secret, ended: true).page == nil)

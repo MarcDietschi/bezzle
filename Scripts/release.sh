@@ -30,9 +30,12 @@ fail() { echo "$*" >&2; exit 1; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 SITE_REPO=mfrports/bezzle-web
-SITE=https://mfrports.github.io/bezzle-web
-# The app's SUFeedURL: written into every copy, so it never moves.
+SITE=https://bezzle.ch
+# The app's SUFeedURL: written into every copy, so it never moves. Copies made before the website
+# moved to bezzle.ch (7 November 2026) read OLD_FEED_URL, which the website's Deploy keeps as the same
+# file for good: a release is out once both offer it.
 FEED_URL="$SITE/updates/appcast.xml"
+OLD_FEED_URL=https://mfrports.github.io/bezzle-web/updates/appcast.xml
 SPARKLE_VERSION=2.10.0
 SPARKLE_SHA256=c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
 SPARKLE_PUBLIC_KEY=gvpXvDhAL5jDyaSz0Vm5FtB2O/PKY1NRdNqSKR8cldU=
@@ -245,13 +248,14 @@ git -C "$WORK/site" add public/updates/appcast.xml src/releases/RELEASE_NOTES.md
 git -C "$WORK/site" commit -q -m "Bezzle $VERSION" -m "The update feed and the release notes, from the app's Scripts/release.sh."
 # gh's sign-in, for this push alone.
 git -C "$WORK/site" -c credential.helper= -c 'credential.helper=!gh auth git-credential' push -q origin HEAD:main
-echo "Waiting for GitHub Pages…"
+echo "Waiting for the website…"
+offers() { curl -fsS "$1?check=$(date +%s)" 2>/dev/null | grep -q "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>"; }
 LIVE=""
 for _ in $(seq 1 60); do
-  if curl -fsS "$FEED_URL?check=$(date +%s)" 2>/dev/null | grep -q "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>"; then LIVE=1; break; fi
+  if offers "$FEED_URL" && offers "$OLD_FEED_URL"; then LIVE=1; break; fi
   sleep 10
 done
-[ -n "$LIVE" ] || fail "After 10 minutes $FEED_URL still does not offer $VERSION: see the Deploy workflow at https://github.com/$SITE_REPO/actions. Once it does, tag the commit: git tag v$VERSION $COMMIT && git push origin refs/tags/v$VERSION"
+[ -n "$LIVE" ] || fail "After 10 minutes $FEED_URL and $OLD_FEED_URL do not both offer $VERSION: see the Deploy workflow at https://github.com/$SITE_REPO/actions. Once they do, tag the commit: git tag v$VERSION $COMMIT && git push origin refs/tags/v$VERSION"
 curl -fsS "$SITE/download.html?check=$(date +%s)" | grep -qF "Bezzle-$VERSION.zip" || echo "The download page does not show $VERSION yet: check $SITE/download.html" >&2
 
 # The tag comes last, as the mark that this version is out.

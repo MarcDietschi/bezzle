@@ -28,7 +28,7 @@ nonisolated struct ShareLink: Codable, Equatable, Sendable {
     /// The page on Bezzle's website that hands the link to Bezzle, in any browser.
     var page: URL? {
         guard keys != nil else { return nil }
-        return URL(string: "https://mfrports.github.io/bezzle-web/open.html#2.\(secret)")
+        return URL(string: "https://bezzle.ch/open.html#2.\(secret)")
     }
 }
 

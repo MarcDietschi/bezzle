@@ -102,7 +102,7 @@ for (const [pic, data] of pictures) {
 }
 
 // 1. From the link alone.
-const link = `https://mfrports.github.io/bezzle-web/open.html#2.${b64url(secret)}`
+const link = `https://bezzle.ch/open.html#2.${b64url(secret)}`
 const ben = await join(await ShareKeys.fromLink(link), 'ben')
 check(ShareKeys.secretIn(link) === b64url(secret) && ShareKeys.secretIn('https://x/open.html#2.short') === null, 'the secret comes out of the link, and only from a whole one')
 check(ben.meta?.title === 'Poster' && ben.meta?.owner === 'Anna', 'the design’s name and owner come with it')

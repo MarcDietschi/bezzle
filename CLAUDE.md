@@ -2,7 +2,7 @@
 
 ## Releases
 
-Bezzle ships from its website alone, https://mfrports.github.io/bezzle-web/download.html, at the
+Bezzle ships from its website alone, https://bezzle.ch/download.html, at the
 version set in Xcode (`MARKETING_VERSION`); there is no App Store version (Erik, 2026-11-06).
 `Scripts/release.sh` builds it with the Swift condition `BEZZLE_DIRECT`, and Sparkle keeps it up to
 date (`Bezzle/App/Updates.swift`).
@@ -26,8 +26,9 @@ Whenever the version is raised, or Erik asks for a release:
    subject matte, exports with the Developer ID, adds Sparkle, signs, notarizes and staples. It then
    publishes the zip and delta updates as the GitHub release `v<version>` of mfrports/bezzle-web. It
    then commits the new feed and a copy of `RELEASE_NOTES.md` there, which rebuilds and deploys the
-   site. Once the feed is live it tags the commit `v<version>`, which marks the version as released.
-4. **Check** https://mfrports.github.io/bezzle-web/download.html and `/updates/appcast.xml`.
+   site. Once the feed is live on bezzle.ch and on GitHub Pages it tags the commit `v<version>`, which
+   marks the version as released.
+4. **Check** https://bezzle.ch/download.html and `/updates/appcast.xml`.
 
 How to write the notes: for the people who use Bezzle, not for developers. Say what they can do now
 and why it matters, benefit first. Only what really shipped. Quiet and plain, no exclamation marks,
@@ -38,14 +39,18 @@ fix with nothing to show gets a title and a lede, no list.
 
 ### How the website copy is put together
 
-- **Website**: its own repository, mfrports/bezzle-web, locally `~/Sites/bezzle-web`, like gerty-web
-  for Gerty. Its source (Vite, React and Tailwind: the pages, the words in four languages, the
-  story's rebuilt window in `src/story/`, `public/img`) is edited there, and every push to its main deploys it to GitHub Pages; its README has the rest.
-  This repository holds no part of the site.
-- **Feed**: https://mfrports.github.io/bezzle-web/updates/appcast.xml, the file
-  `public/updates/appcast.xml` in bezzle-web. It is every copy's `SUFeedURL`, so it never moves.
-  It lists the newest version alone, with its deltas and its notes in every language. Only
-  `release.sh` writes it.
+- **Website**: https://bezzle.ch, a webspace at One.com (Erik, since 2026-11-07). Its own repository,
+  mfrports/bezzle-web, locally `~/Sites/bezzle-web`, like gerty-web for Gerty. Its source (Vite,
+  React and Tailwind: the pages, the words in four languages, the story's rebuilt window in
+  `src/story/`, `public/img`) is edited there, and every push to its main deploys it to bezzle.ch by
+  FTP (the repository's `FTP_*` secrets). GitHub Pages, mfrports.github.io/bezzle-web, where the
+  site was before, then gets a redirect for every page (a link's # comes along) and the feed. Its
+  README has the rest. This repository holds no part of the site.
+- **Feed**: https://bezzle.ch/updates/appcast.xml, the file `public/updates/appcast.xml` in
+  bezzle-web, is the `SUFeedURL` of the copies released after the move. The copies before it read
+  https://mfrports.github.io/bezzle-web/updates/appcast.xml, which every deploy keeps the same file.
+  Neither ever moves. It lists the newest version alone, with its deltas and its notes in every
+  language. Only `release.sh` writes it.
 - **Zips and deltas**: the releases of the public repository mfrports/bezzle-web (the app's own
   repository is private). `release.sh` keeps the last released zips in
   `~/Library/Caches/bezzle-release/dist`, fetching them from GitHub when missing, to make the deltas
@@ -56,6 +61,8 @@ fix with nothing to show gets a title and a lede, no list.
 - **Signing key**: Sparkle's EdDSA key is the one Gerty's releases use (login Keychain, account
   `ed25519`; also the `SPARKLE_PRIVATE_KEY` secret of mfrports/gerty). One key serves every app. Its
   public half is `SPARKLE_PUBLIC_KEY` in `release.sh`. Lose it, and no installed copy can be updated.
+- **Links**: a shared design's link is `https://bezzle.ch/open.html#2.<secret>`; the app still takes
+  the `mfrports.github.io` links made before the move (`Sharing.websites`).
 - **Same app, same data**: both copies have the bundle id `com.erik.Bezzle` and the same sandbox
   container, so they open the same designs, share through the same relay (`Relay/SHARING.md`), and
   hand over to each other like two copies of one app (`HandOver`).

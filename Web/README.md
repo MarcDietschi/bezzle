@@ -165,10 +165,10 @@ and open http://127.0.0.1:8765/Web/site/index.html.
 
 ## Hosting
 
-The page is static files and the core is single-threaded, so it needs none of the
-cross-origin isolation headers GitHub Pages cannot send. It could sit in bezzle-web's `public/`,
-for example at `/bezzle-web/app/`. What does not fit there: Apple's fonts (designs set in SF Pro
-need another answer before a public version), and threads for drawing tiles in parallel (they
-need those headers, or a service worker that adds them). The invitation page, open.html, is the
-way in: without Bezzle installed it can open the design in the browser instead. At about 22 MB a first visit, GitHub Pages' soft limit of 100 GB a month
-is some 4,500 first visits; a core on FoundationEssentials alone would be a fraction of that.
+The page is static files and the core is single-threaded, so it needs no cross-origin isolation
+headers. It sits in bezzle-web's `public/app/`, published at https://bezzle.ch/app/ (`publish.sh`).
+What does not fit there: Apple's fonts (designs set in SF Pro need another answer before a public
+version), and threads for drawing tiles in parallel (they need those headers, which the website's
+`.htaccess` could send now that it is on its own server). The invitation page, open.html, is the way
+in: without Bezzle installed it can open the design in the browser instead. A first visit loads
+about 22 MB; a core on FoundationEssentials alone would be a fraction of that.
