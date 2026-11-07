@@ -79,10 +79,13 @@ do {
         if v.count == 4 { print(WindowsCore.debugCut(from: BezzleCore.CGPoint(x: v[0], y: v[1]), to: BezzleCore.CGPoint(x: v[2], y: v[3]))) }
         boards = WindowsCore.boards()
     }
-    // With BEZZLE_EXPORT (png, jpeg, webp or pdf), every artboard is exported there as the
-    // Export sheet exports them, at the scale given.
+    // With BEZZLE_EXPORT (png, jpeg, webp, avif, svg or pdf), every artboard is exported there as
+    // the Export sheet exports them, at the scale given, at BEZZLE_QUALITY (0…1, 0.9 otherwise);
+    // with BEZZLE_SCOPE=marked, what is marked for export instead, as each is marked.
     if let format = ProcessInfo.processInfo.environment["BEZZLE_EXPORT"] {
-        let outcome = await WindowsCore.export("all", format: format, scale: scale, quality: 0.9, selection: [], to: out, replacing: true) { _ in }
+        let quality = ProcessInfo.processInfo.environment["BEZZLE_QUALITY"].flatMap { Double($0) } ?? 0.9
+        let scope = ProcessInfo.processInfo.environment["BEZZLE_SCOPE"] ?? "all"
+        let outcome = await WindowsCore.export(scope, format: format, scale: scale, quality: quality, selection: [], to: out, replacing: true) { _ in }
         print("exported: \(outcome.written) written, \(outcome.missed) missed → \(outcome.shown.lastPathComponent)")
         exit(0)
     }

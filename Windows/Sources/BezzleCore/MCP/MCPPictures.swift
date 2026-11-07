@@ -80,7 +80,6 @@ extension MCPTools {
         let store = try await store(args)
         let doc = store.doc
         let format = try Self.format(try args.string("format") ?? "png")
-        guard format != .avif else { throw MCPError("Bezzle on Windows does not write AVIF: png, jpeg, webp, svg and pdf it does.") }
         // Whole numbers, as the Export sheet offers them, so the files are named "@2x" and so on.
         let scale = CGFloat(min(max((try args.number("scale") ?? 1).rounded(), 1), 4))
         let quality = min(max(try args.number("quality") ?? 0.9, 0), 1)

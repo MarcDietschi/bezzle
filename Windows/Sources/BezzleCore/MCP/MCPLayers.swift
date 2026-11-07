@@ -232,7 +232,7 @@ extension MCPTools {
         guard let f = ExportFormat(rawValue: w == "jpg" ? "jpeg" : w) else {
             throw MCPError("There is no format \(word). There are: \(ExportFormat.offered.map(\.rawValue).joined(separator: ", ")).")
         }
-        guard f.isAvailable else { throw MCPError("This Mac cannot write \(f.title) files. It can write \(ExportFormat.offered.map(\.rawValue).joined(separator: ", ")).") }
+        guard f.isAvailable else { throw MCPError("This copy of Bezzle cannot write \(f.title) files. It can write \(ExportFormat.offered.map(\.rawValue).joined(separator: ", ")).") }
         return f
     }
 

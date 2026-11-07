@@ -3,8 +3,10 @@ import CBezzleHost
 
 // Exporting on Windows, as the Mac exports (Export/Exporter.swift): what goes out, how the files
 // are named and where they go is the shared ExportPlan.swift; here each is drawn with Skia and
-// written as PNG, JPEG or WebP, or as one PDF that keeps text and shapes sharp; SVG is the
-// shared SVGWriter, its text and pictures as Web/WebSVGText.swift has them. AVIF is the Mac's alone.
+// written as PNG, JPEG or WebP, as AVIF by libavif as the Mac's Image I/O writes it (CBezzleHost/
+// avif.cpp; offered when the build has it, Host/PictureFormats.swift), or as one PDF that keeps
+// text and shapes sharp; SVG is the shared SVGWriter, its text and pictures as Web/WebSVGText.swift
+// has them.
 
 extension ExportItem {
     /// The part of the canvas it covers: an artboard's frame, or for a layer just what it paints,
@@ -86,7 +88,7 @@ extension ExportItem {
 extension WindowsCore {
     /// The kinds of file Bezzle for Windows writes, in the order the Mac offers them.
     public static var exportFormats: [String] {
-        ExportFormat.offered.filter { $0 != .avif }.map(\.rawValue)
+        ExportFormat.offered.map(\.rawValue)
     }
 
     public static func formatTitle(_ raw: String) -> String { ExportFormat(rawValue: raw)?.title ?? raw }
@@ -196,13 +198,18 @@ extension WindowsCore {
                 forget(before: first)
             }
             return bz_pdf_end(pdf) == 0 && ok
-        case .png, .jpeg, .webp:
-            guard let item = file.items.first else { return false }
+        case .png, .jpeg, .webp, .avif:
+            guard let item = file.items.first, file.format.isAvailable else { return false }
             let scale = file.scale(drawn: item.bounds(assets: assets).size)
             guard let drawn = item.pixels(scale: scale, opaque: !file.format.keepsTransparency, assets: assets) else { return false }
             // A WebP is at most 16383 pixels a side.
             if file.format == .webp, max(drawn.width, drawn.height) > 16_383 { return false }
-            let kind: Int32 = file.format == .jpeg ? 1 : file.format == .webp ? 2 : 0
+            let kind: Int32 = switch file.format {
+            case .jpeg: 1
+            case .webp: 2
+            case .avif: 3
+            default: 0
+            }
             return drawn.pixels.withUnsafeBytes { bz_image_write(url.path, Int32(drawn.width), Int32(drawn.height), $0.baseAddress, kind, quality) } == 0
         case .svg:
             guard let item = file.items.first else { return false }
@@ -216,8 +223,6 @@ extension WindowsCore {
             }
             let svg = SVGWriter.document(for: item, bounds: bounds, assets: assets)
             return (try? svg.write(to: url, atomically: true, encoding: .utf8)) != nil
-        case .avif:
-            return false
         }
     }
 }

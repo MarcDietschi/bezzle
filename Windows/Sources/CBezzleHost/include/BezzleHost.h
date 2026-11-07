@@ -151,7 +151,8 @@ int32_t bz_png_write(const char *path, int32_t width, int32_t height, const void
 /// how many bytes, which `bz_host_take` hands over; 0 when it could not be made.
 int32_t bz_image_encode(int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
 /// Writes premultiplied RGBA pixels as a picture file: `format` 0 PNG, 1 JPEG, 2 WebP (lossless at
-/// a quality of 1), `quality` 0…1. Returns 0 when written.
+/// a quality of 1), 3 AVIF (as the Mac's Image I/O writes it, avif.cpp), `quality` 0…1. Returns 0
+/// when written.
 int32_t bz_image_write(const char *path, int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
 /// 1 when this build reads and writes AVIF (Windows/avif.ps1 made libavif and libaom for it), else 0.
 int32_t bz_avif_available(void);

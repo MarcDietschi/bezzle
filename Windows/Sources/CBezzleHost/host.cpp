@@ -1479,6 +1479,12 @@ extern "C" int32_t bz_image_write(const char* path, int32_t width, int32_t heigh
             options.fQuality = float(quality >= 1 ? 75 : std::clamp(quality * 100, 0.0, 100.0));
             return SkWebpEncoder::Encode(&file, pixmap, options) ? 0 : 2;
         }
+        case 3: {
+            // As the Mac's Image I/O writes AVIF (avif.cpp).
+            std::vector<uint8_t> bytes;
+            if (!avif::write(width, height, static_cast<const uint8_t*>(pixels), quality, bytes)) return 2;
+            return file.write(bytes.data(), bytes.size()) ? 0 : 2;
+        }
         default:
             return SkPngEncoder::Encode(&file, pixmap, {}) ? 0 : 2;
     }

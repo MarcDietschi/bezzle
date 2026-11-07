@@ -78,8 +78,9 @@ let package = Package(
             dependencies: frameworks.map { .target(name: $0) } + ["LZFSE", "CBezzleHost", "Compression", "Accelerate"],
             // The browser's host and Main.swift are replaced by Host/; DesignTokens.swift comes
             // from Web/prepare.sh, as for the web core. Live.swift seals with CryptoKit, which
-            // Host/Sealing.swift stands in for with Windows' own cryptography.
-            exclude: ["Platform/WebHost.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],
+            // Host/Sealing.swift stands in for with Windows' own cryptography. Which picture files
+            // can be written is Host/PictureFormats.swift's to say (AVIF with avif.ps1's libraries).
+            exclude: ["Platform/WebHost.swift", "Platform/ImageIO.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],
             swiftSettings: [.defaultIsolation(MainActor.self), .unsafeFlags(["-Xfrontend", "-disable-availability-checking"])]
         ),
         .executableTarget(

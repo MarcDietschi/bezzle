@@ -314,7 +314,7 @@ extension MCPTools {
                        properties: .object([
                            design,
                            ("layers", Self.list("Artboards or layers to export. The selection otherwise, or every artboard when nothing is selected; with marked, everything marked for export.")),
-                           ("format", Self.choice(ExportFormat.offered.filter { $0 != .avif }.map(\.rawValue), "png otherwise.")),
+                           ("format", Self.choice(ExportFormat.offered.map(\.rawValue), "png otherwise.")),
                            ("scale", Self.integer("For pictures (png, jpeg, webp, avif): pixels to a point, 1 to 4; 1 otherwise.")),
                            ("quality", Self.number("For jpeg, webp and avif: how much of the picture is kept, 0 to 1; 0.9 otherwise. 1 makes a webp lossless.")),
                            ("marked", Self.boolean("Export each layer as its exports say, ignoring format and scale.")),
