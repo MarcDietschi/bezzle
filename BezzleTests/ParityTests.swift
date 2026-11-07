@@ -446,6 +446,47 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    /// The look of a few pictures (their tones, colours, what is lost to black and white) and
+    /// what Auto makes of them, plain and developed.
+    @Test func pictureLooksAndAuto() {
+        func picture(_ w: Int, _ h: Int, _ color: (Int, Int) -> (Double, Double, Double)) -> CGImage {
+            let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            for y in 0..<h { for x in 0..<w {
+                let (r, g, b) = color(x, y)
+                ctx.setFillColor(CGColor(srgbRed: r, green: g, blue: b, alpha: 1))
+                ctx.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }}
+            return ctx.makeImage()!
+        }
+        let pictures: [(String, CGImage)] = [
+            ("warm ramp", picture(120, 80) { x, y in (0.3 + Double(x) / 200, 0.25 + Double(x) / 260, 0.15 + Double(y) / 500) }),
+            ("dark", picture(100, 100) { x, y in let v = 0.02 + Double((x * 7 + y * 13) % 23) / 120; return (v, v * 0.9, v * 1.1) }),
+            ("blocks", picture(96, 64) { x, y in
+                let k = (x / 16 + y / 16 * 6) % 8
+                return [(0.9, 0.2, 0.2), (0.95, 0.6, 0.1), (0.9, 0.9, 0.2), (0.2, 0.7, 0.3), (0.2, 0.8, 0.8), (0.2, 0.3, 0.9), (0.5, 0.2, 0.8), (0.9, 0.3, 0.7)][k]
+            }),
+        ]
+        var developed = Develop()
+        developed[.exposure] = 0.6
+        developed[.vibrance] = 40
+        developed[.highlights] = -50
+        func hash(_ v: [Double]) -> String {
+            var h: UInt64 = 0xcbf29ce484222325
+            for x in v { for byte in withUnsafeBytes(of: x.bitPattern, Array.init) { h = (h ^ UInt64(byte)) &* 0x100000001b3 } }
+            return String(h, radix: 16)
+        }
+        for (name, image) in pictures {
+            for (way, d) in [("plain", nil), ("developed", developed)] as [(String, Develop?)] {
+                guard let look = PictureLook(image, d) else { Self.log("looks", "\(name) \(way): none"); continue }
+                Self.log("looks", "\(name) \(way): tones \(hash(look.tones)) rgb \(hash(look.reds + look.greens + look.blues)) colours \(hash(look.colors)) crushed \(look.crushed) blown \(look.blown)")
+            }
+            let auto = Develop.auto(for: image)
+            Self.log("looks", "\(name) auto: " + Develop.Setting.allCases.map { "\($0) \(auto[$0])" }.joined(separator: ", "))
+        }
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.

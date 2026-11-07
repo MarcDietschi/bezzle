@@ -380,19 +380,13 @@ nonisolated enum Developer {
 
 // MARK: - Reading pixels
 
-/// A picture read small, its pixels at hand: for looking at what it holds, and what colour it is
-/// under the pointer. In sRGB, 8 bits, premultiplied.
-nonisolated struct Pixels: Sendable {
-    let width: Int
-    let height: Int
-    let bytes: [UInt8]
-
+/// Reading a picture small with Core Graphics, as the Mac does (`Pixels` itself is shared, in
+/// Model/PictureLook.swift).
+nonisolated extension Pixels {
     init?(_ picture: CGImage, longest: Int) {
         let s = min(1, Double(longest) / Double(max(picture.width, picture.height)))
-        width = max(1, Int((Double(picture.width) * s).rounded()))
-        height = max(1, Int((Double(picture.height) * s).rounded()))
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let w = width, h = height
+        let w = max(1, Int((Double(picture.width) * s).rounded())), h = max(1, Int((Double(picture.height) * s).rounded()))
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
         let drawn = bytes.withUnsafeMutableBytes { raw -> Bool in
             guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
@@ -401,21 +395,6 @@ nonisolated struct Pixels: Sendable {
             return true
         }
         guard drawn else { return nil }
-        self.bytes = bytes
-    }
-
-    /// The pixel `i` along, top row first: its colour unpremultiplied, 0…1, and its alpha.
-    func color(at i: Int) -> SIMD4<Double>? {
-        guard i >= 0, i < width * height else { return nil }
-        let a = Double(bytes[i * 4 + 3]) / 255
-        guard a > 0 else { return SIMD4(0, 0, 0, 0) }
-        return SIMD4(Double(bytes[i * 4]) / 255 / a, Double(bytes[i * 4 + 1]) / 255 / a, Double(bytes[i * 4 + 2]) / 255 / a, a)
-    }
-
-    /// The colour at a point across and down the picture, 0…1.
-    func color(at unit: CGPoint) -> SIMD4<Double>? {
-        guard (0...1).contains(unit.x), (0...1).contains(unit.y) else { return nil }
-        let x = min(Int(unit.x * CGFloat(width)), width - 1), y = min(Int(unit.y * CGFloat(height)), height - 1)
-        return color(at: y * width + x)
+        self.init(width: w, height: h, bytes: bytes)
     }
 }
