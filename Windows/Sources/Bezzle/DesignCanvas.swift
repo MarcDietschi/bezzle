@@ -124,6 +124,13 @@ final class DesignCanvas {
     private let waveMarks = Canvas()
     private var waveTick: EventCleanup?
     private var waveToken = 0
+    /// The artboards as they were, shown ahead of a style's wave.
+    private var washImages: [Image] = []
+
+    private func removeFromStage(_ e: UIElement) {
+        var k: UInt32 = 0
+        if (try? stage.children.indexOf(e, &k)) == true { stage.children.removeAt(k) }
+    }
     private var shownOffer: WindowsCore.MaskOffer?
     private var offerLit = false
     /// What is offered for a moment after a change to a copy (the Mac's ComponentTool offer): a
@@ -1096,12 +1103,52 @@ final class DesignCanvas {
             let u = (t - rise) / fall
             return u >= 1 ? 0 : pow(1 - u, 2.2)
         }
+        // The artboards as they looked before, ahead of the front: the change comes in behind it,
+        // as paint washing over them.
+        for e in washImages { removeFromStage(e) }
+        washImages = []
+        let visible = CGRect(origin: inDesign(.zero), size: CGSize(width: width / zoom, height: height / zoom))
+        let wash = WindowsCore.styleWash(w, visible: visible, scale: zoom * pixelScale)
+        var washBitmaps: [WriteableBitmap?] = []
+        if let wash {
+            for rect in wash.rects {
+                let image = Image()
+                image.stretch = .fill
+                image.isHitTestVisible = false
+                let o = onStage(rect.origin)
+                try? Canvas.setLeft(image, Double(o.x))
+                try? Canvas.setTop(image, Double(o.y))
+                image.width = Double(rect.width) * zoom
+                image.height = Double(rect.height) * zoom
+                stage.children.append(image)
+                washImages.append(image)
+                washBitmaps.append(nil)
+            }
+        }
+        let washOrigin = w.origin ?? inDesign(CGPoint(x: origin.x, y: origin.y))
         waveToken += 1
         let token = waveToken, start = WindowsCore.now
         func step() {
             guard token == waveToken else { return }
             let t = WindowsCore.now - start
             let r = max(t, 0) * pace
+            if let wash {
+                let rc = BezzleCore.CGFloat(r / zoom), edge = BezzleCore.CGFloat(36 / zoom)
+                for (k, image) in washImages.enumerated() where image.visibility == .visible {
+                    guard wash.ahead(k, origin: washOrigin, radius: rc - edge) else {
+                        image.visibility = .collapsed
+                        continue
+                    }
+                    var bitmap = washBitmaps[k]
+                    _ = wash.draw(k, origin: washOrigin, radius: rc, edge: edge) { bw, bh in
+                        if bitmap == nil || bitmap!.pixelWidth != Int32(bw) || bitmap!.pixelHeight != Int32(bh) { bitmap = WriteableBitmap(Int32(bw), Int32(bh)) }
+                        return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+                    }
+                    try? bitmap?.invalidate()
+                    if washBitmaps[k] !== bitmap { image.source = bitmap }
+                    washBitmaps[k] = bitmap
+                }
+            }
             for ring in rings {
                 ring.visibility = r < reach ? .visible : .collapsed
                 ring.width = 2 * r
@@ -1116,6 +1163,8 @@ final class DesignCanvas {
             }
             if t > end + 0.05 {
                 waveMarks.children.clear()
+                for e in washImages { removeFromStage(e) }
+                washImages = []
                 waveTick?.dispose()
                 waveTick = nil
             }

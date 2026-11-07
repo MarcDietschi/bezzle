@@ -427,6 +427,8 @@ extension WindowsCore {
         public let layers: [UUID]
         /// Dragged in, it was seen coming all along: glow only.
         public let dragged: Bool
+        /// The design as it was, for the artboards to be drawn so ahead of the front.
+        let before: BezzleDocument
     }
 
     /// What the last step settled did to the design's styles, as the Mac's noteStyles: a wave
@@ -442,6 +444,91 @@ extension WindowsCore {
         let reached = Array(Set(changed.flatMap { users[$0] ?? [] }))
         guard reached.count > 1 || step.fromList else { return nil }
         let origin = step.fromList ? nil : doc.bounds(of: selection).map { CGPoint(x: $0.midX, y: $0.midY) }
-        return StyleWave(origin: origin, layers: reached, dragged: step.dragged)
+        return StyleWave(origin: origin, layers: reached, dragged: step.dragged, before: step.before)
+    }
+
+    /// The artboards a wave's layers lie on as they looked before the change, in the part of each
+    /// that is in sight (`visible`, on the canvas), drawn `scale` pixels to the point: ahead of
+    /// the front the canvas shows them so, and behind it the change, as paint washing over them.
+    /// Nil for a change dragged in, or too much to draw at once.
+    public static func styleWash(_ wave: StyleWave, visible: CGRect, scale: Double) -> StyleWash? {
+        guard !wave.dragged, let doc = design else { return nil }
+        var boards: [UUID] = []
+        for id in wave.layers {
+            guard let board = doc.node(id).flatMap({ $0.isArtboard ? $0 : nil }) ?? doc.artboard(of: id), !boards.contains(board.id) else { continue }
+            boards.append(board.id)
+        }
+        var pixels = 0.0
+        var parts: [StyleWash.Part] = []
+        for id in boards {
+            guard let was = wave.before.node(id), was.isArtboard, !was.hidden else { continue }
+            let part = was.frame.intersection(visible)
+            guard !part.isNull, part.width > 1, part.height > 1 else { continue }
+            pixels += Double(part.width * part.height) * scale * scale
+            // Too much to draw at once; the wave alone shows the change.
+            guard pixels < 24_000_000 else { return nil }
+            let shown = was.shownAlone
+            let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+            guard let image = Renderer.image(of: shown, part: part, scale: CGFloat(scale), assets: assets) else { continue }
+            // Kept by the wash, and so in Skia, until it is let go of.
+            for picture in Images.shared.list where picture.id >= first { send(picture) }
+            parts.append(StyleWash.Part(image: image, rect: part))
+        }
+        return parts.isEmpty ? nil : StyleWash(parts: parts, scale: scale)
+    }
+}
+
+/// Artboards as they looked before a change to a style, which the canvas shows ahead of the wave
+/// that carries it, as the Mac's StyleShow.Wash.
+@MainActor public final class StyleWash {
+    struct Part {
+        let image: CGImage
+        let rect: CGRect
+    }
+    let parts: [Part]
+    let scale: Double
+
+    init(parts: [Part], scale: Double) {
+        self.parts = parts
+        self.scale = scale
+    }
+
+    /// Where each part lies on the canvas.
+    public var rects: [CGRect] { parts.map(\.rect) }
+
+    /// Part `k` as it looked, with what lies within `radius` of `origin` (both on the canvas)
+    /// taken away, softly over `edge`: into BGRA pixels, as many as when it was drawn.
+    public func draw(_ k: Int, origin: CGPoint, radius: CGFloat, edge: CGFloat, into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
+        guard parts.indices.contains(k) else { return false }
+        let part = parts[k], scale = CGFloat(self.scale)
+        return WindowsCore.picture({
+            let w = part.image.width, h = part.image.height
+            guard let ctx = Renderer.bitmap(CGSize(width: w, height: h)) else { return nil }
+            ctx.translateBy(x: 0, y: CGFloat(h))
+            ctx.scaleBy(x: scale, y: -scale)
+            ctx.translateBy(x: -part.rect.minX, y: -part.rect.minY)
+            // The picture the right way up: Core Graphics draws its top row at the rectangle's top, which is up.
+            ctx.saveGState()
+            ctx.translateBy(x: part.rect.minX, y: part.rect.maxY)
+            ctx.scaleBy(x: 1, y: -1)
+            ctx.draw(part.image, in: CGRect(origin: .zero, size: part.rect.size))
+            ctx.restoreGState()
+            let hole = [CGColor(gray: 0, alpha: 1), CGColor(gray: 0, alpha: 0)] as CFArray
+            if radius > 0, let g = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: hole, locations: [0, 1] as [CGFloat]) {
+                ctx.setBlendMode(.destinationOut)
+                ctx.drawRadialGradient(g, startCenter: origin, startRadius: max(0, radius - edge), endCenter: origin, endRadius: max(radius, 0.01),
+                                       options: [.drawsBeforeStartLocation])
+            }
+            return ctx.makeImage()
+        }, into: fill)
+    }
+
+    /// Whether some of part `k` still lies ahead of the front.
+    public func ahead(_ k: Int, origin: CGPoint, radius: CGFloat) -> Bool {
+        guard parts.indices.contains(k) else { return false }
+        let r = parts[k].rect
+        let far = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
+            .map { hypot($0.x - origin.x, $0.y - origin.y) }.max() ?? 0
+        return radius < far
     }
 }
