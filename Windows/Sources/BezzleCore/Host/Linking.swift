@@ -7,15 +7,17 @@ import Foundation
 // The relay's requests and the link itself are the shared Model/RelayRooms.swift.
 
 enum Linking {
-    /// The relay: Bezzle's own, or in tests one of their own (`BEZZLE_RELAY`), never the real one.
-    nonisolated(unsafe) static var server: ShareServer? = {
+    /// Where the relay is: Bezzle's own, or in tests one of their own (`BEZZLE_RELAY`), never the
+    /// real one; none, and nothing is shared by link.
+    nonisolated static let relay: URL? = {
         #if DEBUG
-        if let given = ProcessInfo.processInfo.environment["BEZZLE_RELAY"] {
-            return given.isEmpty ? nil : URL(string: given).map { RelayServer(base: $0) }
-        }
+        // "off" for none at all, as PowerShell drops a variable set to nothing.
+        if let given = ProcessInfo.processInfo.environment["BEZZLE_RELAY"] { return given.isEmpty || given == "off" ? nil : URL(string: given) }
         #endif
-        return URL(string: "https://bezzle-live.bezzle-live.workers.dev").map { RelayServer(base: $0) }
+        return URL(string: "https://bezzle-live.bezzle-live.workers.dev")
     }()
+
+    nonisolated(unsafe) static var server: ShareServer? = relay.map { RelayServer(base: $0) }
 
     // MARK: Which design is which
 

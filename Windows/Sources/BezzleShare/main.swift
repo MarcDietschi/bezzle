@@ -6,6 +6,7 @@ import Foundation
 //
 //   bezzle-share <open fonts folder> folder <design.bezzle> <out folder>
 //   bezzle-share <open fonts folder> link <link.json> <out folder>
+//   bezzle-share <open fonts folder> live <link.json> <out folder>
 //
 // `folder`: opens a design shared through its folder (written by the Mac as two people), writes
 // what it opened as (opened.json), changes it and names a version, saves (stage1.json), then
@@ -16,6 +17,9 @@ import Foundation
 // here for the Mac to open), then opens the link in link.json through the relay (BEZZLE_RELAY)
 // into a designs folder beside it, and works on it as above, sending and taking in through the
 // relay; after <out>/go2, the Mac has stopped sharing it: it is kept read only (ended.json).
+//
+// `live`: opens the link and stays in the design's live room until <out>/go, saying where it
+// points; what it heard of the Mac there goes to live.json.
 // BEZZLE_REPLICA names this computer among those sharing it.
 
 let arguments = CommandLine.arguments
@@ -182,6 +186,55 @@ func wait(for file: URL) {
     print("ended: read only \(WindowsCore.isReadOnly)")
 }
 
+/// The live room: Windows says where it is, hears Anna come in, sees where she points and her
+/// wink, takes in her change the moment she makes it, answers with one of its own, and hears the
+/// relay say a record came; until <out>/go.
+@MainActor func liveRun(_ file: URL, _ out: URL) async throws {
+    let given = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] ?? [:]
+    guard let link = given["link"] as? String else { print("FAIL: no link"); exit(1) }
+    let designs = file.deletingLastPathComponent().appendingPathComponent("designs", isDirectory: true)
+    let url = try await WindowsCore.acceptLink(link, into: designs)
+    _ = try WindowsCore.open(url)
+    await WindowsCore.syncShareNow()
+    guard let live = WindowsCore.live else { print("FAIL: no live room"); exit(1) }
+    live.say(pointer: CGPoint(x: 123, y: 45), view: CGRect(x: 0, y: 0, width: 400, height: 300), selection: [], tool: "select", doing: "looking")
+    print("in the live room as \(WindowsCore.replica)")
+    var answered = false, events: [String] = []
+    // Anna as Windows saw her while she was in the room.
+    var seen: [String: Any] = [:]
+    let go = out.appendingPathComponent("go"), started = Date()
+    while !FileManager.default.fileExists(atPath: go.path) {
+        guard Date().timeIntervalSince(started) < 600 else { print("FAIL: no go"); exit(1) }
+        live.tick()
+        try await Task.sleep(for: .milliseconds(50))
+        let anna = live.people.first { $0.replica == "anna" }
+        if let anna, !events.contains("hello") { events.append("hello") }
+        if let anna, let p = live.presence[anna.id], p.pointer == CGPoint(x: 200, y: 150), !events.contains("presence") {
+            events.append("presence")
+            seen = ["replica": anna.replica, "name": anna.name, "pencil": String(format: "%06x", anna.pencil),
+                    "pointer": [p.pointer?.x ?? 0, p.pointer?.y ?? 0], "tool": p.tool, "link": "\(live.link)"]
+        }
+        if live.winks.contains(where: { $0.at == CGPoint(x: 77, y: 88) }), !events.contains("wink") { events.append("wink") }
+        if live.recordsHeard > 0, !events.contains("records") { events.append("records") }
+        // Anna's change came live: shown once nothing holds it back, as the app's look does.
+        WindowsCore.showOthersIfIdle()
+        if WindowsCore.design?.allNodes.contains(where: { $0.name == "R, renamed live" }) == true, !answered {
+            events.append("changes")
+            answered = true
+            if let s = layer("S") {
+                WindowsCore.edit { d in d.update(s) { $0.name = "S, from Windows live" } }
+                // Taken in as the app's save does, which sends it to the room at once.
+                try WindowsCore.save()
+                events.append("answered")
+            }
+        }
+    }
+    try write(["events": events, "anna": seen, "peopleAtTheEnd": live.people.map(\.replica),
+               "recordsHeard": live.recordsHeard, "design": json(WindowsCore.sharing?.state.flatDesign().document() ?? BezzleDocument())],
+              "live.json", in: out)
+    print("live: \(events)")
+}
+
 do {
     try WindowsCore.loadFonts(from: URL(fileURLWithPath: arguments[1]))
     let given = URL(fileURLWithPath: arguments[3]), out = URL(fileURLWithPath: arguments[4])
@@ -189,6 +242,7 @@ do {
     switch arguments[2] {
     case "folder": try folderRun(given, out)
     case "link": try await linkRun(given, out)
+    case "live": try await liveRun(given, out)
     default: print("unknown: \(arguments[2])"); exit(2)
     }
     print("done")

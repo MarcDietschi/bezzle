@@ -100,6 +100,7 @@ extension WindowsCore {
                 session.receive(took.changes, from: .folder, current: previewBase ?? design)
                 session.persist()
             }
+            if took.roomChanged { session.roomChanged() }
             for name in took.pictures { pictureArrived(name, in: folder.url) }
             for (version, data) in took.versions { versions.arrived(version, data: data) }
         }
@@ -197,6 +198,8 @@ final class SharedSession {
     private(set) var link: ShareLink?
     /// The design's room on the relay, while it is shared by link.
     private(set) var cloud: CloudCopy?
+    /// The design's live room, while there is a relay to meet on.
+    private(set) var live: LiveTogether?
     /// The pictures each artboard and loose layer of `baseDoc` shows.
     private var basePictures: [UUID: Set<String>] = [:]
     /// The layers as this computer last showed them, to tell what was changed here since.
@@ -235,15 +238,35 @@ final class SharedSession {
         return SharedSession(url: url, state: opened.state, folder: opened.copy, link: link, replica: replica)
     }
 
-    /// The design as it is shown is taken in, and its room looked at (the Mac's attach).
+    /// The design as it is shown is taken in, its room looked at, and its live room joined (the
+    /// Mac's attach).
     func start(with doc: BezzleDocument) {
         takeIn(doc)
         cloud?.start(for: self)
+        openLive()
     }
 
     func close() {
+        live?.leave()
+        live = nil
         cloud?.stop()
     }
+
+    /// The keys the live room is found by and sealed with: the share's, or the synced folder's.
+    var liveKeys: ShareKeys? { cloud?.keys ?? folder?.roomKeys }
+
+    /// The latest of this computer's changes that everyone can have, from the room's records or the folder.
+    var sentUpTo: Int64 { cloud?.sentUpTo ?? folder?.writtenUpTo ?? 0 }
+
+    private func openLive() {
+        live?.leave()
+        live = nil
+        guard !isReadOnly, let relay = Linking.relay, let keys = liveKeys else { return }
+        live = LiveTogether(session: self, keys: keys, relay: relay)
+    }
+
+    /// The live room is another now: the design was shared, or no longer is.
+    func roomChanged() { openLive() }
 
     var mark: WindowsCore.ShareMark? {
         guard let link else { return folder?.mark }
@@ -267,6 +290,7 @@ final class SharedSession {
         cloud?.stop()
         cloud = link.keys.map { CloudCopy(keys: $0, replica: replica) }
         cloud?.start(for: self)
+        roomChanged()
     }
 
     /// Its owner gave the design another name, or theirs.
@@ -285,6 +309,7 @@ final class SharedSession {
             link = ended
             try? Linking.write(ended, to: url)
         }
+        roomChanged()
     }
 
     /// The pictures layers show, in their looks and their masks.
@@ -334,6 +359,7 @@ final class SharedSession {
         if state.absorb(now, since: was, by: replica, at: WindowsCore.nowMilliseconds) {
             changedUpTo = state.clock.time
             cloud?.changed()
+            live?.relay()
         }
     }
 
@@ -558,4 +584,7 @@ final class FolderCopy {
 
     /// Whether anyone else writes in the folder, so that it is worth looking through.
     var watched: Bool { service != nil || !people.isEmpty }
+
+    /// The keys of the folder's live room, made from its secret.
+    var roomKeys: ShareKeys? { Data(hex: room.seed).flatMap { ShareKeys(secret: $0) } }
 }
