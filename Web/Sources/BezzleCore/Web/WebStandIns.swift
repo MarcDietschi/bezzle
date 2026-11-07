@@ -24,10 +24,6 @@ nonisolated final class Assets: @unchecked Sendable {
     func image(_ name: String, pixels: CGFloat, later: Bool) -> CGImage? { image(name, pixels: pixels) }
 }
 
-/// Photos are drawn as they were taken for now: the Mac develops them with Core Image.
-nonisolated enum Developer {
-    static func developed(_ picture: CGImage, _ develop: Develop?) -> CGImage { picture }
-}
 
 /// The canvas's ink, light, as the page's canvas is.
 enum CanvasInk {

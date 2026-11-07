@@ -88,6 +88,11 @@ nonisolated public final class Images: @unchecked Sendable {
         case crop(CGRect)
         /// Drawn through a 3×3 matrix, row by row, into a picture whose top left is `origin` in its pixels.
         case perspective([Double], origin: CGPoint)
+        /// A photo developed as the Mac's Developer does it: its haze taken away (above nought) or
+        /// laid over, then each colour, as it looks through the sRGB curve, mapped through a cube
+        /// `size` steps a side (red changing fastest, then green, then blue, three numbers each),
+        /// then clarity, texture and sharpness, each −1…1 as the Mac's kernels take them.
+        case develop(cube: [Float], size: Int, dehaze: Double, clarity: Double, texture: Double, sharpness: Double)
     }
 
     /// The pictures from `first` on, as the page reads them.
@@ -109,6 +114,9 @@ nonisolated public final class Images: @unchecked Sendable {
                         return "{\"blur\":\(sigma),\"clamp\":\(clamp),\"ramp\":[\(a.x),\(a.y),\(b.x),\(b.y)]}"
                     case .crop(let r): return "{\"crop\":[\(r.minX),\(r.minY),\(r.width),\(r.height)]}"
                     case .perspective(let m, let origin): return "{\"perspective\":\(Recording.json(m)),\"origin\":[\(origin.x),\(origin.y)]}"
+                    case .develop(let cube, let size, let dehaze, let clarity, let texture, let sharpness):
+                        return "{\"develop\":{\"cube\":\(Recording.json(cube.map(Double.init))),\"size\":\(size),\"dehaze\":\(dehaze),"
+                            + "\"clarity\":\(clarity),\"texture\":\(texture),\"sharpness\":\(sharpness)}}"
                     }
                 }.joined(separator: ",") + "]"
             case .pixels(let bytes, let row, let gray):

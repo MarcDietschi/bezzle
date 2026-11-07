@@ -432,6 +432,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         canvas.concat([1, 0, 0, 0, -1, d.h, 0, 0, 1])
         play(canvas, Float64Array.from(d.picture))
       })
+    } else if (d.from !== undefined && d.changes.some((ch) => ch.develop)) {
+      const from = get(d.from)
+      if (from) img = developed(from, d.changes.find((ch) => ch.develop).develop)
     } else if (d.from !== undefined) {
       const from = get(d.from)
       if (from) {
@@ -456,6 +459,180 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     }
     made.set(id, img)
     return img
+  }
+
+  // MARK: Developing photos, as the Mac's Developer does with Core Image (host.cpp has the same)
+
+  const enc = (x) => { const a = Math.abs(x), v = a <= 0.0031308 ? a * 12.92 : 1.055 * Math.pow(a, 1 / 2.4) - 0.055; return x < 0 ? -v : v }
+  const dec = (x) => { const a = Math.abs(x), v = a <= 0.04045 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4); return x < 0 ? -v : v }
+  const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b
+  const clamp = (x, a, b) => Math.min(Math.max(x, a), b)
+
+  // A blur of four floats a pixel, edges carried on outward: three box passes each way, as near
+  // a Gaussian of `sigma` as they come.
+  function blurred(px, w, h, sigma) {
+    const boxes = (() => {
+      const n = 3, ideal = Math.sqrt((12 * sigma * sigma / n) + 1)
+      let wl = Math.floor(ideal); if (wl % 2 === 0) wl--
+      const m = Math.round((12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4))
+      return [0, 1, 2].map((i) => ((i < m ? wl : wl + 2) - 1) / 2)
+    })()
+    let a = Float32Array.from(px), b = new Float32Array(px.length)
+    const pass = (src, dst, r, across) => {
+      const lines = across ? h : w, len = across ? w : h, step = across ? 4 : w * 4
+      for (let l = 0; l < lines; l++) {
+        const start = across ? l * w * 4 : l * 4
+        for (let k = 0; k < 4; k++) {
+          let sum = 0
+          const at = (i) => src[start + clamp(i, 0, len - 1) * step + k]
+          for (let i = -r; i <= r; i++) sum += at(i)
+          for (let i = 0; i < len; i++) {
+            dst[start + i * step + k] = sum / (2 * r + 1)
+            sum += at(i + r + 1) - at(i - r)
+          }
+        }
+      }
+    }
+    for (const r of boxes) {
+      if (r < 1) continue
+      pass(a, b, r, true); pass(b, a, r, false)
+    }
+    return a
+  }
+
+  function developed(from, dv) {
+    const w = from.width(), h = from.height(), n = w * h
+    const raw = from.readPixels(0, 0, { width: w, height: h, colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB })
+    if (!raw) return from
+    const lut8 = Array.from({ length: 256 }, (_, i) => dec(i / 255))
+    // In light, premultiplied, as Core Image works.
+    let px = new Float32Array(n * 4)
+    for (let i = 0; i < n; i++) {
+      const a = raw[i * 4 + 3] / 255
+      for (let k = 0; k < 3; k++) px[i * 4 + k] = lut8[raw[i * 4 + k]] * a
+      px[i * 4 + 3] = a
+    }
+    const seen = (p, i, out) => { const a = p[i + 3]; for (let k = 0; k < 3; k++) out[k] = enc(a > 0.0001 ? p[i + k] / a : 0) }
+    const longest = Math.max(w, h)
+    if (dv.dehaze) {
+      // The haze's colour, from the picture read small: the haziest hundredth's.
+      const sw = Math.max(1, Math.round(w * Math.min(1, 96 / longest))), sh = Math.max(1, Math.round(h * Math.min(1, 96 / longest)))
+      const darks = []
+      for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+        const i = (Math.floor(y * h / sh) * w + Math.floor(x * w / sw)) * 4, a = raw[i + 3] / 255
+        if (a <= 0.5) continue
+        const c = [raw[i] / 255 / a, raw[i + 1] / 255 / a, raw[i + 2] / 255 / a]
+        darks.push([Math.min(...c), c])
+      }
+      darks.sort((x, y) => y[0] - x[0])
+      const top = darks.slice(0, Math.max(1, Math.floor(darks.length / 100)))
+      const air = [0.9, 0.9, 0.9]
+      if (top.length) for (let k = 0; k < 3; k++) air[k] = clamp(top.reduce((s, t) => s + t[1][k], 0) / top.length, 0.45, 1)
+      const qw = Math.max(1, Math.round(w / 4)), qh = Math.max(1, Math.round(h / 4))
+      let small = new Float32Array(qw * qh * 4)
+      for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
+        const sum = [0, 0, 0, 0]
+        for (let dy = 0; dy < 4; dy++) for (let dx = 0; dx < 4; dx++) {
+          const i = (Math.min(h - 1, y * 4 + dy) * w + Math.min(w - 1, x * 4 + dx)) * 4
+          for (let k = 0; k < 4; k++) sum[k] += px[i + k]
+        }
+        const o = (y * qw + x) * 4, m = Math.min(sum[0], sum[1], sum[2]) / 16
+        small[o] = small[o + 1] = small[o + 2] = m; small[o + 3] = sum[3] / 16
+      }
+      const reach = Math.max(1, Math.round(longest * 0.25 * 0.01))
+      for (const across of [true, false]) {
+        const out = new Float32Array(small.length)
+        for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) for (let k = 0; k < 4; k++) {
+          let m = 1e9
+          for (let d = -reach; d <= reach; d++) {
+            const sx = across ? clamp(x + d, 0, qw - 1) : x, sy = across ? y : clamp(y + d, 0, qh - 1)
+            m = Math.min(m, small[(sy * qw + sx) * 4 + k])
+          }
+          out[(y * qw + x) * 4 + k] = m
+        }
+        small = out
+      }
+      small = blurred(small, qw, qh, reach * 1.6)
+      const am = Math.max((air[0] + air[1] + air[2]) / 3, 0.2), amount = dv.dehaze, c = [0, 0, 0]
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4
+        if (px[i + 3] <= 0.0001) continue
+        const fx = clamp((x + 0.5) / 4 - 0.5, 0, qw - 1), fy = clamp((y + 0.5) / 4 - 0.5, 0, qh - 1)
+        const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(x0 + 1, qw - 1), y1 = Math.min(y0 + 1, qh - 1), tx = fx - x0, ty = fy - y0
+        const at = (xx, yy, k) => small[(yy * qw + xx) * 4 + k]
+        const mix = (k) => (at(x0, y0, k) * (1 - tx) + at(x1, y0, k) * tx) * (1 - ty) + (at(x0, y1, k) * (1 - tx) + at(x1, y1, k) * tx) * ty
+        const dr = mix(0), da = mix(3)
+        seen(px, i, c)
+        const d = clamp(enc(da > 0.0001 ? dr / da : 0) / am, 0, 1)
+        if (amount > 0) {
+          const t = Math.max(1 - amount * 0.92 * d, 0.22)
+          for (let k = 0; k < 3; k++) c[k] = (c[k] - air[k]) / t + air[k] + (1 - t) * 0.18 * amount
+        } else {
+          const m = -amount * 0.62 * (0.3 + 0.7 * d)
+          for (let k = 0; k < 3; k++) c[k] += (air[k] - c[k]) * m
+        }
+        for (let k = 0; k < 3; k++) px[i + k] = dec(c[k]) * px[i + 3]
+      }
+    }
+    const size = dv.size, cube = dv.cube
+    if (cube && cube.length >= size * size * size * 3 && size > 1) {
+      const top = size - 1, c = [0, 0, 0]
+      for (let i = 0; i < n * 4; i += 4) {
+        const a = px[i + 3]
+        if (a <= 0.0001) continue
+        for (let k = 0; k < 3; k++) c[k] = clamp(enc(px[i + k] / a), 0, 1) * top
+        const r0 = Math.min(Math.floor(c[0]), size - 2), g0 = Math.min(Math.floor(c[1]), size - 2), b0 = Math.min(Math.floor(c[2]), size - 2)
+        const tr = c[0] - r0, tg = c[1] - g0, tb = c[2] - b0
+        let o0 = 0, o1 = 0, o2 = 0
+        for (let db = 0; db < 2; db++) for (let dg = 0; dg < 2; dg++) for (let dr = 0; dr < 2; dr++) {
+          const wgt = (dr ? tr : 1 - tr) * (dg ? tg : 1 - tg) * (db ? tb : 1 - tb), e = (((b0 + db) * size + (g0 + dg)) * size + (r0 + dr)) * 3
+          o0 += cube[e] * wgt; o1 += cube[e + 1] * wgt; o2 += cube[e + 2] * wgt
+        }
+        px[i] = dec(o0) * a; px[i + 1] = dec(o1) * a; px[i + 2] = dec(o2) * a
+      }
+    }
+    if (dv.clarity || dv.texture || dv.sharpness) {
+      const o = new Float32Array(n * 3), c = new Float32Array(n * 3), s = [0, 0, 0], t = [0, 0, 0]
+      for (let i = 0; i < n; i++) { seen(px, i * 4, s); o.set(s, i * 3) }
+      c.set(o)
+      const sigma = (part, least) => Math.max(longest * part, least)
+      if (dv.clarity) {
+        const wide = blurred(px, w, h, sigma(0.014, 2))
+        for (let i = 0; i < n; i++) {
+          if (px[i * 4 + 3] <= 0.0001) continue
+          seen(wide, i * 4, s)
+          const m = 1 - Math.pow(Math.abs(2 * clamp(luma(s[0], s[1], s[2]), 0, 1) - 1), 2.2)
+          for (let k = 0; k < 3; k++) c[i * 3 + k] += dv.clarity * m * (o[i * 3 + k] - s[k])
+        }
+      }
+      if (dv.texture) {
+        const mid = blurred(px, w, h, sigma(0.0045, 1.5)), fine = blurred(px, w, h, sigma(0.0011, 0.6))
+        for (let i = 0; i < n; i++) {
+          if (px[i * 4 + 3] <= 0.0001) continue
+          seen(fine, i * 4, s); seen(mid, i * 4, t)
+          const m = 1 - Math.pow(Math.abs(2 * clamp(luma(o[i * 3], o[i * 3 + 1], o[i * 3 + 2]), 0, 1) - 1), 3)
+          for (let k = 0; k < 3; k++) c[i * 3 + k] += dv.texture * m * (s[k] - t[k])
+        }
+      }
+      if (dv.sharpness) {
+        const tiny = blurred(px, w, h, sigma(0.00045, 0.7))
+        for (let i = 0; i < n; i++) {
+          if (px[i * 4 + 3] <= 0.0001) continue
+          seen(tiny, i * 4, s)
+          const d = clamp(luma(o[i * 3], o[i * 3 + 1], o[i * 3 + 2]) - luma(s[0], s[1], s[2]), -0.25, 0.25)
+          for (let k = 0; k < 3; k++) c[i * 3 + k] += dv.sharpness * d
+        }
+      }
+      for (let i = 0; i < n; i++) if (px[i * 4 + 3] > 0.0001) for (let k = 0; k < 3; k++) px[i * 4 + k] = dec(c[i * 3 + k]) * px[i * 4 + 3]
+    }
+    // Back into sRGB, eight bits a channel.
+    const out = new Uint8Array(n * 4)
+    for (let i = 0; i < n; i++) {
+      const a = px[i * 4 + 3]
+      for (let k = 0; k < 3; k++) out[i * 4 + k] = Math.round(clamp(enc(a > 0.0001 ? px[i * 4 + k] / a : 0), 0, 1) * 255)
+      out[i * 4 + 3] = Math.round(clamp(a, 0, 1) * 255)
+    }
+    return CK.MakeImage({ width: w, height: h, alphaType: CK.AlphaType.Unpremul, colorType: CK.ColorType.RGBA_8888, colorSpace: CK.ColorSpace.SRGB }, out, w * 4) ?? from
   }
 
   function raster(w, h, draw) {
