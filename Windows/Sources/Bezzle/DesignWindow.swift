@@ -84,6 +84,7 @@ final class DesignWindow {
         root.children.append(export.layer)
         bar.onExport = { [weak self] in self?.export.open() }
         bar.onPlay = { [weak self] in self?.play(from: nil) }
+        session.openExport = { [weak self] in self?.export.open() }
         session.play = { [weak self] board in self?.play(from: board) }
         session.reveal = { [weak self] id in
             if let r = WindowsCore.canvasBounds(of: [id]) { self?.canvas.reveal(r) }

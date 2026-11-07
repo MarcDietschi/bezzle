@@ -41,6 +41,8 @@ final class DesignSession {
     var play: ((UUID?) -> Void)?
     /// A layer brought into sight on the canvas, when it is out of it.
     var reveal: ((UUID) -> Void)?
+    /// The Export sheet, opened.
+    var openExport: (() -> Void)?
     /// The Photo card's colour whose rows show, as a press on the photo picks it.
     var pickPhotoBand: ((String) -> Void)?
     /// The selected layers, all on the artboard at `board` (its index among the design's layers);

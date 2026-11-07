@@ -56,6 +56,9 @@ final class Inspector {
     var prototypePicked: [UUID] = []
     /// The story card's moving drawing, held while it shows.
     var pullDemo: AnyObject?
+    /// What Inspect's Asset card takes a layer as: its format, and for a picture how many pixels to the point.
+    var assetFormat = "png"
+    var assetScale = 2.0
     /// What the Inspect panel writes code for.
     var inspectPlatform: WindowsCore.InspectPlatform = .css
 

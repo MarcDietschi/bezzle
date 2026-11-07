@@ -17,6 +17,7 @@ extension Inspector {
             if spec.isText { cards.children.append(typeCard(spec)) }
             if !spec.looks.isEmpty { cards.children.append(specCard(spec.looks)) }
             cards.children.append(codeCard(ids[0]))
+            cards.children.append(assetCard(ids[0]))
         } else {
             let palette = WindowsCore.inspectPalette(platform: inspectPlatform)
             if !palette.isEmpty {
@@ -26,6 +27,11 @@ extension Inspector {
                 for line in palette { stack.children.append(specLine(line)) }
                 cards.children.append(specBox(stack))
             }
+            let samples = WindowsCore.typeSamples(platform: inspectPlatform)
+            if !samples.isEmpty { cards.children.append(typeSamplesCard(samples)) }
+            cards.children.append(handOffCard(showsInspect: false))
+            let marked = WindowsCore.markedAssets()
+            if !marked.isEmpty { cards.children.append(markedAssetsCard(marked)) }
             cards.children.append(Controls.caption("Pick a layer to read its size, where it lies and its looks, and to copy any of them, or its code."))
         }
     }
@@ -331,6 +337,292 @@ extension Inspector {
         block.child = text
         stack.children.append(block)
         return specBox(stack)
+    }
+}
+
+extension Inspector {
+    // MARK: Taking a layer away
+
+    /// The layer to take away as a file: its picture, dragged out to Explorer or into code, in
+    /// the format and size chosen, or copied, as the Mac's AssetCard.
+    fileprivate func assetCard(_ id: UUID) -> FrameworkElement {
+        let stack = StackPanel()
+        stack.spacing = 10
+        let picture = isPicture(assetFormat)
+        stack.children.append(dragPicture(id, format: assetFormat, scale: picture ? assetScale : 1))
+        let chips = Grid()
+        let formats = StackPanel()
+        formats.orientation = .horizontal
+        formats.spacing = 3
+        for f in WindowsCore.assetFormats {
+            formats.children.append(chip(f.title, on: assetFormat == f.key) { [weak self] in
+                self?.assetFormat = f.key
+                self?.show()
+            })
+        }
+        chips.children.append(formats)
+        if picture {
+            let scales = StackPanel()
+            scales.orientation = .horizontal
+            scales.spacing = 3
+            scales.horizontalAlignment = .right
+            for s in [1.0, 2.0, 3.0] {
+                scales.children.append(chip("\(Int(s))×", on: assetScale == s) { [weak self] in
+                    self?.assetScale = s
+                    self?.show()
+                })
+            }
+            chips.children.append(scales)
+        }
+        stack.children.append(chips)
+        let copy = Theme.card(radius: 8)
+        copy.height = 28
+        let label = Theme.text(Words.t("Copy"), size: 12.5, weight: 500)
+        label.horizontalAlignment = .center
+        copy.child = label
+        let format = assetFormat, scale = picture ? assetScale : 1
+        copy.pointerPressed.addHandler { _, args in args?.handled = true }
+        copy.tapped.addHandler { _, _ in
+            guard let url = WindowsCore.assetFile(id, format: format, scale: scale) else { return }
+            Clipboard.copyFile(url, png: format == "png" ? WindowsCore.assetPixels(id, scale: scale) : nil)
+            label.text = "✓ " + Words.t("Copied")
+            label.foreground = Theme.brush(Theme.pencil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                MainActor.assumeIsolated {
+                    label.text = Words.t("Copy")
+                    label.foreground = Theme.ink(1)
+                }
+            }
+        }
+        stack.children.append(copy)
+        let card = Theme.card(radius: 12)
+        card.width = Theme.cardWidth
+        card.padding = Theme.inset(12)
+        card.child = stack
+        return card
+    }
+
+    private func isPicture(_ format: String) -> Bool { format != "pdf" && format != "svg" }
+
+    /// A small choice, as the Mac's Chip: pencil while chosen.
+    private func chip(_ title: String, on: Bool, _ action: @escaping @MainActor () -> Void) -> FrameworkElement {
+        let box = Border()
+        box.height = 22
+        box.cornerRadius = Theme.corners(6)
+        box.padding = Theme.inset(6, 0, 6, 0)
+        box.background = on ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.brush(Theme.ink, 0.03)
+        box.borderBrush = on ? Theme.brush(Theme.pencil, 0.5) : Theme.clear
+        box.borderThickness = Theme.inset(1)
+        let text = Theme.text(title, size: 11, weight: on ? 600 : 500, ink: on ? 1 : 2)
+        if on { text.foreground = Theme.brush(Theme.pencil) }
+        box.child = text
+        box.pointerEntered.addHandler { _, _ in if !on { box.background = Theme.brush(Theme.ink, 0.06) } }
+        box.pointerExited.addHandler { _, _ in if !on { box.background = Theme.brush(Theme.ink, 0.03) } }
+        box.pointerPressed.addHandler { _, args in args?.handled = true }
+        box.tapped.addHandler { _, _ in DispatchQueue.main.async { MainActor.assumeIsolated { action() } } }
+        return box
+    }
+
+    /// A layer's picture on a checkerboard, lifted a little while pointed at, to drag out as a file.
+    fileprivate func dragPicture(_ id: UUID, format: String, scale: Double, width: Double = Theme.cardWidth - 24, height: Double = 124) -> FrameworkElement {
+        let holder = Grid()
+        holder.width = width
+        holder.height = height
+        holder.cornerRadius = Theme.corners(8)
+        holder.borderBrush = Theme.hairline
+        holder.borderThickness = Theme.inset(0.5)
+        let light = WindowsCore.assetIsLight(id)
+        holder.children.append(Self.checker(width: width, height: height, dark: light))
+        let picture = Image()
+        picture.stretch = .fill
+        var bitmap: WriteableBitmap?
+        let made = WindowsCore.assetPicture(id, fitting: CGSize(width: width - 24, height: height - 24)) { w, h in
+            bitmap = WriteableBitmap(Int32(w), Int32(h))
+            return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+        }
+        let lift = CompositeTransform()
+        if let made, let b = bitmap {
+            try? b.invalidate()
+            picture.source = b
+            // At its own size, or smaller to fit.
+            let w = Double(b.pixelWidth) / made, h = Double(b.pixelHeight) / made
+            let k = min((width - 24) / max(w, 1), (height - 24) / max(h, 1), 1)
+            picture.width = w * k
+            picture.height = h * k
+            picture.horizontalAlignment = .center
+            picture.verticalAlignment = .center
+            picture.renderTransform = lift
+            lift.centerX = w * k / 2
+            lift.centerY = h * k / 2
+            holder.children.append(picture)
+        }
+        // A file's corner, where it is taken hold of.
+        let file = Glyphs.view(Glyphs.fileDown(size: 16), size: 16, brush: Theme.ink(3))
+        file.horizontalAlignment = .right
+        file.verticalAlignment = .bottom
+        file.margin = Theme.inset(0, 0, 6, 6)
+        file.opacity = 0
+        holder.children.append(file)
+        holder.background = Theme.clear
+        holder.pointerEntered.addHandler { _, _ in
+            lift.translateY = -2
+            lift.scaleX = 1.03
+            lift.scaleY = 1.03
+            file.opacity = 1
+        }
+        holder.pointerExited.addHandler { _, _ in
+            lift.translateY = 0
+            lift.scaleX = 1
+            lift.scaleY = 1
+            file.opacity = 0
+        }
+        // Taken: the layer written as a file of its own, shown in Explorer, from where it goes
+        // wherever it is dragged. (WinUI's own drag out of the window fails here, for now.)
+        holder.pointerPressed.addHandler { _, args in args?.handled = true }
+        holder.tapped.addHandler { _, _ in
+            guard let url = WindowsCore.assetFile(id, format: format, scale: scale) else { return }
+            Explorer.show(url)
+        }
+        try? ToolTipService.setToolTip(holder, WindowsCore.formatTitle(format) + (isPicture(format) ? " @\(Int(scale))x" : "") + "  ·  " + Words.t("Show in Explorer"))
+        return holder
+    }
+
+    /// A checkerboard of squares 6 across, light, or dark for what is light.
+    private static func checker(width: Double, height: Double, dark: Bool) -> Image {
+        let image = Image()
+        image.width = width
+        image.height = height
+        image.stretch = .fill
+        image.isHitTestVisible = false
+        let w = Int(width.rounded()), h = Int(height.rounded())
+        guard w > 0, h > 0 else { return image }
+        let bitmap = WriteableBitmap(Int32(w), Int32(h))
+        if let p = (try? bitmap.pixelBuffer.buffer).flatMap({ $0 }) {
+            let px = UnsafeMutableRawPointer(p).assumingMemoryBound(to: UInt32.self)
+            // Light: the card, and half-strength squares of ink; dark: greys of a fifth and a quarter.
+            let a: UInt32, b: UInt32
+            if dark {
+                a = 0xFF33_3333; b = 0xFF40_4040
+            } else {
+                let base = Theme.card, ink = Theme.ink
+                func mix(_ c: UInt32, _ d: UInt32, _ t: Double) -> UInt32 {
+                    var out: UInt32 = 0xFF00_0000
+                    for shift in [16, 8, 0] as [UInt32] {
+                        let x = Double((c >> shift) & 255), y = Double((d >> shift) & 255)
+                        out |= UInt32((x + (y - x) * t).rounded()) << shift
+                    }
+                    return out
+                }
+                a = mix(base, ink, 0); b = mix(base, ink, 0.04)
+            }
+            for y in 0..<h { for x in 0..<w { px[y * w + x] = ((x / 6 + y / 6) % 2 == 1) ? b : a } }
+        }
+        try? bitmap.invalidate()
+        image.source = bitmap
+        return image
+    }
+
+    // MARK: Nothing picked
+
+    /// The type the design is set in, each in itself: those it names first, by their names,
+    /// then the others it uses most; a click copies one as code.
+    fileprivate func typeSamplesCard(_ samples: [WindowsCore.TypeSample]) -> FrameworkElement {
+        let stack = StackPanel()
+        for (i, s) in samples.enumerated() {
+            if i > 0 {
+                let rule = Border()
+                rule.height = 0.5
+                rule.background = Theme.hairline
+                stack.children.append(rule)
+            }
+            let row = Grid()
+            row.padding = Theme.inset(12, 9, 12, 9)
+            row.background = Theme.clear
+            let words = StackPanel()
+            words.spacing = 2
+            let title = Theme.text(s.title, size: s.size)
+            if let font = Self.font(of: s.family) { title.fontFamily = font }
+            title.fontWeight = FontWeight(weight: UInt16(s.weight))
+            if s.italic { title.fontStyle = .italic }
+            words.children.append(title)
+            words.children.append(Theme.text(s.detail, size: 10.5, ink: 3))
+            row.children.append(words)
+            let tick = Theme.text("✓", size: 11, weight: 600)
+            tick.foreground = Theme.brush(Theme.pencil)
+            tick.horizontalAlignment = .right
+            tick.opacity = 0
+            row.children.append(tick)
+            row.pointerEntered.addHandler { _, _ in row.background = Theme.brush(Theme.pencil, Theme.pencilWash) }
+            row.pointerExited.addHandler { _, _ in row.background = Theme.clear }
+            let copy = s.copy
+            row.tapped.addHandler { _, _ in
+                Clipboard.copyText(copy)
+                tick.opacity = 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { MainActor.assumeIsolated { tick.opacity = 0 } }
+            }
+            try? ToolTipService.setToolTip(row, copy)
+            stack.children.append(row)
+        }
+        let card = Theme.card(radius: 12)
+        card.width = Theme.cardWidth
+        card.child = stack
+        return card
+    }
+
+    /// What the design marks for export, each to drag out as its first mark makes it, and all of
+    /// it exported at once.
+    fileprivate func markedAssetsCard(_ marked: [(id: UUID, name: String, format: String, scale: Double)]) -> FrameworkElement {
+        let stack = StackPanel()
+        stack.spacing = 10
+        let tileWidth = (Theme.cardWidth - 24 - 16) / 3
+        var row: StackPanel?
+        let rows = StackPanel()
+        rows.spacing = 10
+        for (k, m) in marked.enumerated() {
+            if k % 3 == 0 {
+                let r = StackPanel()
+                r.orientation = .horizontal
+                r.spacing = 8
+                rows.children.append(r)
+                row = r
+            }
+            let tile = StackPanel()
+            tile.spacing = 4
+            tile.width = tileWidth
+            tile.children.append(dragPicture(m.id, format: m.format, scale: m.scale, width: tileWidth, height: 64))
+            let name = Theme.text(m.name, size: 10, ink: 2)
+            name.textTrimming = .characterEllipsis
+            name.horizontalAlignment = .center
+            tile.children.append(name)
+            let id = m.id
+            tile.tapped.addHandler { [weak self] _, _ in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.session.select([id], on: WindowsCore.board(of: id) ?? WindowsCore.boardIndex(of: id))
+                    }
+                }
+            }
+            row?.children.append(tile)
+        }
+        stack.children.append(rows)
+        stack.children.append(Controls.cardButton(Words.t("Export…"), height: 28) { [weak self] in self?.session.openExport?() })
+        let card = Theme.card(radius: 12)
+        card.width = Theme.cardWidth
+        card.padding = Theme.inset(12)
+        card.child = stack
+        return card
+    }
+}
+
+extension Glyphs {
+    /// A page with its corner folded and an arrow down into it: a file to take.
+    static func fileDown(size s: Double = 16) -> [Part] {
+        var page = PathData(), arrow = PathData()
+        page.move(s * 0.3, s * 0.14); page.line(s * 0.58, s * 0.14); page.line(s * 0.74, s * 0.3); page.line(s * 0.74, s * 0.86)
+        page.line(s * 0.3, s * 0.86); page.close()
+        arrow.move(s * 0.52, s * 0.38); arrow.line(s * 0.52, s * 0.7)
+        arrow.move(s * 0.42, s * 0.6); arrow.line(s * 0.52, s * 0.7); arrow.line(s * 0.62, s * 0.6)
+        return [Part(data: page.d, mode: .stroke, width: 1.2), Part(data: arrow.d, mode: .stroke, width: 1.2)]
     }
 }
 

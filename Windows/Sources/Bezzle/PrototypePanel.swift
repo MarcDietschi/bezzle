@@ -17,7 +17,7 @@ extension Inspector {
         if ids.isEmpty {
             cards.children.append(startCard(screens))
             cards.children.append(storyCard())
-            cards.children.append(codeCard())
+            cards.children.append(handOffCard())
             return
         }
         guard let look = WindowsCore.flowLook(ids) else { return }
@@ -341,8 +341,8 @@ extension Inspector {
     }
 
     /// The design as code: its named looks as tokens, copied in a click; and Inspect, to build it
-    /// by hand, a layer at a time.
-    private func codeCard() -> UIElement {
+    /// by hand, a layer at a time (not while it is inspected).
+    func handOffCard(showsInspect: Bool = true) -> UIElement {
         let count = WindowsCore.tokenCount
         let stack = StackPanel()
         stack.spacing = 10
@@ -400,10 +400,12 @@ extension Inspector {
         chips.opacity = count == 0 ? 0.45 : 1
         try? ToolTipService.setToolTip(chips, Words.t(count == 0 ? "Give colours, type, shadows or corners a name in the design, and they come out here as tokens." : "Copy the design's named looks as tokens"))
         stack.children.append(chips)
-        let inspect = Controls.cardButton(Words.t("Inspect"), height: 30) { [weak self] in self?.session.mode = 2 }
-        inspect.horizontalAlignment = .stretch
-        if let label = (inspect as? Border)?.child as? TextBlock { label.horizontalAlignment = .center }
-        stack.children.append(inspect)
+        if showsInspect {
+            let inspect = Controls.cardButton(Words.t("Inspect"), height: 30) { [weak self] in self?.session.mode = 2 }
+            inspect.horizontalAlignment = .stretch
+            if let label = (inspect as? Border)?.child as? TextBlock { label.horizontalAlignment = .center }
+            stack.children.append(inspect)
+        }
         let card = Theme.card(radius: 12)
         card.width = Theme.cardWidth
         card.padding = Theme.inset(12)
