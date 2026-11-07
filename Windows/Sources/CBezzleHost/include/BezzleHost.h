@@ -122,6 +122,9 @@ int32_t bz_stage(int32_t width, int32_t height, double scale, uint32_t table, ui
 int32_t bz_inflate(const void *bytes, int32_t count);
 /// Writes pixels as bz_picture_read makes them to a PNG file at `path` (UTF-8). Returns 0 when done.
 int32_t bz_png_write(const char *path, int32_t width, int32_t height, const void *pixels);
+/// Premultiplied RGBA pixels as a picture file's bytes, `format` 0 PNG, 1 JPEG, `quality` 0…1:
+/// how many bytes, which `bz_host_take` hands over; 0 when it could not be made.
+int32_t bz_image_encode(int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
 /// Writes premultiplied RGBA pixels as a picture file: `format` 0 PNG, 1 JPEG, 2 WebP (lossless at
 /// a quality of 1), `quality` 0…1. Returns 0 when written.
 int32_t bz_image_write(const char *path, int32_t width, int32_t height, const void *pixels, int32_t format, double quality);

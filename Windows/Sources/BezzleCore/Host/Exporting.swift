@@ -3,8 +3,8 @@ import CBezzleHost
 
 // Exporting on Windows, as the Mac exports (Export/Exporter.swift): what goes out, how the files
 // are named and where they go is the shared ExportPlan.swift; here each is drawn with Skia and
-// written as PNG, JPEG or WebP, or as one PDF that keeps text and shapes sharp. SVG waits for
-// the shared SVG writer, whose text the Mac lays out with its own text system.
+// written as PNG, JPEG or WebP, or as one PDF that keeps text and shapes sharp; SVG is the
+// shared SVGWriter, its text and pictures as Web/WebSVGText.swift has them. AVIF is the Mac's alone.
 
 extension ExportItem {
     /// The part of the canvas it covers: an artboard's frame, or for a layer just what it paints,
@@ -86,7 +86,7 @@ extension ExportItem {
 extension WindowsCore {
     /// The kinds of file Bezzle for Windows writes, in the order the Mac offers them.
     public static var exportFormats: [String] {
-        ExportFormat.offered.filter { $0 != .svg && $0 != .avif }.map(\.rawValue)
+        ExportFormat.offered.filter { $0 != .avif }.map(\.rawValue)
     }
 
     public static func formatTitle(_ raw: String) -> String { ExportFormat(rawValue: raw)?.title ?? raw }
@@ -176,6 +176,10 @@ extension WindowsCore {
         return (written.count == 1 ? written[0] : folder, written.count, missed)
     }
 
+    /// While an SVG is written, the first of the pictures made for it, which reach Skia before
+    /// one of them is encoded (`Host.encodePicture`).
+    nonisolated(unsafe) static var picturesFrom: Int?
+
     /// Writes one file where it goes, replacing what is there.
     static func write(_ file: ExportFile, to url: URL, quality: Double) -> Bool {
         switch file.format {
@@ -200,7 +204,19 @@ extension WindowsCore {
             if file.format == .webp, max(drawn.width, drawn.height) > 16_383 { return false }
             let kind: Int32 = file.format == .jpeg ? 1 : file.format == .webp ? 2 : 0
             return drawn.pixels.withUnsafeBytes { bz_image_write(url.path, Int32(drawn.width), Int32(drawn.height), $0.baseAddress, kind, quality) } == 0
-        case .svg, .avif:
+        case .svg:
+            guard let item = file.items.first else { return false }
+            let bounds = item.bounds(assets: assets)
+            // What has to come as a picture is drawn by Skia as the writer asks for it.
+            let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+            picturesFrom = first
+            defer {
+                picturesFrom = nil
+                forget(before: first)
+            }
+            let svg = SVGWriter.document(for: item, bounds: bounds, assets: assets)
+            return (try? svg.write(to: url, atomically: true, encoding: .utf8)) != nil
+        case .avif:
             return false
         }
     }

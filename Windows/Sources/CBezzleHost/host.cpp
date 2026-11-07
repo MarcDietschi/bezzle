@@ -1322,6 +1322,26 @@ extern "C" int32_t bz_image_write(const char* path, int32_t width, int32_t heigh
     }
 }
 
+extern "C" int32_t bz_image_encode(int32_t width, int32_t height, const void* pixels, int32_t format, double quality) {
+    std::lock_guard<std::mutex> guard(lock);
+    SkDynamicMemoryWStream stream;
+    const SkPixmap pixmap(rgba(width, height), pixels, size_t(width) * 4);
+    bool done = false;
+    if (format == 1) {
+        SkJpegEncoder::Options options;
+        options.fQuality = std::clamp(int(quality * 100 + 0.5), 0, 100);
+        done = SkJpegEncoder::Encode(&stream, pixmap, options);
+    } else {
+        done = SkPngEncoder::Encode(&stream, pixmap, {});
+    }
+    answer.clear();
+    if (!done) return 0;
+    sk_sp<SkData> data = stream.detachAsData();
+    const auto* bytes = static_cast<const uint8_t*>(data->data());
+    answer.assign(bytes, bytes + data->size());
+    return int32_t(answer.size());
+}
+
 /// A PDF being written: its file, and the document drawing into it.
 struct PDF {
     std::unique_ptr<SkFILEWStream> file;

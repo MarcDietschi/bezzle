@@ -13,11 +13,37 @@ nonisolated public enum Host {
         case image = 2
         case textLayout = 3
         case log = 4
+        /// A picture as a PNG or JPEG file: its number, width, height, format (0 PNG, 1 JPEG) and
+        /// quality as five doubles; the file's bytes back.
+        case encodePicture = 5
     }
 
     public static func call(_ function: Function, bytes: [UInt8]) -> [UInt8] {
         if function == .textLayout { return Array(TextHost.answer(String(decoding: bytes, as: UTF8.self)).utf8) }
+        if function == .encodePicture { return encodePicture(bytes) }
         let count = bytes.withUnsafeBytes { bz_host_call(function.rawValue, $0.baseAddress, Int32($0.count)) }
+        guard count > 0 else { return [] }
+        var out = [UInt8](repeating: 0, count: Int(count))
+        out.withUnsafeMutableBytes { bz_host_take($0.baseAddress) }
+        return out
+    }
+
+    /// A picture the core made, drawn by Skia and encoded (SVGWriter's pictures in WebSVGText.swift).
+    private static func encodePicture(_ bytes: [UInt8]) -> [UInt8] {
+        guard bytes.count >= 5 * 8 else { return [] }
+        let ask = bytes.withUnsafeBytes { raw in (0..<5).map { raw.loadUnaligned(fromByteOffset: $0 * 8, as: Double.self) } }
+        let id = Int32(ask[0]), width = Int32(ask[1]), height = Int32(ask[2])
+        guard width > 0, height > 0 else { return [] }
+        // Asked while an SVG is written, which is on the main thread.
+        MainActor.assumeIsolated {
+            if let first = WindowsCore.picturesFrom {
+                for picture in Images.shared.list where picture.id >= first { WindowsCore.send(picture) }
+            }
+        }
+        var pixels = [UInt8](repeating: 0, count: Int(width) * Int(height) * 4)
+        let read = pixels.withUnsafeMutableBytes { bz_picture_read(id, width, height, 0, $0.baseAddress) }
+        guard read == 0 else { return [] }
+        let count = pixels.withUnsafeBytes { bz_image_encode(width, height, $0.baseAddress, Int32(ask[3]), ask[4]) }
         guard count > 0 else { return [] }
         var out = [UInt8](repeating: 0, count: Int(count))
         out.withUnsafeMutableBytes { bz_host_take($0.baseAddress) }
