@@ -57,7 +57,7 @@ zero-padded, and strictly increasing per replica.
 | key                    | plaintext                                                  | writes             |
 |------------------------|------------------------------------------------------------|--------------------|
 | `meta`                 | JSON `{"title","owner","made"}` (owner's name, ms)          | owner, replaceable |
-| `m.<replica>`          | JSON `{"replica","name","app","since"}` (app `mac`/`web`)   | its writer, replaceable |
+| `m.<replica>`          | JSON `{"replica","name","app","since"}` (app `mac`/`web`/`windows`) | its writer, replaceable |
 | `c.<replica>.<upTo>`   | changes: `SharedDesign` JSON, then LZFSE                    | its writer, once   |
 | `w.<replica>.<upTo>`   | the whole design as that copy had it, same packing          | its writer, once   |
 | `p.<hex64>`            | picture bytes; hex = HMAC-SHA256(names key, picture name)   | anyone, once       |

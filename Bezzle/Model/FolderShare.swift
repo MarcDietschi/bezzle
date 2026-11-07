@@ -161,7 +161,7 @@ nonisolated enum FolderShare {
     struct Person: Codable, Equatable, Sendable {
         var replica: String
         var name: String
-        /// "mac" or "web".
+        /// "mac", "web" or "windows": only said, never acted on.
         var app: String
         /// When they first worked on it, in milliseconds since 1970.
         var since: Int64
