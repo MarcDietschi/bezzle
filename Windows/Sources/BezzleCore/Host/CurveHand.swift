@@ -14,7 +14,7 @@ import Foundation
 // - A text riding a shape, dragged, slides along it the same way; pulled well clear, it comes off,
 //   straight again.
 //
-// Not yet: the Mac's letters springing one by one to their new places.
+// Its letters spring to their new places letter by letter from the pointer (`fly`, LetterFlights).
 
 extension WindowsCore {
     @MainActor public final class CurveHand {
@@ -28,6 +28,11 @@ extension WindowsCore {
         public var redraw: () -> Void = {}
         /// The design changed by itself, as a text caught on an edge it rested on: drawn again.
         public var edited: () -> Void = {}
+        /// Has a text's next change fly letter by letter, from the letter nearest a point on the
+        /// canvas (LetterFlights.fly).
+        public var fly: (_ id: UUID, _ from: CGPoint?) -> Void = { _, _ in }
+        /// The text being dragged, whose letters are watched as it rests on an edge or rides one.
+        public var holding: UUID? { hold?.text }
 
         public init() {}
 
@@ -285,6 +290,7 @@ extension WindowsCore {
                     h.over = nil
                     hold = h
                     glow = (edge.path, Self.now(), true)
+                    fly(id, p)
                     if ride.caught {
                         // Caught a moment ago: back as it was, straight under the pointer.
                         Editing.gestureBase = ride.before
@@ -371,6 +377,8 @@ extension WindowsCore {
             curve.hangs = hangs ? true : nil
             curve.at = (at(middle: mid, width: ride.width, alignK: k, reversed: reversed, total: total) * 10_000).rounded() / 10_000
             guard curve != node.curve else { return }
+            // Over to the other side, or turned round: letter by letter.
+            if curve.reversed != node.curve?.reversed || curve.hangs != node.curve?.hangs { fly(node.id, canvas(hold?.at ?? .zero)) }
             ride.changed = true
             let id = node.id
             // Made again from what the drag is made from: the text as it rode then, set where it slides to.
@@ -416,6 +424,7 @@ extension WindowsCore {
             curve.at = (at(middle: near.s, width: width, alignK: k, reversed: reversed, total: total) * 10_000).rounded() / 10_000
             // The drag goes on from the design as it is now, the text on the edge.
             let before = Editing.gestureBase
+            fly(h.text, p)
             var made: UUID?
             let id = h.text
             let caught = Editing.edited(doc, start: nil) { made = $0.ride(id, on: edge.shape, curve: curve) }

@@ -30,9 +30,8 @@ extension WindowsCore {
 
     /// Draws a layer lying on the canvas (`index` among the design's) over its reach, at `scale`
     /// pixels a point, into pixels as `render(board:)` does.
-    public static func render(loose index: Int, scale: Double, hiding: UUID? = nil, into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
-        guard var doc = design, doc.nodes.indices.contains(index), !doc.nodes[index].isArtboard else { return false }
-        if let hiding { doc.update(hiding) { $0.hidden = true } }
+    public static func render(loose index: Int, scale: Double, hiding: Set<UUID> = [], into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
+        guard let doc = design, doc.nodes.indices.contains(index), !doc.nodes[index].isArtboard else { return false }
         let node = doc.nodes[index]
         let r = Renderer.reach(of: node).integral
         let size = CGSize(width: max(1, (r.width * CGFloat(scale)).rounded()), height: max(1, (r.height * CGFloat(scale)).rounded()))
@@ -42,7 +41,10 @@ extension WindowsCore {
         ctx.scaleBy(x: CGFloat(scale), y: -CGFloat(scale))
         ctx.translateBy(x: -r.minX, y: -r.minY)
         Renderer.withFlippedContext(ctx) {
-            Renderer.drawNode(node, in: ctx, options: Renderer.Options(deviceScale: CGFloat(scale), assets: assets))
+            // Left out, the layers `hiding`, and the layer itself when it is one of them.
+            var options = Renderer.Options(deviceScale: CGFloat(scale), assets: assets)
+            options.skipping = hiding
+            Renderer.drawNode(node, in: ctx, options: options)
         }
         guard let image = ctx.makeImage() else { return false }
         for picture in Images.shared.list where picture.id >= first { send(picture) }

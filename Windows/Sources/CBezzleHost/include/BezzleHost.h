@@ -60,6 +60,16 @@ int32_t bz_text_boxes(int32_t id, int32_t start, int32_t end, double *boxes, int
 /// the line's width, ascent and descent, and the first letter's cap height.
 int32_t bz_text_glyphs(const bz_text_run *runs, int32_t count, double *glyphs, int32_t capacity,
                        int32_t *glyphCount, double *line);
+/// Where in the words (UTF-16) each letter of a line set by `bz_text_glyphs` or `bz_text_letters`
+/// is from, for up to `capacity` letters. Returns how many letters the line has.
+int32_t bz_glyph_starts(int32_t line, int32_t *starts, int32_t capacity);
+/// A text set by `bz_text_lay`, its letters taken one by one, for letters springing to new places
+/// over the canvas: each as a letter of a line drawing call 13 draws, by the line's id this
+/// returns and the letter's place in it. Writes, for up to `capacity` letters, nine numbers each
+/// to `letters`: where its baseline begins, x and y from the text's top left as drawing call 12
+/// draws it, its own width, ascent and descent, where its underline is and how thick, its font's
+/// x height, and where in the words (UTF-16) it is from. `*letterCount` is how many there are.
+int32_t bz_text_letters(int32_t text, double *letters, int32_t capacity, int32_t *letterCount);
 /// Forgets every text set, as when fonts were added.
 void bz_text_forget(void);
 

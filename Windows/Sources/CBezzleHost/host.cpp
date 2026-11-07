@@ -747,15 +747,17 @@ struct Text {
     /// Each line on its own, where Skia puts its baseline, and how far to the left it is drawn:
     /// Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
     /// lines set from the left (centred or set from the right, Skia's lines lie where the Mac's do).
-    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; double back; size_t start = 0; };
+    /// Its words too, from `start` on in the text's (UTF-16), for telling which a letter is of.
+    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; double back; size_t start = 0; std::u16string words; };
     std::vector<Line> lines;
     std::vector<double> baselines;
 };
 std::map<int, Text> texts;
 int nextText = 1;
 
-/// A text set as one line for a curve: its letters, each drawn on its own where the core places it.
-struct Glyph { SkFont font; SkGlyphID id; };
+/// A text set as one line for a curve, or a straight text's letters taken one by one: each letter
+/// drawn on its own where the core places it, and where in the words (UTF-16) it is from.
+struct Glyph { SkFont font; SkGlyphID id; int32_t at = 0; };
 std::map<int, std::vector<Glyph>> glyphLines;
 
 /// How many bytes UTF-8 takes for these letters, as Skia counts its clusters.
@@ -767,6 +769,18 @@ size_t utf8Length(const std::u16string& s) {
         else n += c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
     }
     return n;
+}
+
+/// Where in these letters (UTF-16) the one `utf8` bytes into them as UTF-8 is.
+size_t utf16Index(const std::u16string& s, size_t utf8) {
+    size_t n = 0;
+    for (size_t k = 0; k < s.size(); k++) {
+        if (n >= utf8) return k;
+        const char16_t c = s[k];
+        if (c >= 0xD800 && c < 0xDC00 && k + 1 < s.size()) { n += 4; k++; }
+        else n += c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
+    }
+    return s.size();
 }
 
 // MARK: Playing a recording (bezzle.mjs's look and play)
@@ -1042,7 +1056,9 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             if (!lm.empty()) baseline = lm[0].fBaseline;
         }
         const bool fromLeft = align == 0 || align == 3;
-        text.lines.push_back({std::move(line), baseline, part.empty() || !fromLeft ? 0 : part[0].tracking / 2, m.fStartIndex});
+        std::u16string words;
+        for (const auto& r : part) words += r.text;
+        text.lines.push_back({std::move(line), baseline, part.empty() || !fromLeft ? 0 : part[0].tracking / 2, m.fStartIndex, std::move(words)});
         text.baselines.push_back(m.fBaseline);
         if (written < capacity) {
             // Skia shares the leading out above and below the line; Text Kit keeps it apart.
@@ -1107,8 +1123,9 @@ extern "C" int32_t bz_text_glyphs(const bz_text_run* given, int32_t count, doubl
     // Where each run begins in the words' UTF-8, which is how Skia tells where a letter is from.
     std::vector<size_t> starts;
     size_t at = 0;
-    for (const auto& r : runs) { starts.push_back(at); at += utf8Length(r.text); }
-    struct Laid { SkFont font; SkGlyphID id; double x, y; size_t run; };
+    std::u16string words;
+    for (const auto& r : runs) { starts.push_back(at); at += utf8Length(r.text); words += r.text; }
+    struct Laid { SkFont font; SkGlyphID id; double x, y; size_t run; int32_t at; };
     std::vector<Laid> laid;
     p->visit([&](int lineNumber, const Paragraph::VisitorInfo* info) {
         if (!info || lineNumber != 0) return;
@@ -1120,7 +1137,7 @@ extern "C" int32_t bz_text_glyphs(const bz_text_run* given, int32_t count, doubl
             // Skia puts half the letters' spacing before each, Core Text all of it after.
             const double spacing = run < runs.size() ? runs[run].tracking : 0;
             laid.push_back({info->font, info->glyphs[k], double(info->origin.fX + info->positions[k].fX) - spacing / 2,
-                            double(info->positions[k].fY), run});
+                            double(info->positions[k].fY), run, int32_t(utf16Index(words, u))});
         }
     });
     std::vector<Glyph> kept;
@@ -1141,7 +1158,7 @@ extern "C" int32_t bz_text_glyphs(const bz_text_run* given, int32_t count, doubl
         }
         width = std::max(width, g.x + advance);
         if (capHeight < 0) capHeight = m.fCapHeight;
-        kept.push_back({g.font, g.id});
+        kept.push_back({g.font, g.id, g.at});
         if (int32_t(k) < capacity) {
             double* o = out + k * 10;
             SkScalar underline = 0, thickness = 0;
@@ -1171,6 +1188,64 @@ extern "C" int32_t bz_text_glyphs(const bz_text_run* given, int32_t count, doubl
     const int id = nextText++;
     glyphLines[id] = std::move(kept);
     return id;
+}
+
+extern "C" int32_t bz_glyph_starts(int32_t id, int32_t* out, int32_t capacity) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = glyphLines.find(id);
+    if (it == glyphLines.end()) return 0;
+    const auto& line = it->second;
+    for (size_t k = 0; k < line.size() && int32_t(k) < capacity; k++) out[k] = line[k].at;
+    return int32_t(line.size());
+}
+
+extern "C" int32_t bz_text_letters(int32_t id, double* out, int32_t capacity, int32_t* letterCount) {
+    std::lock_guard<std::mutex> guard(lock);
+    if (letterCount) *letterCount = 0;
+    auto it = texts.find(id);
+    if (it == texts.end()) return 0;
+    const auto& t = it->second;
+    std::vector<Glyph> kept;
+    int32_t n = 0;
+    for (size_t k = 0; k < t.lines.size(); k++) {
+        const auto& line = t.lines[k];
+        if (!line.paragraph) continue;
+        // Where drawing call 12 paints the line, from the text's top left: its baseline where
+        // the core put it, and back by half the spacing for a line set from the left.
+        const double baseline = k < t.baselines.size() ? t.baselines[k] : 0;
+        const double dx = -line.back, dy = baseline - line.baseline;
+        line.paragraph->visit([&](int, const Paragraph::VisitorInfo* info) {
+            if (!info) return;
+            SkFontMetrics m;
+            info->font.getMetrics(&m);
+            SkScalar underline = 0, thickness = 0;
+            if (!m.hasUnderlinePosition(&underline)) underline = -m.fAscent * 0.1f;
+            if (!m.hasUnderlineThickness(&thickness)) thickness = info->font.getSize() / 14;
+            for (int g = 0; g < info->count; g++) {
+                const int32_t at = int32_t(line.start + utf16Index(line.words, info->utf8Starts[g]));
+                SkScalar w = 0;
+                info->font.getWidths({&info->glyphs[g], 1}, {&w, 1});
+                if (n < capacity) {
+                    double* o = out + size_t(n) * 9;
+                    o[0] = dx + info->origin.fX + info->positions[g].fX;
+                    o[1] = dy + info->origin.fY + info->positions[g].fY;
+                    o[2] = w;
+                    o[3] = -m.fAscent;
+                    o[4] = m.fDescent;
+                    o[5] = underline;
+                    o[6] = thickness;
+                    o[7] = m.fXHeight;
+                    o[8] = at;
+                }
+                kept.push_back({info->font, info->glyphs[g], at});
+                n++;
+            }
+        });
+    }
+    if (letterCount) *letterCount = n;
+    const int letters = nextText++;
+    glyphLines[letters] = std::move(kept);
+    return letters;
 }
 
 extern "C" void bz_text_forget(void) {

@@ -181,6 +181,9 @@ final class DesignCanvas {
     /// text held on a shape's edge catches on it and slides along it.
     let curveHand = WindowsCore.CurveHand()
     private let curveMarks = Canvas()
+    /// Letters springing to new places as a text goes onto a curve, along it or off it (the Mac's
+    /// CurveTool flights), over the artboards, which leave those texts to them meanwhile.
+    private let letters = FlyingLetters()
     /// The photo as the control (the Mac's DevelopTool, ported), with what it shows.
     var develop: WindowsCore.DevelopHand { session.develop }
     private let developMarks = Canvas()
@@ -237,6 +240,7 @@ final class DesignCanvas {
         root.background = Theme.brush(Theme.table)
         root.children.append(stage)
         stage.children.append(decks.feet)
+        root.children.append(letters.layer)
         root.children.append(overlay)
         root.children.append(decks.layer)
         root.children.append(margin.layer)
@@ -346,6 +350,16 @@ final class DesignCanvas {
         flow.play = { [weak self] id in self?.session.play?(id) }
         inspect.titleHit = { [weak self] p in self?.titleHit(p) }
         curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
+        curveHand.fly = { [weak self] id, p in self?.letters.fly(id, from: p) }
+        letters.watching = { [weak self] in
+            guard let self else { return ([], nil, nil) }
+            return (self.session.selection, self.editing?.id, self.curveHand.holding)
+        }
+        letters.view = { [weak self] in
+            guard let self else { return (1, .zero, .zero, 1) }
+            return (self.zoom, self.pan, CGSize(width: self.stage.actualWidth, height: self.stage.actualHeight), self.pixelScale)
+        }
+        letters.turned = { [weak self] texts in self?.lettersTurned(texts) }
         offerChip.height = 28
         offerChip.cornerRadius = Theme.corners(14)
         offerChip.background = Theme.brush(Theme.selection)
@@ -425,6 +439,7 @@ final class DesignCanvas {
         }
         session.openCardChanged = { [weak self] in self?.drawAids() }
         session.listen { [weak self] in
+            self?.stepLetters()
             self?.placeOverlays()
             // The row under a stack follows the selection.
             self?.decks.update()
@@ -508,6 +523,7 @@ final class DesignCanvas {
     // MARK: Drawing
 
     private func drawAll() {
+        if !letters.step().isEmpty { placeEditor() }
         boards = WindowsCore.boards()
         for k in boards.indices { draw(k) }
         for (k, sheet) in sheets where k >= boards.count {
@@ -531,8 +547,7 @@ final class DesignCanvas {
                 return (image, nil)
             }()
             var bitmap = sheet.bitmap
-            let hiding = editing.flatMap { $0.board == item.index ? $0.id : nil }
-            _ = WindowsCore.render(loose: item.index, scale: scale, hiding: hiding) { width, height in
+            _ = WindowsCore.render(loose: item.index, scale: scale, hiding: hiding(on: item.index)) { width, height in
                 if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
                     bitmap = WriteableBitmap(Int32(width), Int32(height))
                 }
@@ -550,11 +565,51 @@ final class DesignCanvas {
 
     /// What shows `board` (an artboard, or a layer on the canvas) drawn again.
     private func redraw(board: Int?) {
+        // Letters that set off with this change, or landed, and so their texts' artboards too.
+        let turned = letters.step()
+        defer { if !turned.isEmpty { placeEditor() } }
         // What is known of each artboard first: the change may have moved or sized it.
         let now = WindowsCore.boards()
         guard let board, now.count == boards.count, let k = now.firstIndex(where: { $0.index == board }) else { drawAll(); return }
         boards = now
         draw(k)
+        redrawTexts(turned, besides: board)
+        letters.draw()
+    }
+
+    /// What is left out of the picture of `board` (by its place among the design's layers): the
+    /// text typed into, shown by its editor, and those whose letters are on their way.
+    private func hiding(on board: Int) -> Set<UUID> {
+        var ids = letters.hidden
+        if let editing, editing.board == board { ids.insert(editing.id) }
+        return ids
+    }
+
+    /// The pictures of the artboards (or layers on the canvas) these texts are on drawn again,
+    /// but for `done`, drawn already.
+    private func redrawTexts(_ texts: Set<UUID>, besides done: Int? = nil) {
+        var drawn: Set<Int> = done.map { [$0] } ?? []
+        var loose = false
+        for id in texts {
+            guard let index = WindowsCore.board(of: id), !drawn.contains(index) else { continue }
+            drawn.insert(index)
+            if let k = boards.firstIndex(where: { $0.index == index }) { draw(k) } else { loose = true }
+        }
+        if loose { drawLoose() }
+    }
+
+    /// The letters stepped on outside a change drawn, as when the selection changes.
+    private func stepLetters() {
+        let turned = letters.step()
+        if !turned.isEmpty { lettersTurned(turned) }
+        letters.draw()
+    }
+
+    /// Letters that set off or landed: their texts drawn again with them, or without; the text
+    /// typed into shows once its letters have landed.
+    private func lettersTurned(_ texts: Set<UUID>) {
+        redrawTexts(texts)
+        placeEditor()
     }
 
     /// Artboard `k` drawn again by the core at the zoom's pixels, with its shadow.
@@ -579,8 +634,7 @@ final class DesignCanvas {
         var bitmap = sheet.bitmap
         sheet.image.visibility = .visible
         sheet.shadow.visibility = .visible
-        let hiding = editing.flatMap { $0.board == board.index ? $0.id : nil }
-        _ = WindowsCore.render(board: board.index, scale: scale, hiding: hiding) { width, height in
+        _ = WindowsCore.render(board: board.index, scale: scale, hiding: hiding(on: board.index)) { width, height in
             if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
                 bitmap = WriteableBitmap(Int32(width), Int32(height))
             }
@@ -689,6 +743,7 @@ final class DesignCanvas {
             sheet.image.width = Double(item.reach.width) * zoom
             sheet.image.height = Double(item.reach.height) * zoom
         }
+        letters.draw()
         placeOverlays()
     }
 
@@ -3635,7 +3690,25 @@ final class DesignCanvas {
     }
 
     private func placeEditor() {
-        guard let editing, let field = editor, let box = onStage(layer: editing.id, board: editing.board) else { return }
+        guard let editing, let field = editor else { return }
+        // Words on a curve are typed into straight, where their letters spring to (as on the Mac,
+        // CurvedText.straight), turned as the curve runs there; the field shows once they land.
+        field.opacity = letters.hidden.contains(editing.id) ? 0 : 1
+        if let typed = WindowsCore.typingPlace(of: editing.id) {
+            let o = onStage(typed.frame.origin)
+            let w = Double(typed.frame.width) * zoom, h = Double(typed.frame.height) * zoom
+            try? Canvas.setLeft(field, Double(o.x))
+            try? Canvas.setTop(field, Double(o.y))
+            field.width = max(w + 24, 24)
+            let t = CompositeTransform()
+            t.centerX = w / 2
+            t.centerY = h / 2
+            t.rotation = typed.rotation
+            field.renderTransform = t
+            return
+        }
+        field.renderTransform = nil
+        guard let box = onStage(layer: editing.id, board: editing.board) else { return }
         try? Canvas.setLeft(field, Double(box.minX))
         try? Canvas.setTop(field, Double(box.minY))
         field.width = max(Double(box.width) + 24, 24)
@@ -3745,6 +3818,7 @@ final class DesignCanvas {
     /// The selected text laid along the selected shape, where it lies nearest it; the text is picked.
     private func rideSelection() {
         if WindowsCore.endPreview() { session.previewed(board: nil) }
+        if let text = WindowsCore.ridePair(session.selection)?.text { letters.fly(text) }
         guard let text = WindowsCore.ride(session.selection) else { MessageBeep(0); return }
         session.select([text], on: WindowsCore.board(of: text) ?? session.board)
         session.edited(board: nil)

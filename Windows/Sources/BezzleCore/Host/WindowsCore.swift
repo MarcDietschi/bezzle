@@ -129,14 +129,17 @@ public enum WindowsCore {
 
     /// Draws artboard `index` as `render` does, into pixels the caller has: its size first, then,
     /// in `fill`, where to put the premultiplied BGRA pixels, rows top first (a WinUI
-    /// WriteableBitmap's own layout).
-    public static func render(board index: Int, scale: Double, hiding: UUID? = nil, into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
+    /// WriteableBitmap's own layout). The layers `hiding` are left out.
+    public static func render(board index: Int, scale: Double, hiding: Set<UUID> = [], into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
         guard var doc = design, index < doc.nodes.count else { return false }
-        // The text being typed into is shown by its editor, not drawn under it, as on the Mac.
-        if let hiding { doc.update(hiding) { $0.hidden = true } }
+        // As much of the canvas as the artboard covers with them all: what the canvas places it by.
+        let part = drawn(seen(doc.nodes[index]))
+        // The text being typed into is shown by its editor, not drawn under it, as on the Mac, and
+        // texts whose letters are on their way by the canvas, over the design.
+        for id in hiding { doc.update(id) { $0.hidden = true } }
         let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
         // A deck as the post in front of it here.
-        let board = seen(doc.nodes[index]), part = drawn(board)
+        let board = seen(doc.nodes[index])
         guard let image = Renderer.image(of: board, part: part == board.frame ? nil : part, scale: CGFloat(scale), assets: assets) else { return false }
         for picture in Images.shared.list where picture.id >= first { send(picture) }
         defer { forget(before: first) }
