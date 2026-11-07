@@ -73,7 +73,26 @@ final class DesignCanvas {
     private let marqueeBox = Rectangle()
     private var guides: [WindowsCore.GuideLine] = []
     /// Where the right-click menu opens.
-    var menus: MenuHost? { didSet { margin.menus = menus } }
+    var menus: MenuHost? {
+        didSet {
+            margin.menus = menus
+            // A gradient's handles take their presses over what closes the fill menu.
+            menus?.addOverCatcher(gradients.layer)
+        }
+    }
+    /// A gradient's handles where the layer is, while its fill menu is open.
+    private(set) lazy var gradients: GradientHandles = {
+        let g = GradientHandles(session: session)
+        g.menuOpen = { [weak self] in self?.menus?.isOpen == true }
+        g.toStage = { [weak self] p in self?.onStage(p) ?? p }
+        g.toCanvas = { [weak self] p in self?.inDesign(p) ?? p }
+        g.canvasPlace = { [weak self] in
+            guard let self, let host = self.menus?.layer, let t = try? self.stage.transformToVisual(host),
+                  let o = try? t.transformPoint(Point(x: 0, y: 0)) else { return nil }
+            return CGRect(x: Double(o.x), y: Double(o.y), width: self.stage.actualWidth, height: self.stage.actualHeight)
+        }
+        return g
+    }()
     /// The notes in the margin, beside the sheets.
     private(set) lazy var margin = MarginView(notes: session.notes)
     /// Decks as stacks of cards: their feet, the row under a selected one, turning, the spread.
@@ -450,6 +469,8 @@ final class DesignCanvas {
             self?.drawFlow()
         }
         session.listenToHover { [weak self] in self?.placeOverlays() }
+        // The fill menu opened or shut, or another of its gradient's colours chosen.
+        session.listenToGradient { [weak self] in self?.gradients.draw() }
         session.listenToStyles { [weak self] in self?.drawStyleUsers() }
         session.listenToEdits { [weak self] board in
             guard let self else { return }
@@ -1224,6 +1245,7 @@ final class DesignCanvas {
         placeOffer()
         placeCopyOffer()
         drawComponents()
+        gradients.draw()
         if drag == nil, let p = lastPoint { updatePointer(at: p) }
     }
 

@@ -63,6 +63,12 @@ final class MenuHost {
         }
     }
 
+    /// Something that takes its own presses while a menu is open, such as a gradient's handles
+    /// on the canvas: over what catches presses round the menu, under the menus themselves.
+    func addOverCatcher(_ element: UIElement) {
+        try? layer.children.insertAt(1, element)
+    }
+
     /// Opens a menu below `anchor` (or above it, where there is no room), as wide as `width`
         /// or the anchor, its left edge in line with the anchor's: the Mac's MenuButton menus.
     func show(below anchor: FrameworkElement, width: Double? = nil, entries: [Entry], searchable: Bool = false, closed: (() -> Void)? = nil) {

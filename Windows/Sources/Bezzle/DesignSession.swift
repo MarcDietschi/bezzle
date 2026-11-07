@@ -55,6 +55,22 @@ final class DesignSession {
     func listenToStyles(_ f: @escaping () -> Void) { styleListeners.append(f) }
     /// The Photo card's colour whose rows show, as a press on the photo picks it.
     var pickPhotoBand: ((String) -> Void)?
+    /// What the fill menu is open on, while it is: one of the layers' fills or borders (the Mac's
+    /// GradientSession.target), whose gradient the canvas shows its handles for.
+    struct FillMenuTarget: Equatable {
+        var border: Bool
+        var slot: Int
+        var ids: [UUID]
+        var board: Int
+    }
+    var fillMenu: FillMenuTarget? { didSet { if fillMenu != oldValue { for f in gradientListeners { f() } } } }
+    /// Which of the gradient's colours is chosen, in the fill menu's bar and on the canvas alike.
+    var gradientStop = 0 { didSet { if gradientStop != oldValue { for f in gradientListeners { f() } } } }
+    private var gradientListeners: [() -> Void] = []
+    func listenToGradient(_ f: @escaping () -> Void) { gradientListeners.append(f) }
+    /// The fill menu made again as the gradient changed on the canvas: with its colour panel
+    /// (another colour chosen), or its bar alone.
+    var refreshFillMenu: ((_ panelToo: Bool) -> Void)?
     /// The selected layers, all on the artboard at `board` (its index among the design's layers);
     /// with none selected, `board` is the artboard whose page the layers list shows, if any.
     private(set) var selection: [UUID] = []

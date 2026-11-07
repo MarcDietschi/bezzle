@@ -172,6 +172,11 @@ final class DesignWindow {
             if args.key == .menu { self.inspector.photoAltChanged() }
             if self.menus.isOpen {
                 if args.key == .escape { args.handled = true; self.menus.close() }
+                // Open on a gradient, Delete takes off its chosen colour, not the layer.
+                if args.key == .delete || args.key == .back, !(((try? FocusManager.getFocusedElement(self.root.xamlRoot)) ?? nil) is TextBox),
+                   self.canvas.gradients.deleteKey() {
+                    args.handled = true
+                }
                 return
             }
             if let playing = self.playing {

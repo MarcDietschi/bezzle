@@ -411,16 +411,27 @@ extension Inspector {
 
     // MARK: The fill menu and the colour panel
 
-    /// The chosen colour of a gradient in the fill menu.
-    private static var stop = 0
-
     /// The fill menu, hanging from a paint's swatch: one colour, a gradient along a line or out
     /// from a point, or the picture there is. A gradient lays its colours on a bar, to choose,
-    /// move, add and drag off, with the chosen one's colour picked under it.
+    /// move, add and drag off, with the chosen one's colour picked under it; while it is open, the
+    /// canvas shows the gradient's handles where the layer is (`GradientHandles`), the chosen
+    /// colour (`session.gradientStop`) the same in both.
     func openFillMenu(below anchor: FrameworkElement, target: Target, ids: [UUID], board: Int) {
-        Self.stop = 0
+        session.gradientStop = 0
         guard let (content, height) = fillMenu(target: target, ids: ids, board: board) else { return }
-        menus?.panel(below: anchor, width: Theme.cardWidth, height: height, content: content)
+        let session = self.session
+        menus?.panel(below: anchor, width: Theme.cardWidth, height: height, content: content, closed: { [weak self] in
+            session.fillMenu = nil
+            session.refreshFillMenu = nil
+            self?.refreshGradientBar = nil
+        })
+        switch target {
+        case .fill(let slot): session.fillMenu = DesignSession.FillMenuTarget(border: false, slot: slot, ids: ids, board: board)
+        case .border(let slot): session.fillMenu = DesignSession.FillMenuTarget(border: true, slot: slot, ids: ids, board: board)
+        }
+        session.refreshFillMenu = { [weak self] panelToo in
+            if panelToo { self?.refreshFillMenu(target: target, ids: ids, board: board) } else { self?.refreshGradientBar?() }
+        }
         returnFocus?()
     }
 
@@ -448,7 +459,7 @@ extension Inspector {
             case .fill(let slot): change(.fillKind(slot, k))
             case .border(let slot): change(.borderKind(slot, k))
             }
-            Self.stop = 0
+            self?.session.gradientStop = 0
             self?.refreshFillMenu(target: target, ids: ids, board: board)
         }
         well.margin = Theme.inset(14, 14, 14, 0)
@@ -461,11 +472,11 @@ extension Inspector {
         }
         let gradient = paint.kind == "linear" || paint.kind == "radial"
         let stops = paint.stops
-        let chosen = min(Self.stop, max(stops.count - 1, 0))
-        // The bar, made again as its colours change in the panel under it.
+        let chosen = min(session.gradientStop, max(stops.count - 1, 0))
+        // The bar, made again as its colours change in the panel under it, or on the canvas.
         let barHolder = Border()
         @MainActor func makeBar(_ stops: [WindowsCore.Stop]) {
-            barHolder.child = gradientBar(stops, chosen: min(Self.stop, max(stops.count - 1, 0)), set: { [weak self] next in
+            barHolder.child = gradientBar(stops, chosen: min(self.session.gradientStop, max(stops.count - 1, 0)), set: { [weak self] next in
                 switch target {
                 case .fill(let slot): WindowsCore.change(ids, .stops(slot, next))
                 case .border(let slot): WindowsCore.change(ids, .borderStops(slot, next))
@@ -473,8 +484,16 @@ extension Inspector {
                 self?.session.edited(board: board)
             }, refresh: { [weak self] in self?.refreshFillMenu(target: target, ids: ids, board: board) })
         }
+        refreshGradientBar = nil
         if gradient, !stops.isEmpty {
             makeBar(stops)
+            refreshGradientBar = {
+                guard let looks = WindowsCore.looks(ids) else { return }
+                switch target {
+                case .fill(let slot): if looks.fills.indices.contains(slot) { makeBar(looks.fills[slot].stops) }
+                case .border(let slot): if looks.borders.indices.contains(slot) { makeBar(looks.borders[slot].paint.stops) }
+                }
+            }
             barHolder.margin = Theme.inset(14, 14, 14, 0)
             stack.children.append(barHolder)
         }
@@ -509,6 +528,7 @@ extension Inspector {
     private func gradientBar(_ stops: [WindowsCore.Stop], chosen: Int, set: @escaping @MainActor ([WindowsCore.Stop]) -> Void,
                              refresh: @escaping @MainActor () -> Void) -> FrameworkElement {
         let pin = 16.0, width = Theme.cardWidth - 28, run = width - pin
+        let session = self.session
         let bar = Canvas()
         bar.width = width
         bar.height = pin + 4
@@ -542,7 +562,7 @@ extension Inspector {
                            b: a.colour.b + (b.colour.b - a.colour.b) * t, a: a.colour.a + (b.colour.a - a.colour.a) * t)
             var next = stops + [WindowsCore.Stop(offset: offset, colour: c)]
             next.sort { $0.offset < $1.offset }
-            Self.stop = next.firstIndex { $0.offset == offset } ?? 0
+            session.gradientStop = next.firstIndex { $0.offset == offset } ?? 0
             DispatchQueue.main.async { MainActor.assumeIsolated {
                 set(next)
                 refresh()
@@ -567,7 +587,7 @@ extension Inspector {
                 guard let q = try? args?.getCurrentPoint(bar)?.position else { return }
                 args?.handled = true
                 from = (Double(q.x), s.offset)
-                Self.stop = k
+                session.gradientStop = k
                 _ = try? (sender as? UIElement)?.capturePointer(args?.pointer)
                 WindowsCore.beginGesture()
             }
@@ -581,7 +601,7 @@ extension Inspector {
                 var next = stops
                 next[k] = WindowsCore.Stop(offset: offset, colour: s.colour)
                 let order = next.indices.sorted { next[$0].offset < next[$1].offset }
-                Self.stop = order.firstIndex(of: k) ?? k
+                session.gradientStop = order.firstIndex(of: k) ?? k
                 set(order.map { next[$0] })
             }
             p.pointerReleased.addHandler { sender, args in
@@ -597,14 +617,14 @@ extension Inspector {
                         // Taken off the bar: the colour goes, the others as they were.
                         var next = stops
                         next.remove(at: k)
-                        Self.stop = max(k - 1, 0)
+                        session.gradientStop = max(k - 1, 0)
                         set(next)
                     }
                     refresh()
                 } }
             }
             p.tapped.addHandler { _, _ in
-                Self.stop = k
+                session.gradientStop = k
             }
         }
         return bar

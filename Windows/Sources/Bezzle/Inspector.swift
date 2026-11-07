@@ -39,6 +39,8 @@ final class Inspector {
     var showsAxes = false
     /// What a panel open from a card needs kept, such as the colour panel's state.
     var retained: AnyObject?
+    /// The open fill menu's gradient bar made again, as its colours move on the canvas.
+    var refreshGradientBar: (() -> Void)?
     /// The Export card's export: how far it has come, the question before replacing files, and
     /// where they went, for the layers it was for.
     var exporting: Double?
