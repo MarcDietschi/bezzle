@@ -1,0 +1,2848 @@
+import Foundation
+import WinSDK
+import WinUI
+import WinAppSDK
+import WindowsFoundation
+import UWP
+import BezzleCore
+
+/// The canvas, as the Mac's (Canvas/CanvasView.swift; numbers in DESIGN.md): the artboards on the
+/// table, each casting its shadow and with its name above it, drawn by the core into bitmaps.
+/// A click picks the layer under it, a drag moves what is picked as one gesture, the handles
+/// resize it (Shift keeps a corner's proportions); Delete deletes, the arrows nudge (Shift by 10),
+/// Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z) undo and redo; the tools' letters choose them. The wheel
+/// pans; Ctrl and the wheel zoom round the pointer, Ctrl with +, − and 0 step and fit.
+@MainActor
+final class DesignCanvas {
+    let root = Grid()
+    private let stage = Canvas()
+    /// Over the artboards, always: the hover, the selection and its handles; then the rulers.
+    private let overlay = Canvas()
+    private let rulers = Rulers()
+    /// Where a text is typed into, over the canvas: the text field the Mac's editor is here.
+    private let editorLayer = Canvas()
+    private var editor: TextBox?
+    private var editing: (id: UUID, board: Int)?
+    private let session: DesignSession
+
+    /// Where the design's origin is on the stage, in its pixels (DIPs).
+    private var pan = CGPoint(x: 64, y: 64)
+    private var pixelScale = 1.0
+    private var zoom: Double { session.zoom }
+
+    private var boards: [WindowsCore.Board] = []
+    private struct Sheet {
+        let image = Image()
+        var bitmap: WriteableBitmap?
+        let shadow = Image()
+        var shadowBitmap: WriteableBitmap?
+        var shadowPad = 0.0
+        let name = TextBlock()
+    }
+    private var sheets: [Int: Sheet] = [:]
+    /// Layers lying on the canvas outside artboards, each drawn on its own, by their place in the design.
+    private var loose: [WindowsCore.Loose] = []
+    private var looseSheets: [Int: (image: Image, bitmap: WriteableBitmap?)] = [:]
+
+    /// The hovered layer's outline, 1.5 wide; each selected layer's, 1 wide, along its turn (a
+    /// line's two ends), in the colour of component copies for one; the box round several, dashed.
+    private let hover = WinUI.Path()
+    private var outlines: [WinUI.Path] = []
+    private let bounds = WinUI.Path()
+    /// The handles, white with a soft shadow under them, as the Mac draws them: square, or round
+    /// at a line's ends and under text as wide as its words.
+    /// The dots inside a selected rectangle's corners, shown while the pointer is on it.
+    private let cornerDots = (0..<4).map { _ in Ellipse() }
+    private var dotsShown = false
+    /// The selected layer's shadow, dashed, while the pointer is on it.
+    private let shadowLine = WinUI.Path()
+    private var shadowShown = false
+    /// What a drag measures, in a pill under it, as the Mac's canvas shows it.
+    private let measurePill = Border()
+    private let measureText = TextBlock()
+    private let handles = (0..<8).map { _ in Rectangle() }
+    private let handleShades = (0..<8).map { _ in Rectangle() }
+    /// The handles shown, on the stage: each by its place in `WindowsCore.handleOrder` (a line's
+    /// ends by 0 and 1).
+    private var shownHandles: [(index: Int, point: CGPoint)] = []
+    private var lineEnds = false
+    /// While something is dragged: the lines it catches on and the gaps as wide as others (in
+    /// pencil, as the Mac draws them), and the box dragged out to pick with.
+    private let guideLines = WinUI.Path()
+    private let gapFields = WinUI.Path()
+    private let marqueeBox = Rectangle()
+    private var guides: [WindowsCore.GuideLine] = []
+    /// Where the right-click menu opens.
+    var menus: MenuHost?
+    private var overlaysAdded = false
+    private static let handleSize = 8.0
+
+    /// What a press has taken hold of: the selection to move (copies of it with Alt), a handle,
+    /// a line's end, a box to drag out from a point on the canvas (with what was selected before,
+    /// with Shift, and the artboard it began on), or a layer being drawn.
+    private enum Grab {
+        case move(duplicate: Bool)
+        case handle(Int)
+        case lineEnd(Int)
+        case marquee(start: CGPoint, base: [UUID], inside: Int?)
+        case draw(id: UUID, kind: String, start: CGPoint, board: Int?)
+        /// Just outside a corner: turning in the page. A corner's dot: rounding the corners. The
+        /// layer's shadow: moving it, once the pointer goes 3 points (a click picks what is there).
+        /// A turned layer's knob, or just outside the middle of a side: turning it in depth.
+        /// A selected repeat grid's handle, gap or corner: repeating, spacing or turning it. A
+        /// layout grid's gutter, margin or baseline, while its card is open.
+        case turn, corner, shadow, depth, grid, layout
+        /// The canvas itself, moved round with Space held or the wheel pressed, from where it was.
+        case pan(start: CGPoint)
+        /// Pieces of the shapes being built with, joined or wiped away.
+        case build
+        /// A selected path's corner dot (rounding its corners), or a shape's edge with Alt (an
+        /// outline pulled out or in).
+        case outline
+    }
+    private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
+    /// The pen and a path's points (the shared PenTool), and what it shows over the design.
+    var pen: WindowsCore.Pen { session.pen }
+    /// Building with pieces (the shared PieceBuilding), started from the Arrange card.
+    var builder: WindowsCore.BuildHand { session.builder }
+    private let buildMarks = Canvas()
+    /// A selected shape's outline (the shared OutlineDragging): a path's corner dots, the edge with Alt.
+    let outlineHand = WindowsCore.OutlineHand()
+    private let outlineMarks = Canvas()
+    /// The word "Mask" offered after a change, above what it is about (the Mac's MaskTool offer):
+    /// pointed at, the mask shows made; pressed, it is made.
+    private let offerChip = Border()
+    private var shownOffer: WindowsCore.MaskOffer?
+    private var offerLit = false
+    /// What is offered for a moment after a change to a copy (the Mac's ComponentTool offer): a
+    /// capsule beside the copy, its words and buttons, the first the one to take.
+    private let copyChip = Border()
+    /// The other copies of the copy picked, faintly, and its component's name over it.
+    private let componentMarks = Canvas()
+    private var copyOffer: WindowsCore.CopyOffer?
+    private var copyButtons: [(rect: CGRect, index: Int)] = []
+    /// Something being moved, held still over a shape (the Mac's MaskTool dip): the shape under
+    /// the pointer and where it came to rest, whether resting would open it, the shape opened and
+    /// the mask it made, and the shapes opened and left again in this drag.
+    private struct Dip {
+        var over: UUID?
+        var at: CGPoint = .zero
+        var ready = false
+        var opened: (shape: UUID, mask: UUID)?
+        var declined: Set<UUID> = []
+        /// Counts each rest, so a wait for an earlier one comes to nothing.
+        var rest = 0
+    }
+    private var dip: Dip?
+    private let dipMarks = Canvas()
+    /// How long something has to rest over a shape for it to open, and how far the pointer may
+    /// wander on screen and still be resting, as on the Mac.
+    private static let dipRest = 0.9
+    private static let dipWander = 3.0
+    let knife = WindowsCore.KnifeHand()
+    /// Turning in depth (the shared DepthTurning): the knob of a turned layer, and turning from
+    /// just outside the middle of a side.
+    let depth = WindowsCore.Depth()
+    /// Guides (the shared GuideDragging): pulled out of the rulers, moved by their lines and tabs.
+    let guideHand = WindowsCore.Guides()
+    /// A selected repeat grid (the shared GridHandles): its handles repeat it, its gaps space it.
+    let gridHand = WindowsCore.GridHand()
+    /// A layout grid's gutters, margins and baselines (the shared LayoutHandles), while its card is open.
+    let layoutHand = WindowsCore.LayoutHand()
+    private let gridMarks = Canvas()
+    /// The drawing aids' menu, for a click on the rulers' corner.
+    var aidsMenu: (() -> [MenuHost.Entry])?
+    private let depthMarks = Canvas()
+    private let penMarks = Canvas()
+    /// Where carousels will be cut into slides, and each slide's number over it.
+    private let slideMarks = Canvas()
+    /// The artboards' layout grids and guides.
+    private let aidMarks = Canvas()
+    /// The last press, for telling a double click from two: when, and where on the stage.
+    private var lastPress: (at: CGPoint, time: UInt32, clicks: Int)?
+    private var hovered: UUID? { session.hovered }
+    /// Where the pointer last was on the stage, and the pointer shown there.
+    private var lastPoint: CGPoint?
+    private var shownPointer: Pointer?
+    /// Space held: a press moves the canvas round, as on the Mac.
+    private var spaceDown = false
+
+    init(session: DesignSession) {
+        self.session = session
+        root.background = Theme.brush(Theme.table)
+        root.children.append(stage)
+        root.children.append(overlay)
+        root.children.append(rulers.root)
+        root.children.append(editorLayer)
+        overlay.isHitTestVisible = false
+        root.sizeChanged.addHandler { [weak self] _, _ in self?.place() }
+        stage.background = Theme.clear
+        root.isTabStop = true
+
+        hover.strokeThickness = 1.5
+        bounds.stroke = Theme.brush(Theme.selection)
+        bounds.strokeThickness = 1
+        let dashes = DoubleCollection()
+        dashes.append(3)
+        dashes.append(3)
+        bounds.strokeDashArray = dashes
+        for shape in [hover, bounds] { shape.visibility = .collapsed; shape.isHitTestVisible = false }
+        guideLines.stroke = Theme.brush(Theme.selection)
+        guideLines.strokeThickness = 1
+        gapFields.fill = Theme.brush(Theme.selection, 0.07)
+        gapFields.stroke = Theme.brush(Theme.selection, 0.55)
+        gapFields.strokeThickness = 1
+        marqueeBox.fill = Theme.brush(Theme.selection, 0.08)
+        marqueeBox.stroke = Theme.brush(Theme.selection, 0.8)
+        marqueeBox.strokeThickness = 1
+        for shape in [guideLines, gapFields, marqueeBox] as [Shape] { shape.visibility = .collapsed; shape.isHitTestVisible = false }
+        for h in handles {
+            h.width = Self.handleSize
+            h.height = Self.handleSize
+            h.fill = Theme.brush(0xFFFFFF)
+            h.stroke = Theme.brush(Theme.selection)
+            h.strokeThickness = 1
+            h.visibility = .collapsed
+            h.isHitTestVisible = false
+        }
+        for dot in cornerDots {
+            dot.width = 7
+            dot.height = 7
+            dot.fill = Theme.brush(0xFFFFFF)
+            dot.stroke = Theme.brush(Theme.selection)
+            dot.strokeThickness = 1
+            dot.visibility = .collapsed
+            dot.isHitTestVisible = false
+        }
+        shadowLine.stroke = Theme.brush(Theme.selection, 0.7)
+        shadowLine.strokeThickness = 1
+        let shadowDashes = DoubleCollection()
+        shadowDashes.append(3)
+        shadowDashes.append(3)
+        shadowLine.strokeDashArray = shadowDashes
+        shadowLine.visibility = .collapsed
+        shadowLine.isHitTestVisible = false
+        measurePill.background = Theme.brush(Theme.selection)
+        measurePill.cornerRadius = Theme.corners(6)
+        measurePill.height = 20
+        measurePill.isHitTestVisible = false
+        measurePill.visibility = .collapsed
+        measureText.fontFamily = Theme.ui
+        measureText.fontSize = 11
+        measureText.fontWeight = FontWeight(weight: 500)
+        measureText.foreground = Theme.brush(0xFFFFFF)
+        measureText.verticalAlignment = .center
+        measureText.margin = Theme.inset(7, 0, 7, 0)
+        measurePill.child = measureText
+        for shade in handleShades {
+            shade.width = Self.handleSize + 1
+            shade.height = Self.handleSize + 1
+            shade.fill = Theme.brush(0, 0.12)
+            shade.visibility = .collapsed
+            shade.isHitTestVisible = false
+        }
+
+        pen.redraw = { [weak self] in self?.drawPen() }
+        knife.redraw = { [weak self] in self?.drawPen() }
+        depth.redraw = { [weak self] in self?.drawDepth() }
+        gridHand.redraw = { [weak self] in self?.drawGrids() }
+        builder.redraw = { [weak self] in self?.drawBuild() }
+        outlineHand.redraw = { [weak self] in self?.drawOutline() }
+        offerChip.height = 28
+        offerChip.cornerRadius = Theme.corners(14)
+        offerChip.background = Theme.brush(Theme.selection)
+        offerChip.isHitTestVisible = false
+        offerChip.visibility = .collapsed
+        let offerWords = StackPanel()
+        offerWords.orientation = .horizontal
+        offerWords.spacing = 6
+        offerWords.margin = Theme.inset(10, 0, 13, 0)
+        offerWords.verticalAlignment = .center
+        let offerGlyph = Glyphs.mask(size: 13, brush: Theme.brush(0xFFFFFF))
+        offerGlyph.verticalAlignment = .center
+        offerWords.children.append(offerGlyph)
+        let offerText = Theme.text("Mask", size: 11.5, weight: 600)
+        offerText.foreground = Theme.brush(0xFFFFFF)
+        offerText.verticalAlignment = .center
+        offerWords.children.append(offerText)
+        offerChip.child = offerWords
+        outlineHand.picked = { [weak self] ids in
+            guard let self else { return }
+            self.session.select(ids, on: ids.first.flatMap(WindowsCore.board(of:)) ?? self.session.board)
+        }
+        builder.changed = { [weak self] in
+            self?.session.changed()
+            self?.drawBuild()
+        }
+        builder.built = { [weak self] now in
+            guard let self else { return }
+            self.session.select(now, on: now.first.flatMap(WindowsCore.board(of:)) ?? self.session.board)
+            self.session.edited(board: nil)
+        }
+        layoutHand.redraw = { [weak self] in self?.drawAids() }
+        guideHand.redraw = { [weak self] in self?.drawAids() }
+        guideHand.click = { [weak self] v, shift in self?.clickThrough(at: v, adding: shift) }
+        guideHand.under = { [weak self] v in
+            guard let self, let id = self.pick(v) else { return nil }
+            return WindowsCore.bounds(of: [id])
+        }
+        guideHand.cornerMenu = { [weak self] v in
+            guard let self, let menus = self.menus, let entries = self.aidsMenu?() else { return }
+            menus.show(at: v, width: 220, entries: entries)
+        }
+        depth.pick = { [weak self] p in
+            guard let self else { return nil }
+            return self.pick(self.onStage(p))
+        }
+        pen.onDropPen = { [weak self] in self?.session.tool = .select }
+        penMarks.isHitTestVisible = false
+        stage.pointerPressed.addHandler { [weak self] _, args in self?.pressed(args) }
+        stage.pointerMoved.addHandler { [weak self] _, args in self?.moved(args) }
+        stage.pointerReleased.addHandler { [weak self] _, args in self?.released(args) }
+        stage.pointerExited.addHandler { [weak self] _, _ in
+            if self?.drag == nil {
+                self?.setHover(nil)
+                self?.gridHand.hover(nil)
+                self?.layoutHand.hover(nil)
+            }
+        }
+        stage.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args) }
+        stage.doubleTapped.addHandler { [weak self] _, args in self?.doubleTapped(args) }
+        stage.rightTapped.addHandler { [weak self] _, args in self?.rightTapped(args) }
+        // Pictures and words dragged in from elsewhere, as the Mac's canvas takes them (Dropping):
+        // over a shape a picture fills, the shape is lit.
+        stage.allowDrop = true
+        stage.dragOver.addHandler { [weak self] _, args in self?.dragOver(args) }
+        stage.dragLeave.addHandler { [weak self] _, _ in self?.setHover(nil) }
+        stage.drop.addHandler { [weak self] _, args in self?.dropped(args) }
+        root.loaded.addHandler { [weak self] _, _ in
+            guard let self else { return }
+            self.pixelScale = self.root.xamlRoot?.rasterizationScale ?? 1
+            self.fit()
+        }
+        session.openCardChanged = { [weak self] in self?.drawAids() }
+        session.listen { [weak self] in
+            self?.placeOverlays()
+            self?.drawPen()
+        }
+        session.listenToHover { [weak self] in self?.placeOverlays() }
+        session.listenToEdits { [weak self] board in
+            guard let self else { return }
+            self.redraw(board: board)
+            self.place()
+            // A step made at once to a copy offers what can be made of it; any other step takes
+            // what was offered away.
+            if self.drag == nil, let considered = WindowsCore.considerCopyOffer() {
+                if let offer = considered { self.showCopyOffer(offer) } else if self.copyOffer != nil {
+                    self.copyOffer = nil
+                    self.placeCopyOffer()
+                }
+            }
+        }
+    }
+
+    /// The keys come here again, from a field that was typed into.
+    func takeKeys() {
+        _ = try? root.focus(.programmatic)
+    }
+
+    /// The whole design in view, as the Mac fits it: 64 points round it, never above 1×.
+    func fit() {
+        boards = WindowsCore.boards()
+        fit(boards.reduce(CGRect.null) { $0.union($1.frame) }, padding: 64, most: 1)
+    }
+
+    /// What is selected in view, as the Mac's Zoom to Selection: 80 points round it, never above 8×.
+    func fitSelection() {
+        guard let box = WindowsCore.bounds(of: session.selection) else { fit(); return }
+        fit(box, padding: 80, most: 8)
+    }
+
+    private func fit(_ all: CGRect, padding: Double, most: Double) {
+        let width = max(200, root.actualWidth > 0 ? root.actualWidth : 900), height = max(200, root.actualHeight > 0 ? root.actualHeight : 600)
+        if !all.isNull, all.width > 0, all.height > 0 {
+            let z = min(most, (width - 2 * padding) / Double(all.width), (height - 2 * padding) / Double(all.height))
+            session.zoom = max(0.02, z)
+            pan = CGPoint(x: (width - Double(all.width) * zoom) / 2 - Double(all.minX) * zoom,
+                          y: (height - Double(all.height) * zoom) / 2 - Double(all.minY) * zoom)
+        }
+        drawAll()
+    }
+
+    /// The zoom menu's steps: in or out one step, or to a zoom, about the middle of the canvas.
+    func zoomStep(in grow: Bool) { step(in: grow) }
+    func zoom(to z: Double) { zoom(to: z, around: CGPoint(x: root.actualWidth / 2, y: root.actualHeight / 2)) }
+    var currentZoom: Double { zoom }
+    /// The canvas point in the middle of what shows.
+    var middleOnCanvas: CGPoint { inDesign(CGPoint(x: root.actualWidth / 2, y: root.actualHeight / 2)) }
+    /// The drawing aids shown or hidden: drawn again.
+    func aidsChanged() {
+        drawAids()
+        showRulers()
+    }
+
+    // MARK: Drawing
+
+    private func drawAll() {
+        boards = WindowsCore.boards()
+        for k in boards.indices { draw(k) }
+        for (k, sheet) in sheets where k >= boards.count {
+            for e in [sheet.image, sheet.shadow] as [UIElement] { e.visibility = .collapsed }
+            sheet.name.visibility = .collapsed
+        }
+        drawLoose()
+        place()
+    }
+
+    /// The layers lying on the canvas drawn again, each over as much as it paints.
+    private func drawLoose() {
+        loose = WindowsCore.looseLayers()
+        let scale = zoom * pixelScale
+        var shown = Set<Int>()
+        for item in loose {
+            var sheet = looseSheets[item.index] ?? {
+                let image = Image()
+                image.isHitTestVisible = false
+                stage.children.append(image)
+                return (image, nil)
+            }()
+            var bitmap = sheet.bitmap
+            let hiding = editing.flatMap { $0.board == item.index ? $0.id : nil }
+            _ = WindowsCore.render(loose: item.index, scale: scale, hiding: hiding) { width, height in
+                if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
+                    bitmap = WriteableBitmap(Int32(width), Int32(height))
+                }
+                return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+            }
+            try? bitmap?.invalidate()
+            if sheet.bitmap !== bitmap { sheet.image.source = bitmap }
+            sheet.bitmap = bitmap
+            sheet.image.visibility = .visible
+            looseSheets[item.index] = sheet
+            shown.insert(item.index)
+        }
+        for (k, sheet) in looseSheets where !shown.contains(k) { sheet.image.visibility = .collapsed }
+    }
+
+    /// What shows `board` (an artboard, or a layer on the canvas) drawn again.
+    private func redraw(board: Int?) {
+        // What is known of each artboard first: the change may have moved or sized it.
+        let now = WindowsCore.boards()
+        guard let board, now.count == boards.count, let k = now.firstIndex(where: { $0.index == board }) else { drawAll(); return }
+        boards = now
+        draw(k)
+    }
+
+    /// Artboard `k` drawn again by the core at the zoom's pixels, with its shadow.
+    private func draw(_ k: Int) {
+        guard boards.indices.contains(k) else { return }
+        let board = boards[k]
+        var sheet = sheets[k] ?? {
+            let sheet = Sheet()
+            sheet.shadow.isHitTestVisible = false
+            sheet.image.isHitTestVisible = false
+            sheet.name.fontFamily = Theme.ui
+            sheet.name.fontSize = 11
+            sheet.name.fontWeight = FontWeight(weight: 500)
+            sheet.name.textTrimming = .characterEllipsis
+            sheet.name.isHitTestVisible = false
+            stage.children.append(sheet.shadow)
+            stage.children.append(sheet.name)
+            stage.children.append(sheet.image)
+            return sheet
+        }()
+        let scale = zoom * pixelScale
+        var bitmap = sheet.bitmap
+        sheet.image.visibility = .visible
+        sheet.shadow.visibility = .visible
+        let hiding = editing.flatMap { $0.board == board.index ? $0.id : nil }
+        _ = WindowsCore.render(board: board.index, scale: scale, hiding: hiding) { width, height in
+            if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
+                bitmap = WriteableBitmap(Int32(width), Int32(height))
+            }
+            return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+        }
+        try? bitmap?.invalidate()
+        if sheet.bitmap !== bitmap { sheet.image.source = bitmap }
+        sheet.bitmap = bitmap
+
+        var shadow = sheet.shadowBitmap
+        var pad = 0
+        let w = Int((Double(board.frame.width) * scale).rounded()), h = Int((Double(board.frame.height) * scale).rounded())
+        _ = WindowsCore.artboardShadow(width: w, height: h, scale: pixelScale, colour: Theme.shadow) { width, height, p in
+            pad = p
+            if shadow == nil || shadow!.pixelWidth != Int32(width) || shadow!.pixelHeight != Int32(height) {
+                shadow = WriteableBitmap(Int32(width), Int32(height))
+            }
+            return (try? shadow?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+        }
+        try? shadow?.invalidate()
+        if sheet.shadowBitmap !== shadow { sheet.shadow.source = shadow }
+        sheet.shadowBitmap = shadow
+        sheet.shadowPad = Double(pad) / pixelScale
+        sheet.name.text = board.name
+        sheets[k] = sheet
+    }
+
+    /// Everything where the zoom and pan put it.
+    private func place() {
+        for (k, board) in boards.enumerated() {
+            guard let sheet = sheets[k] else { continue }
+            let at = onStage(board.frame.origin)
+            let w = Double(board.frame.width) * zoom, h = Double(board.frame.height) * zoom
+            // The picture covers what runs past the edges too, when the artboard shows it.
+            let drawn = board.drawn.isEmpty ? board.frame : board.drawn
+            let from = onStage(drawn.origin)
+            try? Canvas.setLeft(sheet.image, Double(from.x))
+            try? Canvas.setTop(sheet.image, Double(from.y))
+            sheet.image.width = Double(drawn.width) * zoom
+            sheet.image.height = Double(drawn.height) * zoom
+            try? Canvas.setLeft(sheet.shadow, Double(at.x) - sheet.shadowPad)
+            try? Canvas.setTop(sheet.shadow, Double(at.y) - sheet.shadowPad)
+            sheet.shadow.width = w + 2 * sheet.shadowPad
+            sheet.shadow.height = h + 2 * sheet.shadowPad
+            // The name 19 above, as wide as the artboard (at least 40), gone under 30 wide; a
+            // carousel's as wide as its first slide, less the room for its number.
+            try? Canvas.setLeft(sheet.name, Double(at.x))
+            try? Canvas.setTop(sheet.name, Double(at.y) - 19)
+            let named = board.slide.map { Double($0.width) * zoom - Self.slideNumberRoom } ?? w
+            sheet.name.maxWidth = max(named, 40)
+            sheet.name.visibility = w < 30 ? .collapsed : .visible
+        }
+        placeSlideMarks()
+        drawAids()
+        for item in loose {
+            guard let sheet = looseSheets[item.index] else { continue }
+            let at = onStage(item.reach.origin)
+            try? Canvas.setLeft(sheet.image, Double(at.x))
+            try? Canvas.setTop(sheet.image, Double(at.y))
+            sheet.image.width = Double(item.reach.width) * zoom
+            sheet.image.height = Double(item.reach.height) * zoom
+        }
+        placeOverlays()
+    }
+
+    /// Layout grids, as the Mac's LayoutTool draws them at rest: columns and rows washed in the red
+    /// of a ruled margin with an edge each side, baselines in the pale blue of lined paper (fading
+    /// as they crowd together zooming out); brighter while the grid's card is open or something on
+    /// its artboard is dragged. And the guides, in pencil, from edge to edge of their artboards.
+    private func drawAids() {
+        if aidMarks.parent == nil {
+            aidMarks.isHitTestVisible = false
+            overlay.children.insertAt(0, aidMarks)
+        }
+        aidMarks.children.clear()
+        func crisp(_ v: Double) -> Double { v.rounded() + 0.5 }
+        func path(_ data: String, fill: Brush? = nil, stroke: Brush? = nil) {
+            guard !data.isEmpty, let p = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(data)' StrokeThickness='1'/>")) as? WinUI.Path else { return }
+            p.fill = fill
+            p.stroke = stroke
+            aidMarks.children.append(p)
+        }
+        let red = Inspector.red, blue = Inspector.blue
+        syncLayout()
+        // What is being moved or resized on an artboard, to light the columns it spans.
+        let moving: Bool = switch drag?.grab {
+        case .move?, .handle?: drag?.moved == true
+        default: false
+        }
+        let span = moving ? WindowsCore.columnSpan(session.selection) : nil
+        let spanBoard = moving ? session.selection.first.flatMap(WindowsCore.board(of:)) : nil
+        for m in WindowsCore.gridMarks() {
+            let index = boards.first { $0.id == m.board }?.index
+            let lit = (session.selection == [m.board] && session.openCard == "Layout Grid") || (drag?.moved == true && index != nil && index == session.board)
+                || layoutHand.workedOn == m.board
+            let a = lit ? 1.0 : 0.0
+            let wash = 0.04 + 0.035 * a, edge = 0.12 + 0.2 * a
+            let spanned = index != nil && index == spanBoard ? span?.lit ?? [] : []
+            for (bands, columns) in [(m.columns, true), (m.rows, false)] where !bands.isEmpty {
+                var washes = PathData(), edges = PathData(), litWashes = PathData(), litEdges = PathData()
+                for (i, r) in bands.enumerated() {
+                    let o = onStage(r.origin)
+                    let x = Double(o.x), y = Double(o.y), w = Double(r.width) * zoom, h = Double(r.height) * zoom
+                    guard (columns ? w : h) >= 0.5 else { continue }
+                    let spans = columns && spanned.contains(i)
+                    if spans { litWashes.rect(x, y, w, h) } else { washes.rect(x, y, w, h) }
+                    if columns {
+                        if spans {
+                            litEdges.move(crisp(x), y); litEdges.line(crisp(x), y + h)
+                            litEdges.move(crisp(x + w), y); litEdges.line(crisp(x + w), y + h)
+                        } else {
+                            edges.move(crisp(x), y); edges.line(crisp(x), y + h)
+                            edges.move(crisp(x + w), y); edges.line(crisp(x + w), y + h)
+                        }
+                    } else {
+                        edges.move(x, crisp(y)); edges.line(x + w, crisp(y))
+                        edges.move(x, crisp(y + h)); edges.line(x + w, crisp(y + h))
+                    }
+                }
+                path(washes.d, fill: Theme.brush(red, columns ? wash : wash * 0.8))
+                path(edges.d, stroke: Theme.brush(red, edge))
+                path(litWashes.d, fill: Theme.brush(red, wash + 0.07))
+                path(litEdges.d, stroke: Theme.brush(red, edge + 0.2))
+            }
+            // Each column's number along the top while the grid is worked on.
+            if layoutHand.editable == m.board {
+                for (i, r) in m.columns.enumerated() {
+                    let o = onStage(r.origin), w = Double(r.width) * zoom
+                    guard w >= 14 else { continue }
+                    let label = Theme.text("\(m.perArea > 0 ? i % m.perArea + 1 : i + 1)", size: 9, weight: 600)
+                    label.foreground = Theme.brush(red, 0.85)
+                    try? label.measure(Size(width: 60, height: 20))
+                    try? Canvas.setLeft(label, (Double(o.x) + w / 2 - Double(label.desiredSize.width) / 2).rounded())
+                    try? Canvas.setTop(label, Double(o.y) + 4)
+                    aidMarks.children.append(label)
+                }
+            }
+            let crowd = min(max((Double(m.step) * zoom - 2.5) / 5, 0), 1)
+            if crowd > 0.01, !m.baselines.isEmpty {
+                var lines = PathData()
+                for b in m.baselines {
+                    let y = crisp(Double(onStage(CGPoint(x: 0, y: b.y)).y))
+                    lines.move(Double(onStage(CGPoint(x: b.from, y: 0)).x), y)
+                    lines.line(Double(onStage(CGPoint(x: b.to, y: 0)).x), y)
+                }
+                path(lines.d, stroke: Theme.brush(blue, (0.14 + 0.14 * a) * crowd))
+            }
+        }
+        // The part of the grid under the pointer, or held: its bands hatched, as the gaps between
+        // layers are when they line up; a baseline drawn firmly, and the first, which stays.
+        for band in layoutHand.lit() {
+            let o = onStage(band.rect.origin)
+            let x = Double(o.x), y = Double(o.y), w = Double(band.rect.width) * zoom, h = Double(band.rect.height) * zoom
+            if band.line {
+                var line = PathData()
+                line.rect(x, y - 0.75, w, 1.5)
+                path(line.d, fill: Theme.brush(blue, band.held ? 0.95 : 0.6))
+                continue
+            }
+            guard w > 0, h > 0 else { continue }
+            var fill = PathData()
+            fill.rect(x, y, w, h)
+            path(fill.d, fill: Theme.brush(red, 0.14))
+            let hatch = Canvas()
+            hatch.width = w
+            hatch.height = h
+            let clip = RectangleGeometry()
+            clip.rect = Rect(x: 0, y: 0, width: Float(w), height: Float(h))
+            hatch.clip = clip
+            var lines = PathData()
+            var hx = -h
+            while hx < w {
+                lines.move(hx, h)
+                lines.line(hx + h, 0)
+                hx += 4
+            }
+            if let shape = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(lines.d)' StrokeThickness='0.75'/>")) as? WinUI.Path {
+                shape.stroke = Theme.brush(red, 0.5)
+                hatch.children.append(shape)
+            }
+            try? Canvas.setLeft(hatch, x)
+            try? Canvas.setTop(hatch, y)
+            aidMarks.children.append(hatch)
+        }
+        // How many columns something spans exactly, in a red pill over it.
+        if let span, let count = span.exact {
+            let r = span.box, o = onStage(r.origin)
+            let box = Border()
+            box.height = 18
+            box.cornerRadius = Theme.corners(9)
+            box.background = Theme.brush(red)
+            let words = Theme.text(count == 1 ? "1 column" : "\(count) columns", size: 10.5, weight: 600)
+            words.foreground = Theme.brush(0xFFFFFF)
+            words.margin = Theme.inset(7, 0, 7, 0)
+            words.verticalAlignment = .center
+            box.child = words
+            try? box.measure(Size(width: 300, height: 18))
+            let w = Double(box.desiredSize.width)
+            try? Canvas.setLeft(box, (Double(o.x) + Double(r.width) * zoom / 2 - w / 2).rounded())
+            try? Canvas.setTop(box, (Double(o.y) - 26).rounded())
+            aidMarks.children.append(box)
+        }
+        // The guides: lit under the pointer or while moved; one being dragged in or off, and its
+        // distances to the edges, as the Mac shows them (without its unrolling and quivering).
+        syncGuides()
+        var calm = PathData(), lit = PathData()
+        for g in guideHand.lines() {
+            let a = onStage(g.from), b = onStage(g.to)
+            let x0 = g.vertical ? crisp(Double(a.x)) : Double(a.x), y0 = g.vertical ? Double(a.y) : crisp(Double(a.y))
+            let x1 = g.vertical ? crisp(Double(b.x)) : Double(b.x), y1 = g.vertical ? Double(b.y) : crisp(Double(b.y))
+            if g.lit { lit.move(x0, y0); lit.line(x1, y1) } else { calm.move(x0, y0); calm.line(x1, y1) }
+        }
+        path(calm.d, stroke: Theme.brush(Theme.selection, 0.62))
+        if let shape = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(lit.d.isEmpty ? "M0,0" : lit.d)' StrokeThickness='1.25'/>")) as? WinUI.Path, !lit.d.isEmpty {
+            shape.stroke = Theme.brush(Theme.selection)
+            aidMarks.children.append(shape)
+        }
+        func pill(_ text: String, at p: CGPoint, solid: Bool, warning: Bool) {
+            let ink = warning ? Theme.warning : Theme.selection
+            let box = Border()
+            box.height = 18
+            box.cornerRadius = Theme.corners(9)
+            box.background = solid ? Theme.brush(ink) : Theme.brush(0xFFFFFF)
+            box.borderBrush = Theme.brush(ink)
+            box.borderThickness = Theme.inset(solid ? 0 : 1)
+            let words = Theme.text(text, size: 10.5, weight: 600)
+            words.foreground = solid ? Theme.brush(0xFFFFFF) : Theme.brush(ink)
+            words.margin = Theme.inset(6, 0, 6, 0)
+            words.verticalAlignment = .center
+            box.child = words
+            try? box.measure(Size(width: 300, height: 18))
+            let w = Double(box.desiredSize.width)
+            try? Canvas.setLeft(box, (Double(p.x) - w / 2).rounded())
+            try? Canvas.setTop(box, (Double(p.y) - 9).rounded())
+            aidMarks.children.append(box)
+        }
+        for h in guideHand.held() {
+            let a = onStage(h.from), b = onStage(h.to)
+            var line = PathData()
+            line.move(Double(a.x), Double(a.y))
+            line.line(Double(b.x), Double(b.y))
+            let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(line.d)' StrokeThickness='\(h.leaving ? 1 : 1.25)'"
+                + (h.leaving ? " StrokeDashArray='4 3'" : "") + "/>"
+            if let shape = (try? XamlReader.load(xaml)) as? WinUI.Path {
+                shape.stroke = Theme.brush(Theme.selection, h.leaving ? 0.4 : 1)
+                aidMarks.children.append(shape)
+            }
+            if h.leaving {
+                let q = onStage(h.pointer)
+                pill("Release to remove", at: CGPoint(x: Double(q.x) + 14 + 50, y: Double(q.y) + 14 + 9), solid: true, warning: true)
+                continue
+            }
+            // Each distance beside the pointer along the guide, solid toward the edge it keeps to.
+            for span in h.spans {
+                let s0 = onStage(span.from), s1 = onStage(span.to)
+                var dim = PathData()
+                let off = 26.0
+                let d0 = h.vertical ? CGPoint(x: Double(s0.x), y: Double(s0.y) + off) : CGPoint(x: Double(s0.x) + off, y: Double(s0.y))
+                let d1 = h.vertical ? CGPoint(x: Double(s1.x), y: Double(s1.y) + off) : CGPoint(x: Double(s1.x) + off, y: Double(s1.y))
+                dim.move(Double(d0.x), Double(d0.y)); dim.line(Double(d1.x), Double(d1.y))
+                path(dim.d, stroke: Theme.brush(Theme.selection, 0.75))
+                pill(number(Double(span.length)), at: CGPoint(x: (Double(d0.x) + Double(d1.x)) / 2, y: (Double(d0.y) + Double(d1.y)) / 2), solid: span.kept, warning: false)
+            }
+        }
+        rulers.showTabs(WindowsCore.showsRulers ? guideHand.tabs().map { (Double($0.at), $0.vertical, $0.lit) } : [])
+    }
+
+    private func number(_ v: Double) -> String {
+        let r = (v * 10).rounded() / 10
+        return r == r.rounded() ? String(Int(r)) : String(format: "%.1f", r)
+    }
+
+    /// The guides see the canvas as it is now.
+    private func syncGuides() {
+        guideHand.zoom = CGFloat(zoom)
+        guideHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+        guideHand.size = CGSize(width: root.actualWidth, height: root.actualHeight)
+        guideHand.selecting = session.tool == .select && editing == nil
+        guideHand.rulerIndex = session.board
+    }
+
+    /// A press on a guide that did not become a drag: a click on what lies under it.
+    private func clickThrough(at p: CGPoint, adding: Bool) {
+        let id = pick(p)
+        if adding, let id {
+            var picked = session.selection
+            if let i = picked.firstIndex(of: id) { picked.remove(at: i) } else { picked.append(id) }
+            session.select(picked, on: WindowsCore.board(of: id) ?? session.board)
+        } else {
+            session.select(id.map { [$0] } ?? [], on: id.flatMap(WindowsCore.board(of:)) ?? session.board)
+        }
+    }
+
+    static let slideNumberRoom = 28.0
+
+    /// A carousel's cuts, as the Mac's canvas draws them (drawSlideCuts): a dashed pencil line
+    /// down each, over a pale one so it shows on dark slides and light ones; and each slide's
+    /// number in the names' row at its right, once a slide leaves room for it beside the name.
+    private func placeSlideMarks() {
+        if slideMarks.parent == nil {
+            slideMarks.isHitTestVisible = false
+            overlay.children.insertAt(0, slideMarks)
+        }
+        slideMarks.children.clear()
+        for board in boards where !board.hidden && board.slides > 1 {
+            guard let slide = board.slide, Double(slide.width) * zoom >= 4 else { continue }
+            let at = onStage(board.frame.origin)
+            let h = Double(board.frame.height) * zoom, step = Double(slide.width) * zoom
+            var cuts = PathData()
+            for i in 1..<board.slides {
+                let x = (Double(at.x) + Double(i) * step).rounded() + 0.5
+                cuts.move(x, Double(at.y))
+                cuts.line(x, Double(at.y) + h)
+            }
+            for (colour, alpha, dashed) in [(UInt32(0xFFFFFF), 0.7, false), (Theme.pencil, 1.0, true)] {
+                let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(cuts.d)' StrokeThickness='1'"
+                    + (dashed ? " StrokeDashArray='4 3'" : "") + "/>"
+                guard let line = (try? XamlReader.load(xaml)) as? WinUI.Path else { continue }
+                line.stroke = Theme.brush(colour, alpha)
+                slideMarks.children.append(line)
+            }
+            guard step >= Self.slideNumberRoom + 40 else { continue }
+            let lit = session.board == board.index
+            for i in 0..<board.slides {
+                let number = Theme.text("\(i + 1)", size: 11, weight: 500)
+                number.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)
+                number.width = Self.slideNumberRoom
+                number.textAlignment = .right
+                try? Canvas.setLeft(number, Double(at.x) + Double(i + 1) * step - Self.slideNumberRoom)
+                try? Canvas.setTop(number, Double(at.y) - 19)
+                slideMarks.children.append(number)
+            }
+        }
+    }
+
+    private func placeOverlays() {
+        if !overlaysAdded {
+            overlay.children.append(hover)
+            overlay.children.append(bounds)
+            overlay.children.append(gapFields)
+            overlay.children.append(guideLines)
+            overlay.children.append(marqueeBox)
+            overlay.children.append(shadowLine)
+            for h in handleShades { overlay.children.append(h) }
+            for h in handles { overlay.children.append(h) }
+            for d in cornerDots { overlay.children.append(d) }
+            overlay.children.append(measurePill)
+            overlaysAdded = true
+        }
+        for (k, board) in boards.enumerated() {
+            let lit = session.board == board.index
+            sheets[k]?.name.foreground = lit ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.5)
+        }
+        if let id = hovered, !session.selection.contains(id), drag == nil,
+           let line = WindowsCore.shown([id], zoom: zoom)?.outlines.first {
+            trace(hover, line.points, closed: line.closed)
+            hover.stroke = Theme.brush(line.copy ? Theme.linked : Theme.selection)
+            hover.visibility = .visible
+        } else {
+            hover.visibility = .collapsed
+        }
+        showRulers()
+        // A path whose points show has them in place of its frame and handles.
+        let pointsShown = session.selection.count == 1 && session.selection.first == pen.shownPath
+        // Shapes being built with show their pieces instead.
+        let shown = session.selection.isEmpty || pointsShown || builder.active ? nil : WindowsCore.shown(session.selection, zoom: zoom)
+        let lines = shown?.outlines ?? []
+        while outlines.count < lines.count {
+            let path = WinUI.Path()
+            path.strokeThickness = 1
+            path.isHitTestVisible = false
+            // Under the handles, over the hover.
+            try? overlay.children.insertAt(1, path)
+            outlines.append(path)
+        }
+        for (k, path) in outlines.enumerated() {
+            guard k < lines.count else { path.visibility = .collapsed; continue }
+            trace(path, lines[k].points, closed: lines[k].closed)
+            path.stroke = Theme.brush(lines[k].copy ? Theme.linked : Theme.selection)
+            path.visibility = .visible
+        }
+        if let box = shown?.bounds {
+            trace(bounds, box, closed: true)
+            bounds.visibility = .visible
+        } else {
+            bounds.visibility = .collapsed
+        }
+        shownHandles = (shown?.handles ?? []).map { ($0.index, onStage($0.point)) }
+        lineEnds = shown?.round == true && lines.first?.closed == false
+        let round = shown?.round == true
+        for k in handles.indices {
+            guard k < shownHandles.count else {
+                handles[k].visibility = .collapsed
+                handleShades[k].visibility = .collapsed
+                continue
+            }
+            let p = shownHandles[k].point
+            let x = (Double(p.x)).rounded() - Self.handleSize / 2, y = (Double(p.y)).rounded() - Self.handleSize / 2
+            let r = round ? Self.handleSize / 2 : 0
+            handles[k].radiusX = r
+            handles[k].radiusY = r
+            handleShades[k].radiusX = round ? (Self.handleSize + 1) / 2 : 1
+            handleShades[k].radiusY = handleShades[k].radiusX
+            try? Canvas.setLeft(handles[k], x)
+            try? Canvas.setTop(handles[k], y)
+            try? Canvas.setLeft(handleShades[k], x - 0.5)
+            try? Canvas.setTop(handleShades[k], y)
+            handles[k].visibility = .visible
+            handleShades[k].visibility = .visible
+        }
+        placeHolds()
+        drawDepth()
+        drawGrids()
+        drawOutline()
+        drawBuild()
+        placeOffer()
+        placeCopyOffer()
+        drawComponents()
+        if drag == nil, let p = lastPoint { updatePointer(at: p) }
+    }
+
+    /// The depth tool sees the canvas as it is now.
+    private func syncDepth() {
+        depth.selection = session.selection
+        depth.free = session.tool == .select && editing == nil && pen.editingPath == nil
+        depth.zoom = CGFloat(zoom)
+        depth.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// The layout grid's handles see the canvas as it is now.
+    private func syncLayout() {
+        layoutHand.selection = session.selection
+        layoutHand.free = session.tool == .select && editing == nil && pen.editingPath == nil
+        layoutHand.cardOpen = session.openCard == "Layout Grid"
+        layoutHand.zoom = CGFloat(zoom)
+        layoutHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// The word "Mask", where the Mac shows it: centred over all it is about, 12 above it (below
+    /// it when that would leave the canvas), kept on the canvas.
+    private func offerRect(_ offer: WindowsCore.MaskOffer) -> CGRect {
+        try? offerChip.measure(Size(width: 400, height: 28))
+        let w = Double(offerChip.desiredSize.width)
+        let o = onStage(offer.box.origin)
+        let r = CGRect(x: Double(o.x), y: Double(o.y), width: Double(offer.box.width) * zoom, height: Double(offer.box.height) * zoom)
+        var x = (Double(r.midX) - w / 2).rounded(), y = (Double(r.minY) - 28 - 12).rounded()
+        let top = WindowsCore.showsRulers ? 8 + Double(WindowsCore.Guides.rulerSize) : 8
+        if y < top { y = (Double(r.maxY) + 12).rounded() }
+        x = min(max(x, 8), max(8, root.actualWidth - w - 8))
+        return CGRect(x: x, y: y, width: w, height: 28)
+    }
+
+    /// Shows the word offered, when there is one for what is picked, and nothing else is under way.
+    private func placeOffer() {
+        if offerChip.parent == nil { overlay.children.append(offerChip) }
+        let free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && drag == nil
+        let offer = free ? WindowsCore.maskOffer(session.selection) : nil
+        if offer != shownOffer, offerLit, let was = shownOffer {
+            offerLit = false
+            WindowsCore.previewOffer(was, false)
+            session.previewed(board: nil)
+        }
+        shownOffer = offer
+        guard let offer else { offerChip.visibility = .collapsed; return }
+        let r = offerRect(offer)
+        try? Canvas.setLeft(offerChip, Double(r.minX))
+        try? Canvas.setTop(offerChip, Double(r.minY) - (offerLit ? 1 : 0))
+        offerChip.background = offerLit ? Theme.brush(0x3357C0) : Theme.brush(Theme.selection)
+        offerChip.visibility = .visible
+    }
+
+    /// As the Mac's ComponentTool: with a copy picked, every other copy of its component faintly
+    /// dashed in violet, so what will change with it is in sight; and over the copy, at its top
+    /// left, a diamond and the component's name, with the variant it shows.
+    private func drawComponents() {
+        if componentMarks.parent == nil {
+            componentMarks.isHitTestVisible = false
+            overlay.children.append(componentMarks)
+        }
+        componentMarks.children.clear()
+        guard session.tool == .select, !builder.active else { return }
+        var lines = PathData()
+        for corners in WindowsCore.otherCopies(session.selection) {
+            guard let first = corners.first else { continue }
+            let a = onStage(first)
+            lines.move(Double(a.x).rounded() + 0.5, Double(a.y).rounded() + 0.5)
+            for p in corners.dropFirst() { let q = onStage(p); lines.line(Double(q.x).rounded() + 0.5, Double(q.y).rounded() + 0.5) }
+            lines.close()
+        }
+        if !lines.d.isEmpty,
+           let path = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(lines.d)' StrokeThickness='1' StrokeDashArray='3 3'/>")) as? WinUI.Path {
+            path.stroke = Theme.brush(Theme.linked, 0.42)
+            componentMarks.children.append(path)
+        }
+        guard editing == nil, let tag = WindowsCore.copyTag(session.selection), Double(tag.width) * zoom > 36 else { return }
+        let o = onStage(tag.at)
+        let row = StackPanel()
+        row.orientation = .horizontal
+        row.spacing = 5
+        let diamond = Glyphs.view(Glyphs.diamond(size: 8), size: 8, brush: Theme.brush(Theme.linked))
+        diamond.verticalAlignment = .center
+        row.children.append(diamond)
+        let words = Theme.text(tag.text, size: 10.5, weight: 500)
+        words.foreground = Theme.brush(Theme.linked)
+        row.children.append(words)
+        try? row.measure(Size(width: 600, height: 30))
+        try? Canvas.setLeft(row, Double(o.x).rounded() + 1)
+        try? Canvas.setTop(row, (Double(o.y) - Double(row.desiredSize.height) - 4).rounded())
+        componentMarks.children.append(row)
+    }
+
+    /// Shows an offer after a change to a copy, for 8 seconds, unless another comes first.
+    private func showCopyOffer(_ offer: WindowsCore.CopyOffer) {
+        copyOffer = offer
+        let token = offer.token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.copyOffer?.token == token else { return }
+                self.copyOffer = nil
+                WindowsCore.dropCopyOffer()
+                self.placeCopyOffer()
+            }
+        }
+        placeCopyOffer()
+    }
+
+    /// The offer beside the copy it is about, where it covers nothing of it; else under it. Only
+    /// while that copy is what is picked, and nothing is being typed or dragged.
+    private func placeCopyOffer() {
+        if copyChip.parent == nil {
+            copyChip.height = 28
+            copyChip.cornerRadius = Theme.corners(14)
+            copyChip.background = Theme.brush(Theme.card)
+            copyChip.borderBrush = Theme.brush(Theme.ink, 0.12)
+            copyChip.borderThickness = Theme.inset(0.5)
+            copyChip.isHitTestVisible = false
+            overlay.children.append(copyChip)
+        }
+        copyButtons = []
+        guard let offer = copyOffer, drag == nil, editing == nil,
+              WindowsCore.componentLook(session.selection)?.copy == offer.anchor || session.selection.contains(offer.anchor),
+              let frame = WindowsCore.selectionFrame([offer.anchor]) else {
+            copyChip.visibility = .collapsed
+            return
+        }
+        let row = StackPanel()
+        row.orientation = .horizontal
+        row.spacing = 4
+        row.margin = Theme.inset(12, 0, 4, 0)
+        row.verticalAlignment = .center
+        let words = Theme.text(offer.words, size: 11.5, ink: 2)
+        words.verticalAlignment = .center
+        words.margin = Theme.inset(0, 0, 6, 0)
+        row.children.append(words)
+        var pills: [Border] = []
+        for (i, title) in offer.buttons.enumerated() {
+            let pill = Border()
+            pill.height = 20
+            pill.cornerRadius = Theme.corners(10)
+            pill.background = i == 0 ? Theme.brush(Theme.linked) : Theme.brush(Theme.linked, 0.08)
+            let label = Theme.text(title, size: 11.5, weight: 600)
+            label.foreground = i == 0 ? Theme.brush(0xFFFFFF) : Theme.brush(Theme.linked)
+            label.margin = Theme.inset(9, 0, 9, 0)
+            label.verticalAlignment = .center
+            pill.child = label
+            row.children.append(pill)
+            pills.append(pill)
+        }
+        copyChip.child = row
+        try? copyChip.measure(Size(width: 800, height: 28))
+        let w = Double(copyChip.desiredSize.width)
+        let o = onStage(frame.origin)
+        let r = CGRect(x: Double(o.x), y: Double(o.y), width: Double(frame.width) * zoom, height: Double(frame.height) * zoom)
+        var x = (Double(r.maxX) + 14).rounded(), y = (Double(r.midY) - 14).rounded()
+        if x + w > root.actualWidth - 8 {
+            x = min(max((Double(r.midX) - w / 2).rounded(), 8), max(8, root.actualWidth - w - 8))
+            y = (Double(r.maxY) + 12).rounded()
+        }
+        try? Canvas.setLeft(copyChip, x)
+        try? Canvas.setTop(copyChip, y)
+        copyChip.visibility = .visible
+        // Where each button is on the stage, for a press there.
+        var left = x + 12 + Double(words.desiredSize.width) + 4
+        for (i, pill) in pills.enumerated() {
+            let pw = Double(pill.desiredSize.width)
+            copyButtons.append((CGRect(x: left, y: y + 4, width: pw, height: 20), i))
+            left += pw + 4
+        }
+    }
+
+    /// Whether `p` on the stage is on the word offered.
+    private func onOffer(_ p: CGPoint) -> Bool {
+        guard let offer = shownOffer else { return false }
+        return offerRect(offer).insetBy(dx: -2, dy: -2).contains(p)
+    }
+
+    // MARK: Holding a drag over a shape
+
+    /// What is moved has been dragged to `p` on the stage: held still a moment over a shape that
+    /// would cut it off, the shape opens and takes it in; dragged off the shape it opened, the
+    /// shape closes again, and does not open again in the same drag.
+    private func dipMoved(at p: CGPoint) {
+        var d = dip ?? Dip()
+        let ids = session.selection
+        if let opened = d.opened {
+            // Inside it still, what it holds moves inside it.
+            if WindowsCore.onDip(opened.mask, at: inDesign(p), slop: CGFloat(12 / zoom)) { dip = d; return }
+            WindowsCore.closeDip()
+            d.opened = nil
+            d.declined.insert(opened.shape)
+            d.over = nil
+            d.ready = false
+            dip = d
+            drawDip()
+            return
+        }
+        let over = WindowsCore.dipTarget(at: inDesign(p), moving: ids)
+        let wandered = hypot(Double(p.x) - Double(d.at.x), Double(p.y) - Double(d.at.y)) > Self.dipWander
+        if over != d.over || wandered {
+            d.over = over
+            d.at = p
+            d.ready = over.map { !d.declined.contains($0) && WindowsCore.canDip(ids, over: $0) } == true
+            d.rest += 1
+            if d.ready, let over {
+                let rest = d.rest
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.dipRest) { [weak self] in
+                    MainActor.assumeIsolated { self?.dipOpens(over, rest: rest) }
+                }
+            }
+        }
+        dip = d
+        drawDip()
+    }
+
+    /// The shape rested on, the rest not broken since: it opens, and what is moved goes into it.
+    private func dipOpens(_ over: UUID, rest: Int) {
+        guard var d = dip, d.rest == rest, d.over == over, d.ready, d.opened == nil,
+              case .move? = drag?.grab, drag?.moved == true else { return }
+        guard let mask = WindowsCore.openDip(session.selection, over: over) else { return }
+        d.opened = (over, mask)
+        dip = d
+        session.edited(board: nil)
+        drawDip()
+    }
+
+    /// The shape waited on, its outline dashed; the one opened, its outline drawn firmly round
+    /// what it now holds (the Mac runs a line round it as the moment passes, and it glows open).
+    private func drawDip() {
+        if dipMarks.parent == nil {
+            dipMarks.isHitTestVisible = false
+            overlay.children.append(dipMarks)
+        }
+        dipMarks.children.clear()
+        guard let d = dip else { return }
+        let id = d.opened?.mask ?? (d.ready ? d.over : nil)
+        guard let id, let data = WindowsCore.outlineData(of: id, zoom: zoom, pan: pan), !data.isEmpty else { return }
+        let open = d.opened != nil
+        let dashes = open ? "" : " StrokeDashArray='4 3'"
+        let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(data)' StrokeThickness='\(open ? 2 : 1.5)'\(dashes)/>"
+        guard let path = (try? XamlReader.load(xaml)) as? WinUI.Path else { return }
+        path.stroke = Theme.brush(Theme.selection, open ? 0.9 : 0.6)
+        dipMarks.children.append(path)
+    }
+
+    /// The outline's dots and edge see the canvas as it is now.
+    private func syncOutline() {
+        outlineHand.selection = session.selection
+        outlineHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active
+        outlineHand.zoom = CGFloat(zoom)
+        outlineHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// A selected path's corner dots, while the pointer is on it, and a shape's edge lit with Alt
+    /// over it, as the Mac's OutlineTool draws them.
+    private func drawOutline() {
+        if outlineMarks.parent == nil {
+            outlineMarks.isHitTestVisible = false
+            overlay.children.append(outlineMarks)
+        }
+        outlineMarks.children.clear()
+        syncOutline()
+        let m = outlineHand.marks()
+        if let edge = m.edge, !edge.isEmpty,
+           let path = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(edge)' StrokeThickness='2'/>")) as? WinUI.Path {
+            path.stroke = Theme.brush(Theme.selection)
+            outlineMarks.children.append(path)
+        }
+        for p in m.dots {
+            let x = Double(p.x).rounded(), y = Double(p.y).rounded()
+            let shade = Ellipse()
+            shade.width = 8
+            shade.height = 8
+            shade.fill = Theme.brush(0, 0.18)
+            try? Canvas.setLeft(shade, x - 4)
+            try? Canvas.setTop(shade, y - 3.5)
+            outlineMarks.children.append(shade)
+            let dot = Ellipse()
+            dot.width = 7
+            dot.height = 7
+            dot.fill = Theme.brush(0xFFFFFF)
+            dot.stroke = Theme.brush(Theme.selection)
+            dot.strokeThickness = 1
+            try? Canvas.setLeft(dot, x - 3.5)
+            try? Canvas.setTop(dot, y - 3.5)
+            outlineMarks.children.append(dot)
+        }
+    }
+
+    /// Building with pieces sees the canvas as it is now.
+    private func syncBuild() {
+        builder.zoom = CGFloat(zoom)
+        builder.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// The pieces of the shapes being built with, as the Mac's ShapeBuilder draws them: the one
+    /// under the pointer, or those the drag has touched, tinted; every piece's edge, faint and
+    /// dashed but for those; the way the drag has gone. Wiping away in red, joining in blue.
+    private func drawBuild() {
+        if buildMarks.parent == nil {
+            buildMarks.isHitTestVisible = false
+            overlay.children.append(buildMarks)
+        }
+        buildMarks.children.clear()
+        guard builder.active else { return }
+        syncBuild()
+        let m = builder.marks()
+        let ink: UInt32 = m.erasing ? 0xE04A33 : Theme.selection
+        func shape(_ data: String, width: Double, dash: String? = nil) -> WinUI.Path? {
+            guard !data.isEmpty else { return nil }
+            let dashes = dash.map { " StrokeDashArray='\($0)'" } ?? ""
+            let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(data)' StrokeThickness='\(width)' StrokeStartLineCap='Round' StrokeEndLineCap='Round' StrokeLineJoin='Round'\(dashes)/>"
+            return (try? XamlReader.load(xaml)) as? WinUI.Path
+        }
+        for piece in m.pieces where piece.lit {
+            guard let path = shape(piece.data, width: 0) else { continue }
+            path.fill = Theme.brush(ink, m.erasing ? 0.28 : 0.22)
+            buildMarks.children.append(path)
+        }
+        for piece in m.pieces {
+            guard let path = shape(piece.data, width: 1, dash: piece.lit ? nil : "3 2") else { continue }
+            path.stroke = piece.lit ? Theme.brush(ink) : Theme.brush(Theme.selection, 0.55)
+            buildMarks.children.append(path)
+        }
+        if m.trail.count > 1 {
+            var way = PathData()
+            way.move(Double(m.trail[0].x), Double(m.trail[0].y))
+            for p in m.trail.dropFirst() { way.line(Double(p.x), Double(p.y)) }
+            if let path = shape(way.d, width: 2) {
+                path.stroke = Theme.brush(ink, 0.9)
+                buildMarks.children.append(path)
+            }
+        }
+    }
+
+    /// The selection made a component, of which it is then the first copy (Ctrl+Alt+K, as ⌥⌘K).
+    private func makeComponent() {
+        guard let made = WindowsCore.makeComponent(session.selection) else { MessageBeep(0); return }
+        session.select([made.copy], on: WindowsCore.board(of: made.copy) ?? session.board)
+        session.showCard?("Component")
+        session.edited(board: nil)
+        // Other groups that look the same are offered to be linked to it.
+        if let offer = WindowsCore.offerLinking(made.copy, made.lookAlikes) { showCopyOffer(offer) }
+    }
+
+    /// Building with the selected shapes' pieces started, or done (Ctrl+Alt+B, as ⌥⌘B on the Mac).
+    private func toggleBuild() {
+        if builder.active {
+            builder.building = nil
+        } else if session.selection.count > 1, WindowsCore.canCombine(session.selection) {
+            // As the Mac opens Arrange when building starts, where its Build button is lit.
+            session.showCard?("Arrange")
+            builder.start(session.selection)
+        } else {
+            MessageBeep(0)
+        }
+    }
+
+    /// The grid tool sees the canvas as it is now.
+    private func syncGrid() {
+        gridHand.selection = session.selection
+        gridHand.free = session.tool == .select && editing == nil && pen.editingPath == nil
+        gridHand.zoom = CGFloat(zoom)
+        gridHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// A path as XAML reads it, stroked one point thick (dashed when `dash` is given).
+    private func markPath(_ d: PathData, thickness: Double = 1, dash: String? = nil) -> WinUI.Path? {
+        guard !d.d.isEmpty else { return nil }
+        let dashes = dash.map { " StrokeDashArray='\($0)'" } ?? ""
+        let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(d.d)' StrokeThickness='\(thickness)'\(dashes)/>"
+        return (try? XamlReader.load(xaml)) as? WinUI.Path
+    }
+
+    /// A selected repeat grid as the Mac's GridTool draws it: the same layer in the other cells,
+    /// each cell faintly dashed, the gaps under the pointer, the cells to come, and its handles.
+    private func drawGrids() {
+        if gridMarks.parent == nil {
+            gridMarks.isHitTestVisible = false
+            overlay.children.append(gridMarks)
+        }
+        gridMarks.children.clear()
+        syncGrid()
+        let m = gridHand.marks()
+        // Lines of one point fall on whole pixels.
+        func crisp(_ p: CGPoint) -> (Double, Double) { (Double(p.x).rounded() + 0.5, Double(p.y).rounded() + 0.5) }
+        func add(_ corners: [CGPoint], to d: inout PathData) {
+            guard let first = corners.first else { return }
+            let a = crisp(first)
+            d.move(a.0, a.1)
+            for p in corners.dropFirst() { let b = crisp(p); d.line(b.0, b.1) }
+            d.close()
+        }
+        func stroked(_ d: PathData, alpha: Double, dash: String?) {
+            guard let path = markPath(d, dash: dash) else { return }
+            path.stroke = Theme.brush(Theme.selection, alpha)
+            gridMarks.children.append(path)
+        }
+        var copies = PathData()
+        for c in m.copies { add(c, to: &copies) }
+        stroked(copies, alpha: 0.6, dash: "3 2")
+        var cells = PathData()
+        for c in m.cells { add(c, to: &cells) }
+        stroked(cells, alpha: m.cellsActive ? 0.55 : 0.3, dash: "3 3")
+        for band in m.gaps {
+            var fill = PathData()
+            add(band.corners, to: &fill)
+            if let path = markPath(fill, thickness: 0) {
+                path.fill = Theme.brush(Theme.selection, 0.16)
+                gridMarks.children.append(path)
+            }
+            var edges = PathData()
+            for (a, b) in band.edges {
+                let p = crisp(a), q = crisp(b)
+                edges.move(p.0, p.1)
+                edges.line(q.0, q.1)
+            }
+            stroked(edges, alpha: 0.7, dash: nil)
+        }
+        for ghost in m.ghosts {
+            var d = PathData()
+            add(ghost.corners, to: &d)
+            guard let path = markPath(d, dash: "4 3") else { continue }
+            path.fill = Theme.brush(Theme.selection, 0.07 * ghost.near)
+            path.stroke = Theme.brush(Theme.selection, 0.25 + 0.55 * ghost.near)
+            gridMarks.children.append(path)
+        }
+        // A pull of pencil blue on the edge it pulls out, with two grip lines across, as on a
+        // drawer, or a dot at the corner; drawn upright about its middle, turned with the grid.
+        for h in m.handles {
+            let w = Double(h.size.width), t = Double(h.size.height), r = min(w, t) / 2
+            let place = Affine(tx: Double(h.at.x), ty: Double(h.at.y), angle: h.angle * .pi / 180)
+            var shade = PathData(place: Affine(tx: place.tx, ty: place.ty + 0.75, angle: place.angle))
+            shade.rect(-w / 2 - 1, -t / 2 - 1, w + 2, t + 2, radius: r + 1)
+            if let path = markPath(shade, thickness: 0) {
+                path.fill = Theme.brush(0, 0.18)
+                gridMarks.children.append(path)
+            }
+            var body = PathData(place: place)
+            body.rect(-w / 2, -t / 2, w, t, radius: r)
+            if let path = markPath(body, thickness: 1.5) {
+                path.fill = Theme.brush(Theme.selection)
+                path.stroke = Theme.brush(0xFFFFFF)
+                gridMarks.children.append(path)
+            }
+            guard !h.dot else { continue }
+            var grips = PathData(place: place)
+            for d in [-2.0, 2.0] {
+                if h.across {
+                    grips.move(-1.5, d); grips.line(1.5, d)
+                } else {
+                    grips.move(d, -1.5); grips.line(d, 1.5)
+                }
+            }
+            if let path = markPath(grips) {
+                path.stroke = Theme.brush(0xFFFFFF, 0.85)
+                gridMarks.children.append(path)
+            }
+        }
+    }
+
+    /// The knob a turned layer's face points with, on its stalk from the layer's middle, and the
+    /// ring where the face is seen edge on, or the ball being turned, as the Mac draws them.
+    private func drawDepth() {
+        if depthMarks.parent == nil {
+            depthMarks.isHitTestVisible = false
+            overlay.children.append(depthMarks)
+        }
+        depthMarks.children.clear()
+        depth.selection = session.selection
+        depth.zoom = CGFloat(zoom)
+        depth.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+        let o = depth.overlay()
+        func circle(_ c: CGPoint, _ r: Double, alpha: Double, dash: (Double, Double)) {
+            var d = PathData()
+            d.move(Double(c.x) - r, Double(c.y))
+            d.d += String(format: "A%.2f,%.2f 0 1 1 %.2f,%.2f A%.2f,%.2f 0 1 1 %.2f,%.2f Z", r, r, Double(c.x) + r, Double(c.y), r, r, Double(c.x) - r, Double(c.y))
+            let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(d.d)' StrokeThickness='1' StrokeDashArray='\(dash.0) \(dash.1)'/>"
+            guard let path = (try? XamlReader.load(xaml)) as? WinUI.Path else { return }
+            path.stroke = Theme.brush(Theme.selection, alpha)
+            depthMarks.children.append(path)
+        }
+        if let (center, radius) = o.ball {
+            circle(center, Double(radius), alpha: 0.35, dash: (3, 4))
+            return
+        }
+        guard let (center, knob) = o.stalk else { return }
+        if let ring = o.ring { circle(ring, WindowsCore.Depth.reach, alpha: 0.4, dash: (2, 3)) }
+        var line = PathData()
+        line.move(Double(center.x), Double(center.y))
+        line.line(Double(knob.x), Double(knob.y))
+        if let stalk = (try? XamlReader.load("<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(line.d)' StrokeThickness='1.25'/>")) as? WinUI.Path {
+            stalk.stroke = Theme.brush(Theme.selection)
+            depthMarks.children.append(stalk)
+        }
+        func dot(_ c: CGPoint, _ size: Double, fill: UInt32, rim: Bool) {
+            let e = Ellipse()
+            e.width = size
+            e.height = size
+            e.fill = Theme.brush(fill)
+            if rim {
+                e.stroke = Theme.brush(Theme.selection)
+                e.strokeThickness = 1
+            }
+            try? Canvas.setLeft(e, Double(c.x) - size / 2)
+            try? Canvas.setTop(e, Double(c.y) - size / 2)
+            depthMarks.children.append(e)
+        }
+        dot(center, 4, fill: Theme.selection, rim: false)
+        dot(knob, 12, fill: 0xFFFFFF, rim: true)
+        dot(knob, 4, fill: Theme.selection, rim: false)
+    }
+
+    /// The corner dots, the shadow's outline and the measure, as the pointer and the drag have them.
+    private func placeHolds() {
+        let holding: Grab? = drag?.grab
+        let rounding: Bool = if case .corner? = holding { true } else { false }
+        let moving: Bool = if case .shadow? = holding { drag?.moved == true } else { false }
+        let dots = session.tool == .select && (dotsShown || rounding) ? WindowsCore.cornerDots(session.selection, zoom: zoom, pan: pan) : []
+        for (k, dot) in cornerDots.enumerated() {
+            guard k < dots.count else { dot.visibility = .collapsed; continue }
+            try? Canvas.setLeft(dot, Double(dots[k].x).rounded() - 3.5)
+            try? Canvas.setTop(dot, Double(dots[k].y).rounded() - 3.5)
+            dot.visibility = .visible
+        }
+        if shadowShown || moving, let corners = WindowsCore.shadowOutline(session.selection) {
+            trace(shadowLine, corners, closed: true)
+            shadowLine.visibility = .visible
+        } else {
+            shadowLine.visibility = .collapsed
+        }
+        if let (text, box) = WindowsCore.measure {
+            measureText.text = text
+            measurePill.visibility = .visible
+            try? measurePill.measure(Size(width: 400, height: 20))
+            let w = Double(measurePill.desiredSize.width)
+            let a = onStage(CGPoint(x: box.midX, y: box.maxY))
+            try? Canvas.setLeft(measurePill, (Double(a.x) - w / 2).rounded())
+            try? Canvas.setTop(measurePill, (Double(a.y) + 10).rounded())
+        } else {
+            measurePill.visibility = .collapsed
+        }
+    }
+
+    /// The lines and gaps a drag catches on, drawn until it ends (an empty list).
+    private func showGuides(_ lines: [WindowsCore.GuideLine]) {
+        guides = lines
+        let straight = lines.filter { $0.field == nil }, fields = lines.compactMap(\.field)
+        guideLines.visibility = straight.isEmpty ? .collapsed : .visible
+        gapFields.visibility = fields.isEmpty ? .collapsed : .visible
+        if !straight.isEmpty { guideLines.data = figures(straight.map { ([$0.from, $0.to], false) }) }
+        if !fields.isEmpty {
+            gapFields.data = figures(fields.map { r in ([CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
+                                                         CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)], true) })
+        }
+    }
+
+    /// The box dragged out to pick with (on the canvas), or none.
+    private func showMarquee(_ box: CGRect?) {
+        guard let box else { marqueeBox.visibility = .collapsed; return }
+        let a = onStage(CGPoint(x: box.minX, y: box.minY))
+        try? Canvas.setLeft(marqueeBox, Double(a.x).rounded())
+        try? Canvas.setTop(marqueeBox, Double(a.y).rounded())
+        marqueeBox.width = max(1, Double(box.width) * zoom)
+        marqueeBox.height = max(1, Double(box.height) * zoom)
+        marqueeBox.visibility = .visible
+    }
+
+    /// Paths through points (on the canvas) as one geometry on the stage.
+    private func figures(_ paths: [([CGPoint], Bool)]) -> PathGeometry {
+        let geometry = PathGeometry()
+        for (points, closed) in paths {
+            guard let first = points.first else { continue }
+            func at(_ p: CGPoint) -> Point {
+                let q = onStage(p)
+                return Point(x: Float((Double(q.x)).rounded() + 0.5), y: Float((Double(q.y)).rounded() + 0.5))
+            }
+            let figure = PathFigure()
+            figure.startPoint = at(first)
+            figure.isClosed = closed
+            figure.isFilled = closed
+            for p in points.dropFirst() {
+                let segment = LineSegment()
+                segment.point = at(p)
+                figure.segments.append(segment)
+            }
+            geometry.figures.append(figure)
+        }
+        return geometry
+    }
+
+    /// `path` through `points` (on the canvas), placed on the stage.
+    private func trace(_ path: WinUI.Path, _ points: [CGPoint], closed: Bool) {
+        guard let first = points.first else { return }
+        func at(_ p: CGPoint) -> Point {
+            let q = onStage(p)
+            return Point(x: Float((Double(q.x)).rounded() + 0.5), y: Float((Double(q.y)).rounded() + 0.5))
+        }
+        let figure = PathFigure()
+        figure.startPoint = at(first)
+        figure.isClosed = closed
+        figure.isFilled = false
+        for p in points.dropFirst() {
+            let segment = LineSegment()
+            segment.point = at(p)
+            figure.segments.append(segment)
+        }
+        let geometry = PathGeometry()
+        geometry.figures.append(figure)
+        path.data = geometry
+    }
+
+    /// The rulers measure the selection's artboard, counted from its corner.
+    private func showRulers() {
+        let sheet = session.board.flatMap { b in boards.first { $0.index == b }?.frame }
+        var selection: CGRect?
+        if let sheet, let f = selectedFrame() { selection = f.offsetBy(dx: sheet.minX, dy: sheet.minY) }
+        rulers.root.visibility = WindowsCore.showsRulers ? .visible : .collapsed
+        rulers.show(width: root.actualWidth, height: root.actualHeight, zoom: zoom, pan: pan, sheet: sheet, selection: selection)
+    }
+
+    private func show(_ shape: Rectangle, _ box: CGRect) {
+        try? Canvas.setLeft(shape, Double(box.minX))
+        try? Canvas.setTop(shape, Double(box.minY))
+        shape.width = max(1, Double(box.width))
+        shape.height = max(1, Double(box.height))
+        shape.visibility = .visible
+    }
+
+    private func onStage(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: Double(pan.x) + Double(p.x) * zoom, y: Double(pan.y) + Double(p.y) * zoom)
+    }
+
+    private func inDesign(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: (Double(p.x) - Double(pan.x)) / zoom, y: (Double(p.y) - Double(pan.y)) / zoom)
+    }
+
+    /// A layer on the stage: of artboard `board`, or of whichever artboard holds it.
+    private func onStage(layer id: UUID, board: Int? = nil) -> CGRect? {
+        // On an artboard, its frame counted from the artboard's corner; on the canvas, from the canvas's.
+        let places = boards.map { ($0.index, $0.frame.origin) } + loose.map { ($0.index, CGPoint.zero) }
+        for (index, origin) in places where board == nil || index == board {
+            if let f = WindowsCore.layers(board: index).first(where: { $0.id == id })?.frame {
+                let o = onStage(CGPoint(x: origin.x + f.minX, y: origin.y + f.minY))
+                return CGRect(x: o.x, y: o.y, width: Double(f.width) * zoom, height: Double(f.height) * zoom)
+            }
+        }
+        return nil
+    }
+
+    private func selectedFrame() -> CGRect? {
+        guard let id = session.selection.first, let board = session.board else { return nil }
+        return WindowsCore.layers(board: board).first { $0.id == id }?.frame
+    }
+
+    /// The handle under `p` on the stage, by its place in `WindowsCore.handleOrder` (or a line's end).
+    private func handle(at p: CGPoint) -> Int? {
+        let reach = lineEnds ? 7 : Self.handleSize / 2 + 3
+        return shownHandles.first { abs(Double($0.point.x) - Double(p.x)) <= reach && abs(Double($0.point.y) - Double(p.y)) <= reach }?.index
+    }
+
+    // MARK: The pen
+
+    /// The pen sees the canvas as it is now: the selection, the zoom and where it is, the tool.
+    private func syncPen() {
+        pen.selection = session.selection
+        knife.selection = session.selection
+        syncView()
+    }
+
+    /// Where the canvas is and which tool is in hand, but not the selection: drawing the marks
+    /// again must not take back what the pen or the knife just picked.
+    private func syncView() {
+        pen.zoom = CGFloat(zoom)
+        pen.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+        pen.penInHand = session.tool == .pen
+        pen.selecting = session.tool == .select
+        knife.zoom = CGFloat(zoom)
+        knife.pan = pen.pan
+        knife.knifeInHand = session.tool == .knife
+    }
+
+    /// What the knife cut shows: the pieces picked, the design drawn again, the blade.
+    private func knifeChanged() {
+        if knife.selection != session.selection {
+            session.select(knife.selection, on: knife.selection.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+            session.edited(board: nil)
+        }
+        drawPen()
+    }
+
+    /// What the pen did shows: what it picked, the design drawn again, its marks.
+    private func penChanged() {
+        if pen.selection != session.selection {
+            session.select(pen.selection, on: pen.selection.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+        }
+        session.edited(board: pen.shownPath.flatMap(WindowsCore.board(of:)) ?? session.board)
+        drawPen()
+    }
+
+    /// The pen's marks over the design: the path's outline, the curve still to come, the handles
+    /// and points (7 square, filled when picked), the ring round the first point, the ghost of a
+    /// point to add and the box dragged round points, all in pencil, as the Mac draws them.
+    private func drawPen() {
+        penMarks.children.clear()
+        if penMarks.parent == nil { overlay.children.append(penMarks) }
+        syncView()
+        if session.tool == .knife, let (line, anchors) = knife.blade() {
+            // A pale rim, so the blade shows on anything, and the blade dashed in a warm red.
+            for (colour, alpha, width, dashed) in [(UInt32(0xFFFFFF), 0.8, 3.0, false), (UInt32(0xE04A33), 1.0, 1.25, true)] {
+                let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(line)' StrokeThickness='\(width)' "
+                    + "StrokeStartLineCap='Round' StrokeEndLineCap='Round' StrokeLineJoin='Round'" + (dashed ? " StrokeDashArray='4 2.4'" : "") + "/>"
+                guard let shape = (try? XamlReader.load(xaml)) as? WinUI.Path else { continue }
+                shape.stroke = Theme.brush(colour, alpha)
+                penMarks.children.append(shape)
+            }
+            for a in anchors {
+                let dot = Border()
+                dot.width = 7
+                dot.height = 7
+                dot.cornerRadius = Theme.corners(3.5)
+                dot.background = a.newest ? Theme.brush(0xE04A33) : Theme.brush(0xFFFFFF)
+                dot.borderBrush = Theme.brush(0xE04A33)
+                dot.borderThickness = Theme.inset(1)
+                try? Canvas.setLeft(dot, Double(a.point.x) - 3.5)
+                try? Canvas.setTop(dot, Double(a.point.y) - 3.5)
+                penMarks.children.append(dot)
+            }
+            return
+        }
+        guard session.tool == .pen || pen.editingPath != nil || pen.shownPath != nil else { return }
+        let o = pen.overlay()
+        func path(_ data: String, alpha: Double = 1, width: Double = 1) {
+            let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(data)' StrokeThickness='\(width)'/>"
+            guard let shape = (try? XamlReader.load(xaml)) as? WinUI.Path else { return }
+            shape.stroke = Theme.brush(Theme.pencil, alpha)
+            penMarks.children.append(shape)
+        }
+        if let outline = o.outline, !outline.isEmpty { path(outline) }
+        if let toCome = o.toCome { path(toCome, alpha: 0.75) }
+        for h in o.handles {
+            var line = PathData()
+            line.move(Double(h.point.x), Double(h.point.y))
+            line.line(Double(h.handle.x), Double(h.handle.y))
+            path(line.d, alpha: 0.85)
+        }
+        func box(_ at: CGPoint, round: Bool, filled: Bool, alpha: Double = 1) {
+            let b = Border()
+            b.width = 7
+            b.height = 7
+            b.cornerRadius = Theme.corners(round ? 3.5 : 0)
+            b.background = filled ? Theme.brush(Theme.pencil, alpha) : Theme.brush(0xFFFFFF, alpha)
+            b.borderBrush = Theme.brush(Theme.pencil, alpha)
+            b.borderThickness = Theme.inset(1)
+            try? Canvas.setLeft(b, Double(at.x) - 3.5)
+            try? Canvas.setTop(b, Double(at.y) - 3.5)
+            penMarks.children.append(b)
+        }
+        for h in o.handles { box(h.handle, round: true, filled: false) }
+        for a in o.anchors { box(a.point, round: false, filled: a.filled) }
+        if let c = o.closing {
+            let ring = Border()
+            ring.width = 15
+            ring.height = 15
+            ring.cornerRadius = Theme.corners(7.5)
+            ring.borderBrush = Theme.brush(Theme.pencil)
+            ring.borderThickness = Theme.inset(1.5)
+            try? Canvas.setLeft(ring, Double(c.x) - 7.5)
+            try? Canvas.setTop(ring, Double(c.y) - 7.5)
+            penMarks.children.append(ring)
+        }
+        if let spot = o.spot { box(spot, round: false, filled: false, alpha: 0.55) }
+        if let r = o.marquee {
+            let m = Border()
+            m.width = Double(r.width)
+            m.height = Double(r.height)
+            m.background = Theme.brush(Theme.pencil, 0.08)
+            m.borderBrush = Theme.brush(Theme.pencil, 0.8)
+            m.borderThickness = Theme.inset(1)
+            try? Canvas.setLeft(m, Double(r.minX))
+            try? Canvas.setTop(m, Double(r.minY))
+            penMarks.children.append(m)
+        }
+    }
+
+    // MARK: Things dragged in
+
+    /// StandardDataFormats.StorageItems, which the bindings leave out: files, as Explorer drags them.
+    private static let storageItems = "Shell IDList Array"
+
+    private func dragOver(_ args: DragEventArgs?) {
+        guard let args, let view = args.dataView else { return }
+        let files = (try? view.contains(Self.storageItems)) == true, words = (try? view.contains("Text")) == true
+        args.acceptedOperation = files || words ? .copy : .none
+
+        guard let p = try? args.getPosition(stage) else { return }
+        let target = WindowsCore.dropTarget(at: inDesign(CGPoint(x: Double(p.x), y: Double(p.y))), zoom: zoom)
+        setHover(target.flatMap { WindowsCore.isShape($0) || (words && WindowsCore.isText($0)) ? $0 : nil })
+    }
+
+    private func dropped(_ args: DragEventArgs?) {
+        guard let args, let view = args.dataView, let p = try? args.getPosition(stage) else { return }
+        let at = inDesign(CGPoint(x: Double(p.x), y: Double(p.y)))
+        setHover(nil)
+        let deferral = try? args.getDeferral()
+        Task { @MainActor [weak self] in
+            defer { try? deferral?.complete() }
+            var files: [URL] = []
+            var text: String?
+            if (try? view.contains(Self.storageItems)) == true, let items = try? await view.getStorageItemsAsync()?.get() {
+                for k in 0..<items.size {
+                    if let item = (try? items.getAt(k)) ?? nil, !item.path.isEmpty { files.append(URL(fileURLWithPath: item.path)) }
+                }
+            } else if (try? view.contains("Text")) == true {
+                text = try? await view.getTextAsync()?.get()
+            }
+            guard let self else { return }
+            let target = WindowsCore.dropTarget(at: at, zoom: self.zoom)
+            guard let made = WindowsCore.drop(files: files, text: text, at: at, on: target) else { return }
+            self.session.select(made, on: made.first.flatMap(WindowsCore.board(of:)))
+            self.session.edited(board: nil)
+        }
+    }
+
+    // MARK: Picking and dragging
+
+    private func point(_ args: PointerRoutedEventArgs?) -> CGPoint {
+        guard let p = try? args?.getCurrentPoint(stage)?.position else { return .zero }
+        return CGPoint(x: Double(p.x), y: Double(p.y))
+    }
+
+    /// What a click at `p` on the stage picks, as the Mac picks it (`Picking`, shared): the group
+    /// the selection lies in is looked in first.
+    private func pick(_ p: CGPoint) -> UUID? {
+        titleHit(p) ?? WindowsCore.pick(inDesign(p), selection: session.selection, zoom: zoom)
+    }
+
+    /// The artboard whose name is at `p` on the stage, as the Mac's titleHit: its name, 19 above
+    /// it and 16 tall, as wide as it reads (at least 40, at most the artboard), a little taller to
+    /// be caught.
+    private func titleHit(_ p: CGPoint) -> UUID? {
+        for (k, board) in boards.enumerated().reversed() where !board.hidden {
+            guard let sheet = sheets[k], sheet.name.visibility == .visible else { continue }
+            let at = onStage(board.frame.origin)
+            let w = min(sheet.name.actualWidth + 2, max(Double(board.frame.width) * zoom, 40))
+            let r = CGRect(x: Double(at.x), y: Double(at.y) - 21, width: w, height: 20)
+            if r.contains(p) { return board.id }
+        }
+        return nil
+    }
+
+    private func setHover(_ id: UUID?) {
+        session.hovered = id
+    }
+
+    private func pressed(_ args: PointerRoutedEventArgs?) {
+        if editing != nil { endEditing() }
+        _ = try? root.focus(.pointer)
+        let p = point(args), c = inDesign(p)
+        // A second press soon after the first, where it was, is a double click, as Windows counts them.
+        let now = GetTickCount()
+        if let last = lastPress, now - last.time <= GetDoubleClickTime(), abs(Double(last.at.x - p.x)) <= 4, abs(Double(last.at.y - p.y)) <= 4 {
+            lastPress = (p, now, last.clicks + 1)
+        } else {
+            lastPress = (p, now, 1)
+        }
+        // With Space held, or the wheel pressed, the canvas moves round, whatever tool is in hand.
+        let middle = (try? args?.getCurrentPoint(stage))?.properties?.isMiddleButtonPressed == true
+        if spaceDown || middle {
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, -1, false, .pan(start: pan))
+            setHover(nil)
+            showPointer(.grab)
+            return
+        }
+        // A word offered after a change is taken before anything else.
+        if let hit = copyButtons.first(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) {
+            copyOffer = nil
+            if let picked = WindowsCore.takeCopyOffer(hit.index) { session.select(picked, on: session.board) }
+            session.edited(board: nil)
+            return
+        }
+        if let offer = shownOffer, onOffer(p) {
+            offerLit = false
+            if let mask = WindowsCore.takeOffer(offer) {
+                session.select([mask], on: WindowsCore.board(of: mask) ?? session.board)
+            }
+            session.edited(board: nil)
+            return
+        }
+        // The rulers, whatever the tool, as on the Mac.
+        syncGuides()
+        if guideHand.rulerDown(at: p, clicks: lastPress?.clicks ?? 1, shift: shift, option: option, command: control) {
+            _ = try? stage.capturePointer(args?.pointer)
+            return
+        }
+        // The knife, cutting what its line runs across.
+        if session.tool == .knife {
+            syncPen()
+            _ = try? stage.capturePointer(args?.pointer)
+            knife.down(at: p, shift: shift, clicks: lastPress?.clicks ?? 1)
+            knifeChanged()
+            return
+        }
+        // The pen, and the points of a path being edited, as the Mac's canvas hands them on.
+        if session.tool == .pen || pen.editingPath != nil {
+            syncPen()
+            if session.tool == .pen {
+                _ = try? stage.capturePointer(args?.pointer)
+                pen.penDown(at: p, shift: shift, option: option, command: control)
+                penChanged()
+                return
+            }
+            if pen.editDown(at: p, shift: shift, option: option, command: control, clicks: lastPress?.clicks ?? 1) {
+                _ = try? stage.capturePointer(args?.pointer)
+                penChanged()
+                return
+            }
+            // Off the path's points and outline: dragging round points, or, on another layer, out
+            // of editing to pick that. A click on nothing at all leaves editing too.
+            let other = pick(p)
+            if other == nil || other == pen.editingPath {
+                if (lastPress?.clicks ?? 1) >= 2 {
+                    pen.editingPath = nil
+                } else {
+                    _ = try? stage.capturePointer(args?.pointer)
+                    pen.startMarquee(at: p, adding: shift, offPath: other == nil)
+                }
+                penChanged()
+                return
+            }
+            pen.editingPath = nil
+            drawPen()
+            session.changed()
+        }
+        if let kind = drawn(session.tool) {
+            let on = kind == "artboard" ? nil : WindowsCore.board(at: c)
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, on ?? -1, false, .draw(id: UUID(), kind: kind, start: CGPoint(x: Double(c.x).rounded(), y: Double(c.y).rounded()), board: on))
+            WindowsCore.beginGesture()
+            return
+        }
+        // Off the pieces, building is done, and the press goes on as any.
+        if session.tool == .select, builder.active {
+            syncBuild()
+            if builder.down(at: p, option: option) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, -1, false, .build)
+                return
+            }
+        }
+        // A selected grid's handles repeat it, and its gaps space it, as the Mac asks first.
+        if session.tool == .select {
+            syncGrid()
+            if gridHand.down(at: p) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.selection.first.flatMap(WindowsCore.board(of:)) ?? -1, false, .grid)
+                return
+            }
+        }
+        // A turned layer's knob, as the Mac asks its depth tool first.
+        if session.tool == .select, let board = session.board {
+            syncDepth()
+            if depth.down(at: p, clicks: lastPress?.clicks ?? 1) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, board, false, .depth)
+                session.edited(board: board)
+                return
+            }
+        }
+        // A path's corner dots, and a shape's edge with Alt, unless a resize handle is in the way.
+        if session.tool == .select, handle(at: p) == nil {
+            syncOutline()
+            if outlineHand.down(at: p, shift: shift, option: option) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.board ?? -1, false, .outline)
+                return
+            }
+        }
+        // As the Mac's selectDown: a handle first, then what lies under the pointer.
+        if let k = handle(at: p), let board = session.board {
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, board, false, lineEnds ? .lineEnd(k) : .handle(k))
+            if lineEnds { WindowsCore.beginGesture() } else { WindowsCore.beginPull(session.selection) }
+            return
+        }
+        // Just outside a corner, a corner's dot, the layer's shadow, as the Mac's handleHit has them.
+        if session.tool == .select, let board = session.board,
+           let hit = WindowsCore.hit(at: p, selection: session.selection, zoom: zoom, pan: pan, selecting: true) {
+            switch hit {
+            case .rotate:
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, board, false, .turn)
+                WindowsCore.beginTurn(session.selection, at: c)
+                return
+            case .corner(let k):
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, board, false, .corner)
+                WindowsCore.beginCorner(session.selection[0], corner: k)
+                return
+            case .shadow:
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, board, false, .shadow)
+                return
+            case .turnInDepth:
+                syncDepth()
+                _ = try? stage.capturePointer(args?.pointer)
+                depth.startTurn(at: p)
+                drag = (p, board, false, .depth)
+                return
+            default:
+                break
+            }
+        }
+        // With its card open, a selected artboard's grid is changed where it is drawn; then a
+        // guide's line, where no layer lies under it, as the Mac's selectDown has them.
+        if session.tool == .select {
+            syncLayout()
+            if layoutHand.down(at: p) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.board ?? -1, false, .layout)
+                return
+            }
+            if guideHand.lineDown(at: p, shift: shift, option: option, command: control) {
+                _ = try? stage.capturePointer(args?.pointer)
+                return
+            }
+        }
+        if let id = pick(p) {
+            let board = WindowsCore.board(of: id)
+            if shift {
+                var picked = session.selection
+                if let i = picked.firstIndex(of: id) { picked.remove(at: i) } else { picked.append(id) }
+                session.select(picked, on: board ?? session.board)
+            } else if !session.selection.contains(id) {
+                session.select([id], on: board)
+            }
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, board ?? -1, false, .move(duplicate: option))
+            return
+        }
+        // Inside the box round several layers, a drag moves them all.
+        if session.selection.count > 1, !shift, let box = WindowsCore.bounds(of: session.selection), box.contains(c) {
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, session.board ?? -1, false, .move(duplicate: option))
+            return
+        }
+        // Elsewhere a box is dragged out, adding to the selection with Shift.
+        let inside = WindowsCore.board(at: c)
+        let base = shift ? session.selection : []
+        if !shift { session.select([], on: inside) }
+        _ = try? stage.capturePointer(args?.pointer)
+        drag = (p, inside ?? -1, false, .marquee(start: c, base: base, inside: inside))
+    }
+
+    private func moved(_ args: PointerRoutedEventArgs?) {
+        let p = point(args)
+        lastPoint = p
+        if case .pan(let start)? = drag?.grab, let from = drag?.from {
+            pan = CGPoint(x: Double(start.x) + Double(p.x) - Double(from.x), y: Double(start.y) + Double(p.y) - Double(from.y))
+            place()
+            return
+        }
+        if guideHand.pressed {
+            syncGuides()
+            guideHand.drag(to: p, shift: shift, option: option, command: control)
+            updatePointer(at: p)
+            return
+        }
+        if pen.dragging {
+            syncPen()
+            pen.drag(to: p, shift: shift, option: option, command: control)
+            penChanged()
+            return
+        }
+        if session.tool == .knife {
+            syncPen()
+            if knife.dragging { knife.drag(to: p, shift: shift) } else { knife.hover(p, shift: shift) }
+            return
+        }
+        if drag == nil, session.tool == .pen || pen.editingPath != nil {
+            syncPen()
+            pen.hover(p, shift: shift, option: option, command: control)
+            showGuides(pen.guideLines)
+            if session.tool == .pen { return }
+        }
+        guard let d = drag else {
+            setHover(pick(p))
+            // The corner dots show while the pointer is on the selected rectangle; the shadow's
+            // outline while it is on the shadow.
+            let dots = session.tool == .select && WindowsCore.onRectangle(p, selection: session.selection, zoom: zoom, pan: pan)
+            let onShadow = session.tool == .select && WindowsCore.onShadow(p, selection: session.selection, zoom: zoom, pan: pan)
+            if session.tool == .select {
+                syncDepth()
+                depth.hover(p)
+                syncGrid()
+                gridHand.hover(p)
+                syncLayout()
+                layoutHand.hover(p)
+                syncBuild()
+                builder.hover(p, option: option)
+                syncOutline()
+                outlineHand.hover(p, shift: shift, option: option)
+                // The word offered shows what it would do while it is pointed at.
+                let lit = onOffer(p)
+                if lit != offerLit, let offer = shownOffer {
+                    offerLit = lit
+                    WindowsCore.previewOffer(offer, lit)
+                    session.previewed(board: nil)
+                    placeOffer()
+                }
+            }
+            syncGuides()
+            guideHand.hover(p)
+            if dots != dotsShown || onShadow != shadowShown {
+                dotsShown = dots
+                shadowShown = onShadow
+                placeHolds()
+            }
+            updatePointer(at: p)
+            return
+        }
+        if case .depth = d.grab {
+            syncDepth()
+            depth.drag(to: p, shift: shift, option: option)
+            drag?.moved = true
+            session.edited(board: d.board)
+            return
+        }
+        if case .outline = d.grab {
+            syncOutline()
+            outlineHand.drag(to: p, shift: shift, option: option)
+            drag?.moved = true
+            session.edited(board: d.board >= 0 ? d.board : nil)
+            showPointer(pointer(at: p))
+            return
+        }
+        if case .build = d.grab {
+            syncBuild()
+            builder.drag(to: p, option: option)
+            showPointer(pointer(at: p))
+            return
+        }
+        if case .grid = d.grab {
+            syncGrid()
+            gridHand.drag(to: p, shift: shift)
+            drag?.moved = true
+            session.edited(board: d.board >= 0 ? d.board : nil)
+            return
+        }
+        if case .layout = d.grab {
+            syncLayout()
+            layoutHand.drag(to: p)
+            drag?.moved = true
+            session.edited(board: d.board >= 0 ? d.board : nil)
+            return
+        }
+        let dx = (Double(p.x) - Double(d.from.x)) / zoom, dy = (Double(p.y) - Double(d.from.y)) / zoom
+        // A drag begins once the pointer has gone 3 points, as on the Mac.
+        guard d.moved || (dx * dx + dy * dy).squareRoot() * zoom > 3 else { return }
+        let first = !d.moved
+        drag?.moved = true
+        // From where the gesture began: the core makes the change again from there. Ctrl, as
+        // Command on the Mac, keeps anything from catching.
+        switch d.grab {
+        case .draw(let id, let kind, let start, let board):
+            var end = inDesign(p)
+            // With Shift, a square or a circle; a line keeps to the nearest eighth of a turn.
+            if shift {
+                let w = Double(end.x) - Double(start.x), h = Double(end.y) - Double(start.y)
+                if kind == "line" {
+                    let angle = (atan2(h, w) / (.pi / 4)).rounded() * (.pi / 4), length = (w * w + h * h).squareRoot()
+                    end = CGPoint(x: Double(start.x) + cos(angle) * length, y: Double(start.y) + sin(angle) * length)
+                } else {
+                    let side = max(abs(w), abs(h))
+                    end = CGPoint(x: Double(start.x) + (w < 0 ? -side : side), y: Double(start.y) + (h < 0 ? -side : side))
+                }
+            }
+            WindowsCore.draw(id, kind: kind, from: start, to: CGPoint(x: Double(end.x).rounded(), y: Double(end.y).rounded()), board: board, click: false)
+            session.edited(board: board)
+            return
+        case .move(let duplicate):
+            if first {
+                let moving = WindowsCore.beginMove(session.selection, duplicate: duplicate)
+                if duplicate { session.select(moving, on: session.board) }
+            }
+            showGuides(WindowsCore.move(by: CGPoint(x: dx, y: dy), constrain: shift, snapping: !control, zoom: zoom))
+            dipMoved(at: p)
+        case .handle(let k):
+            showGuides(WindowsCore.resize(session.selection, handle: k, to: inDesign(p), keep: shift, fromCenter: option, snapping: !control, zoom: zoom))
+            WindowsCore.measureSize(session.selection)
+        case .turn, .corner:
+            WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
+        case .shadow:
+            if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
+            WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
+        case .depth, .grid, .layout, .pan, .build, .outline:
+            return
+        case .lineEnd(let k):
+            guard let id = session.selection.first else { return }
+            WindowsCore.moveLineEnd(id, end: k, to: inDesign(p), constrain: shift)
+        case .marquee(let start, let base, let inside):
+            let end = inDesign(p)
+            let box = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
+            let picked = WindowsCore.marquee(box, onBoard: inside, zoom: zoom)
+            session.select(base + picked.filter { !base.contains($0) }, on: inside ?? session.board)
+            showMarquee(box)
+            return
+        }
+        session.edited(board: d.board)
+    }
+
+    private func released(_ args: PointerRoutedEventArgs?) {
+        if guideHand.pressed {
+            try? stage.releasePointerCapture(args?.pointer)
+            syncGuides()
+            guideHand.up(at: point(args), shift: shift, option: option, command: control)
+            session.edited(board: nil)
+            return
+        }
+        if knife.dragging {
+            try? stage.releasePointerCapture(args?.pointer)
+            syncPen()
+            knife.up(at: point(args))
+            knifeChanged()
+            return
+        }
+        if pen.dragging {
+            try? stage.releasePointerCapture(args?.pointer)
+            syncPen()
+            pen.up(at: point(args), shift: shift, option: option, command: control)
+            showGuides([])
+            penChanged()
+            return
+        }
+        guard let d = drag else { return }
+        drag = nil
+        try? stage.releasePointerCapture(args?.pointer)
+        showGuides([])
+        switch d.grab {
+        case .draw(let id, let kind, let start, let board):
+            if !d.moved { WindowsCore.draw(id, kind: kind, from: start, to: start, board: board, click: true) }
+            WindowsCore.endGesture()
+            // What was drawn is picked; the tool is put down, but for Text, which stays in hand.
+            if kind == "artboard" {
+                session.select([], on: WindowsCore.boardIndex(of: id))
+            } else {
+                session.select([id], on: board)
+            }
+            if kind != "text" { session.tool = .select }
+            // A shape just drawn over a picture offers to mask it.
+            WindowsCore.inviteMask(session.selection)
+            session.edited(board: kind == "artboard" ? nil : board)
+            if kind == "text", let board { beginEditing(id, board: board) }
+        case .move:
+            // Dropped, each goes onto the artboard its middle is over, or off onto the canvas.
+            if d.moved {
+                // Into the shape it opened, the mask is what is picked; dragged wholly off the mask
+                // it lay in, it comes out of it, as one step with the move.
+                let opened = dip?.opened?.mask
+                dip = nil
+                drawDip()
+                WindowsCore.endMove(takingOut: opened == nil && WindowsCore.leavingMask(session.selection) != nil)
+                let picked = opened.flatMap { WindowsCore.board(of: $0) != nil ? [$0] : nil } ?? session.selection
+                session.select(picked, on: picked.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+                WindowsCore.inviteMask(session.selection)
+                session.edited(board: nil)
+            }
+        case .handle:
+            WindowsCore.endPull()
+            WindowsCore.clearMeasure()
+            if d.moved {
+                WindowsCore.inviteMask(session.selection)
+                session.edited(board: d.board)
+            }
+        case .turn, .corner:
+            WindowsCore.letGo()
+            session.edited(board: d.board)
+        case .depth:
+            syncDepth()
+            depth.up(at: point(args), adding: shift)
+            // A click outside what is picked picks what is there.
+            if depth.selection != session.selection {
+                session.select(depth.selection, on: depth.selection.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+            }
+            session.edited(board: d.board)
+        case .grid:
+            gridHand.up()
+            session.edited(board: d.board >= 0 ? d.board : nil)
+        case .layout:
+            layoutHand.up()
+            session.edited(board: d.board >= 0 ? d.board : nil)
+        case .pan:
+            updatePointer(at: point(args))
+        case .build:
+            syncBuild()
+            builder.up(at: point(args))
+        case .outline:
+            syncOutline()
+            outlineHand.up()
+            session.edited(board: d.board >= 0 ? d.board : nil)
+        case .shadow:
+            if d.moved {
+                WindowsCore.letGo()
+                session.edited(board: d.board)
+            } else {
+                // Only a click, on the shadow: whatever is there is picked, as anywhere else.
+                let id = pick(point(args))
+                session.select(id.map { [$0] } ?? [], on: id.flatMap(WindowsCore.board(of:)) ?? session.board)
+            }
+        case .lineEnd:
+            WindowsCore.endGesture()
+            if d.moved { session.edited(board: d.board) }
+        case .marquee:
+            showMarquee(nil)
+        }
+    }
+
+    /// A key let go: Space puts the hand away.
+    func keyUp(_ args: KeyRoutedEventArgs?) {
+        guard let args, args.key == .space, spaceDown else { return }
+        args.handled = true
+        spaceDown = false
+        if let p = lastPoint { updatePointer(at: p) }
+    }
+
+    // MARK: The pointer
+
+    /// Shows a pointer over the canvas, rulers and all.
+    private func showPointer(_ pointer: Pointer) {
+        guard pointer != shownPointer else { return }
+        shownPointer = pointer
+        root.protectedCursor = pointer.cursor
+    }
+
+    private func updatePointer(at p: CGPoint) { showPointer(pointer(at: p)) }
+
+    /// What the pointer shows at `p` on the stage, in the order the Mac's canvas asks its tools
+    /// (CanvasView.updateCursor).
+    private func pointer(at p: CGPoint) -> Pointer {
+        if case .pan? = drag?.grab { return .grab }
+        if spaceDown { return .grab }
+        syncGuides()
+        switch guideHand.pointer(at: p) {
+        case .across?: return .across
+        case .upDown?: return .upDown
+        case .cross?: return .cross
+        case .pointingHand?: return .pointingHand
+        case .arrow?: return .arrow
+        case nil: break
+        }
+        syncLayout()
+        if let across = layoutHand.pointer(at: p) { return across ? .across : .upDown }
+        if drag == nil, onOffer(p) || copyButtons.contains(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) { return .pointingHand }
+        if session.tool == .pen { return .pen(Self.penMark(pen.mark)) }
+        if session.tool == .select, pen.editingPath != nil { return pen.mark == "add" ? .pen(1) : .arrow }
+        syncDepth()
+        if depth.turnsPointer { return .turn }
+        syncGrid()
+        switch gridHand.pointer(at: p) {
+        case .resize(let a)?: return .resize(a)
+        case .turn(let a)?: return .rotate(a)
+        case nil: break
+        }
+        if let b = builder.pointer { return b.onPiece ? .build(erase: b.erase) : .arrow }
+        syncOutline()
+        switch outlineHand.pointer(at: p) {
+        case .cross?: return .cross
+        case .across(let a)?: return .resize(a)
+        case nil: break
+        }
+        switch session.tool {
+        case .knife:
+            return .knife
+        case .select:
+            switch WindowsCore.handlePointer(at: p, selection: session.selection, zoom: zoom, pan: pan, selecting: editing == nil) {
+            case .resize(let a)?: return .resize(a)
+            case .rotate(let a)?: return .rotate(a)
+            case .cross?: return .cross
+            case .grab?: return .grab
+            case .turn?: return .turn
+            case nil: return .arrow
+            }
+        case .text:
+            // The selected text's handles resize it with the Text tool in hand too.
+            if case .resize(let a)? = WindowsCore.handlePointer(at: p, selection: session.selection, zoom: zoom, pan: pan, selecting: false) {
+                return .resize(a)
+            }
+            return .iBeam
+        default:
+            return .cross
+        }
+    }
+
+    /// The mark the pen's pointer shows beside its nib, by what a click does there.
+    private static func penMark(_ mark: String) -> Int {
+        switch mark {
+        case "add": 1
+        case "remove": 2
+        case "close": 3
+        case "convert": 4
+        case "carryOn": 5
+        default: 0
+        }
+    }
+
+    /// A drag taken back: the design as it was when it began, and no step made. What is held
+    /// stays held until the button comes up, doing nothing more.
+    private func cancelDrag(_ grab: Grab, moved: Bool) {
+        drag = nil
+        switch grab {
+        case .move:
+            if moved { WindowsCore.cancelMove() }
+            dip = nil
+            drawDip()
+        case .handle:
+            WindowsCore.cancelMove()
+        case .lineEnd, .draw:
+            WindowsCore.cancelGesture()
+        case .turn, .corner, .shadow:
+            WindowsCore.cancelHold()
+        case .marquee:
+            showMarquee(nil)
+        case .depth:
+            depth.cancel()
+        case .grid:
+            gridHand.cancel()
+        case .layout:
+            layoutHand.cancel()
+        case .pan:
+            break
+        case .build:
+            _ = builder.key("escape")
+        case .outline:
+            outlineHand.cancel()
+        }
+        showGuides([])
+        session.edited(board: nil)
+    }
+
+    /// The tools that draw a layer, and the kind each draws; the others are to come.
+    private func drawn(_ tool: Glyphs.Tool) -> String? {
+        switch tool {
+        case .artboard: "artboard"
+        case .rectangle: "rectangle"
+        case .ellipse: "ellipse"
+        case .line: "line"
+        case .text: "text"
+        default: nil
+        }
+    }
+
+    // MARK: Typing
+
+    /// A double click goes into a group, one level each time; on a text, it starts typing.
+    private func doubleTapped(_ args: DoubleTappedRoutedEventArgs?) {
+        guard let q = try? args?.getPosition(stage) else { return }
+        let p = CGPoint(x: Double(q.x), y: Double(q.y))
+        guard let id = pick(p), let board = WindowsCore.board(of: id) else { return }
+        // A double click on a path edits its points, as on the Mac.
+        if WindowsCore.isPath(id), session.tool == .select, pen.editingPath == nil {
+            session.select([id], on: board)
+            syncPen()
+            pen.editSelectedPoints()
+            penChanged()
+            return
+        }
+        if WindowsCore.isGroup(id), let inner = WindowsCore.pick(inDesign(p), inGroup: id, zoom: zoom) {
+            session.select([inner], on: board)
+            return
+        }
+        guard WindowsCore.isText(id) else { return }
+        session.select([id], on: board)
+        beginEditing(id, board: board)
+    }
+
+    /// Typing into a text, in a field over it, one step for all of it; the canvas draws the
+    /// design without it meanwhile, so what is seen is the field's.
+    private func beginEditing(_ id: UUID, board: Int) {
+        guard let layer = WindowsCore.layers(board: board).first(where: { $0.id == id }), layer.isText else { return }
+        endEditing()
+        editing = (id, board)
+        WindowsCore.beginGesture()
+        let field = TextBox()
+        field.text = layer.text ?? ""
+        field.fontFamily = Theme.ui
+        field.fontSize = max(1, (layer.fontSize ?? 12) * zoom)
+        field.foreground = Theme.brush(UInt32(layer.fill.hex, radix: 16) ?? Theme.ink, max(layer.fill.alpha, 0.4))
+        field.background = Theme.clear
+        field.borderThickness = Theme.inset(0)
+        field.padding = Theme.inset(0)
+        field.minWidth = 4
+        field.minHeight = 0
+        field.acceptsReturn = true
+        field.textWrapping = .wrap
+        field.textChanged.addHandler { [weak self] sender, _ in
+            guard let self, let words = (sender as? TextBox)?.text, let editing = self.editing else { return }
+            WindowsCore.setText(editing.id, words)
+            self.session.edited(board: editing.board)
+            self.placeEditor()
+        }
+        // Before the field, which keeps Esc for itself.
+        field.previewKeyDown.addHandler { [weak self] _, args in
+            if args?.key == .escape { args?.handled = true; self?.endEditing() }
+        }
+        // No field to be seen: the words are the layer's own, as on the Mac.
+        for key in ["TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused",
+                    "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused"] {
+            _ = field.resources?.insert(key, Theme.clear)
+        }
+        // Focus once it is on screen: before, WinUI gives it none.
+        field.loaded.addHandler { sender, _ in
+            guard let field = sender as? TextBox else { return }
+            _ = try? field.focus(.programmatic)
+            try? field.selectAll()
+        }
+        // The field keeps the keys while it is typed into: WinUI moves the focus on (to a panel's
+        // scroller) once the double click that began the typing lets go. Another field may take
+        // them, and a press on the canvas ends the typing before the canvas takes them.
+        field.losingFocus.addHandler { [weak self] _, args in
+            guard let self, self.editing != nil, let args, !(args.newFocusedElement is TextBox) else { return }
+            _ = try? args.tryCancel()
+        }
+        editorLayer.children.append(field)
+        editor = field
+        placeEditor()
+        redraw(board: board)
+    }
+
+    private func placeEditor() {
+        guard let editing, let field = editor, let box = onStage(layer: editing.id, board: editing.board) else { return }
+        try? Canvas.setLeft(field, Double(box.minX))
+        try? Canvas.setTop(field, Double(box.minY))
+        field.width = max(Double(box.width) + 24, 24)
+    }
+
+    /// Typing is done: one step; an empty text is not kept.
+    private func endEditing() {
+        guard let done = editing else { return }
+        editing = nil
+        if let field = editor {
+            var k: UInt32 = 0
+            if (try? editorLayer.children.indexOf(field, &k)) == true { editorLayer.children.removeAt(k) }
+        }
+        editor = nil
+        if (WindowsCore.text(of: done.id) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            WindowsCore.delete([done.id])
+            session.select([], on: done.board)
+        }
+        WindowsCore.endGesture()
+        session.edited(board: done.board)
+        _ = try? root.focus(.programmatic)
+    }
+
+    private func wheel(_ args: PointerRoutedEventArgs?) {
+        guard let current = try? args?.getCurrentPoint(stage), let properties = current.properties else { return }
+        let delta = Double(properties.mouseWheelDelta)
+        let p = point(args)
+        if control {
+            zoom(to: zoom * pow(1.0015, delta), around: p)
+        } else if properties.isHorizontalMouseWheel || shift {
+            pan.x = CGFloat(Double(pan.x) - delta)
+            place()
+        } else {
+            pan.y = CGFloat(Double(pan.y) + delta)
+            place()
+        }
+        args?.handled = true
+    }
+
+    /// The Mac's zoom range (2% to 6400%), keeping `p` (on the stage) where it is.
+    private func zoom(to z: Double, around p: CGPoint) {
+        let before = inDesign(p)
+        session.zoom = min(64, max(0.02, z))
+        let after = onStage(before)
+        pan = CGPoint(x: Double(pan.x) + Double(p.x) - Double(after.x), y: Double(pan.y) + Double(p.y) - Double(after.y))
+        drawAll()
+    }
+
+    /// The Mac's zoom steps (Operations.swift).
+    private static let steps = [0.02, 0.05, 0.1, 0.125, 0.25, 0.333, 0.5, 0.667, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64]
+
+    private func step(in grow: Bool) {
+        let next = grow ? Self.steps.first { $0 > zoom + 0.001 } : Self.steps.last { $0 < zoom - 0.001 }
+        zoom(to: next ?? zoom, around: CGPoint(x: root.actualWidth / 2, y: root.actualHeight / 2))
+    }
+
+    // MARK: Keys
+
+    /// The selected shapes made one, as the Arrange card's buttons do; a beep when they cannot be.
+    private func combine(_ way: String) {
+        guard WindowsCore.canCombine(session.selection) else { MessageBeep(0); return }
+        guard let made = WindowsCore.combine(session.selection, way) else { MessageBeep(0); return }
+        session.select([made], on: session.board)
+        session.edited(board: session.board)
+    }
+
+    private var control: Bool { GetKeyState(Int32(VK_CONTROL)) < 0 }
+    private var shift: Bool { GetKeyState(Int32(VK_SHIFT)) < 0 }
+    private var option: Bool { GetKeyState(Int32(VK_MENU)) < 0 }
+
+    // MARK: Commands, from the keys and the right-click menu
+
+    private func duplicate() {
+        guard !session.selection.isEmpty else { return }
+        session.select(WindowsCore.duplicate(session.selection), on: session.board)
+        session.edited(board: session.board)
+    }
+
+    private func group() {
+        guard let made = WindowsCore.group(session.selection) else { return }
+        session.select([made], on: session.board)
+        session.edited(board: session.board)
+    }
+
+    private func ungroup() {
+        let freed = WindowsCore.ungroup(session.selection)
+        guard !freed.isEmpty else { return }
+        session.select(session.selection.filter { WindowsCore.board(of: $0) != nil } + freed, on: session.board)
+        session.edited(board: session.board)
+    }
+
+    /// The selection made a repeat grid of one cell. A beep when it cannot be.
+    private func makeRepeatGrid() {
+        guard let made = WindowsCore.makeRepeatGrid(session.selection) else { MessageBeep(0); return }
+        session.select([made], on: WindowsCore.board(of: made) ?? session.board)
+        session.edited(board: nil)
+    }
+
+    /// The selection masked: a shape among it holding the rest. A beep when there is none.
+    private func maskSelection() {
+        if WindowsCore.endPreview() { session.previewed(board: nil) }
+        guard let made = WindowsCore.mask(session.selection) else { MessageBeep(0); return }
+        session.select([made], on: WindowsCore.board(of: made) ?? session.board)
+        session.edited(board: nil)
+    }
+
+    /// A mask taken apart; what it held, and its shape, are picked.
+    private func releaseMask(_ id: UUID) {
+        let freed = WindowsCore.releaseMask(id)
+        session.select(freed, on: freed.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+        session.edited(board: nil)
+    }
+
+    private func takeOutOfMask() {
+        let ids = session.selection
+        WindowsCore.takeOutOfMask(ids)
+        session.select(ids, on: ids.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+        session.edited(board: nil)
+    }
+
+    private func selectAll() {
+        session.select(WindowsCore.selectAll(session.selection, board: session.board), on: session.board)
+    }
+
+    private func cut() {
+        guard !session.selection.isEmpty else { return }
+        Clipboard.copy(session.selection)
+        delete()
+    }
+
+    private func delete() {
+        guard !session.selection.isEmpty else { return }
+        WindowsCore.delete(session.selection)
+        session.select([], on: session.board)
+        session.edited(board: session.board)
+    }
+
+    private func paste() {
+        let visible = CGRect(origin: inDesign(.zero), size: CGSize(width: root.actualWidth / zoom, height: root.actualHeight / zoom))
+        guard let pasted = Clipboard.paste(visible: visible, board: session.board), !pasted.isEmpty else { return }
+        session.select(pasted, on: pasted.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+        session.edited(board: session.board)
+    }
+
+    private func arrange(_ how: WindowsCore.Arrange) {
+        guard !session.selection.isEmpty else { return }
+        WindowsCore.arrange(session.selection, how)
+        session.edited(board: session.board)
+    }
+
+    private func toggleLock() {
+        let layers = session.selectedLayers
+        guard !layers.isEmpty else { return }
+        WindowsCore.setLocked(session.selection, !layers.allSatisfy(\.locked))
+        session.edited(board: session.board)
+    }
+
+    private func setHidden(_ hidden: Bool) {
+        guard !session.selection.isEmpty else { return }
+        WindowsCore.setHidden(session.selection, hidden)
+        if hidden { session.select([], on: session.board) }
+        session.edited(board: session.board)
+    }
+
+    /// The right-click menu, as the Mac's CanvasMenus: for the selection (what is under the
+    /// pointer is picked first, unless it is picked already), else paste, select all and zoom.
+    private func rightTapped(_ args: RightTappedRoutedEventArgs?) {
+        guard let menus, let q = try? args?.getPosition(stage), let w = try? args?.getPosition(menus.layer) else { return }
+        if editing != nil { endEditing() }
+        let p = CGPoint(x: Double(q.x), y: Double(q.y))
+        // On a guide: taking it away, or all of its artboard's, and locking them, as on the Mac.
+        syncGuides()
+        if session.tool == .select, let guide = guideHand.menu(at: p) {
+            var entries: [MenuHost.Entry] = [.item("Remove Guide") { [weak self] in guide.remove(); self?.session.edited(board: nil) }]
+            if let all = guide.removeAll { entries.append(.item("Remove Guides") { [weak self] in all(); self?.session.edited(board: nil) }) }
+            entries += [.separator, .item("Lock Guides", checked: WindowsCore.guidesLocked) { [weak self] in
+                WindowsCore.guidesLocked.toggle()
+                self?.drawAids()
+            }]
+            menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), entries: entries)
+            return
+        }
+        if let id = pick(p), !session.selection.contains(id) { session.select([id], on: WindowsCore.board(of: id)) }
+        let selection = session.selection
+        var entries: [MenuHost.Entry] = []
+        if !selection.isEmpty {
+            entries += [
+                .item("Cut", shortcut: "Ctrl+X") { [weak self] in self?.cut() },
+                .item("Copy", shortcut: "Ctrl+C") { Clipboard.copy(selection) },
+                .item("Paste", shortcut: "Ctrl+V", enabled: Clipboard.canPaste) { [weak self] in self?.paste() },
+                .item("Duplicate", shortcut: "Ctrl+D") { [weak self] in self?.duplicate() },
+                .item("Delete", shortcut: "Del") { [weak self] in self?.delete() },
+                .separator,
+                .item("Bring to Front", shortcut: "Ctrl+Shift+]") { [weak self] in self?.arrange(.front) },
+                .item("Bring Forward", shortcut: "Ctrl+]") { [weak self] in self?.arrange(.forward) },
+                .item("Send Backward", shortcut: "Ctrl+[") { [weak self] in self?.arrange(.backward) },
+                .item("Send to Back", shortcut: "Ctrl+Shift+[") { [weak self] in self?.arrange(.back) },
+                .separator,
+            ]
+            let canGroup = WindowsCore.canGroup(selection), canUngroup = selection.contains(where: WindowsCore.isGroup)
+            if canGroup { entries.append(.item("Group", shortcut: "Ctrl+G") { [weak self] in self?.group() }) }
+            if canUngroup { entries.append(.item("Ungroup", shortcut: "Ctrl+Shift+G") { [weak self] in self?.ungroup() }) }
+            // Masks, as the Mac's menu has them: pointed at, the mask shows made.
+            let canMask = WindowsCore.canMask(selection), mask = WindowsCore.selectedMask(selection)
+            if canMask {
+                entries.append(.item("Mask", shortcut: "Ctrl+M", preview: { [weak self] on in
+                    WindowsCore.previewMask(selection, on)
+                    self?.session.previewed(board: nil)
+                }) { [weak self] in self?.maskSelection() })
+            }
+            if let mask {
+                if WindowsCore.inMask(selection) {
+                    entries.append(.item("Take Out of Mask") { [weak self] in self?.takeOutOfMask() })
+                }
+                entries.append(.item("Release Mask", shortcut: "Ctrl+Shift+M") { [weak self] in self?.releaseMask(mask) })
+            }
+            if canGroup || canUngroup || canMask || mask != nil { entries.append(.separator) }
+            // Repeat grids, as the Mac's menu has them.
+            if WindowsCore.canRepeat(selection) {
+                entries += [.item("Make Repeat Grid", shortcut: "Ctrl+R") { [weak self] in self?.makeRepeatGrid() }, .separator]
+            } else if selection.count == 1, let cell = WindowsCore.cellLook(selection[0]) {
+                if let slot = cell.slot, cell.kind == "text" || cell.picture {
+                    entries.append(.item("Same in Every Cell") { [weak self] in WindowsCore.sameInEveryCell(selection[0]); self?.session.edited(board: nil) })
+                    entries.append(.item("Shuffle Cells") { [weak self] in WindowsCore.shuffleCells(slot, in: cell.grid); self?.session.edited(board: nil) })
+                }
+                entries.append(.item("Select Grid") { [weak self] in self?.session.select([cell.grid], on: self?.session.board) })
+                entries.append(.item("Ungroup Grid", shortcut: "Ctrl+Shift+R") { [weak self] in WindowsCore.ungroupGrid(cell.grid); self?.session.edited(board: nil) })
+                entries.append(.separator)
+            } else if selection.count == 1, WindowsCore.isGrid(selection[0]) {
+                entries.append(.item("Ungroup Grid", shortcut: "Ctrl+Shift+R") { [weak self] in WindowsCore.ungroupGrid(selection[0]); self?.session.edited(board: nil) })
+                entries.append(.separator)
+            }
+            // Components, as the Mac's Object menu has them.
+            if WindowsCore.canMakeComponent(selection) {
+                entries += [.item("Make Component", shortcut: "Ctrl+Alt+K") { [weak self] in self?.makeComponent() }, .separator]
+            } else if let copy = WindowsCore.componentLook(selection) {
+                entries.append(.item("New Variant") { [weak self] in
+                    guard let self else { return }
+                    let picked = WindowsCore.addVariant(selection)
+                    self.session.select(picked, on: self.session.board)
+                    self.session.edited(board: nil)
+                })
+                if copy.ownLooks {
+                    entries.append(.item("Look Like the Others") { [weak self] in WindowsCore.resetCopy(copy.copy); self?.session.edited(board: nil) })
+                }
+                entries.append(.item("Unlink Copy") { [weak self] in WindowsCore.unlink(selection); self?.session.edited(board: nil) })
+                entries.append(.separator)
+            }
+            let layers = session.selectedLayers
+            let locked = !layers.isEmpty && layers.allSatisfy(\.locked)
+            entries.append(.item(locked ? "Unlock" : "Lock", shortcut: "Ctrl+L") { [weak self] in self?.toggleLock() })
+            if !layers.isEmpty, layers.allSatisfy(\.hidden) {
+                entries.append(.item("Show") { [weak self] in self?.setHidden(false) })
+            } else {
+                entries.append(.item("Hide", shortcut: "Ctrl+Shift+H") { [weak self] in self?.setHidden(true) })
+            }
+        } else {
+            entries += [
+                .item("Paste", shortcut: "Ctrl+V", enabled: Clipboard.canPaste) { [weak self] in self?.paste() },
+                .item("Select All", shortcut: "Ctrl+A", enabled: !WindowsCore.boards().isEmpty) { [weak self] in self?.selectAll() },
+                .separator,
+                .item("Zoom to Fit", shortcut: "Ctrl+0") { [weak self] in self?.fit() },
+                .item("Actual Size", shortcut: "Ctrl+1") { [weak self] in
+                    guard let self else { return }
+                    self.zoom(to: 1, around: CGPoint(x: self.root.actualWidth / 2, y: self.root.actualHeight / 2))
+                },
+            ]
+        }
+        menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), entries: entries) { [weak self] in
+            // A mask pointed at and not made is taken away again.
+            if WindowsCore.endPreview() { self?.session.previewed(board: nil) }
+        }
+    }
+
+    func key(_ args: KeyRoutedEventArgs?) {
+        // Keys typed into a text are the text's.
+        guard let args, editing == nil else { return }
+        // Space held: a press moves the canvas round.
+        if args.key == .space {
+            args.handled = true
+            if !spaceDown {
+                spaceDown = true
+                if let p = lastPoint { updatePointer(at: p) }
+            }
+            return
+        }
+        // The pen's keys, and those for the points of a path being edited, first; Enter on a
+        // selected path edits its points.
+        let penKey: String? = switch args.key {
+        case .escape: "escape"
+        case .enter: "enter"
+        case .delete, .back: "delete"
+        case .left: "left"
+        case .right: "right"
+        case .up: "up"
+        case .down: "down"
+        default: nil
+        }
+        if let penKey {
+            syncPen()
+            // Enter on a mask picks what it holds, as on the Mac.
+            if penKey == "enter", session.tool == .select, pen.editingPath == nil, drag == nil,
+               let held = WindowsCore.maskHeld(session.selection) {
+                args.handled = true
+                session.select(held, on: held.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+                session.changed()
+                return
+            }
+            // Building before the knife and the pen: Enter and Escape end it, or the drag.
+            if builder.active, builder.key(penKey) {
+                args.handled = true
+                if case .build? = drag?.grab { drag = nil }
+                return
+            }
+            if session.tool == .knife, knife.key(penKey) {
+                args.handled = true
+                knifeChanged()
+                return
+            }
+            // Escape while a guide is dragged: back as it was.
+            if penKey == "escape", guideHand.pressed {
+                args.handled = true
+                guideHand.cancel()
+                drawAids()
+                return
+            }
+            // Escape while a layout grid is dragged: back as it was.
+            if penKey == "escape", layoutHand.dragging {
+                args.handled = true
+                layoutHand.cancel()
+                let board = drag?.board ?? -1
+                drag = nil
+                session.edited(board: board >= 0 ? board : nil)
+                return
+            }
+            // Escape while a grid's handle is dragged: back as it was.
+            if penKey == "escape", gridHand.dragging {
+                args.handled = true
+                gridHand.cancel()
+                let board = drag?.board ?? -1
+                drag = nil
+                session.edited(board: board >= 0 ? board : nil)
+                return
+            }
+            // Escape while turning in depth: back as it was.
+            if penKey == "escape", depth.dragging {
+                args.handled = true
+                depth.cancel()
+                drag = nil
+                session.edited(board: session.board)
+                return
+            }
+            // Escape during any other drag: back as it was when it began, as on the Mac.
+            if penKey == "escape", let d = drag {
+                args.handled = true
+                cancelDrag(d.grab, moved: d.moved)
+                return
+            }
+            if pen.key(penKey, shift: shift) {
+                args.handled = true
+                penChanged()
+                return
+            }
+        }
+        let step = shift ? 10.0 : 1.0
+        let selection = session.selection
+        var edited = true
+        var undoing = false
+        switch args.key {
+        case .delete, .back:
+            delete()
+            args.handled = true
+            return
+        case .left: WindowsCore.move(selection, dx: -step, dy: 0)
+        case .right: WindowsCore.move(selection, dx: step, dy: 0)
+        case .up: WindowsCore.move(selection, dx: 0, dy: -step)
+        case .down: WindowsCore.move(selection, dx: 0, dy: step)
+        // The Mac's Edit and Object menus, Ctrl for Command and Alt for Option.
+        case .b where control && option: toggleBuild(); args.handled = true; return
+        case .k where control && option: makeComponent(); args.handled = true; return
+        case .u where control && option: combine("union"); args.handled = true; return
+        case .s where control && option: combine("subtract"); args.handled = true; return
+        case .i where control && option: combine("intersect"); args.handled = true; return
+        case .x where control && option: combine("exclude"); args.handled = true; return
+        case .m where control && shift:
+            if let mask = WindowsCore.selectedMask(selection) { releaseMask(mask) } else { MessageBeep(0) }
+            args.handled = true
+            return
+        case .m where control: maskSelection(); args.handled = true; return
+        case .r where control && shift:
+            if let id = selection.first, let grid = WindowsCore.isGrid(id) ? id : WindowsCore.cellLook(id)?.grid {
+                WindowsCore.ungroupGrid(grid)
+                session.edited(board: nil)
+            } else {
+                MessageBeep(0)
+            }
+            args.handled = true
+            return
+        case .r where control: makeRepeatGrid(); args.handled = true; return
+        case .d where control: duplicate(); args.handled = true; return
+        case .g where control && shift: ungroup(); args.handled = true; return
+        case .g where control: group(); args.handled = true; return
+        case .a where control: selectAll(); args.handled = true; return
+        case .c where control: Clipboard.copy(selection); args.handled = true; return
+        case .x where control: cut(); args.handled = true; return
+        case .v where control: paste(); args.handled = true; return
+        case .l where control: toggleLock(); args.handled = true; return
+        case .h where control && shift: setHidden(true); args.handled = true; return
+        case .z where control: edited = shift ? WindowsCore.redo() : WindowsCore.undo(); undoing = true
+        case .y where control: edited = WindowsCore.redo(); undoing = true
+        case .o where control: session.onOpen?(); args.handled = true; return
+        case .number0 where control: fit(); args.handled = true; return
+        case .number1 where control: zoom(to: 1, around: CGPoint(x: root.actualWidth / 2, y: root.actualHeight / 2)); args.handled = true; return
+        default:
+            let raw = args.key.rawValue
+            if control, raw == 187 || raw == 107 { self.step(in: true); args.handled = true; return }   // = and the keypad's +
+            if control, raw == 189 || raw == 109 { self.step(in: false); args.handled = true; return }  // − and the keypad's −
+            // Ctrl+] and Ctrl+[ bring forward and send backward, with Shift to the front and back
+            // (the keys beside P, as ] and [ lie on an English keyboard).
+            if control, raw == 221 || raw == 219, !selection.isEmpty {
+                arrange(raw == 221 ? (shift ? .front : .forward) : (shift ? .back : .backward))
+                args.handled = true
+                return
+            }
+            guard !control, let tool = Glyphs.Tool.allCases.first(where: { UInt32($0.key.unicodeScalars.first!.value) == UInt32(raw) }) else { return }
+            session.tool = tool
+            args.handled = true
+            return
+        }
+        args.handled = true
+        // Undone or done again, what is picked and still there stays picked, on the artboard it
+        // is on now.
+        if edited, undoing {
+            let kept = session.selection.filter { WindowsCore.board(of: $0) != nil }
+            session.select(kept, on: kept.first.flatMap(WindowsCore.board(of:)) ?? session.board)
+        }
+        if edited { session.edited(board: undoing ? nil : session.board) }
+    }
+}

@@ -1,0 +1,31 @@
+#!/bin/zsh
+# Runs a PowerShell command in the Bezzle test VM's signed-in desktop session, rather than in SSH's
+# own: windows appear there, and package installs work (Windows refuses them over SSH with
+# 0x80070005). It goes through a scheduled task of its own that runs as "bezzle" when signed in
+# (the VM signs in by itself). Waits, prints what the command wrote and exits with its code; with
+# --detach it returns at once, for an app or a build that keeps running.
+#
+#   Windows/VM/desktop [--detach] '<powershell command>'
+set -euo pipefail
+detach=0
+[[ ${1:-} == --detach ]] && { detach=1; shift; }
+command=$1
+task=BezzleDesktop-$(date +%s)-$RANDOM
+log="C:\\bezzle\\$task.log"
+encoded=$(printf '%s' "& { $command } *> $log; exit \$LASTEXITCODE" | iconv -t UTF-16LE | base64)
+${0:A:h}/win "
+\$ErrorActionPreference = 'Stop'
+Get-ScheduledTask -TaskName 'BezzleDesktop*' | Where-Object State -ne 'Running' | Unregister-ScheduledTask -Confirm:\$false
+\$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand $encoded'
+\$principal = New-ScheduledTaskPrincipal -UserId 'bezzle' -LogonType Interactive -RunLevel Highest
+\$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 4)
+Register-ScheduledTask -TaskName $task -Action \$action -Principal \$principal -Settings \$settings -Force | Out-Null
+Start-ScheduledTask -TaskName $task
+if ($detach) { exit 0 }
+Start-Sleep -Milliseconds 500
+while ((Get-ScheduledTask -TaskName $task).State -eq 'Running') { Start-Sleep -Milliseconds 500 }
+if (Test-Path $log) { Get-Content $log; Remove-Item $log }
+\$code = (Get-ScheduledTaskInfo -TaskName $task).LastTaskResult
+Unregister-ScheduledTask -TaskName $task -Confirm:\$false
+exit \$code
+"

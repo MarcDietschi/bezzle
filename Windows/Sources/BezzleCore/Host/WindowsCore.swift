@@ -1,0 +1,306 @@
+import Foundation
+import AppKit
+import CBezzleHost
+
+/// What the Windows app and its tools ask of the core: the fonts, a design, an artboard drawn.
+/// The counterpart of the web core's Main.swift, called directly instead of through exports.
+public enum WindowsCore {
+    nonisolated public struct Board: Sendable {
+        public let index: Int
+        public let name: String
+        public let frame: CGRect
+        /// Its fill as six hex digits and an alpha, for drawing it in small.
+        public var fill: (hex: String, alpha: Double) = ("FFFFFF", 1)
+        public var id: UUID?
+        public var hidden = false
+        /// The part of the canvas its picture covers: its frame, or, when it does not clip what
+        /// lies on it, as far as that reaches.
+        public var drawn: CGRect = .zero
+        /// A carousel's slides: how big each is, and how many.
+        public var slide: CGSize?
+        public var slides = 1
+    }
+
+    /// Where an artboard's picture reaches on the canvas: its frame, and when it shows what runs
+    /// past its edges, as far as that paints.
+    static func drawn(_ n: Node) -> CGRect {
+        guard n.isArtboard, !n.clips else { return n.frame }
+        var r = n.frame
+        for c in n.children where !c.hidden { r = r.union(Renderer.reach(of: c).offsetBy(dx: n.frame.minX, dy: n.frame.minY)) }
+        return r.integral
+    }
+
+    nonisolated(unsafe) static var design: BezzleDocument?
+    nonisolated(unsafe) static var assets = Assets(folder: nil)
+    /// Where the open design is kept: its package, or its file.
+    nonisolated(unsafe) public private(set) static var designURL: URL?
+
+    /// The open fonts that stand in for the Mac's (Web/tools/openfonts.py): `manifest.json` and
+    /// the faces it lists, in `folder`. The system font's stand-in is registered as "System".
+    public static func loadFonts(from folder: URL) throws {
+        let data = try Data(contentsOf: folder.appendingPathComponent("manifest.json"))
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        if let system = manifest["system"] as? [String: Any], let file = system["file"] as? String {
+            try add("System", "", Data(contentsOf: folder.appendingPathComponent(file)))
+            Fonts.files["System/"] = folder.appendingPathComponent(file)
+            SystemFont.weights = (system["weights"] as? [String: Any] ?? [:]).compactMapValues { ($0 as? NSNumber)?.doubleValue }
+            if let o = system["opsz"] as? [Any], o.count == 2, let low = (o[0] as? NSNumber)?.doubleValue, let high = (o[1] as? NSNumber)?.doubleValue {
+                SystemFont.opticalSizes = low...high
+            }
+        }
+        for face in manifest["faces"] as? [[String: Any]] ?? [] {
+            guard let family = face["family"] as? String, let name = face["face"] as? String, let file = face["file"] as? String else { continue }
+            try add(family, name, Data(contentsOf: folder.appendingPathComponent(file)))
+            Fonts.files["\(family)/\(name)"] = folder.appendingPathComponent(file)
+        }
+        NSFontManager.shared.families = manifest["families"] as? [String: [String]] ?? [:]
+        bz_text_forget()
+        TextLayout.forget()
+    }
+
+    private static func add(_ family: String, _ face: String, _ data: Data) throws {
+        let added = data.withUnsafeBytes { bz_font_add(family, face, $0.baseAddress, Int32($0.count)) }
+        if added == 0 { throw CoreError("Skia cannot read the font \(family) \(face)") }
+    }
+
+    /// Opens the design in `folder`, a .bezzle package: its document.json, and its pictures in
+    /// images/, by their file names, as the core asks for them. Answers its artboards.
+    public static func open(_ folder: URL) throws -> [Board] {
+        let doc = try read(folder)
+        previewBase = nil
+        design = doc
+        designURL = folder
+        Editing.undos = []
+        Editing.redos = []
+        assets = Assets(folder: folder.appendingPathComponent("images"))
+        return boards()
+    }
+
+    /// Lets the open design go, once it is saved: a save that comes later has nothing to write.
+    public static func close() {
+        previewBase = nil
+        design = nil
+        designURL = nil
+        Editing.undos = []
+        Editing.redos = []
+        Editing.gestureStart = nil
+        Editing.gestureBase = nil
+        assets = Assets(folder: nil)
+    }
+
+    /// A design's document as its file has it, its pictures given to Skia by their file names
+    /// (each picture's own UUID): a package with its document.json, or a design from before
+    /// pictures, one JSON file. Nothing that is open changes.
+    private static func read(_ folder: URL) throws -> BezzleDocument {
+        var isFolder: ObjCBool = false
+        _ = FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder)
+        let json = isFolder.boolValue ? folder.appendingPathComponent("document.json") : folder
+        var doc = try JSONDecoder().decode(BezzleDocument.self, from: Data(contentsOf: json))
+        doc.repairStyles()
+        let images = folder.appendingPathComponent("images")
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? [] {
+            let data = try Data(contentsOf: images.appendingPathComponent(name))
+            _ = data.withUnsafeBytes { bz_asset_add(name, $0.baseAddress, Int32($0.count)) }
+        }
+        return doc
+    }
+
+    /// Draws the design's layer `index` (an artboard) at `scale` pixels a point with the app's own
+    /// renderer, and Skia makes the pictures it recorded: premultiplied RGBA, rows top first.
+    public static func render(board index: Int, scale: Double) -> (width: Int, height: Int, pixels: [UInt8])? {
+        guard let doc = design, index < doc.nodes.count else { return nil }
+        let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+        guard let image = Renderer.image(of: doc.nodes[index], scale: CGFloat(scale), assets: assets) else { return nil }
+        for picture in Images.shared.list where picture.id >= first { send(picture) }
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let done = pixels.withUnsafeMutableBytes { bz_picture_read(Int32(image.id), Int32(image.width), Int32(image.height), 0, $0.baseAddress) }
+        forget(before: first)
+        return done == 0 ? (image.width, image.height, pixels) : nil
+    }
+
+    /// Draws artboard `index` as `render` does, into pixels the caller has: its size first, then,
+    /// in `fill`, where to put the premultiplied BGRA pixels, rows top first (a WinUI
+    /// WriteableBitmap's own layout).
+    public static func render(board index: Int, scale: Double, hiding: UUID? = nil, into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
+        guard var doc = design, index < doc.nodes.count else { return false }
+        // The text being typed into is shown by its editor, not drawn under it, as on the Mac.
+        if let hiding { doc.update(hiding) { $0.hidden = true } }
+        let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+        let board = doc.nodes[index], part = drawn(board)
+        guard let image = Renderer.image(of: board, part: part == board.frame ? nil : part, scale: CGFloat(scale), assets: assets) else { return false }
+        for picture in Images.shared.list where picture.id >= first { send(picture) }
+        defer { forget(before: first) }
+        guard let pixels = fill(image.width, image.height) else { return false }
+        return bz_picture_read(Int32(image.id), Int32(image.width), Int32(image.height), 1, pixels) == 0
+    }
+
+    /// The pictures made for drawings before `first` are let go here, but not the design's own;
+    /// each is forgotten by Skia when nothing holds it any more (`CGImage.released`): the drawing
+    /// keeps some of them to draw them again (as 3D layers' flattened faces).
+    static func forget(before first: Int) {
+        if CGImage.released == nil { CGImage.released = { id in bz_picture_forget(Int32(id)) } }
+        Images.shared.list.removeAll { image in
+            if case .asset = image.source { return false }
+            return image.id < first
+        }
+    }
+
+    /// Writes pixels as `render` makes them to a PNG file.
+    public static func writePNG(_ pixels: [UInt8], width: Int, height: Int, to url: URL) throws {
+        let written = pixels.withUnsafeBytes { bz_png_write(url.path, Int32(width), Int32(height), $0.baseAddress) }
+        if written != 0 { throw CoreError("Could not write \(url.path)") }
+    }
+
+    /// A picture the core made, as Skia will make it (CGImage.Source).
+    static func send(_ p: CGImage) {
+        let id = Int32(p.id), w = Int32(p.width), h = Int32(p.height)
+        switch p.source {
+        case .asset(let n):
+            bz_picture_asset(id, Int32(n))
+        case .picture(let commands):
+            commands.withUnsafeBufferPointer { bz_picture_recording(id, w, h, $0.baseAddress, Int64($0.count)) }
+        case .changed(let from, let changes):
+            var crop: [Double] = [0, 0, 0, 0], blur = -1.0, clamp: Int32 = 0, perspective: [Double]?, ramp: [Double]?
+            for change in changes {
+                switch change {
+                case .crop(let r): crop = [Double(r.minX), Double(r.minY), Double(r.width), Double(r.height)]
+                case .blur(let sigma, let c): blur = sigma; clamp = c ? 1 : 0
+                case .rampBlur(let sigma, let c, let a, let b):
+                    blur = sigma
+                    clamp = c ? 1 : 0
+                    ramp = [Double(a.x), Double(a.y), Double(b.x), Double(b.y)]
+                case .perspective(let m, _): perspective = m
+                }
+            }
+            defer { if let ramp { ramp.withUnsafeBufferPointer { bz_picture_ramp(id, $0.baseAddress) } } }
+            crop.withUnsafeBufferPointer { c in
+                if let m = perspective {
+                    m.withUnsafeBufferPointer { bz_picture_changed(id, w, h, Int32(from.id), c.baseAddress, blur, clamp, $0.baseAddress) }
+                } else {
+                    bz_picture_changed(id, w, h, Int32(from.id), c.baseAddress, blur, clamp, nil)
+                }
+            }
+        case .pixels(let bytes, let row, _):
+            bytes.withUnsafeBufferPointer { bz_picture_pixels(id, w, h, Int32(row), $0.baseAddress) }
+        }
+    }
+
+    nonisolated public struct CoreError: Swift.Error, CustomStringConvertible {
+        public let description: String
+        init(_ description: String) { self.description = description }
+    }
+}
+
+extension WindowsCore {
+    /// The shadow an artboard casts on the canvas, as the Mac's canvas draws it (2 pt down, blur
+    /// 10, the shadow colour at 13%), `width` by `height` pixels at `scale` pixels a point, into
+    /// BGRA pixels `pad` larger on every side, which `fill` gives once it has the size.
+    public static func artboardShadow(width: Int, height: Int, scale: Double, colour: UInt32 = 0x3A3226,
+                                      into fill: (_ width: Int, _ height: Int, _ pad: Int) -> UnsafeMutableRawPointer?) -> Bool {
+        let pad = Int((14 * scale).rounded(.up))
+        guard let pixels = fill(width + 2 * pad, height + 2 * pad, pad) else { return false }
+        return bz_shadow(Int32(width), Int32(height), Int32(pad), 10 * scale, 2 * scale, colour, 0.13, pixels) == 0
+    }
+}
+
+extension WindowsCore {
+    /// Whether the design is shared through the folder it is kept in (Google Drive, Dropbox, OneDrive
+    /// and the like): each computer then writes only records of its own (`FolderShare`), which this
+    /// Windows copy does not write yet, so it does not save over such a design.
+    public static var isSharedThroughFolder: Bool {
+        guard let url = designURL else { return false }
+        return FileManager.default.fileExists(atPath: url.appendingPathComponent("sharing").appendingPathComponent(FolderShare.peopleFolder).path)
+    }
+
+    /// Saves the design where it is kept, as the Mac's DesignFile.write does: its document.json
+    /// (sorted keys), written whole; a package gone meanwhile is made again, so nothing is lost.
+    public static func save() throws {
+        guard let url = designURL, let doc = previewBase ?? design else { return }
+        guard !isSharedThroughFolder else { throw CoreError("This design is shared through its folder, which Bezzle for Windows does not save to yet.") }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(doc)
+        var isFolder: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder)
+        if exists, !isFolder.boolValue {
+            try data.write(to: url, options: .atomic)
+        } else {
+            try FileManager.default.createDirectory(at: url.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
+            try data.write(to: url.appendingPathComponent("document.json"), options: .atomic)
+        }
+    }
+}
+
+extension WindowsCore {
+    /// A size a design can start at, as the Mac's home offers it (Store/Library.swift's Preset).
+    nonisolated public struct Size: Sendable {
+        public let name: String
+        public let width: Double
+        public let height: Double
+        /// Its family (Preset.Group), which says what it is drawn as on home's stage.
+        public var group = ""
+    }
+
+    /// The sizes by kind (Devices, Social media, Print & slides) and family, in the order offered.
+    public static func sizes() -> [(kind: String, families: [(name: String, sizes: [Size])])] {
+        Preset.Kind.allCases.map { kind in
+            (kind.title.key, Preset.Group.all(of: kind).map { group in
+                (group.title.key, Preset.all.filter { $0.group == group }.map { Size(name: $0.name, width: Double($0.size.width), height: Double($0.size.height), group: group.rawValue) })
+            }.filter { !$0.1.isEmpty })
+        }
+    }
+
+    /// Makes a new design in `folder`, with one artboard of `size`, as the Mac's Library.create
+    /// does: "Untitled", then "Untitled 2"…; returns where it is.
+    public static func createDesign(in folder: URL, size: Size?) throws -> URL {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var url = folder.appendingPathComponent("Untitled.bezzle")
+        var i = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("Untitled \(i).bezzle")
+            i += 1
+        }
+        var doc = BezzleDocument()
+        if let size {
+            doc.nodes = [Node(kind: .artboard, name: "Artboard", frame: CGRect(x: 0, y: 0, width: size.width, height: size.height))]
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
+        try encoder.encode(doc).write(to: url.appendingPathComponent("document.json"), options: .atomic)
+        return url
+    }
+
+    /// Draws the first artboard of the design at `url` for a thumbnail, `width` pixels wide,
+    /// into BGRA pixels `fill` gives once it has the size; opens the design to do it.
+    public static func thumbnail(of url: URL, width: Double, height: Double, scale: Double, into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
+        // Read on its own: the design that is open, its file and its undo stay as they are.
+        guard let doc = try? read(url) else { return false }
+        let pictures = Assets(folder: url.appendingPathComponent("images"))
+        let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+        guard let image = Renderer.thumbnail(of: doc, size: CGSize(width: width, height: height), scale: CGFloat(scale), assets: pictures, cover: true) else { return false }
+        for picture in Images.shared.list where picture.id >= first { send(picture) }
+        defer { forget(before: first) }
+        guard let pixels = fill(image.width, image.height) else { return false }
+        return bz_picture_read(Int32(image.id), Int32(image.width), Int32(image.height), 1, pixels) == 0
+    }
+}
+
+extension WindowsCore {
+    /// Home's table, as the Mac's Stage draws it: the table's colour, radius 20, a pool of light
+    /// where the clock puts it (Daylight: from the left in the morning to the right by evening, a
+    /// lamp after dark), and the far edge falling into shade; into BGRA pixels.
+    public static func stage(width: Int, height: Int, scale: Double, table: UInt32, dark: Bool, date: Date = Date(),
+                             into pixels: UnsafeMutableRawPointer) -> Bool {
+        let calendar = Calendar.current
+        let hour = Double(calendar.component(.hour, from: date)) + Double(calendar.component(.minute, from: date)) / 60
+        let lamp = !(6..<20).contains(hour)
+        let day = (hour - 6) / 14
+        let x = lamp ? 0.8 : 0.14 + day * 0.72, warmth = lamp ? 1 : max(0, day - 0.45) * 1.6
+        let t = min(max(warmth, 0), 1)
+        let light = (r: 0.92 + 0.08 * t, g: 0.95 - 0.11 * t, b: 1.0 - 0.36 * t)
+        let rgb = UInt32(light.r * 255) << 16 | UInt32(light.g * 255) << 8 | UInt32(light.b * 255)
+        let strength = dark ? (lamp ? 0.13 : 0.075) : (lamp ? 0.5 : 0.62)
+        return bz_stage(Int32(width), Int32(height), scale, table, rgb, strength, x, lamp ? 0.25 : 0, lamp ? 0.62 : 0.85, dark ? 0.16 : 0.035, pixels) == 0
+    }
+}

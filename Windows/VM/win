@@ -1,0 +1,5 @@
+#!/bin/zsh
+# Runs a command in the Bezzle test VM (PowerShell), or opens a shell there: Windows/VM/win [command]
+# The VM is made by make-vm.sh; scp works the same way with these options and bezzle@192.168.77.10.
+exec ssh -i ~/.ssh/bezzle-windows-vm -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+    -o UserKnownHostsFile=~/.ssh/bezzle-windows-vm.known_hosts -o ConnectTimeout=5 bezzle@192.168.77.10 "$@"

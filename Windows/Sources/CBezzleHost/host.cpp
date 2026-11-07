@@ -1,0 +1,960 @@
+// Bezzle's core on Windows, the part Skia does: see BezzleHost.h. Each piece follows its
+// counterpart in Web/site/bezzle.mjs, which does the same with CanvasKit (Skia in the browser), so
+// a design draws and measures here as it does there, and there as on the Mac.
+
+#include "BezzleHost.h"
+
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColorSpace.h"
+#include "include/core/SkData.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontMetrics.h"
+#include "include/core/SkFontMgr.h"
+#include "include/core/SkMaskFilter.h"
+#include "include/core/SkBlurTypes.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkRRect.h"
+#include "include/core/SkPathBuilder.h"
+#include "include/core/SkPathUtils.h"
+#include "include/core/SkStream.h"
+#include "include/core/SkSurface.h"
+#include "include/core/SkTypeface.h"
+#include "include/codec/SkCodec.h"
+#include "include/codec/SkEncodedOrigin.h"
+#include "include/codec/SkJpegDecoder.h"
+#include "include/codec/SkPngDecoder.h"
+#include "include/codec/SkWebpDecoder.h"
+#include "include/effects/SkDashPathEffect.h"
+#include "include/encode/SkPngEncoder.h"
+#include "include/encode/SkJpegEncoder.h"
+#include "include/encode/SkWebpEncoder.h"
+#include "include/docs/SkPDFDocument.h"
+#include "include/docs/SkPDFJpegHelpers.h"
+#include "include/effects/SkGradient.h"
+#include "include/effects/SkImageFilters.h"
+#include "include/pathops/SkPathOps.h"
+#include "include/ports/SkFontMgr_empty.h"
+#include "modules/skparagraph/include/FontCollection.h"
+#include "modules/skparagraph/include/Paragraph.h"
+#include "modules/skparagraph/include/ParagraphBuilder.h"
+#include "modules/skparagraph/include/ParagraphStyle.h"
+#include "modules/skparagraph/include/TextStyle.h"
+#include "modules/skparagraph/include/TypefaceFontProvider.h"
+#include "modules/skunicode/include/SkUnicode_icu.h"
+
+#include <algorithm>
+#include <iterator>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+using namespace skia::textlayout;
+
+namespace {
+
+std::mutex lock;
+
+/// With BEZZLE_HOST_TRACE set, what a drawing asks for and is not there goes to stderr.
+bool tracing() {
+    static const bool on = getenv("BEZZLE_HOST_TRACE") != nullptr;
+    return on;
+}
+
+std::vector<uint8_t> answer;
+
+void keep(const std::vector<double>& values) {
+    answer.resize(values.size() * sizeof(double));
+    if (!values.empty()) memcpy(answer.data(), values.data(), answer.size());
+}
+
+// MARK: Paths, as CanvasKit's commands: a verb, then its points.
+
+enum Verb { kMove = 0, kLine = 1, kQuad = 2, kConic = 3, kCubic = 4, kClose = 5 };
+
+SkPath readPath(const double* c, size_t n, SkPathFillType fill) {
+    SkPathBuilder b(fill);
+    size_t i = 0;
+    auto f = [&](size_t k) { return static_cast<float>(c[i + k]); };
+    while (i < n) {
+        switch (static_cast<int>(c[i++])) {
+            case kMove: if (i + 2 > n) return b.detach(); b.moveTo(f(0), f(1)); i += 2; break;
+            case kLine: if (i + 2 > n) return b.detach(); b.lineTo(f(0), f(1)); i += 2; break;
+            case kQuad: if (i + 4 > n) return b.detach(); b.quadTo(f(0), f(1), f(2), f(3)); i += 4; break;
+            case kConic: if (i + 5 > n) return b.detach(); b.conicTo(f(0), f(1), f(2), f(3), f(4)); i += 5; break;
+            case kCubic: if (i + 6 > n) return b.detach(); b.cubicTo(f(0), f(1), f(2), f(3), f(4), f(5)); i += 6; break;
+            case kClose: b.close(); break;
+            default: return b.detach();
+        }
+    }
+    return b.detach();
+}
+
+void writePath(const SkPath& path, std::vector<double>& out) {
+    SkPath::Iter it(path, false);
+    while (auto r = it.next()) {
+        const auto& p = r->fPoints;
+        switch (r->fVerb) {
+            case SkPathVerb::kMove: out.insert(out.end(), {double(kMove), p[0].fX, p[0].fY}); break;
+            case SkPathVerb::kLine: out.insert(out.end(), {double(kLine), p[1].fX, p[1].fY}); break;
+            case SkPathVerb::kQuad: out.insert(out.end(), {double(kQuad), p[1].fX, p[1].fY, p[2].fX, p[2].fY}); break;
+            case SkPathVerb::kConic:
+                out.insert(out.end(), {double(kConic), p[1].fX, p[1].fY, p[2].fX, p[2].fY, r->fConicWeight});
+                break;
+            case SkPathVerb::kCubic:
+                out.insert(out.end(), {double(kCubic), p[1].fX, p[1].fY, p[2].fX, p[2].fY, p[3].fX, p[3].fY});
+                break;
+            case SkPathVerb::kClose: out.push_back(double(kClose)); break;
+        }
+    }
+}
+
+SkPathFillType fillOf(double rule) { return rule == 1 ? SkPathFillType::kEvenOdd : SkPathFillType::kWinding; }
+
+/// op, rule, then path A, path B and parameters, each counted: as bezzle.mjs's pathOp.
+std::vector<double> pathOp(const double* v, size_t n) {
+    std::vector<double> out;
+    if (n < 3) return out;
+    size_t i = 0;
+    const int op = int(v[i++]);
+    const auto fill = fillOf(v[i++]);
+    const size_t nA = size_t(v[i++]); if (i + nA > n) return out;
+    const double* a = v + i; i += nA;
+    const size_t nB = i < n ? size_t(v[i++]) : 0; if (i + nB > n) return out;
+    const double* b = v + i; i += nB;
+    const size_t nP = i < n ? size_t(v[i++]) : 0; if (i + nP > n) return out;
+    const double* p = v + i;
+    const SkPath A = readPath(a, nA, fill);
+    std::optional<SkPath> R;
+    if (op >= 1 && op <= 4) {
+        const SkPathOp ops[] = {kUnion_SkPathOp, kIntersect_SkPathOp, kDifference_SkPathOp, kXOR_SkPathOp};
+        R = Op(A, readPath(b, nB, fill), ops[op - 1]);
+    } else if (op == 5) {
+        R = Simplify(A);
+    } else if (op == 6 && nP >= 4) {
+        SkPaint paint;
+        paint.setStyle(SkPaint::kStroke_Style);
+        paint.setStrokeWidth(float(p[0]));
+        const SkPaint::Cap caps[] = {SkPaint::kButt_Cap, SkPaint::kRound_Cap, SkPaint::kSquare_Cap};
+        const SkPaint::Join joins[] = {SkPaint::kMiter_Join, SkPaint::kRound_Join, SkPaint::kBevel_Join};
+        paint.setStrokeCap(caps[std::clamp(int(p[1]), 0, 2)]);
+        paint.setStrokeJoin(joins[std::clamp(int(p[2]), 0, 2)]);
+        paint.setStrokeMiter(float(p[3]));
+        R = skpathutils::FillPathWithPaint(A, paint);
+    } else if (op == 7) {
+        // makeDashed(on, off, phase): the dashes as a hairline would draw them, not stroked.
+        const float on = nP > 1 ? float(p[1]) : 1, off = nP > 2 ? float(p[2]) : on;
+        const float intervals[] = {on, off};
+        SkPaint paint;
+        paint.setStyle(SkPaint::kStroke_Style);
+        paint.setStrokeWidth(0);
+        paint.setPathEffect(SkDashPathEffect::Make(intervals, nP > 0 ? float(p[0]) : 0));
+        R = skpathutils::FillPathWithPaint(A, paint);
+    }
+    if (R) writePath(*R, out);
+    return out;
+}
+
+// MARK: Pictures
+
+struct Asset { sk_sp<SkImage> image; };
+std::vector<Asset> assets;                      // by number - 1
+std::map<std::string, int> assetsByName;
+
+sk_sp<SkImage> decode(const void* data, size_t count) {
+    static std::once_flag registered;
+    std::call_once(registered, [] {
+        SkCodecs::Register(SkPngDecoder::Decoder());
+        SkCodecs::Register(SkJpegDecoder::Decoder());
+        SkCodecs::Register(SkWebpDecoder::Decoder());
+    });
+    if (!data || !count) return nullptr;
+    auto image = SkImages::DeferredFromEncodedData(SkData::MakeWithCopy(data, count));
+    // With mipmaps, as the page makes them, for pictures drawn smaller.
+    auto raster = image ? image->makeRasterImage(nullptr) : nullptr;
+    return raster ? raster->withDefaultMipmaps() : nullptr;
+}
+
+extern "C" int32_t bz_image_size(const void* data, int32_t count, int32_t* width, int32_t* height) {
+    decode(nullptr, 0);  // the decoders, registered once
+    auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
+    if (!codec) return 0;
+    const auto d = codec->dimensions();
+    // Turned on its side by its orientation, it is as wide as it is tall.
+    const bool turned = SkEncodedOriginSwapsWidthHeight(codec->getOrigin());
+    *width = turned ? d.height() : d.width();
+    *height = turned ? d.width() : d.height();
+    return d.width() > 0 && d.height() > 0 ? 1 : 0;
+}
+
+/// A picture by name: its number, width and height, or 0 when there is none (bezzle.mjs's image).
+std::vector<double> imageByName(const double* v, size_t n) {
+    std::string name;
+    for (size_t i = 0; i < n; i++) name.push_back(char(int(v[i])));
+    auto it = assetsByName.find(name);
+    if (it == assetsByName.end()) {
+        if (tracing()) fprintf(stderr, "[host] no asset %s\n", name.c_str());
+        return {0};
+    }
+    const auto& image = assets[it->second - 1].image;
+    return {double(it->second), double(image->width()), double(image->height())};
+}
+
+struct Picture {
+    enum Kind { kAsset, kRecording, kChanged, kPixels } kind = kAsset;
+    int width = 0, height = 0;
+    int asset = 0;
+    std::vector<double> commands;
+    int from = 0;
+    double crop[4] = {0, 0, 0, 0};
+    double blur = -1;
+    bool clamp = false;
+    bool hasPerspective = false;
+    double perspective[9] = {};
+    bool hasRamp = false;
+    double ramp[4] = {};
+    int bytesPerRow = 0;
+    std::vector<uint8_t> pixels;
+};
+std::map<int, Picture> pictures;
+std::map<int, sk_sp<SkImage>> made;
+
+sk_sp<SkImage> get(int id);
+void play(SkCanvas* canvas, const double* c, size_t n);
+
+SkImageInfo rgba(int w, int h) {
+    return SkImageInfo::Make(std::max(1, w), std::max(1, h), kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+}
+
+template <typename Draw> sk_sp<SkImage> raster(int w, int h, Draw draw) {
+    auto surface = SkSurfaces::Raster(rgba(w, h));
+    if (!surface) return nullptr;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    draw(canvas);
+    return surface->makeImageSnapshot();
+}
+
+sk_sp<SkImage> make(const Picture& d) {
+    switch (d.kind) {
+        case Picture::kAsset:
+            return d.asset > 0 && size_t(d.asset) <= assets.size() ? assets[d.asset - 1].image : nullptr;
+        case Picture::kRecording:
+            return raster(d.width, d.height, [&](SkCanvas* canvas) {
+                // Core Graphics' space: y up from the bottom left.
+                canvas->concat(SkMatrix::MakeAll(1, 0, 0, 0, -1, float(d.height), 0, 0, 1));
+                play(canvas, d.commands.data(), d.commands.size());
+            });
+        case Picture::kChanged: {
+            auto from = get(d.from);
+            if (!from) return nullptr;
+            const double crop[4] = {d.crop[2] > 0 ? d.crop[0] : 0, d.crop[2] > 0 ? d.crop[1] : 0, 0, 0};
+            return raster(d.width, d.height, [&](SkCanvas* canvas) {
+                canvas->translate(float(-crop[0]), float(-crop[1]));
+                if (d.hasPerspective) {
+                    const double* m = d.perspective;
+                    canvas->concat(SkMatrix::MakeAll(float(m[0]), float(m[1]), float(m[2]), float(m[3]), float(m[4]),
+                                                     float(m[5]), float(m[6]), float(m[7]), float(m[8])));
+                }
+                const SkSamplingOptions sampling(SkFilterMode::kLinear, SkMipmapMode::kNone);
+                const SkTileMode tiles = d.clamp ? SkTileMode::kClamp : SkTileMode::kDecal;
+                if (d.hasRamp && d.blur > 0) {
+                    // A blur growing along the ramp: the picture at a few strengths, from sharp to
+                    // the whole blur, each weighed by how near the ramp is to it there, and added
+                    // up. The weights always come to one, so it blends from one to the next.
+                    const int levels = 5;
+                    const SkPoint ends[2] = {{float(d.ramp[0]), float(d.ramp[1])}, {float(d.ramp[2]), float(d.ramp[3])}};
+                    for (int k = 0; k < levels; k++) {
+                        const float at = float(k) / float(levels - 1), step = 1.0f / float(levels - 1);
+                        std::vector<SkColor4f> colors;
+                        std::vector<float> positions;
+                        if (k > 0) { positions.push_back(at - step); colors.push_back({0, 0, 0, 0}); }
+                        positions.push_back(at);
+                        colors.push_back({0, 0, 0, 1});
+                        if (k < levels - 1) { positions.push_back(at + step); colors.push_back({0, 0, 0, 0}); }
+                        if (positions.size() == 1) { positions.insert(positions.begin(), 0); colors.insert(colors.begin(), {0, 0, 0, 1}); }
+                        SkPaint weigh;
+                        weigh.setShader(SkShaders::LinearGradient(ends, SkGradient(SkGradient::Colors(colors, positions, SkTileMode::kClamp), {})));
+                        weigh.setBlendMode(SkBlendMode::kDstIn);
+                        SkPaint sum;
+                        sum.setBlendMode(SkBlendMode::kPlus);
+                        canvas->saveLayer(nullptr, &sum);
+                        SkPaint level;
+                        const float sigma = float(d.blur) * at;
+                        if (sigma > 0.01f) level.setImageFilter(SkImageFilters::Blur(sigma, sigma, tiles, nullptr));
+                        canvas->drawImage(from, 0, 0, sampling, &level);
+                        canvas->drawPaint(weigh);
+                        canvas->restore();
+                    }
+                } else {
+                    SkPaint paint;
+                    if (d.blur >= 0) paint.setImageFilter(SkImageFilters::Blur(float(d.blur), float(d.blur), tiles, nullptr));
+                    canvas->drawImage(from, 0, 0, sampling, &paint);
+                }
+            });
+        }
+        case Picture::kPixels: {
+            if (d.pixels.empty()) return nullptr;
+            return SkImages::RasterFromData(rgba(d.width, d.height), SkData::MakeWithCopy(d.pixels.data(), d.pixels.size()), size_t(d.bytesPerRow));
+        }
+    }
+    return nullptr;
+}
+
+sk_sp<SkImage> get(int id) {
+    if (auto it = made.find(id); it != made.end()) return it->second;
+    auto it = pictures.find(id);
+    if (it == pictures.end()) {
+        if (tracing()) fprintf(stderr, "[host] no picture %d\n", id);
+        return nullptr;
+    }
+    auto image = make(it->second);
+    made[id] = image;
+    return image;
+}
+
+// MARK: Text, through Skia's paragraphs (bezzle.mjs's style, paragraph, slice and textCall)
+
+sk_sp<SkFontMgr> fontManager() {
+    static sk_sp<SkFontMgr> manager = SkFontMgr_New_Custom_Empty();
+    return manager;
+}
+sk_sp<TypefaceFontProvider> provider = sk_make_sp<TypefaceFontProvider>();
+sk_sp<FontCollection> collection;
+sk_sp<SkUnicode> unicode;
+std::map<std::string, sk_sp<SkTypeface>> faces;   // "family|face"
+std::map<std::string, double> leadings;
+
+sk_sp<FontCollection> fonts() {
+    if (!collection) {
+        collection = sk_make_sp<FontCollection>();
+        collection->setDefaultFontManager(provider);
+        collection->enableFontFallback();
+        unicode = SkUnicodes::ICU::Make();
+    }
+    return collection;
+}
+
+struct Run {
+    std::u16string text;
+    std::string family, face;
+    double size, tracking, weight, opticalSize;
+    bool underline, strike, hasColor;
+    SkColor4f color;
+    std::string features, axes;
+};
+
+/// "tag=value,tag=value" as pairs of four-letter tags and numbers.
+std::vector<std::pair<std::string, double>> tagged(const std::string& list) {
+    std::vector<std::pair<std::string, double>> out;
+    size_t at = 0;
+    while (at < list.size()) {
+        size_t end = list.find(',', at);
+        if (end == std::string::npos) end = list.size();
+        std::string item = list.substr(at, end - at);
+        size_t eq = item.find('=');
+        if (eq == 4) out.push_back({item.substr(0, 4), std::atof(item.c_str() + 5)});
+        at = end + 1;
+    }
+    return out;
+}
+
+SkFourByteTag fourBytes(const std::string& t) { return SkSetFourByteTag(t[0], t[1], t[2], t[3]); }
+
+std::u16string utf16(const char* s) {
+    std::u16string out;
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p;) {
+        uint32_t c = *p++;
+        int more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+        if (more) c &= (0x3F >> more);
+        for (; more > 0 && (*p & 0xC0) == 0x80; more--) c = (c << 6) | (*p++ & 0x3F);
+        if (c >= 0x10000) {
+            c -= 0x10000;
+            out.push_back(char16_t(0xD800 + (c >> 10)));
+            out.push_back(char16_t(0xDC00 + (c & 0x3FF)));
+        } else {
+            out.push_back(char16_t(c));
+        }
+    }
+    return out;
+}
+
+TextStyle style(const Run& run) {
+    TextStyle s;
+    s.setFontSize(float(run.size));
+    s.setLetterSpacing(float(run.tracking));
+    s.setColor(run.hasColor ? run.color.toSkColor() : SK_ColorTRANSPARENT);
+    // The font's OpenType features as the layer sets them, and its axes: the system font's weight
+    // and optical size by its face and size, unless the layer sets them itself.
+    for (const auto& [tag, value] : tagged(run.features)) s.addFontFeature(SkString(tag.c_str()), int(value));
+    std::vector<SkFontArguments::VariationPosition::Coordinate> axes;
+    const auto set = tagged(run.axes);
+    auto has = [&](const char* tag) { for (const auto& a : set) if (a.first == tag) return true; return false; };
+    if (run.family == "System") {
+        s.setFontFamilies({SkString("System")});
+        if (!has("wght")) axes.push_back({SkSetFourByteTag('w', 'g', 'h', 't'), float(run.weight > 0 ? run.weight : 400)});
+        if (run.opticalSize > 0 && !has("opsz")) axes.push_back({SkSetFourByteTag('o', 'p', 's', 'z'), float(run.opticalSize)});
+    } else {
+        s.setFontFamilies({SkString((run.family + "|" + run.face).c_str()), SkString("System")});
+    }
+    for (const auto& [tag, value] : set) axes.push_back({fourBytes(tag), float(value)});
+    if (!axes.empty()) {
+        SkFontArguments arguments;
+        arguments.setVariationDesignPosition({axes.data(), int(axes.size())});
+        s.setFontArguments(arguments);
+    }
+    int decoration = TextDecoration::kNoDecoration;
+    if (run.underline) decoration |= TextDecoration::kUnderline;
+    if (run.strike) decoration |= TextDecoration::kLineThrough;
+    if (decoration) {
+        s.setDecoration(TextDecoration(decoration));
+        s.setDecorationColor(s.getColor());
+    }
+    return s;
+}
+
+std::unique_ptr<Paragraph> paragraph(const std::vector<Run>& runs, const Run& first, double width, int align) {
+    ParagraphStyle ps;
+    const TextAlign aligns[] = {TextAlign::kLeft, TextAlign::kCenter, TextAlign::kRight, TextAlign::kJustify};
+    ps.setTextAlign(aligns[std::clamp(align, 0, 3)]);
+    ps.setTextStyle(style(first));
+    // fonts() first: it makes `unicode` too, and arguments are evaluated in no set order.
+    auto collection = fonts();
+    auto builder = ParagraphBuilder::make(ps, collection, unicode);
+    for (const auto& r : runs) {
+        builder->pushStyle(style(r));
+        builder->addText(r.text);
+        builder->pop();
+    }
+    auto p = builder->Build();
+    p->layout(float(width));
+    return p;
+}
+
+/// The runs of [start, end) of the words, in UTF-16, as Skia and Text Kit both count.
+std::vector<Run> slice(const std::vector<Run>& runs, size_t start, size_t end) {
+    std::vector<Run> out;
+    size_t at = 0;
+    for (const auto& r : runs) {
+        const size_t a = std::max(start, at), z = std::min(end, at + r.text.size());
+        if (z > a) {
+            Run part = r;
+            part.text = r.text.substr(a - at, z - a);
+            out.push_back(part);
+        }
+        at += r.text.size();
+    }
+    return out;
+}
+
+double leadingOf(const Run& run) {
+    if (run.family == "System") return 0;
+    const std::string key = run.family + "|" + run.face + "|" + std::to_string(run.size);
+    if (auto it = leadings.find(key); it != leadings.end()) return it->second;
+    double leading = 0;
+    if (auto it = faces.find(run.family + "|" + run.face); it != faces.end()) {
+        SkFont font(it->second, float(run.size));
+        SkFontMetrics metrics;
+        font.getMetrics(&metrics);
+        leading = metrics.fLeading;
+    }
+    leadings[key] = leading;
+    return leading;
+}
+
+struct Text {
+    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; };
+    std::vector<Line> lines;
+    std::vector<double> baselines;
+};
+std::map<int, Text> texts;
+int nextText = 1;
+
+// MARK: Playing a recording (bezzle.mjs's look and play)
+
+const SkBlendMode blends[] = {
+    SkBlendMode::kSrcOver, SkBlendMode::kMultiply, SkBlendMode::kScreen, SkBlendMode::kOverlay, SkBlendMode::kDarken,
+    SkBlendMode::kLighten, SkBlendMode::kColorDodge, SkBlendMode::kColorBurn, SkBlendMode::kSoftLight,
+    SkBlendMode::kHardLight, SkBlendMode::kDifference, SkBlendMode::kExclusion, SkBlendMode::kHue,
+    SkBlendMode::kSaturation, SkBlendMode::kColor, SkBlendMode::kLuminosity, SkBlendMode::kClear, SkBlendMode::kSrc,
+    SkBlendMode::kSrcIn, SkBlendMode::kSrcOut, SkBlendMode::kSrcATop, SkBlendMode::kDstOver, SkBlendMode::kDstIn,
+    SkBlendMode::kDstOut, SkBlendMode::kDstATop, SkBlendMode::kXor, SkBlendMode::kMultiply, SkBlendMode::kPlus,
+};
+
+struct Look { double alpha; int blend; bool shadowed; };
+
+/// Alpha, blend mode and shadow, as each drawing carries them: 10 numbers.
+Look look(const double* c, size_t& i, SkPaint& paint, SkCanvas* canvas) {
+    const double alpha = c[i], blend = c[i + 1], shadowed = c[i + 2];
+    const int b = int(blend);
+    paint.setBlendMode(b >= 0 && b < int(std::size(blends)) ? blends[b] : SkBlendMode::kSrcOver);
+    if (shadowed != 0) {
+        // Given in device pixels, as Core Graphics measures shadows: back into the canvas's own space.
+        const SkMatrix m = canvas->getTotalMatrix();
+        const double a = m.getScaleX(), bb = m.getSkewY(), cc = m.getSkewX(), d = m.getScaleY();
+        const double det = a * d - bb * cc;
+        const double dx = c[i + 3], dy = c[i + 4];
+        const double lx = det != 0 ? (d * dx - cc * dy) / det : dx, ly = det != 0 ? (-bb * dx + a * dy) / det : dy;
+        const double scale = std::sqrt(std::abs(det)) != 0 ? std::sqrt(std::abs(det)) : 1;
+        const float sigma = float(c[i + 5] / scale);
+        const SkColor4f color = {float(c[i + 6]), float(c[i + 7]), float(c[i + 8]), float(c[i + 9])};
+        paint.setImageFilter(SkImageFilters::DropShadow(float(lx), float(ly), sigma, sigma, color.toSkColor(), nullptr));
+    }
+    i += 10;
+    return {alpha, b, shadowed != 0};
+}
+
+SkPath path(const double* c, size_t& i, size_t n, double rule) {
+    const size_t count = size_t(c[i]);
+    const size_t start = i + 1;
+    i = std::min(n, start + count);
+    return readPath(c + start, i - start, fillOf(rule));
+}
+
+SkColor4f color(const double* c, size_t& i, double alpha) {
+    const SkColor4f out = {float(c[i]), float(c[i + 1]), float(c[i + 2]), float(c[i + 3] * alpha)};
+    i += 4;
+    return out;
+}
+
+void play(SkCanvas* canvas, const double* c, size_t n) {
+    size_t i = 0;
+    while (i < n) {
+        const int op = int(c[i++]);
+        switch (op) {
+            case 1: canvas->save(); break;
+            case 2: canvas->restore(); break;
+            case 3:
+                canvas->concat(SkMatrix::MakeAll(float(c[i]), float(c[i + 2]), float(c[i + 4]), float(c[i + 1]), float(c[i + 3]),
+                                                 float(c[i + 5]), 0, 0, 1));
+                i += 6;
+                break;
+            case 4: {
+                const double rule = c[i++];
+                if (c[i] == 0) { canvas->clipRect(SkRect::MakeEmpty(), SkClipOp::kIntersect, false); i += 1; break; }
+                canvas->clipPath(path(c, i, n, rule), SkClipOp::kIntersect, true);
+                break;
+            }
+            case 5: case 6: {
+                SkPaint paint;
+                paint.setAntiAlias(true);
+                const Look l = look(c, i, paint, canvas);
+                if (op == 5) {
+                    const double rule = c[i++];
+                    paint.setColor4f(color(c, i, l.alpha));
+                    canvas->drawPath(path(c, i, n, rule), paint);
+                } else {
+                    paint.setStyle(SkPaint::kStroke_Style);
+                    paint.setStrokeWidth(float(c[i]));
+                    const SkPaint::Cap caps[] = {SkPaint::kButt_Cap, SkPaint::kRound_Cap, SkPaint::kSquare_Cap};
+                    const SkPaint::Join joins[] = {SkPaint::kMiter_Join, SkPaint::kRound_Join, SkPaint::kBevel_Join};
+                    paint.setStrokeCap(caps[std::clamp(int(c[i + 1]), 0, 2)]);
+                    paint.setStrokeJoin(joins[std::clamp(int(c[i + 2]), 0, 2)]);
+                    paint.setStrokeMiter(float(c[i + 3]));
+                    const double phase = c[i + 4];
+                    const size_t nd = size_t(c[i + 5]);
+                    i += 6;
+                    if (nd > 0) {
+                        std::vector<float> dashes;
+                        for (size_t k = 0; k < nd; k++) dashes.push_back(float(c[i + k]));
+                        if (nd % 2) for (size_t k = 0; k < nd; k++) dashes.push_back(float(c[i + k]));
+                        paint.setPathEffect(SkDashPathEffect::Make(dashes, float(phase)));
+                    }
+                    i += nd;
+                    paint.setColor4f(color(c, i, l.alpha));
+                    canvas->drawPath(path(c, i, n, 0), paint);
+                }
+                break;
+            }
+            case 7: case 8: {
+                SkPaint paint;
+                paint.setAntiAlias(true);
+                const Look l = look(c, i, paint, canvas);
+                const double* g = c + i;
+                i += op == 7 ? 4 : 6;
+                const bool before = c[i] != 0, after = c[i + 1] != 0;
+                const size_t count = size_t(c[i + 2]);
+                i += 3;
+                std::vector<SkColor4f> colors;
+                std::vector<float> positions;
+                for (size_t k = 0; k < count; k++) {
+                    positions.push_back(float(c[i]));
+                    colors.push_back({float(c[i + 1]), float(c[i + 2]), float(c[i + 3]), float(c[i + 4])});
+                    i += 5;
+                }
+                const SkTileMode mode = before || after ? SkTileMode::kClamp : SkTileMode::kDecal;
+                const SkGradient gradient(SkGradient::Colors(colors, positions, mode), {});
+                sk_sp<SkShader> shader;
+                if (op == 7) {
+                    const SkPoint points[2] = {{float(g[0]), float(g[1])}, {float(g[2]), float(g[3])}};
+                    shader = SkShaders::LinearGradient(points, gradient);
+                } else {
+                    shader = SkShaders::TwoPointConicalGradient({float(g[0]), float(g[1])}, float(g[2]),
+                                                                {float(g[3]), float(g[4])}, float(g[5]), gradient);
+                }
+                paint.setShader(shader);
+                paint.setAlphaf(float(l.alpha));
+                canvas->drawPaint(paint);
+                break;
+            }
+            case 9: {
+                SkPaint paint;
+                paint.setAntiAlias(true);
+                const Look l = look(c, i, paint, canvas);
+                const int id = int(c[i]);
+                const float x = float(c[i + 1]), y = float(c[i + 2]), w = float(c[i + 3]), h = float(c[i + 4]);
+                i += 6;
+                if (auto image = get(id)) {
+                    paint.setAlphaf(float(l.alpha));
+                    // Core Graphics draws a picture with its top row at the rectangle's top, which is up.
+                    canvas->save();
+                    canvas->concat(SkMatrix::MakeAll(1, 0, 0, 0, -1, 2 * y + h, 0, 0, 1));
+                    canvas->drawImageRect(image, SkRect::MakeWH(float(image->width()), float(image->height())), SkRect::MakeXYWH(x, y, w, h),
+                                          SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear), &paint,
+                                          SkCanvas::kFast_SrcRectConstraint);
+                    canvas->restore();
+                }
+                break;
+            }
+            case 10: {
+                SkPaint paint;
+                const Look l = look(c, i, paint, canvas);
+                paint.setAlphaf(float(l.alpha));
+                const bool has = c[i] != 0;
+                const SkRect bounds = SkRect::MakeXYWH(float(c[i + 1]), float(c[i + 2]), float(c[i + 3]), float(c[i + 4]));
+                i += 5;
+                canvas->saveLayer(has ? &bounds : nullptr, &paint);
+                break;
+            }
+            case 11: canvas->restore(); break;
+            case 12: {
+                SkPaint paint;
+                const Look l = look(c, i, paint, canvas);
+                const int id = int(c[i]);
+                const float x = float(c[i + 1]), y = float(c[i + 2]);
+                i += 3 + 5;
+                const bool layered = l.alpha < 1 || l.shadowed || l.blend != 0;
+                if (layered) { paint.setAlphaf(float(l.alpha)); canvas->saveLayer(nullptr, &paint); }
+                if (auto it = texts.find(id); it != texts.end()) {
+                    auto& t = it->second;
+                    for (size_t k = 0; k < t.lines.size(); k++) {
+                        auto& line = t.lines[k];
+                        if (!line.paragraph) continue;
+                        const double baseline = k < t.baselines.size() ? t.baselines[k] : 0;
+                        line.paragraph->paint(canvas, x, float(y + baseline - line.baseline));
+                    }
+                }
+                if (layered) canvas->restore();
+                break;
+            }
+            default:
+                fprintf(stderr, "[host] unknown drawing call %d at %zu\n", op, i - 1);
+                return;
+        }
+    }
+}
+
+}  // namespace
+
+// MARK: The C interface
+
+extern "C" int32_t bz_host_call(int32_t function, const void* bytes, int32_t count) {
+    std::lock_guard<std::mutex> guard(lock);
+    const auto* doubles = static_cast<const double*>(bytes);
+    const size_t n = size_t(std::max(count, 0)) / sizeof(double);
+    switch (function) {
+        case 1: keep(pathOp(doubles, n)); break;
+        case 2: keep(imageByName(doubles, n)); break;
+        case 4:
+            fprintf(stderr, "[core] %.*s\n", int(count), static_cast<const char*>(bytes));
+            answer.clear();
+            break;
+        default: answer.clear();
+    }
+    return int32_t(answer.size());
+}
+
+extern "C" void bz_host_take(void* into) {
+    std::lock_guard<std::mutex> guard(lock);
+    if (into && !answer.empty()) memcpy(into, answer.data(), answer.size());
+}
+
+extern "C" int32_t bz_font_add(const char* family, const char* face, const void* data, int32_t count) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto typeface = fontManager()->makeFromData(SkData::MakeWithCopy(data, size_t(count)));
+    if (!typeface) return 0;
+    const std::string name = std::string(family) == "System" ? "System" : std::string(family) + "|" + face;
+    provider->registerTypeface(typeface, SkString(name.c_str()));
+    faces[name] = typeface;
+    leadings.clear();
+    if (collection) collection->clearCaches();
+    return 1;
+}
+
+extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double width, int32_t align,
+                               double* lines, int32_t capacity, int32_t* lineCount) {
+    std::lock_guard<std::mutex> guard(lock);
+    std::vector<Run> runs;
+    for (int32_t k = 0; k < count; k++) {
+        const auto& r = given[k];
+        runs.push_back({utf16(r.text ? r.text : ""), r.family ? r.family : "System", r.face ? r.face : "", r.size, r.tracking,
+                        r.weight, r.opticalSize, r.underline != 0, r.strike != 0, r.hasColor != 0,
+                        {float(r.color[0]), float(r.color[1]), float(r.color[2]), float(r.color[3])},
+                        r.features ? r.features : "", r.axes ? r.axes : ""});
+    }
+    if (runs.empty()) runs.push_back({u"", "System", "", 12, 0, 400, 0, false, false, false, {0, 0, 0, 1}, "", ""});
+    auto whole = paragraph(runs, runs[0], width, align);
+    std::vector<LineMetrics> metrics;
+    whole->getLineMetrics(metrics);
+    Text text;
+    const double leading = leadingOf(runs[0]);
+    int32_t written = 0;
+    for (const auto& m : metrics) {
+        const size_t end = m.fEndIncludingNewline;
+        auto part = slice(runs, m.fStartIndex, m.fEndExcludingWhitespaces);
+        // Each line drawn on its own, so it can sit where the core puts it.
+        std::unique_ptr<Paragraph> line = part.empty() ? nullptr : paragraph(part, part[0], width, align);
+        double baseline = m.fBaseline;
+        if (line) {
+            std::vector<LineMetrics> lm;
+            line->getLineMetrics(lm);
+            if (!lm.empty()) baseline = lm[0].fBaseline;
+        }
+        text.lines.push_back({std::move(line), baseline});
+        text.baselines.push_back(m.fBaseline);
+        if (written < capacity) {
+            // Skia shares the leading out above and below the line; Text Kit keeps it apart.
+            double* out = lines + written * 6;
+            out[0] = double(m.fStartIndex);
+            out[1] = double(end);
+            out[2] = m.fWidth;
+            out[3] = m.fAscent - leading / 2;
+            out[4] = m.fDescent - leading / 2;
+            out[5] = leading;
+            written++;
+        }
+    }
+    if (lineCount) *lineCount = int32_t(metrics.size());
+    const int id = nextText++;
+    texts[id] = std::move(text);
+    return id;
+}
+
+extern "C" void bz_text_place(int32_t id, const double* baselines, int32_t count) {
+    std::lock_guard<std::mutex> guard(lock);
+    if (auto it = texts.find(id); it != texts.end()) it->second.baselines.assign(baselines, baselines + std::max(count, 0));
+}
+
+extern "C" void bz_text_forget(void) {
+    std::lock_guard<std::mutex> guard(lock);
+    texts.clear();
+}
+
+extern "C" int32_t bz_asset_add(const char* name, const void* data, int32_t count) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto image = decode(data, size_t(count));
+    if (!image) return 0;
+    assets.push_back({image});
+    const int number = int(assets.size());
+    assetsByName[name] = number;
+    return number;
+}
+
+extern "C" void bz_picture_asset(int32_t id, int32_t asset) {
+    std::lock_guard<std::mutex> guard(lock);
+    Picture p;
+    p.kind = Picture::kAsset;
+    p.asset = asset;
+    pictures[id] = std::move(p);
+}
+
+extern "C" void bz_picture_recording(int32_t id, int32_t width, int32_t height, const double* commands, int64_t count) {
+    std::lock_guard<std::mutex> guard(lock);
+    Picture p;
+    p.kind = Picture::kRecording;
+    p.width = width;
+    p.height = height;
+    p.commands.assign(commands, commands + std::max<int64_t>(count, 0));
+    pictures[id] = std::move(p);
+}
+
+extern "C" void bz_picture_changed(int32_t id, int32_t width, int32_t height, int32_t from, const double* crop, double blur,
+                                   int32_t clamp, const double* perspective) {
+    std::lock_guard<std::mutex> guard(lock);
+    Picture p;
+    p.kind = Picture::kChanged;
+    p.width = width;
+    p.height = height;
+    p.from = from;
+    if (crop) std::copy(crop, crop + 4, p.crop);
+    p.blur = blur;
+    p.clamp = clamp != 0;
+    if (perspective) { p.hasPerspective = true; std::copy(perspective, perspective + 9, p.perspective); }
+    pictures[id] = std::move(p);
+}
+
+extern "C" void bz_picture_ramp(int32_t id, const double* ends) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = pictures.find(id);
+    if (it == pictures.end() || !ends) return;
+    it->second.hasRamp = true;
+    std::copy(ends, ends + 4, it->second.ramp);
+}
+
+extern "C" void bz_picture_pixels(int32_t id, int32_t width, int32_t height, int32_t bytesPerRow, const uint8_t* bytes) {
+    std::lock_guard<std::mutex> guard(lock);
+    Picture p;
+    p.kind = Picture::kPixels;
+    p.width = width;
+    p.height = height;
+    p.bytesPerRow = bytesPerRow;
+    p.pixels.assign(bytes, bytes + size_t(bytesPerRow) * size_t(std::max(height, 0)));
+    pictures[id] = std::move(p);
+}
+
+extern "C" int32_t bz_picture_read(int32_t id, int32_t width, int32_t height, int32_t bgra, void* pixels) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto image = get(id);
+    if (!image) return 1;
+    const SkImageInfo info = SkImageInfo::Make(std::max(1, width), std::max(1, height), bgra ? kBGRA_8888_SkColorType : kRGBA_8888_SkColorType,
+                                               kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    return image->readPixels(nullptr, SkPixmap(info, pixels, size_t(width) * 4), 0, 0) ? 0 : 2;
+}
+
+extern "C" void bz_picture_forget(int32_t id) {
+    std::lock_guard<std::mutex> guard(lock);
+    pictures.erase(id);
+    made.erase(id);
+}
+
+extern "C" int32_t bz_png_write(const char* path, int32_t width, int32_t height, const void* pixels) {
+    SkFILEWStream file(path);
+    if (!file.isValid()) return 1;
+    const SkPixmap pixmap(rgba(width, height), pixels, size_t(width) * 4);
+    return SkPngEncoder::Encode(&file, pixmap, {}) ? 0 : 2;
+}
+
+extern "C" int32_t bz_image_write(const char* path, int32_t width, int32_t height, const void* pixels, int32_t format, double quality) {
+    SkFILEWStream file(path);
+    if (!file.isValid()) return 1;
+    const SkPixmap pixmap(rgba(width, height), pixels, size_t(width) * 4);
+    switch (format) {
+        case 1: {
+            SkJpegEncoder::Options options;
+            options.fQuality = std::clamp(int(quality * 100 + 0.5), 0, 100);
+            return SkJpegEncoder::Encode(&file, pixmap, options) ? 0 : 2;
+        }
+        case 2: {
+            // At the very top, lossless, as the Mac's WebP writer makes it.
+            SkWebpEncoder::Options options;
+            options.fCompression = quality >= 1 ? SkWebpEncoder::Compression::kLossless : SkWebpEncoder::Compression::kLossy;
+            options.fQuality = float(quality >= 1 ? 75 : std::clamp(quality * 100, 0.0, 100.0));
+            return SkWebpEncoder::Encode(&file, pixmap, options) ? 0 : 2;
+        }
+        default:
+            return SkPngEncoder::Encode(&file, pixmap, {}) ? 0 : 2;
+    }
+}
+
+/// A PDF being written: its file, and the document drawing into it.
+struct PDF {
+    std::unique_ptr<SkFILEWStream> file;
+    sk_sp<SkDocument> document;
+};
+std::map<int, PDF> pdfs;
+int nextPDF = 1;
+
+extern "C" int32_t bz_pdf_begin(const char* path) {
+    std::lock_guard<std::mutex> guard(lock);
+    PDF pdf;
+    pdf.file = std::make_unique<SkFILEWStream>(path);
+    if (!pdf.file->isValid()) return 0;
+    // Pictures in it kept as JPEG where they came as JPEG, as Skia asks a PDF to be given.
+    SkPDF::Metadata metadata = SkPDF::JPEG::MetadataWithCallbacks();
+    metadata.fCreator = "Bezzle";
+    metadata.fProducer = "Bezzle";
+    pdf.document = SkPDF::MakeDocument(pdf.file.get(), metadata);
+    if (!pdf.document) return 0;
+    const int id = nextPDF++;
+    pdfs[id] = std::move(pdf);
+    return id;
+}
+
+extern "C" int32_t bz_pdf_page(int32_t pdf, int32_t picture, double width, double height, double scale) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = pdfs.find(pdf);
+    auto p = pictures.find(picture);
+    if (it == pdfs.end() || p == pictures.end() || p->second.kind != Picture::kRecording) return 1;
+    SkCanvas* canvas = it->second.document->beginPage(float(width), float(height));
+    if (!canvas) return 2;
+    // The recording, at `scale` pixels a point, played as shapes and text rather than pixels.
+    canvas->scale(float(1 / scale), float(1 / scale));
+    canvas->concat(SkMatrix::MakeAll(1, 0, 0, 0, -1, float(p->second.height), 0, 0, 1));
+    play(canvas, p->second.commands.data(), p->second.commands.size());
+    it->second.document->endPage();
+    return 0;
+}
+
+extern "C" int32_t bz_pdf_end(int32_t pdf) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = pdfs.find(pdf);
+    if (it == pdfs.end()) return 1;
+    it->second.document->close();
+    it->second.file->flush();
+    pdfs.erase(it);
+    return 0;
+}
+
+extern "C" int32_t bz_shadow(int32_t width, int32_t height, int32_t pad, double blur, double dy, uint32_t rgb, double alpha, void* pixels) {
+    const int w = std::max(1, width + 2 * pad), h = std::max(1, height + 2 * pad);
+    const SkImageInfo info = SkImageInfo::Make(w, h, kBGRA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    auto surface = SkSurfaces::WrapPixels(info, pixels, size_t(w) * 4);
+    if (!surface) return 1;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor4f({float((rgb >> 16 & 0xFF) / 255.0), float((rgb >> 8 & 0xFF) / 255.0), float((rgb & 0xFF) / 255.0), float(alpha)});
+    if (blur > 0) paint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, float(blur / 2)));
+    canvas->drawRect(SkRect::MakeXYWH(float(pad), float(pad + dy), float(width), float(height)), paint);
+    return 0;
+}
+
+extern "C" int32_t bz_stage(int32_t width, int32_t height, double scale, uint32_t table, uint32_t light, double strength,
+                            double x, double y, double reach, double shade, void* pixels) {
+    const int w = std::max(1, width), h = std::max(1, height);
+    const SkImageInfo info = SkImageInfo::Make(w, h, kBGRA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    auto surface = SkSurfaces::WrapPixels(info, pixels, size_t(w) * 4);
+    if (!surface) return 1;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    auto c = [](uint32_t rgb, double a) { return SkColor4f{float((rgb >> 16 & 0xFF) / 255.0), float((rgb >> 8 & 0xFF) / 255.0), float((rgb & 0xFF) / 255.0), float(a)}; };
+    const SkRRect shape = SkRRect::MakeRectXY(SkRect::MakeWH(float(w), float(h)), float(20 * scale), float(20 * scale));
+    canvas->clipRRect(shape, true);
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor4f(c(table, 1));
+    canvas->drawPaint(paint);
+    // The pool: an elliptical gradient, as SwiftUI's EllipticalGradient fills the table's frame.
+    const SkColor4f pool[2] = {c(light, strength), c(light, 0)};
+    const SkGradient lit(SkGradient::Colors(pool, SkTileMode::kClamp), {});
+    SkMatrix stretch = SkMatrix::Scale(float(w * reach), float(h * reach));
+    stretch.postTranslate(float(w * x), float(h * y));
+    SkPaint glow;
+    glow.setShader(SkShaders::RadialGradient({0, 0}, 1, lit, &stretch));
+    canvas->drawPaint(glow);
+    // The far edge falling into shade.
+    const SkColor4f fall[2] = {c(0, 0), c(0, shade)};
+    const SkPoint ends[2] = {{0, float(h / 2.0)}, {0, float(h)}};
+    SkPaint dim;
+    dim.setShader(SkShaders::LinearGradient(ends, SkGradient(SkGradient::Colors(fall, SkTileMode::kClamp), {})));
+    canvas->drawPaint(dim);
+    return 0;
+}

@@ -1,0 +1,100 @@
+// What Bezzle's core asks of Windows, done with Skia (host.cpp): what the browser's page does for
+// the WebAssembly core (Web/site/bezzle.mjs), call for call, so designs draw and measure alike.
+// Path operations and pictures by name go through bz_host_call as in the browser, with the same
+// numbers and bytes; text and pictures, which the browser passes as JSON, are given here as
+// structs by Swift (Host/WindowsHost.swift); drawings are the core's recorded commands
+// (Web/Platform/CGContext.swift).
+#pragma once
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/// Does `function` (1 path operation, 2 picture by name, 4 log) with `count` bytes; keeps the
+/// answer and returns its length, for bz_host_take.
+int32_t bz_host_call(int32_t function, const void *bytes, int32_t count);
+/// Copies the last answer into `into`, which holds its length.
+void bz_host_take(void *into);
+
+// MARK: Fonts and text
+
+/// Adds a font face, by family and face as the core names them ("System" for the system font,
+/// with an empty face). Returns 0 if Skia cannot read it.
+int32_t bz_font_add(const char *family, const char *face, const void *data, int32_t count);
+
+typedef struct bz_text_run {
+    const char *text;           // UTF-8
+    const char *family;
+    const char *face;
+    double size;
+    double tracking;            // letter spacing, in points
+    double weight;              // for "System": its wght axis, else 0
+    double opticalSize;         // for "System": its opsz axis, 0 for none
+    int32_t underline;
+    int32_t strike;
+    int32_t hasColor;           // without a colour the letters are not painted (a fill paints them)
+    double color[4];            // r, g, b, a
+    const char *features;       // OpenType features as "liga=0,ss01=1", or null
+    const char *axes;           // variable font axes as "wght=500,wdth=90", or null
+} bz_text_run;
+
+/// Sets `count` runs `width` wide, aligned 0 left, 1 center, 2 right, 3 justified. Returns the
+/// text's id and writes, for up to `capacity` lines, six numbers each to `lines`: its start and
+/// end (UTF-16), width, ascent and descent (less half the leading, as Skia shares it out) and the
+/// font's leading; `*lineCount` is how many lines there are.
+int32_t bz_text_lay(const bz_text_run *runs, int32_t count, double width, int32_t align,
+                    double *lines, int32_t capacity, int32_t *lineCount);
+/// Where the core puts each line's baseline, from the text's top.
+void bz_text_place(int32_t id, const double *baselines, int32_t count);
+/// Forgets every text set, as when fonts were added.
+void bz_text_forget(void);
+
+// MARK: Pictures
+
+/// How big a picture file's picture is, in pixels, upright as its orientation turns it; 0 if
+/// Skia cannot read it.
+int32_t bz_image_size(const void *data, int32_t count, int32_t *width, int32_t *height);
+/// Adds one of a design's pictures by name, as its encoded bytes. Returns its asset number, 0
+/// if Skia cannot read it.
+int32_t bz_asset_add(const char *name, const void *data, int32_t count);
+/// The pictures a drawing made, by the core's numbers (CGImage.Source).
+void bz_picture_asset(int32_t id, int32_t asset);
+void bz_picture_recording(int32_t id, int32_t width, int32_t height, const double *commands, int64_t count);
+/// `crop` is x, y, width, height (width 0 for none); `blur` below 0 for none; `perspective` a
+/// 3×3 matrix row by row, or null.
+void bz_picture_changed(int32_t id, int32_t width, int32_t height, int32_t from,
+                        const double *crop, double blur, int32_t clamp, const double *perspective);
+void bz_picture_pixels(int32_t id, int32_t width, int32_t height, int32_t bytesPerRow, const uint8_t *bytes);
+/// The changed picture `id`'s blur grows along a ramp instead: none at `ends` 0, 1 growing to
+/// the whole blur at `ends` 2, 3, in the source's pixels from its top left.
+void bz_picture_ramp(int32_t id, const double *ends);
+
+/// Makes picture `id` and writes its premultiplied pixels, RGBA (or BGRA with `bgra`), rows top
+/// first, to `pixels`, which holds `width` × `height` × 4 bytes. Returns 0 when done.
+int32_t bz_picture_read(int32_t id, int32_t width, int32_t height, int32_t bgra, void *pixels);
+/// Forgets picture `id` and what was made of it: the core holds it no more.
+void bz_picture_forget(int32_t id);
+/// The shadow an artboard casts on the canvas: a `width` by `height` rectangle `dy` down, blurred
+/// by `blur` (Core Graphics' measure: twice the sigma), in `rgb` at `alpha`, drawn into premultiplied
+/// BGRA pixels `pad` larger on every side. Returns 0 when done.
+int32_t bz_shadow(int32_t width, int32_t height, int32_t pad, double blur, double dy, uint32_t rgb, double alpha, void *pixels);
+/// Home's table: `table` in a rectangle of radius 20 (points, at `scale` pixels each), a pool of
+/// `light` at `strength` round (`x`, `y`) (fractions of the width and height) out to `reach` of the
+/// diagonal, and black at `shade` towards the bottom; into BGRA pixels. Returns 0 when done.
+int32_t bz_stage(int32_t width, int32_t height, double scale, uint32_t table, uint32_t light, double strength,
+                 double x, double y, double reach, double shade, void *pixels);
+/// Writes pixels as bz_picture_read makes them to a PNG file at `path` (UTF-8). Returns 0 when done.
+int32_t bz_png_write(const char *path, int32_t width, int32_t height, const void *pixels);
+/// Writes premultiplied RGBA pixels as a picture file: `format` 0 PNG, 1 JPEG, 2 WebP (lossless at
+/// a quality of 1), `quality` 0…1. Returns 0 when written.
+int32_t bz_image_write(const char *path, int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
+/// A PDF: begun at a path (0 if it cannot be), given pages, each a recorded picture the core made
+/// at `scale` pixels a point and `width` by `height` points, and ended, which writes it.
+int32_t bz_pdf_begin(const char *path);
+int32_t bz_pdf_page(int32_t pdf, int32_t picture, double width, double height, double scale);
+int32_t bz_pdf_end(int32_t pdf);
+
+#ifdef __cplusplus
+}
+#endif
