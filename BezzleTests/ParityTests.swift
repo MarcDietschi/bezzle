@@ -985,6 +985,67 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    @Test func textSearch() {
+        func text(_ words: String, _ name: String, _ x: CGFloat, _ y: CGFloat) -> Node {
+            var t = Node(kind: .text, name: name, frame: CGRect(x: x, y: y, width: 0, height: 0))
+            t.text = words
+            t.refit()
+            return t
+        }
+        var bold = text("Hello World, hello world", "Bold", 20, 200)
+        bold.restyleLetters(in: NSRange(location: 6, length: 5)) { $0.face = "Bold" }
+        bold.refit()
+        var hidden = text("hello from hiding", "Hidden", 20, 20)
+        hidden.hidden = true
+        var group = Node(kind: .group, name: "Group", frame: CGRect(x: 200, y: 10, width: 150, height: 80))
+        group.children = [text("Grouped hello", "Inner", 10, 50), text("Top hello there", "Upper", 10, 0)]
+        let bench = Bench(extra: [text("Order now, hello", "Low", 20, 120), bold, hidden, group, text("Hello again", "Right", 220, 120)])
+        let store = bench.store
+        let loose = text("Loose hello", "Loose", 0, 0)
+        bench.step { store.edit("Loose") { $0.nodes.append(loose) } }
+        bench.step { store.edit("On B") { doc in doc.nodes[1].children = [text("Shell hello hellos", "OnB", 10, 10)] } }
+        func line(_ what: String) {
+            let found = store.foundText.map { m in "\(store.node(m.layer)?.name ?? "?")@\(m.range.location)+\(m.range.length)" }
+            Self.log("find", "\(what): \(found.count) [\(found.joined(separator: " "))] current \(store.finder?.current.map(String.init) ?? "-")")
+        }
+        store.openFind()
+        guard let finder = store.finder else { return }
+        finder.query = "hello"
+        line("hello")
+        finder.matchCase = true
+        line("hello, match case")
+        finder.matchCase = false
+        finder.wholeWords = true
+        line("hello, whole words")
+        finder.query = "ell"
+        line("ell, whole words")
+        finder.wholeWords = false
+        line("ell")
+        store.selection = [bench.node("Right")!.id]
+        store.findNext()
+        line("next from Right")
+        store.findNext(forward: false)
+        store.findNext(forward: false)
+        line("two back")
+        finder.query = "world"
+        finder.replacement = "Earth"
+        bench.step { store.replaceFound() }
+        line("replaced one")
+        bench.step { _ = store.replaceAllFound() }
+        line("replaced all")
+        let b = bench.node("Bold")!
+        Self.log("find", "bold now \(b.text ?? "-") faces \(b.letters(in: NSRange(location: 0, length: (b.text ?? "").utf16.count)).map { $0.face ?? "-" }) frame \(Self.r(b.frame))")
+        bench.undoLast()
+        Self.log("find", "undone: \(bench.node("Bold")?.text ?? "-")")
+        finder.query = "HELLO"
+        finder.replacement = "Hi"
+        line("HELLO")
+        bench.step { _ = store.replaceAllFound() }
+        let doc = store.doc
+        Self.log("find", "replaced everywhere: " + doc.allNodes.filter { $0.kind == .text }.map { "\($0.name)=\($0.text ?? "-") \(Self.r($0.frame))" }.sorted().joined(separator: " ; "))
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.

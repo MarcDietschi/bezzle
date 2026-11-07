@@ -110,11 +110,7 @@ nonisolated extension Node {
 /// their place. The design's own find bar shows it (`FindBar`), and the canvas marks what it finds.
 @MainActor @Observable
 final class TextFinder {
-    /// Some letters found: in which text layer, and where among its words as typed, in UTF-16.
-    struct Match: Hashable {
-        let layer: UUID
-        let range: NSRange
-    }
+    typealias Match = TextSearch.Match
 
     var query = ""
     var replacement = ""
@@ -143,37 +139,14 @@ final class TextFinder {
         let key = Key(query: query, matchCase: matchCase, wholeWords: wholeWords, spelling: spelling, checked: checked)
         if let kept, kept.key == key, kept.doc == doc { return kept.matches }
         if kept?.key.checked != checked { misspelt = [:] }
-        var out: [Match] = []
-        if spelling || !query.isEmpty {
-            for (id, words) in Self.texts(in: doc) {
-                for range in spelling ? misspellings(in: words) : found(in: words) { out.append(Match(layer: id, range: range)) }
-            }
+        let out: [Match]
+        if spelling {
+            out = TextSearch.texts(in: doc).flatMap { id, words in misspellings(in: words).map { Match(layer: id, range: $0) } }
+        } else {
+            out = TextSearch(query: query, matchCase: matchCase, wholeWords: wholeWords).matches(in: doc)
         }
         kept = (doc, key, out)
         return out
-    }
-
-    private func found(in words: String) -> [NSRange] {
-        let ns = words as NSString
-        var out: [NSRange] = []
-        var from = 0
-        let options: NSString.CompareOptions = matchCase ? [] : [.caseInsensitive]
-        while from < ns.length {
-            let r = ns.range(of: query, options: options, range: NSRange(location: from, length: ns.length - from))
-            guard r.location != NSNotFound, r.length > 0 else { break }
-            if !wholeWords || Self.isWhole(r, in: ns) { out.append(r) }
-            from = NSMaxRange(r)
-        }
-        return out
-    }
-
-    private static func isWhole(_ r: NSRange, in s: NSString) -> Bool {
-        let letters = CharacterSet.alphanumerics
-        func wordy(_ i: Int) -> Bool {
-            guard i >= 0, i < s.length, let scalar = Unicode.Scalar(s.character(at: i)) else { return false }
-            return letters.contains(scalar)
-        }
-        return !wordy(r.location - 1) && !wordy(NSMaxRange(r))
     }
 
     /// The misspelt words of a text, each checked in the language the text is written in.
@@ -195,42 +168,6 @@ final class TextFinder {
                                         types: NSTextCheckingResult.CheckingType.orthography.rawValue, options: nil,
                                         inSpellDocumentWithTag: spellTag, orthography: &orthography, wordCount: nil)
         return orthography?.dominantLanguage
-    }
-
-    /// The text layers whose words can be seen, in reading order, with their words.
-    static func texts(in doc: BezzleDocument) -> [(UUID, String)] {
-        struct Found { let id: UUID, words: String, top: Int, post: Int, at: CGPoint }
-        var found: [Found] = []
-        func visit(_ n: Node, top: Int, post: Int, origin: CGPoint) {
-            guard !n.hidden else { return }
-            let at = origin + n.frame.origin
-            if n.kind == .text, let words = n.text, !words.isEmpty {
-                found.append(Found(id: n.id, words: words, top: top, post: post, at: at))
-            }
-            for c in n.children { visit(c, top: top, post: post, origin: n.isGroup ? at : origin) }
-        }
-        let tops = doc.nodes.enumerated().sorted { a, b in
-            let fa = a.element.frame, fb = b.element.frame
-            return (fa.minY.rounded(), fa.minX, a.offset) < (fb.minY.rounded(), fb.minX, b.offset)
-        }
-        for (rank, (_, top)) in tops.enumerated() {
-            guard !top.hidden else { continue }
-            if top.kind == .text, let words = top.text, !words.isEmpty {
-                found.append(Found(id: top.id, words: words, top: rank, post: 0, at: .zero))
-                continue
-            }
-            let posts = top.posts
-            for c in top.children {
-                // The design behind a deck's posts is not seen; each post is.
-                if top.isDeck, c.post == nil { continue }
-                let post = c.post.flatMap { posts.firstIndex(of: $0) } ?? 0
-                visit(c, top: rank, post: post, origin: top.isArtboard ? top.frame.origin : .zero)
-            }
-        }
-        found.sort { a, b in
-            (a.top, a.post, (a.at.y / 4).rounded(), a.at.x) < (b.top, b.post, (b.at.y / 4).rounded(), b.at.x)
-        }
-        return found.map { ($0.id, $0.words) }
     }
 }
 
@@ -306,18 +243,8 @@ extension DocumentStore {
         guard let finder, !finder.spelling else { return 0 }
         let matches = foundText
         guard !matches.isEmpty else { return 0 }
-        var byLayer: [UUID: [NSRange]] = [:]
-        for m in matches { byLayer[m.layer, default: []].append(m.range) }
         let words = finder.replacement
-        edit("Replace All") { doc in
-            for (id, ranges) in byLayer {
-                doc.update(id) { n in
-                    // From the end, so the places of those before stay as they are.
-                    for r in ranges.sorted(by: { $0.location > $1.location }) { n.replaceText(in: r, with: words) }
-                    n.refit()
-                }
-            }
-        }
+        edit("Replace All") { $0.replace(matches, with: words) }
         finder.current = nil
         return matches.count
     }

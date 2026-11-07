@@ -64,17 +64,9 @@ extension MCPTools {
             return [.text(JSONValue.compact([("found", .number(matches.count)), ("where", .array(place(matches, in: store.doc)))]).text)]
         }
         guard !matches.isEmpty else { return [.text(JSONValue.compact([("replaced", .number(0))]).text)] }
-        var byLayer: [UUID: [NSRange]] = [:]
-        for m in matches { byLayer[m.layer, default: []].append(m.range) }
-        try change(store, "Replace All") { doc in
-            for (id, ranges) in byLayer {
-                doc.update(id) { n in
-                    for r in ranges.sorted(by: { $0.location > $1.location }) { n.replaceText(in: r, with: replacement) }
-                    n.refit()
-                }
-            }
-        }
-        return [.text(JSONValue.compact([("replaced", .number(matches.count)), ("layers", .array(byLayer.keys.compactMap { store.doc.node($0) }.map { .string($0.name) }))]).text)]
+        try change(store, "Replace All") { $0.replace(matches, with: replacement) }
+        let layers = Set(matches.map(\.layer))
+        return [.text(JSONValue.compact([("replaced", .number(matches.count)), ("layers", .array(layers.compactMap { store.doc.node($0) }.map { .string($0.name) }))]).text)]
     }
 
     func checkSpelling(_ args: Arguments) async throws -> [Content] {
