@@ -1046,6 +1046,69 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    @Test func richTextRanges() {
+        func text(_ words: String) -> Node {
+            var t = Node(kind: .text, name: "T", frame: CGRect(x: 0, y: 0, width: 0, height: 0))
+            t.text = words
+            t.refit()
+            return t
+        }
+        func said(_ n: Node) -> String {
+            let spans = (n.spans ?? []).map { span in
+                let l = span.look
+                return "[\(span.text)|\(l.face ?? "-")|\(l.color.map { Inspect.hex($0) } ?? "-")|\(l.size.map { Self.n($0) } ?? "-")|\(l.list?.rawValue ?? "-")]"
+            }
+            return "\(n.text ?? "nil") spans \(spans.joined())"
+        }
+        func letters(_ n: Node, _ r: NSRange?) -> String {
+            n.letters(in: r).map { "\($0.face)/\(Inspect.hex($0.color))/\(Self.n($0.size))/\($0.list?.rawValue ?? "-")" }.joined(separator: " ")
+        }
+        let red = RGBA(r: 0.9, g: 0.1, b: 0.1)
+        var base = text("Hello bold World\nSecond line here 👋🏽 end")
+        base.restyleLetters(in: NSRange(location: 6, length: 4)) { $0.face = "Bold" }
+        base.restyleLetters(in: NSRange(location: 8, length: 8)) { $0.color = red }
+        base.restyleLetters(in: NSRange(location: 17, length: 6)) { $0.size = 20 }
+        Self.log("rich", "base: \(said(base))")
+        let length = (base.text ?? "").utf16.count
+        // How letters look, for ranges and carets all along.
+        for loc in [0, 1, 5, 6, 7, 8, 10, 15, 16, 17, 22, 23, 35, 36, 37, length - 1, length, length + 3] {
+            Self.log("rich", "caret \(loc): \(letters(base, NSRange(location: loc, length: 0)))")
+        }
+        for (loc, len) in [(0, 6), (4, 6), (6, 4), (8, 10), (0, length), (15, 4), (30, 10), (length - 2, 5), (50, 3)] {
+            Self.log("rich", "letters \(loc)+\(len): \(letters(base, NSRange(location: loc, length: len)))")
+        }
+        Self.log("rich", "letters all: \(letters(base, nil))")
+        // Words put in place of others, at every kind of edge.
+        for (loc, len, words) in [(0, 0, "Oh "), (0, 5, "Hi"), (6, 4, "BOLD"), (6, 4, ""), (8, 0, "x"), (10, 0, "y"), (5, 6, "_"),
+                                  (16, 1, " / "), (length, 0, " !"), (length - 3, 3, ""), (0, length, "All new"), (0, length, ""),
+                                  (36, 4, "🙂"), (60, 2, "far"), (3, 30, "")] {
+            var t = base
+            t.replaceText(in: NSRange(location: loc, length: len), with: words)
+            Self.log("rich", "replace \(loc)+\(len) with '\(words)': \(said(t))")
+        }
+        // Restyled by range: across runs, a list, back to plain, nothing.
+        var t = base
+        t.restyleLetters(in: NSRange(location: 3, length: 10)) { $0.face = "Italic" }
+        Self.log("rich", "italic 3+10: \(said(t))")
+        t.restyleLetters(in: NSRange(location: 20, length: 2)) { $0.list = .bullet }
+        Self.log("rich", "list 20+2: \(said(t))")
+        t.restyleLetters(in: NSRange(location: 2, length: 1)) { $0.list = .number }
+        Self.log("rich", "list 2+1: \(said(t))")
+        t.restyleLetters(in: NSRange(location: 0, length: length)) { $0.face = "Regular"; $0.color = RGBA(r: 0, g: 0, b: 0) }
+        Self.log("rich", "all regular: \(said(t))")
+        t.restyleLetters(in: NSRange(location: 4, length: 0)) { $0.face = "Bold" }
+        t.restyleLetters(in: NSRange(location: 80, length: 4)) { $0.face = "Bold" }
+        Self.log("rich", "nothing: \(said(t))")
+        var plain = text("plain words")
+        plain.replaceText(in: NSRange(location: 6, length: 5), with: "text")
+        plain.restyleLetters(in: NSRange(location: 0, length: 5)) { $0.underline = true }
+        Self.log("rich", "plain: \(said(plain)) letters \(letters(plain, NSRange(location: 5, length: 0)))")
+        var empty = text("")
+        empty.replaceText(in: NSRange(location: 0, length: 0), with: "new")
+        Self.log("rich", "empty: \(said(empty)) letters \(letters(text(""), NSRange(location: 0, length: 0)))")
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.

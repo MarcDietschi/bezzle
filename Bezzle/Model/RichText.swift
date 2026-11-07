@@ -211,7 +211,7 @@ nonisolated extension TextSpan {
         c == "\n" || c == "\r" || c == "\r\n" || c == "\u{2029}" || c == "\u{85}"
     }
 
-    private static func append(_ text: String, _ look: TextLook, to runs: inout [TextSpan]) {
+    static func append(_ text: String, _ look: TextLook, to runs: inout [TextSpan]) {
         guard !text.isEmpty else { return }
         if let last = runs.last, last.look == look {
             runs[runs.count - 1].text += text
@@ -336,6 +336,47 @@ nonisolated extension TextSpan {
         return out
     }
 
+    /// The runs cut where `range` (UTF-16) begins and ends: those before it, in it and after it,
+    /// each joined where they look the same. Kept to plain strings, since the Foundation of
+    /// Windows and the browser cannot put looks of their own onto an attributed string.
+    static func cut(_ runs: [TextSpan], at range: NSRange) -> (before: [TextSpan], within: [TextSpan], after: [TextSpan]) {
+        var before: [TextSpan] = [], within: [TextSpan] = [], after: [TextSpan] = []
+        let start = range.location, end = NSMaxRange(range)
+        var at = 0
+        for run in runs {
+            let ns = run.text as NSString
+            let n = ns.length
+            defer { at += n }
+            guard n > 0 else { continue }
+            let s = min(max(start - at, 0), n), e = min(max(end - at, 0), n)
+            if s > 0 { append(ns.substring(to: s), run.look, to: &before) }
+            if e > s { append(ns.substring(with: NSRange(location: s, length: e - s)), run.look, to: &within) }
+            if e < n { append(ns.substring(from: e), run.look, to: &after) }
+        }
+        return (before, within, after)
+    }
+
+    /// The runs one after another, joined where they look the same.
+    static func joined(_ parts: [TextSpan]...) -> [TextSpan] {
+        var out: [TextSpan] = []
+        for part in parts { for run in part { append(run.text, run.look, to: &out) } }
+        return out
+    }
+
+    /// How the letter at `i` (UTF-16) looks.
+    static func look(at i: Int, in runs: [TextSpan]) -> TextLook {
+        var at = 0
+        for run in runs {
+            let n = (run.text as NSString).length
+            if i < at + n { return run.look }
+            at += n
+        }
+        return runs.last?.look ?? .plain
+    }
+
+    /// How long the runs' words are, in UTF-16.
+    static func length(of runs: [TextSpan]) -> Int { runs.reduce(0) { $0 + ($1.text as NSString).length } }
+
     /// The words as an attributed string with each letter's look on it (`TextLayout.look`), for
     /// changing some of them by their place.
     static func marked(_ runs: [TextSpan]) -> NSMutableAttributedString {
@@ -424,19 +465,14 @@ nonisolated extension Node {
         let runs = self.runs
         guard !runs.isEmpty else { return [TextLook.plain.resolved(over: style, color: color)] }
         guard let range else { return runs.map { $0.look.resolved(over: style, color: color) } }
-        let marked = TextSpan.marked(runs)
-        let whole = NSRange(location: 0, length: marked.length)
-        var within = NSIntersectionRange(range, whole)
+        let length = TextSpan.length(of: runs)
+        var within = NSIntersectionRange(range, NSRange(location: 0, length: length))
         // Just the caret: the letters it is after, as typing would continue them.
         if within.length == 0 {
-            guard marked.length > 0 else { return [TextLook.plain.resolved(over: style, color: color)] }
-            within = NSRange(location: max(0, min(range.location, marked.length) - 1), length: 1)
+            guard length > 0 else { return [TextLook.plain.resolved(over: style, color: color)] }
+            within = NSRange(location: max(0, min(range.location, length) - 1), length: 1)
         }
-        var out: [Letters] = []
-        marked.enumerateAttribute(.bezzleLook, in: within) { value, _, _ in
-            out.append(((value as? LookBox)?.look ?? .plain).resolved(over: style, color: color))
-        }
-        return out
+        return TextSpan.cut(runs, at: within).within.map { $0.look.resolved(over: style, color: color) }
     }
 
     /// Changes how letters look: those in `range`, or with none every letter, which changes the
@@ -465,45 +501,39 @@ nonisolated extension Node {
             })
             return
         }
-        let marked = TextSpan.marked(runs)
-        let whole = NSRange(location: 0, length: marked.length)
-        var within = NSIntersectionRange(range, whole)
+        let runs = self.runs
+        var within = NSIntersectionRange(range, NSRange(location: 0, length: TextSpan.length(of: runs)))
         guard within.length > 0 else { return }
         // Lists are of paragraphs: see whether the change is to one first.
-        var probe = TextLook.plain.resolved(over: style, color: color)
-        if let at = marked.attribute(.bezzleLook, at: within.location, effectiveRange: nil) as? LookBox {
-            probe = at.look.resolved(over: style, color: color)
-        }
+        var probe = TextSpan.look(at: within.location, in: runs).resolved(over: style, color: color)
         let before = probe
         change(&probe)
         if before.list != probe.list {
-            within = (marked.string as NSString).paragraphRange(for: within)
+            within = (runs.map(\.text).joined() as NSString).paragraphRange(for: within)
         }
-        var edits: [(NSRange, TextLook)] = []
-        marked.enumerateAttribute(.bezzleLook, in: within) { value, r, _ in
-            let look = (value as? LookBox)?.look ?? .plain
-            var letters = look.resolved(over: style, color: color)
+        let parts = TextSpan.cut(runs, at: within)
+        let edited = parts.within.map { run in
+            var letters = run.look.resolved(over: style, color: color)
             change(&letters)
-            edits.append((r, TextLook(letters, over: style, color: color)))
+            return TextSpan(text: run.text, look: TextLook(letters, over: style, color: color))
         }
-        for (r, look) in edits { marked.addAttribute(.bezzleLook, value: LookBox(look), range: r) }
-        spans = TextSpan.stored(TextSpan.runs(of: marked))
+        spans = TextSpan.stored(TextSpan.joined(parts.before, edited, parts.after))
     }
 
     /// Puts `replacement` in place of the words in `range` (UTF-16), its letters looking as the
     /// first of those they replace, or as the letter before for words put in.
     mutating func replaceText(in range: NSRange, with replacement: String) {
-        let marked = TextSpan.marked(runs)
-        let whole = NSRange(location: 0, length: marked.length)
-        let r = NSIntersectionRange(range, whole)
-        guard r.location <= marked.length else { return }
+        let runs = self.runs
+        let length = TextSpan.length(of: runs)
+        let r = NSIntersectionRange(range, NSRange(location: 0, length: length))
+        guard r.location <= length else { return }
         var look = TextLook.plain
-        if marked.length > 0 {
+        if length > 0 {
             let at = r.length > 0 ? r.location : max(r.location - 1, 0)
-            look = (marked.attribute(.bezzleLook, at: min(at, marked.length - 1), effectiveRange: nil) as? LookBox)?.look ?? .plain
+            look = TextSpan.look(at: min(at, length - 1), in: runs)
         }
-        marked.replaceCharacters(in: r, with: NSAttributedString(string: replacement, attributes: [.bezzleLook: LookBox(look)]))
-        setRuns(TextSpan.runs(of: marked))
+        let parts = TextSpan.cut(runs, at: r)
+        setRuns(TextSpan.joined(parts.before, [TextSpan(text: replacement, look: look)], parts.after))
     }
 
     /// The letters' own sizes grown or shrunk by `k`, as the layer's is with them.
