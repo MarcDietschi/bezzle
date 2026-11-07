@@ -765,6 +765,97 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: Decks
+
+    /// A stack of three posts on A, turned, offered, kept, followed, filled, broken, moved, taken
+    /// away, spread out and unstacked.
+    @Test func deckEditing() {
+        var back = Node(kind: .rectangle, name: "Back", frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        back.fill.color = RGBA(r: 1, g: 1, b: 1)
+        var title = Node(kind: .text, name: "Title", frame: CGRect(x: 20, y: 20, width: 0, height: 0))
+        title.text = "Tip 1"
+        title.style?.size = 24
+        title.refit()
+        let bench = Bench(extra: [back, title])
+        let store = bench.store, a = bench.a.id
+        bench.step { store.addPost(to: a) }
+        bench.step { store.addPost(to: a) }
+        func layer(_ name: String, in post: Int?) -> Node? { bench.a.layers(of: post).first { $0.name == name } }
+        for (i, p) in bench.a.posts.enumerated() {
+            let t = layer("Title", in: p)!
+            bench.step { store.update([t.id], "Type") { $0.text = "Tip \(i + 1)" } }
+        }
+        let posts = bench.a.posts
+        store.turn(a, to: posts[0])
+        // Posts by what their title says, as their numbers are new each run.
+        func said(_ p: Int?) -> String { layer("Title", in: p)?.text ?? "design" }
+        func named(_ id: UUID) -> String {
+            guard let n = store.doc.node(id) else { return "-" }
+            return "\(n.name)@\(said(store.doc.post(of: id)?.post ?? nil))"
+        }
+        func line(_ what: String) {
+            let doc = store.doc
+            let boards = doc.nodes.map { b -> String in
+                guard b.isDeck else { return "\(b.name) \(Self.r(b.frame)) [" + b.children.map { "\($0.name) \(Self.r($0.frame)) \($0.text ?? "")" }.joined(separator: ", ") + "]" }
+                let ps = b.posts.map { p in
+                    said(p) + ": " + b.layers(of: p).map { n in
+                        "\(n.name) \(Self.r(n.frame)) \(n.text ?? "") \(Inspect.hex(n.fill.color))\(n.own.map { " own " + $0.joined(separator: "+") } ?? "")"
+                    }.joined(separator: ", ")
+                }
+                let design = b.layers(of: nil).map { "\($0.name) \(Inspect.hex($0.fill.color))" }.joined(separator: ", ")
+                return "\(b.name) deck front \(said(store.front(of: b))) {design \(design)} " + ps.joined(separator: " | ")
+            }
+            Self.log("decks", "\(what): " + boards.joined(separator: " ;; "))
+        }
+        line("made")
+        store.selection = [layer("Title", in: posts[0])!.id, layer("Back", in: posts[0])!.id]
+        store.turn(a, to: posts[1])
+        Self.log("decks", "turned: selection " + store.selection.map(named).joined(separator: ", "))
+        Self.log("decks", "copies: " + store.copies(acrossPosts: layer("Title", in: posts[1])!.id).map(named).joined(separator: ", "))
+        store.turnPage(by: 1)
+        Self.log("decks", "paged: front \(said(store.front(of: bench.a))) place \(store.place(in: bench.a))")
+        store.turnPage(by: -2)
+        Self.log("decks", "paged back: front \(said(store.front(of: bench.a)))")
+        // A colour changed in the post in front, which every post follows: offered to keep in it alone.
+        let backID = layer("Back", in: store.front(of: bench.a))!.id
+        store.selection = [backID]
+        bench.step { store.update([backID], "Fill") { $0.fill.color = RGBA(r: 0.9, g: 0.3, b: 0.2) } }
+        line("filled")
+        Self.log("decks", "offer: \(store.offer?.words ?? "-") / \(store.offer?.button ?? "-") on \(store.offer.map { named($0.anchor) } ?? "-")")
+        if let offer = store.offer { bench.step { store.take(offer) } }
+        line("kept")
+        bench.step { store.followDesign([backID]) }
+        line("followed")
+        let t2 = layer("Title", in: posts[1])!.id
+        bench.step { store.giveEveryPost([t2]) }
+        line("given")
+        let t1 = layer("Title", in: posts[0])!.id
+        bench.step { store.update([t1], "Type") { $0.text = "Tip 1" } }
+        let t3 = layer("Title", in: posts[2])!.id
+        bench.step { store.update([t3], "Type") { $0.text = String(repeating: "A long tip that runs on ", count: 12); $0.frame.size.width = 120; $0.style?.sizing = .fixed; $0.frame.size.height = 40 } }
+        Self.log("decks", "broken: " + store.brokenPosts(of: bench.a).map { said($0).prefix(6) + "" }.sorted().joined(separator: ","))
+        bench.step { store.update([t3], "Type") { $0.text = "Tip 3"; $0.style?.sizing = .autoWidth; $0.refit() } }
+        bench.step { store.movePost(posts[2], in: a, to: 0) }
+        Self.log("decks", "moved: " + bench.a.posts.map(said).joined(separator: ","))
+        bench.step { store.movePost(posts[2], in: a, to: 1) }
+        Self.log("decks", "moved nowhere: " + bench.a.posts.map(said).joined(separator: ","))
+        let table = DataTable("Title,Note\nOne,a\nTwo,b\nThree,c\nFour,d")!
+        var filled = 0
+        bench.step { filled = store.spread(table: table, from: layer("Title", in: posts[0])!.id) }
+        Self.log("decks", "table: \(filled) columns, posts " + bench.a.posts.map(said).joined(separator: ","))
+        store.turn(a, to: bench.a.posts[1])
+        bench.step { store.removePost(bench.a.posts[1], from: a) }
+        line("removed")
+        bench.step { store.spreadOut(a) }
+        line("spread out")
+        Self.log("decks", "selected " + store.selection.compactMap { store.doc.node($0)?.name }.joined(separator: ","))
+        bench.undo.undo()
+        store.turn(a, to: bench.a.posts.last!)
+        bench.step { store.unstack(a) }
+        line("unstacked")
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.
