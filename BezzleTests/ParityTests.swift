@@ -856,6 +856,61 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    // MARK: Resources
+
+    /// Parts, icons and the design's own components put onto a light and a dark artboard: bars
+    /// along the edges and under each other, a list across, a part far narrower than its artboard,
+    /// the same part again as a copy, an icon, an icon onto an icon, a component's copy.
+    @Test func resourcePlacing() throws {
+        let bench = Bench()
+        bench.step {
+            bench.store.edit("Setup") { doc in
+                var phone = Node(kind: .artboard, name: "Phone", frame: CGRect(x: 0, y: 1000, width: 402, height: 874))
+                phone.fill = Fill(color: .white)
+                var night = Node(kind: .artboard, name: "Night", frame: CGRect(x: 500, y: 1000, width: 402, height: 874))
+                night.fill = Fill(color: .hex("#111111"))
+                var wide = Node(kind: .artboard, name: "Wide", frame: CGRect(x: 1000, y: 1000, width: 1440, height: 900))
+                wide.fill = Fill(color: .white)
+                doc.nodes += [phone, night, wide]
+            }
+        }
+        let store = bench.store
+        func line(_ what: String, _ id: UUID?) {
+            guard let id, let n = store.doc.node(id) else { Self.log("resources", "\(what): none"); return }
+            let master = store.doc.component(of: n).map { "copy of \($0.name) part \($0.master?.part ?? "-")" } ?? (n.isCopy ? "copy" : "plain")
+            Self.log("resources", "\(what): \(n.name) \(n.kind) \(Self.r(store.doc.absoluteFrame(of: id))) on \(store.doc.artboard(of: id)?.name ?? "canvas") \(master) children \(n.children.count) fill \(Inspect.hex(n.fill.color))")
+        }
+        func put(_ what: String, _ r: Resource, at p: CGPoint?, on target: UUID? = nil) -> UUID? {
+            var made: UUID?
+            bench.step { made = store.place(r, at: p, on: target) }
+            line(what, made)
+            return made
+        }
+        _ = put("status", .component("ios.status-bar"), at: CGPoint(x: 200, y: 1500))
+        _ = put("status again", .component("ios.status-bar"), at: CGPoint(x: 200, y: 1300))
+        _ = put("navigation", .component("ios.navigation-bar"), at: CGPoint(x: 200, y: 1300))
+        _ = put("tabs", .component("ios.tab-bar"), at: CGPoint(x: 200, y: 1200))
+        _ = put("search", .component("ios.search-bar"), at: CGPoint(x: 200, y: 1400))
+        _ = put("toggle", .component("ios.toggle"), at: CGPoint(x: 200, y: 1600))
+        _ = put("dark toggle", .component("ios.toggle"), at: CGPoint(x: 700, y: 1600))
+        _ = put("dark tabs", .component("ios.tab-bar"), at: CGPoint(x: 700, y: 1200))
+        _ = put("wide status", .component("ios.status-bar"), at: CGPoint(x: 1600, y: 1400))
+        _ = put("canvas button", .component("ios.button-prominent"), at: CGPoint(x: -400, y: 300))
+        Self.log("resources", "edges: top \(Self.n(store.edgeStack(of: bench.node("Phone")!, top: true))) bottom \(Self.n(store.edgeStack(of: bench.node("Phone")!, top: false)))")
+        let set = IconSetID.lucide
+        let style = Icons.set(set).defaultStyle
+        let heart = put("heart", .icon(set, "heart", style), at: CGPoint(x: 200, y: 1700))
+        _ = put("star over heart", .icon(set, "star", style), at: CGPoint(x: 200, y: 1700), on: heart)
+        _ = put("dark house", .icon(set, "house", style), at: CGPoint(x: 700, y: 1750))
+        if let toggle = store.doc.masters.first(where: { $0.master?.part == "ios.toggle" }) {
+            _ = put("design copy", .design(toggle.id), at: CGPoint(x: 300, y: 1800))
+        }
+        let plan = store.placing(.component("ios.tab-bar"), at: nil, into: bench.node("Phone")!.id, dark: true, width: 360)
+        Self.log("resources", "planned: \(plan.map { "\($0.node.name) \(Self.r($0.node.frame)) part \($0.part ?? "-") fit \($0.fit)" } ?? "none")")
+        Self.log("resources", "keys: " + [Resource.component("ios.toggle"), .icon(set, "heart", style)].map(\.key).joined(separator: ", "))
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// A design for comparing what the canvas draws, written to `$TMPDIR/bezzle-parity-scene.bezzle`:
     /// one artboard with four columns and a guide, a repeat grid, two overlapping rectangles, a
     /// triangle, and a rectangle alone.
