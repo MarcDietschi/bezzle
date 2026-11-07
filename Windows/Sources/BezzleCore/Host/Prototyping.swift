@@ -105,6 +105,25 @@ extension WindowsCore {
         }
     }
 
+    /// How the screen a layer goes to would come on, read from the canvas, for the automatic
+    /// choice to say so: its kind ("push", "morph", "sheet", "dissolve", "instant"), the side a
+    /// push comes from, and in a few words.
+    public static func flowWay(_ selection: [UUID]) -> (kind: String, dx: Double, dy: Double, reading: String)? {
+        guard let doc = design, let id = selection.compactMap({ doc.linkable($0) }).first, let to = doc.node(id)?.flow?.to,
+              let a = doc.artboard(of: id), let b = doc.node(to) else { return nil }
+        switch Prototype.way(from: a, to: b, motion: nil) {
+        case .push(let from, let morph):
+            if morph { return ("morph", Double(from.dx), Double(from.dy), say("What both screens share moves; the rest changes round it.")) }
+            let words = from.dx > 0 ? "Slides in from the right, as it lies on the canvas."
+                : from.dx < 0 ? "Slides in from the left, as it lies on the canvas."
+                : from.dy > 0 ? "Rises from below, as it lies on the canvas." : "Comes down from above, as it lies on the canvas."
+            return ("push", Double(from.dx), Double(from.dy), say(words))
+        case .sheet: return ("sheet", 0, 0, say("Smaller than the screen it opens on: rises over it as a sheet."))
+        case .dissolve: return ("dissolve", 0, 0, say("Fades in."))
+        case .instant: return ("instant", 0, 0, say("Comes on at once."))
+        }
+    }
+
     // MARK: The design as code
 
     /// How many named looks the design has, which come out as tokens.

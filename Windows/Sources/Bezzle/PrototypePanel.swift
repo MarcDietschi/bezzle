@@ -10,6 +10,8 @@ import BezzleCore
 /// there); with nothing picked, where the prototype starts and the ways through it.
 extension Inspector {
     func showPrototype() {
+        // The cards are made again: no tile is pointed at now.
+        session.flow.preview = nil
         let ids = session.selection
         let screens = WindowsCore.prototypeScreens()
         if ids.isEmpty {
@@ -55,10 +57,7 @@ extension Inspector {
             })
             if leads {
                 rows.append(noteField(ids, note: look.note ?? ""))
-                rows.append(Controls.segmented(look.motion, WindowsCore.flowMotions.map { ($0.name, $0.title) }, width: Theme.cardWidth - 24) { [weak self] m in
-                    WindowsCore.setFlowMotion(m, for: ids)
-                    self?.edited()
-                })
+                rows.append(motionRow(ids, chosen: look.motion))
             }
             return rows
         })
@@ -556,7 +555,7 @@ extension Inspector {
     }
 
     /// Every screen to go to, as a small picture with its name, three across; and the hook to go back.
-    private func screenGrid(_ screens: [(id: UUID, name: String, starts: Bool)], chosen: UUID?, back: Bool, offersBack: Bool,
+    private func screenGrid(_ screens: [(id: UUID, name: String, starts: Bool)], chosen: UUID?, back: Bool, offersBack: Bool, previews: Bool = true,
                             pick: @escaping @MainActor (UUID?, Bool) -> Void) -> FrameworkElement {
         let wrap = StackPanel()
         wrap.spacing = 12
@@ -583,8 +582,15 @@ extension Inspector {
             tile.children.append(name)
             let press = Pressable(radius: 8) { pick(on ? nil : s.id, false) }
             press.box.child = tile
-            press.box.pointerEntered.addHandler { _, _ in if !on { frame.borderThickness = Theme.inset(1) } }
-            press.box.pointerExited.addHandler { _, _ in if !on { frame.borderThickness = Theme.inset(0) } }
+            let flow = session.flow, id = s.id
+            press.box.pointerEntered.addHandler { _, _ in
+                if !on { frame.borderThickness = Theme.inset(1) }
+                if previews { flow.preview = id }
+            }
+            press.box.pointerExited.addHandler { _, _ in
+                if !on { frame.borderThickness = Theme.inset(0) }
+                if flow.preview == id { flow.preview = nil }
+            }
             tiles.append(press.box)
         }
         if offersBack {
@@ -633,6 +639,127 @@ extension Inspector {
             row?.children.append(tile)
         }
         return wrap
+    }
+
+    /// How the next screen comes on: read from the canvas, or one of three plain ways, as the
+    /// Mac's MotionRow. Each choice is its motion in small, played while it is pointed at, its
+    /// name in the tip; under them, what the canvas says when it is read from there.
+    private func motionRow(_ ids: [UUID], chosen: String) -> FrameworkElement {
+        let way = WindowsCore.flowWay(ids)
+        let stack = StackPanel()
+        stack.spacing = 10
+        let row = Grid()
+        row.columnSpacing = 10
+        for (k, m) in WindowsCore.flowMotions.enumerated() {
+            let c = ColumnDefinition()
+            c.width = GridLength(value: 1, gridUnitType: .star)
+            row.columnDefinitions.append(c)
+            let chip = motionChip(m.name, title: m.title, way: m.name == "auto" ? way : nil, chosen: chosen == m.name) { [weak self] in
+                WindowsCore.setFlowMotion(m.name, for: ids)
+                self?.edited()
+            }
+            try? Grid.setColumn(chip, Int32(k))
+            row.children.append(chip)
+        }
+        stack.children.append(row)
+        if chosen == "auto", let way {
+            let words = Theme.text(way.reading, size: 11, ink: 3)
+            words.textWrapping = .wrap
+            stack.children.append(words)
+        }
+        return stack
+    }
+
+    private func motionChip(_ motion: String, title: String, way: (kind: String, dx: Double, dy: Double, reading: String)?, chosen: Bool,
+                            _ action: @escaping @MainActor () -> Void) -> FrameworkElement {
+        let chip = Border()
+        chip.height = 40
+        chip.cornerRadius = Theme.corners(9)
+        chip.background = chosen ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.clear
+        chip.borderBrush = chosen ? Theme.brush(Theme.pencil, 0.7) : Theme.hairline
+        chip.borderThickness = Theme.inset(chosen ? 1.5 : 1)
+        // Two screens in small, the second coming on the way the motion brings it.
+        let w = 30.0, h = 24.0
+        let frame = (x: w * 0.18, y: 1.0, w: w * 0.64, h: h - 2)
+        let window = Border()
+        window.width = frame.w
+        window.height = frame.h
+        window.cornerRadius = Theme.corners(3)
+        window.background = Theme.ink(4)
+        window.horizontalAlignment = .center
+        window.verticalAlignment = .center
+        let inside = Canvas()
+        inside.width = frame.w
+        inside.height = frame.h
+        let clip = RectangleGeometry()
+        clip.rect = Rect(x: 0, y: 0, width: Float(frame.w), height: Float(frame.h))
+        inside.clip = clip
+        window.child = inside
+        let old = Rectangle(), next = Rectangle()
+        old.fill = Theme.brush(Theme.ink, 0.44 * 0.6)
+        next.fill = Theme.brush(Theme.pencil)
+        inside.children.append(old)
+        inside.children.append(next)
+        func put(_ r: Rectangle, _ x: Double, _ y: Double, _ rw: Double, _ rh: Double, radius: Double = 0) {
+            try? Canvas.setLeft(r, x)
+            try? Canvas.setTop(r, y)
+            r.width = max(0, rw)
+            r.height = max(0, rh)
+            r.radiusX = radius
+            r.radiusY = radius
+        }
+        func show(_ t: Double) {
+            let u = min(max(t, 0), 1), e = 1 - pow(1 - u, 3)
+            old.visibility = .collapsed
+            next.opacity = 1
+            switch motion {
+            case "instant":
+                put(next, 0, 0, frame.w, frame.h)
+                next.opacity = u > 0.5 ? 1 : 0
+            case "dissolve":
+                put(next, 0, 0, frame.w, frame.h)
+                next.opacity = e
+            case "slide":
+                put(next, frame.w * (1 - e), 0, frame.w, frame.h)
+            default:
+                if way?.kind == "sheet" {
+                    put(next, 0, frame.h * 0.35 + frame.h * 0.65 * (1 - e), frame.w, frame.h, radius: 2.5)
+                } else if way?.kind == "morph" {
+                    put(next, 3 + 6 * e, 3 + 4 * e, frame.w * (0.4 + 0.3 * e), frame.h * (0.3 + 0.25 * e), radius: 2)
+                } else {
+                    let dx = way?.kind == "push" ? way!.dx : 1, dy = way?.kind == "push" ? way!.dy : 0
+                    old.visibility = .visible
+                    put(old, -frame.w * 0.28 * e * dx, -frame.h * 0.28 * e * dy, frame.w, frame.h)
+                    put(next, frame.w * (1 - e) * dx, frame.h * (1 - e) * dy, frame.w, frame.h)
+                }
+            }
+        }
+        // At rest, each a moment of its own motion, so the four read apart.
+        let rest = motion == "slide" ? 0.32 : motion == "dissolve" ? 0.3 : motion == "instant" ? 0 : 0.4
+        show(rest)
+        chip.child = window
+        final class Playing { var cleanup: EventCleanup?; var began = Date() }
+        let playing = Playing()
+        chip.pointerEntered.addHandler { _, _ in
+            if !chosen { chip.background = Theme.brush(Theme.ink, 0.05) }
+            guard playing.cleanup == nil else { return }
+            playing.began = Date()
+            playing.cleanup = CompositionTarget.rendering.addHandler { _, _ in
+                MainActor.assumeIsolated { show(Date().timeIntervalSince(playing.began).truncatingRemainder(dividingBy: 1.6) / 1.2) }
+            }
+        }
+        let stop = { @MainActor in
+            if !chosen { chip.background = Theme.clear }
+            playing.cleanup?.dispose()
+            playing.cleanup = nil
+            show(rest)
+        }
+        chip.pointerExited.addHandler { _, _ in stop() }
+        chip.unloaded.addHandler { _, _ in stop() }
+        chip.pointerPressed.addHandler { _, args in args?.handled = true }
+        chip.tapped.addHandler { _, _ in DispatchQueue.main.async { MainActor.assumeIsolated { action() } } }
+        try? ToolTipService.setToolTip(chip, title)
+        return chip
     }
 
     /// What is said of where it goes, written on its thread: Enter keeps it.

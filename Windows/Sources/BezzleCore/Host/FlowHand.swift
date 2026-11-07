@@ -111,6 +111,8 @@ extension WindowsCore {
         /// The canvas seen as a prototype.
         public var on = false { didSet { if on != oldValue { press = nil; pull = nil; flag = nil; redraw() } } }
         public var selection: [UUID] = []
+        /// A screen pointed at in the inspector: the threads the picked layers would take to it.
+        public var preview: UUID? { didSet { if preview != oldValue { redraw() } } }
         public var zoom: CGFloat = 1
         public var pan: CGPoint = .zero
         public var redraw: () -> Void = {}
@@ -684,6 +686,16 @@ extension WindowsCore {
                 for id in selection where seen.node(id)?.isArtboard == false { outline(seen.linkable(id) ?? id, width: 1.5) }
                 if let h = hoveredSource, !selection.contains(h) { outline(h, width: 1) }
                 for id in selection { if let n = seen.node(id), n.isArtboard { m.screens.append((view(n.frame).insetBy(dx: -3, dy: -3), 2, false)) } }
+            }
+            if pull == nil, let to = preview, let r = boardRect(to) {
+                for id in linkSources {
+                    guard let box = seen.absoluteFrame(of: id), seen.artboard(of: id)?.id != to || seen.node(id)?.isArtboard == true else { continue }
+                    let c = FlowCurve.route(from: view(box), to: r)
+                    m.threads.append((c, true, true, false, 0.8))
+                    let d = c.tangent(1)
+                    m.arrows.append((c.p3, atan2(Double(d.dy), Double(d.dx)), true))
+                }
+                m.screens.append((r.insetBy(dx: -4, dy: -4), 2, true))
             }
             // A thread being pulled: the screens it could go to lifting, the well to go back.
             if let pull {

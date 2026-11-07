@@ -1386,7 +1386,7 @@ final class DesignCanvas {
             if s.on { ring(s.rect.insetBy(dx: -3, dy: -3), width: 6, ink: thread, alpha: 0.18, radius: 9) }
             ring(s.rect, width: s.on ? 2.5 : 1, ink: s.on ? bright : thread, alpha: s.on ? 1 : 0.4, radius: 7)
         }
-        for s in m.screens { ring(s.rect, width: s.width, ink: thread, alpha: 1, radius: 5) }
+        for s in m.screens { ring(s.rect, width: s.width, ink: s.bright ? bright : thread, alpha: s.bright ? 0.7 : 1, radius: s.bright ? 6 : 5) }
         for t in m.threads {
             let width = t.bright ? 2.6 : 1.8
             let dash = t.dashed ? "2.8 2.2" : nil
