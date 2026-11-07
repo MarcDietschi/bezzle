@@ -73,7 +73,9 @@ final class DesignCanvas {
     private let marqueeBox = Rectangle()
     private var guides: [WindowsCore.GuideLine] = []
     /// Where the right-click menu opens.
-    var menus: MenuHost?
+    var menus: MenuHost? { didSet { margin.menus = menus } }
+    /// The notes in the margin, beside the sheets.
+    private(set) lazy var margin = MarginView(notes: session.notes)
     private var overlaysAdded = false
     private static let handleSize = 8.0
 
@@ -107,6 +109,8 @@ final class DesignCanvas {
         case inspect(start: CGPoint, target: UUID?)
         /// The design as a prototype: a thread pulled, the flag carried, a screen moved, the view moved.
         case flow
+        /// The note tool: a click starts a note about what is there, a drag draws a loop round a part.
+        case note(start: CGPoint)
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -213,9 +217,15 @@ final class DesignCanvas {
         root.background = Theme.brush(Theme.table)
         root.children.append(stage)
         root.children.append(overlay)
+        root.children.append(margin.layer)
         root.children.append(rulers.root)
         root.children.append(editorLayer)
         overlay.isHitTestVisible = false
+        margin.view = { [weak self] in (self?.zoom ?? 1, self?.pan ?? .zero) }
+        margin.layerAt = { [weak self] p in self.flatMap { WindowsCore.pick(p, selection: [], zoom: $0.zoom) } }
+        margin.edited = { [weak self] in self?.session.edited(board: nil) }
+        margin.reveal = { [weak self] p in self?.reveal(CGRect(x: p.x - 40, y: p.y - 40, width: 80, height: 80)) }
+        margin.returnFocus = { [weak self] in self?.takeKeys() }
         root.sizeChanged.addHandler { [weak self] _, _ in self?.place() }
         stage.background = Theme.clear
         root.isTabStop = true
@@ -393,6 +403,7 @@ final class DesignCanvas {
         session.listenToEdits { [weak self] board in
             guard let self else { return }
             self.redraw(board: board)
+            self.margin.draw()
             self.place()
             // A step made at once to a copy offers what can be made of it; any other step takes
             // what was offered away.
@@ -595,6 +606,7 @@ final class DesignCanvas {
 
     private func place() {
         drawPaper()
+        margin.draw()
         for (k, board) in boards.enumerated() {
             guard let sheet = sheets[k] else { continue }
             let at = onStage(board.frame.origin)
@@ -2645,6 +2657,13 @@ final class DesignCanvas {
             drawPen()
             session.changed()
         }
+        if session.tool == .note {
+            _ = try? stage.capturePointer(args?.pointer)
+            drag = (p, -1, false, .note(start: c))
+            return
+        }
+        // A click on the canvas puts an open note away.
+        if margin.notes.openThread != nil { margin.notes.openThread = nil }
         if let kind = drawn(session.tool) {
             let on = kind == "artboard" ? nil : WindowsCore.board(at: c)
             _ = try? stage.capturePointer(args?.pointer)
@@ -2799,6 +2818,14 @@ final class DesignCanvas {
             pan = CGPoint(x: Double(start.x) + dx, y: Double(start.y) + dy)
             showPointer(.grab)
             place()
+            return
+        }
+        if case .note(let start)? = drag?.grab, let from = drag?.from {
+            let dx = Double(p.x) - Double(from.x), dy = Double(p.y) - Double(from.y)
+            guard drag?.moved == true || (dx * dx + dy * dy).squareRoot() >= 3 else { return }
+            drag?.moved = true
+            let c = inDesign(p)
+            margin.notes.circle = CGRect(x: min(start.x, c.x), y: min(start.y, c.y), width: abs(c.x - start.x), height: abs(c.y - start.y))
             return
         }
         if case .flow? = drag?.grab {
@@ -2996,7 +3023,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -3108,6 +3135,15 @@ final class DesignCanvas {
             flow.up(at: point(args))
             session.edited(board: nil)
             updatePointer(at: point(args))
+        case .note(let start):
+            let c = inDesign(point(args))
+            if d.moved, let circle = margin.notes.circle, circle.width > 0 || circle.height > 0 {
+                margin.notes.begin(around: circle)
+            } else {
+                margin.notes.begin(at: start, on: pick(point(args)) ?? WindowsCore.boardID(at: c))
+            }
+            // Written, the tool goes back to picking, as on the Mac.
+            session.tool = .select
         case .inspect(_, let target):
             showPointer(.arrow)
             guard !d.moved else { return }
@@ -3296,6 +3332,8 @@ final class DesignCanvas {
             break
         case .flow:
             _ = flow.cancel()
+        case .note:
+            margin.notes.circle = nil
         }
         showGuides([])
         session.edited(board: nil)
@@ -3736,6 +3774,12 @@ final class DesignCanvas {
     func key(_ args: KeyRoutedEventArgs?) {
         // Keys typed into a text are the text's.
         guard let args, editing == nil else { return }
+        // Escape puts an open note away, or lets go of one being written.
+        if args.key == .escape, margin.notes.openThread != nil || margin.notes.draftID != nil {
+            args.handled = true
+            if margin.notes.draftID != nil { margin.notes.dropDraft() } else { margin.notes.openThread = nil }
+            return
+        }
         // As a prototype: Delete cuts the picked layers' threads, never the layers; Escape lets go.
         if prototyping {
             switch args.key {

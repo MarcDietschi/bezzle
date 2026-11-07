@@ -30,7 +30,7 @@ extension WindowsCore {
         }
 
         /// The part from the start to `t`.
-        func upTo(_ t: CGFloat) -> FlowCurve {
+        public func upTo(_ t: CGFloat) -> FlowCurve {
             func lerp(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t) }
             let a = lerp(p0, c1), b = lerp(c1, c2), c = lerp(c2, p3)
             let d = lerp(a, b), e = lerp(b, c)

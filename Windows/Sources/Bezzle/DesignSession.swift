@@ -11,12 +11,16 @@ final class DesignSession {
         didSet {
             // The pen works on the points being edited; any other drawing tool leaves them.
             if tool != .select && tool != .pen { pen.editingPath = nil }
+            // With the note tool out, ticked-off threads show as faint flags.
+            notes.showDone = tool == .note
             changed()
         }
     }
     /// The pen and a path's points (the shared PenTool): the canvas hands it the pointer, the
     /// Path card shows and sets the points it has picked.
     let pen = WindowsCore.Pen()
+    /// The notes in the margin (the Mac's NoteOperations and NotesLayer).
+    let notes = WindowsCore.NotesHand()
     /// Building with the pieces the selected shapes cut each other into (the shared
     /// PieceBuilding): the Arrange card's Build button starts it, the canvas works it.
     let builder = WindowsCore.BuildHand()
@@ -74,7 +78,10 @@ final class DesignSession {
     /// What wants to know that the design itself changed (an edit, an undo).
     private var editListeners: [(_ board: Int?) -> Void] = []
 
-    init(name: String) { self.name = name }
+    init(name: String) {
+        self.name = name
+        notes.opened(WindowsCore.designPath ?? name)
+    }
 
     func select(_ ids: [UUID], on board: Int?) {
         selection = ids
