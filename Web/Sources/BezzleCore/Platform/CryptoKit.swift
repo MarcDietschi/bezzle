@@ -46,13 +46,13 @@ nonisolated public struct SHA256: Sendable {
             p += take
             n -= take
             guard waiting.count == 64 else { return }
-            waiting.withUnsafeBufferPointer { block($0.baseAddress!) }
+            waiting.withUnsafeBufferPointer { blocks($0.baseAddress!, 1) }
             waiting.removeAll(keepingCapacity: true)
         }
-        while n >= 64 {
-            block(p)
-            p += 64
-            n -= 64
+        if n >= 64 {
+            blocks(p, n / 64)
+            p += n / 64 * 64
+            n %= 64
         }
         if n > 0 { waiting.append(contentsOf: UnsafeBufferPointer(start: p, count: n)) }
     }
@@ -73,33 +73,39 @@ nonisolated public struct SHA256: Sendable {
         return hasher.finalize()
     }
 
-    /// One block of 64 bytes.
-    private mutating func block(_ m: UnsafePointer<UInt8>) {
+    /// `count` blocks of 64 bytes, one after another, the state and tables taken once for them all.
+    private mutating func blocks(_ start: UnsafePointer<UInt8>, _ count: Int) {
         @inline(__always) func r(_ x: UInt32, _ n: UInt32) -> UInt32 { (x >> n) | (x << (32 - n)) }
         withUnsafeTemporaryAllocation(of: UInt32.self, capacity: 64) { w in
-            var i = 0
-            while i < 16 {
-                w[i] = UInt32(m[i * 4]) << 24 | UInt32(m[i * 4 + 1]) << 16 | UInt32(m[i * 4 + 2]) << 8 | UInt32(m[i * 4 + 3])
-                i += 1
-            }
-            while i < 64 {
-                let s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >> 3)
-                let s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >> 10)
-                w[i] = w[i - 16] &+ s0 &+ w[i - 7] &+ s1
-                i += 1
-            }
             Self.k.withUnsafeBufferPointer { k in
                 h.withUnsafeMutableBufferPointer { h in
-                    var (a, b, c, d, e, f, g, hh) = (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7])
-                    var j = 0
-                    while j < 64 {
-                        let t1 = hh &+ (r(e, 6) ^ r(e, 11) ^ r(e, 25)) &+ ((e & f) ^ (~e & g)) &+ k[j] &+ w[j]
-                        let t2 = (r(a, 2) ^ r(a, 13) ^ r(a, 22)) &+ ((a & b) ^ (a & c) ^ (b & c))
-                        (hh, g, f, e, d, c, b, a) = (g, f, e, d &+ t1, c, b, a, t1 &+ t2)
-                        j += 1
+                    var (h0, h1, h2, h3, h4, h5, h6, h7) = (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7])
+                    var m = start
+                    for _ in 0..<count {
+                        var i = 0
+                        while i < 16 {
+                            w[i] = UInt32(m[i * 4]) << 24 | UInt32(m[i * 4 + 1]) << 16 | UInt32(m[i * 4 + 2]) << 8 | UInt32(m[i * 4 + 3])
+                            i += 1
+                        }
+                        while i < 64 {
+                            let s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >> 3)
+                            let s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >> 10)
+                            w[i] = w[i - 16] &+ s0 &+ w[i - 7] &+ s1
+                            i += 1
+                        }
+                        var (a, b, c, d, e, f, g, hh) = (h0, h1, h2, h3, h4, h5, h6, h7)
+                        var j = 0
+                        while j < 64 {
+                            let t1 = hh &+ (r(e, 6) ^ r(e, 11) ^ r(e, 25)) &+ ((e & f) ^ (~e & g)) &+ k[j] &+ w[j]
+                            let t2 = (r(a, 2) ^ r(a, 13) ^ r(a, 22)) &+ ((a & b) ^ (a & c) ^ (b & c))
+                            hh = g; g = f; f = e; e = d &+ t1; d = c; c = b; b = a; a = t1 &+ t2
+                            j += 1
+                        }
+                        h0 &+= a; h1 &+= b; h2 &+= c; h3 &+= d
+                        h4 &+= e; h5 &+= f; h6 &+= g; h7 &+= hh
+                        m += 64
                     }
-                    h[0] &+= a; h[1] &+= b; h[2] &+= c; h[3] &+= d
-                    h[4] &+= e; h[5] &+= f; h[6] &+= g; h[7] &+= hh
+                    h[0] = h0; h[1] = h1; h[2] = h2; h[3] = h3; h[4] = h4; h[5] = h5; h[6] = h6; h[7] = h7
                 }
             }
         }
