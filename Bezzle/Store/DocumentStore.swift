@@ -185,8 +185,8 @@ final class DocumentStore {
     /// A change shown on the canvas but not made: what a preset under the pointer would do.
     var preview: Preview?
     /// The inspector's card that is open, and the one the pointer is on, whose part of the
-    /// selected layers the canvas outlines. See `AspectCard`.
-    var openAspect: Aspect?
+    /// selected layers the canvas outlines. See `AspectCard`. Frame is open to begin with.
+    var openAspect: Aspect? = .frame
     var pointedAspect: Aspect?
     /// What the Photo card works on while it is open: the pictures' light, colour or detail,
     /// and of their colours, the one picked. A drag on the picture works on the same.

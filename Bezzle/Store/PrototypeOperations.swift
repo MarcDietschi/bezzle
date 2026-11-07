@@ -18,6 +18,8 @@ extension DocumentStore {
             player?.stop()
             player = nil
             inspecting = false
+            // Back at the layers, Frame is open again, as it is to begin with.
+            openAspect = .frame
         }
         canvas?.flowTool.modeChanged(prototyping)
     }
