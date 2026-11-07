@@ -68,9 +68,7 @@ extension DocumentStore {
     // MARK: Reading
 
     /// The design's styles of a kind, in their order.
-    func styles(of kind: StyleKind) -> [Style] {
-        (doc.styles ?? []).filter { $0.kind == kind }.sorted { ($0.rank, $0.id.uuidString) < ($1.rank, $1.id.uuidString) }
-    }
+    func styles(of kind: StyleKind) -> [Style] { doc.styles(of: kind) }
 
     func style(_ id: UUID) -> Style? { doc.style(id) }
 
@@ -97,13 +95,7 @@ extension DocumentStore {
     /// The layers that use a style, worked out for every style at once, once per change.
     func layers(using id: UUID) -> [UUID] {
         if let worked = styleShow.usersWorkedOut, worked.version == version { return worked.users[id] ?? [] }
-        var users: [UUID: [UUID]] = [:]
-        func visit(_ n: Node) {
-            var seen = Set<UUID>()
-            for place in StylePlace.all(in: n) { if let s = place.named(in: n), seen.insert(s).inserted { users[s, default: []].append(n.id) } }
-            n.children.forEach(visit)
-        }
-        if doc.styles != nil { doc.nodes.forEach(visit) }
+        let users = doc.styleUsers()
         styleShow.usersWorkedOut = (version, users)
         return users[id] ?? []
     }
@@ -115,18 +107,9 @@ extension DocumentStore {
     @discardableResult
     func nameLook(at place: StylePlace, _ name: String) -> UUID? {
         guard let first = holding(place).first, let look = place.look(of: first)?.kept else { return nil }
-        var style = Style(name: Self.tidied(name, or: suggestedName(for: look)), look: look)
         let ids = selection
-        // Named on a dark artboard, it is that look in the dark: naming changes nothing to be seen.
-        if ids.contains(where: doc.isDark) { style.dark = look }
-        edit("Name Style") { doc in
-            doc.addStyle(style)
-            for id in ids {
-                doc.update(id) { n in
-                    if place.look(of: n) != nil, place.takes(look, in: n) { place.name(style.id, in: &n) }
-                }
-            }
-        }
+        let style = doc.styleNaming(look, name, on: ids)
+        edit("Name Style") { $0.name(style, at: place, on: ids) }
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         let alike = doc.looksAlike(look, besides: Set(ids))
         let count = Set(alike.map(\.layer)).count
@@ -140,31 +123,19 @@ extension DocumentStore {
 
     /// Gives the selection a style at a place: its look, and its name.
     func use(_ style: Style, at place: StylePlace) {
-        let doc = doc
-        updateSelection("Use Style") { n in
-            let shown = style.look(dark: doc.isDark(n.id))
-            guard place.look(of: n) != nil, place.takes(shown, in: n) else { return }
-            place.name(style.id, in: &n)
-            place.apply(shown, to: &n)
-            // Named type is the whole layer's: letters set apart in size or font follow it again.
-            if place == .text, let spans = n.spans {
-                let parts: Set<Letters.Part> = [.family, .face, .size, .tracking, .underline, .strikethrough]
-                n.spans = TextSpan.stored(TextSpan.tidy(spans.map { TextSpan(text: $0.text, look: $0.look.without(parts)) }))
-                n.refit()
-            }
-        }
+        let ids = selection
+        edit("Use Style") { $0.use(style, at: place, on: ids) }
     }
 
     /// The selection keeps its look at a place, named nothing.
     func unname(at place: StylePlace) {
-        updateSelection("Remove Style Name") { place.name(nil, in: &$0) }
+        let ids = selection
+        edit("Remove Style Name") { $0.unname(at: place, on: ids) }
     }
 
     func renameStyle(_ id: UUID, to name: String) {
-        guard let style = doc.style(id) else { return }
-        let new = Self.tidied(name, or: style.name)
-        guard new != style.name else { return }
-        edit("Rename Style") { $0.changeStyle(id) { $0.name = new } }
+        guard let style = doc.style(id), BezzleDocument.tidiedStyleName(name, or: style.name) != style.name else { return }
+        edit("Rename Style") { $0.renameStyle(id, to: name) }
     }
 
     /// Takes a style away. Its layers keep looking as they do.
@@ -177,30 +148,18 @@ extension DocumentStore {
     func changeStyle(_ id: UUID, _ action: LocalizedStringResource, dark: Bool = false, _ change: (inout StyleLook) -> Void) {
         styleShow.fromList = true
         defer { styleShow.fromList = false }
-        edit(action) { doc in
-            doc.changeStyle(id) { s in
-                if dark {
-                    var look = s.look(dark: true)
-                    change(&look)
-                    s.dark = look
-                } else {
-                    change(&s.look)
-                }
-            }
-        }
+        edit(action) { $0.changeStyleLook(id, dark: dark, change) }
     }
 
     /// Lets a style's look in the dark follow its look again, made dark by itself.
     func followInTheDark(_ id: UUID) {
         styleShow.fromList = true
         defer { styleShow.fromList = false }
-        edit("Automatic in the Dark") { $0.changeStyle(id) { $0.dark = nil } }
+        edit("Automatic in the Dark") { $0.followInTheDark(id) }
     }
 
     /// Whether the design shows anything dark, or has a style made for the dark by hand.
-    var hasDark: Bool {
-        doc.nodes.contains(where: \.showsDark) || (doc.styles ?? []).contains { $0.dark != nil }
-    }
+    var hasDark: Bool { doc.hasDark }
 
     /// Whether the selected layers with a place lie on a dark artboard, as the first does.
     func showsDark(_ place: StylePlace) -> Bool {
@@ -210,12 +169,8 @@ extension DocumentStore {
     /// Names a look found on several layers, giving each of them the new style.
     @discardableResult
     func name(_ found: FoundLook, _ name: String? = nil) -> UUID {
-        var style = Style(name: Self.tidied(name ?? "", or: suggestedName(for: found.look)), look: found.look.kept)
-        if found.uses.contains(where: { doc.isDark($0.layer) }) { style.dark = style.look }
-        edit("Name Style") { doc in
-            doc.addStyle(style)
-            for use in found.uses { doc.update(use.layer) { use.place.name(style.id, in: &$0) } }
-        }
+        let style = doc.styleNaming(found, name)
+        edit("Name Style") { $0.name(found, as: style) }
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         styleShow.wave = StyleShow.Wave(origin: nil, layers: Array(Set(found.uses.map(\.layer))))
         return style.id
@@ -246,20 +201,8 @@ extension DocumentStore {
         guard !styleShow.fromList, offer == nil else { return }
 
         // Changed through the selection: offer to keep it there alone.
-        var places: [FoundLook.Use] = [], olds: [UUID: Style] = [:]
-        for id in selection {
-            guard let n = doc.node(id), let was = before.node(id) else { continue }
-            let dark = doc.isDark(id)
-            for place in StylePlace.all(in: n) {
-                guard let s = place.named(in: n), changed.contains(s), place.named(in: was) == s,
-                      let old = before.style(s), !place.shows(old.look(dark: dark), in: n) else { continue }
-                places.append(FoundLook.Use(layer: id, place: place))
-                olds[s] = old
-            }
-        }
-        let mine = Set(places.map(\.layer))
-        let others = Set(olds.keys.flatMap { layers(using: $0) }).subtracting(mine)
-        guard let anchor = places.first?.layer, !others.isEmpty else { return }
+        guard let (anchor, olds, places, others) = doc.onlyHereOffer(before: before, selection: selection, changed: changed,
+                                                                     users: { self.layers(using: $0) }) else { return }
         show(StyleOffer(anchor: anchor, kind: .onlyHere(styles: olds, places: places),
                         words: String(localized: "Also on \(others.count) more layers"), button: String(localized: "Only Here"),
                         layers: Array(others)))
@@ -312,20 +255,15 @@ extension DocumentStore {
         styleShow.lit = []
         switch offer.kind {
         case .onlyHere(let styles, let places):
-            edit("Only Here") { doc in
-                for use in places { doc.update(use.layer) { use.place.name(nil, in: &$0) } }
-                for (id, old) in styles { doc.changeStyle(id) { $0.look = old.look; $0.dark = old.dark } }
-            }
+            edit("Only Here") { $0.keepOnlyHere(styles: styles, places: places) }
         case .lightTwin(let id):
             guard let board = doc.node(id), board.isArtboard else { return }
             var made: UUID?
-            edit("Add Light Version") { doc in made = Self.lightTwin(of: id, in: &doc) }
+            edit("Add Light Version") { doc in made = doc.addLightTwin(of: id) }
             if let made { styleShow.wave = StyleShow.Wave(origin: CGPoint(x: board.frame.maxX, y: board.frame.midY), layers: [made]) }
         case .nameToo(let id, let uses):
             guard doc.style(id) != nil else { return }
-            edit("Name Style") { doc in
-                for use in uses { doc.update(use.layer) { use.place.name(id, in: &$0) } }
-            }
+            edit("Name Style") { $0.nameToo(id, uses: uses) }
             styleShow.wave = StyleShow.Wave(origin: doc.absoluteFrame(of: offer.anchor).map { CGPoint(x: $0.midX, y: $0.midY) },
                                             layers: Array(Set(uses.map(\.layer)).union([offer.anchor])))
         }
@@ -362,112 +300,15 @@ extension DocumentStore {
     /// The design with an artboard dark, or light again, as `show` would make it, for the canvas
     /// to show while the choice is pointed at.
     func previewing(_ boardID: UUID, dark: Bool) -> (inout BezzleDocument) -> Void {
-        { doc in
-            let before = doc
-            doc.show(boardID, dark: dark, name: StyleNames.base)
-            _ = doc.keepStyles(since: before)
-        }
+        { $0.previewDark(boardID, dark: dark) }
     }
 
     /// A light copy of an artboard, beside it and clear of the others in its row; returns its id.
-    static func lightTwin(of id: UUID, in doc: inout BezzleDocument) -> UUID? {
-        guard let p = doc.path(of: id), p.indices.count == 1 else { return nil }
-        let board = doc[p]
-        var copy = board.freshCopy()
-        copy.dark = nil
-        copy.name = String(localized: "\(board.name) Light")
-        let row = doc.nodes.filter { $0.id != id && !$0.hidden && $0.frame.maxY > board.frame.minY && $0.frame.minY < board.frame.maxY }
-        let right = row.filter { $0.frame.minX >= board.frame.minX }.map(\.frame.maxX).max() ?? board.frame.maxX
-        copy.frame.origin.x = max(board.frame.maxX, right) + 80
-        var at = p
-        at.indices[0] += 1
-        doc.insert(copy, at: at)
-        return copy.id
-    }
+    static func lightTwin(of id: UUID, in doc: inout BezzleDocument) -> UUID? { doc.addLightTwin(of: id) }
 
     // MARK: Names
 
-    private static func tidied(_ name: String, or fallback: String) -> String {
-        let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.isEmpty ? fallback : String(t.prefix(60))
-    }
-
     /// A name for a look not named yet: what a colour is called, what a size of type is for, the
     /// shadow or corners it is among the choices; never one another style of its kind has.
-    func suggestedName(for look: StyleLook) -> String {
-        doc.freshName(StyleNames.base(look), kind: look.kind)
-    }
-}
-
-/// What a look is called before it is given a name of one's own.
-enum StyleNames {
-    /// What a look is, in a word or two: the colour, what a size of type is for, the shadow or
-    /// corners it is among the choices.
-    static func base(_ look: StyleLook) -> String {
-        switch look {
-        case .colour(let p): return p.gradient != nil ? String(localized: "Gradient") : colour(p.color)
-        case .text(let t): return type(t.size)
-        case .shadow(let s):
-            let presets = s.inset == true ? Presets.innerShadows : Presets.shadows
-            if let p = presets.first(where: { Presets.isShadow($0, s) }) { return String(localized: p.name) }
-            return s.inset == true ? String(localized: "Inner shadow") : String(localized: "Shadow")
-        case .corners(let c):
-            if let p = Presets.corners.first(where: { $0.radius == c.radius && $0.radius != 0 }) { return String(localized: p.name) }
-            return String(localized: "Corners \(Int(c.radius.rounded()))")
-        }
-    }
-
-    /// A colour's everyday name: the hue, lighter or darker, or the grey it is.
-    static func colour(_ c: RGBA) -> String {
-        // As the eye sees it: lightness, how colourful, and which way round the hues.
-        let (l, a, b) = c.oklab
-        let chroma = hypot(a, b)
-        var hue = atan2(b, a) * 180 / .pi
-        if hue < 0 { hue += 360 }
-        if chroma < 0.03 {
-            if l > 0.985 { return String(localized: "White") }
-            // A white with a little warmth in it, as paper has.
-            if l > 0.93 { return chroma > 0.006 && (40..<120).contains(hue) ? String(localized: "Ivory") : String(localized: "Off-white") }
-            if l > 0.82 { return chroma > 0.012 && (40..<110).contains(hue) ? String(localized: "Beige") : String(localized: "Light grey") }
-            if l < 0.3 { return String(localized: "Black") }
-            if l < 0.48 { return String(localized: "Dark grey") }
-            return String(localized: "Grey")
-        }
-        // Pale and deep are both soft: a pure yellow is yellow, however light it is.
-        let light = l > 0.82 && chroma < 0.12, dark = l < 0.48 && chroma < 0.2
-        // Brown and beige are orange, darker or paler and not very colourful.
-        if (35..<95).contains(hue), dark || (l < 0.62 && chroma < 0.12) { return String(localized: "Brown") }
-        if (40..<110).contains(hue), light, chroma < 0.07 { return String(localized: "Beige") }
-        switch hue {
-        case 345..., ..<15:
-            return light ? String(localized: "Light pink") : dark ? String(localized: "Dark pink") : String(localized: "Pink")
-        case 15..<45:
-            return light ? String(localized: "Light red") : dark ? String(localized: "Dark red") : String(localized: "Red")
-        case 45..<85:
-            return light ? String(localized: "Light orange") : dark ? String(localized: "Dark orange") : String(localized: "Orange")
-        case 85..<120:
-            return light ? String(localized: "Light yellow") : dark ? String(localized: "Olive") : String(localized: "Yellow")
-        case 120..<175:
-            return light ? String(localized: "Light green") : dark ? String(localized: "Dark green") : String(localized: "Green")
-        case 175..<225:
-            return light ? String(localized: "Light teal") : dark ? String(localized: "Dark teal") : String(localized: "Teal")
-        case 225..<290:
-            return light ? String(localized: "Light blue") : dark ? String(localized: "Dark blue") : String(localized: "Blue")
-        default:
-            return light ? String(localized: "Light purple") : dark ? String(localized: "Dark purple") : String(localized: "Purple")
-        }
-    }
-
-    /// What type of a size is most often for.
-    static func type(_ size: CGFloat) -> String {
-        switch size {
-        case 48...: String(localized: "Display")
-        case 32..<48: String(localized: "Title")
-        case 24..<32: String(localized: "Heading")
-        case 19..<24: String(localized: "Subheading")
-        case 15..<19: String(localized: "Body")
-        case 12..<15: String(localized: "Small")
-        default: String(localized: "Caption")
-        }
-    }
+    func suggestedName(for look: StyleLook) -> String { doc.suggestedName(for: look) }
 }

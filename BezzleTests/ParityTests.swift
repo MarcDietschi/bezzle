@@ -497,6 +497,104 @@ extension ParityTests {
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
+    /// Naming looks and changing styles, as the store does it, step by step: what each style is
+    /// and which layers name it where, written by name.
+    @Test func styleEditing() {
+        let blue = RGBA(r: 0.2, g: 0.35, b: 0.8), red = RGBA(r: 0.9, g: 0.2, b: 0.1)
+        func rect(_ name: String, _ x: CGFloat) -> Node {
+            var n = CanvasTests.rect(name, CGRect(x: x, y: 20, width: 60, height: 40))
+            n.fill.color = blue
+            return n
+        }
+        var words = Node(kind: .text, name: "Words", frame: CGRect(x: 20, y: 120, width: 0, height: 0))
+        words.text = "Hello"
+        words.refit()
+        let bench = Bench(extra: [rect("One", 20), rect("Two", 120), rect("Three", 220), words])
+        let id = { (name: String) in bench.node(name)!.id }
+        func look(_ l: StyleLook) -> String {
+            switch l {
+            case .colour(let c): return "colour \(Inspect.hex(c.color))"
+            case .text(let t): return "type \(t.family) \(t.face) \(Self.n(t.size))"
+            case .shadow(let s): return "shadow \(Self.n(s.x)),\(Self.n(s.y)) \(Self.n(s.blur))"
+            case .corners(let c): return "corners \(Self.n(c.radius))"
+            }
+        }
+        func line(_ what: String) {
+            let doc = bench.store.doc
+            let styles = (doc.styles ?? []).sorted { ($0.kind.rawValue, $0.name) < ($1.kind.rawValue, $1.name) }.map { s in
+                "\(s.name) [\(look(s.look))\(s.dark.map { " dark " + look($0) } ?? "")]"
+            }
+            let uses = doc.allNodes.filter { !$0.isArtboard || $0.dark != nil }.sorted { $0.name < $1.name }.compactMap { n -> String? in
+                let named = StylePlace.all(in: n).compactMap { p in p.named(in: n).flatMap { doc.style($0)?.name }.map { "\(p)=\($0)" } }
+                let fill = n.fills.first.map { Inspect.hex($0.color) } ?? "-"
+                return named.isEmpty && n.dark == nil ? nil : "\(n.name)(\(fill)\(n.dark.map { " dark \($0)" } ?? "")) \(named.joined(separator: ","))"
+            }
+            Self.log("styles", "\(what): " + styles.joined(separator: " ; ") + " | " + uses.joined(separator: " ; "))
+        }
+        bench.store.selection = [id("One")]
+        var brand: UUID?
+        bench.step { brand = bench.store.nameLook(at: .fill(0), "  Brand  ") }
+        line("named")
+        Self.log("styles", "offer: \(bench.store.styleShow.offer?.words ?? "-") / \(bench.store.styleShow.offer?.button ?? "-")")
+        if let offer = bench.store.styleShow.offer { bench.step { bench.store.take(offer) } }
+        line("named too")
+        bench.store.selection = [id("Words")]
+        var body: UUID?
+        bench.step { body = bench.store.nameLook(at: .text, "") }
+        line("type named")
+        Self.log("styles", "suggested: \(bench.store.suggestedName(for: .colour(ColourLook(color: red)))) \(bench.store.suggestedName(for: .corners(CornerLook(radius: 12)))) \(StyleNames.colour(RGBA(hex: "8B4513")!))")
+        if let brand {
+            bench.step { bench.store.renameStyle(brand, to: "  Primary ") }
+            line("renamed")
+            bench.step { bench.store.renameStyle(brand, to: "   ") }
+            line("not renamed to nothing")
+            bench.store.selection = [id("Two")]
+            bench.step { bench.store.unname(at: .fill(0)) }
+            line("unnamed on Two")
+            bench.step { bench.store.use(bench.store.style(brand)!, at: .fill(0)) }
+            line("used on Two")
+            bench.step { bench.store.changeStyle(brand, "x") { $0 = .colour(ColourLook(color: red)) } }
+            line("changed from the list")
+            // Changed through a layer: offered to keep it there.
+            bench.store.selection = [id("Two")]
+            bench.step { bench.store.edit("Fill") { $0.update(id("Two")) { $0.fill.color = blue } } }
+            line("changed on Two")
+            Self.log("styles", "offer: \(bench.store.styleShow.offer?.words ?? "-") / \(bench.store.styleShow.offer?.button ?? "-")")
+            if let offer = bench.store.styleShow.offer { bench.step { bench.store.take(offer) } }
+            line("only here")
+        }
+        // Dark: the artboard made dark, a look changed in the dark, and back to following.
+        bench.store.selection = [bench.a.id]
+        bench.step { bench.store.show(bench.a.id, dark: true) }
+        line("dark")
+        if let brand {
+            bench.step { bench.store.changeStyle(brand, "x", dark: true) { $0 = .colour(ColourLook(color: RGBA(r: 0.1, g: 0.1, b: 0.3))) } }
+            line("changed in the dark")
+            bench.step { bench.store.followInTheDark(brand) }
+            line("follows again")
+        }
+        var preview = bench.store.doc
+        bench.store.previewing(bench.a.id, dark: false)(&preview)
+        Self.log("styles", "previewed light: \(preview.node(bench.a.id)?.showsDark == false) fills \(preview.allNodes.filter { $0.name == "One" }.map { Inspect.hex($0.fill.color) })")
+        var made: UUID?
+        bench.step { bench.store.edit("x") { made = DocumentStore.lightTwin(of: bench.a.id, in: &$0) } }
+        Self.log("styles", "light twin: \(made.flatMap { bench.store.doc.node($0) }.map { "\($0.name) at \(Self.n($0.frame.minX)) dark \($0.dark.map { "\($0)" } ?? "-")" } ?? "-")")
+        bench.step { bench.store.forgetDark(bench.a.id) }
+        line("dark forgotten")
+        // Found looks, named in one go.
+        bench.store.selection = []
+        if let found = bench.store.doc.foundLooks()[.colour]?.first {
+            bench.step { _ = bench.store.name(found) }
+            line("found named")
+        }
+        Self.log("styles", "has dark \(bench.store.hasDark), users \((bench.store.doc.styles ?? []).sorted { $0.name < $1.name }.map { "\($0.name) \(bench.store.layers(using: $0.id).compactMap { bench.store.doc.node($0)?.name }.sorted())" })")
+        if let body { bench.step { bench.store.removeStyle(body) } }
+        line("type removed")
+        bench.undoLast()
+        line("undone")
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
     /// The look of a few pictures (their tones, colours, what is lost to black and white) and
     /// what Auto makes of them, plain and developed.
     @Test func pictureLooksAndAuto() {
