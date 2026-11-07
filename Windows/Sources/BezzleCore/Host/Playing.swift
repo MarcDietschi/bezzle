@@ -1007,3 +1007,8 @@ extension WindowsCore {
         return (d.group, d.name, screen)
     }
 }
+
+extension WindowsCore {
+    /// Where layers lie on the canvas, the box round them as far as each reaches turned.
+    public static func canvasBounds(of ids: [UUID]) -> CGRect? { design?.bounds(of: ids) }
+}

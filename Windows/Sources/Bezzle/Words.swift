@@ -72,7 +72,7 @@ enum Words {
     private static let named: [String: String] = [
         "Centred": "border.centred", "Prototype": "mode.prototype", "Inspect": "mode.inspect", "Variable Font": "text.axes",
         "Curve": "curve.title", "On Path": "curve.on-path", "Dip": "curve.dip", "Arch": "curve.arch", "Half circle": "curve.half",
-        "Goes To": "flow.card", "Screen": "screen.card",
+        "Goes To": "flow.card", "Screen": "screen.card", "States": "states.card",
         "Put Text on Path": "undo.text-on-path", "Straighten Text": "undo.straighten-text", "Take Text off Path": "undo.take-text-off-path",
     ]
 

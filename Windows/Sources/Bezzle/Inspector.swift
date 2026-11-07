@@ -54,6 +54,8 @@ final class Inspector {
     var photoPointing: (ids: [UUID], board: Int)?
     /// What was picked when the prototype's cards were last opened by themselves.
     var prototypePicked: [UUID] = []
+    /// The story card's moving drawing, held while it shows.
+    var pullDemo: AnyObject?
     /// What the Inspect panel writes code for.
     var inspectPlatform: WindowsCore.InspectPlatform = .css
 

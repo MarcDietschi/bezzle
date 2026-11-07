@@ -85,6 +85,9 @@ final class DesignWindow {
         bar.onExport = { [weak self] in self?.export.open() }
         bar.onPlay = { [weak self] in self?.play(from: nil) }
         session.play = { [weak self] board in self?.play(from: board) }
+        session.reveal = { [weak self] id in
+            if let r = WindowsCore.canvasBounds(of: [id]) { self?.canvas.reveal(r) }
+        }
         // Seen as layers again, the playing stops at once.
         session.listen { [weak self] in
             guard let self, self.session.mode != 1, let view = self.playing else { return }

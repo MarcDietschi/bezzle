@@ -78,16 +78,100 @@ extension WindowsCore {
         return Prototype.links(in: doc).filter { $0.flow.to == board && $0.board != board }.count
     }
 
-    /// The ways through the prototype, from the start: what each layer is called, where it goes,
-    /// and what is said of it.
-    public static func flowStory() -> [(from: String, to: String, note: String?)] {
+    /// One way through the prototype, as the Mac's StoryRow tells it: from which layer (or a
+    /// screen that goes on by itself) to where, the screen the layer lies on, and why.
+    public struct StoryLine {
+        public let source: UUID
+        public let title: String
+        public let to: String
+        public let back: Bool
+        /// The screen the layer lies on, when it is not the screen itself.
+        public let from: String?
+        public let note: String?
+        /// How long a screen waits before it goes on by itself.
+        public let after: Double?
+    }
+
+    /// The ways through the prototype, in the order the design holds them.
+    public static func flowStory() -> [StoryLine] {
         guard let doc = design else { return [] }
-        let order = Prototype.start(of: doc).map { Prototype.steps(from: $0.id, in: doc) } ?? [:]
-        return Prototype.links(in: doc).sorted { (order[$0.board] ?? 99, $0.board.uuidString) < (order[$1.board] ?? 99, $1.board.uuidString) }
-            .map { link in
-                let from = doc.node(link.source)?.name ?? ""
-                let to = link.flow.goesBack ? say("Back") : link.flow.to.flatMap { doc.node($0)?.name } ?? ""
-                return (from, to, link.flow.note)
-            }
+        return Prototype.links(in: doc).prefix(60).map { link in
+            let screen = doc.node(link.board)?.name ?? ""
+            let itself = link.source == link.board
+            return StoryLine(source: link.source, title: itself ? screen : doc.node(link.source)?.name ?? "",
+                             to: link.flow.goesBack ? say("Back") : link.flow.to.flatMap { doc.node($0)?.name } ?? "",
+                             back: link.flow.goesBack, from: itself ? nil : screen, note: link.flow.note,
+                             after: itself ? link.flow.after : nil)
+        }
+    }
+
+    // MARK: The design as code
+
+    /// How many named looks the design has, which come out as tokens.
+    public static var tokenCount: Int { design.map(DesignTokens.count) ?? 0 }
+
+    /// The design's named looks as tokens: "css", "swiftui" or "json".
+    public static func tokens(_ format: String, named name: String) -> String? {
+        guard let doc = design, let f = DesignTokens.Format(rawValue: format) else { return nil }
+        return DesignTokens.write(doc, named: name, as: f)
+    }
+
+    // MARK: A copy's states
+
+    /// What a copy of a component shows as it is used, as the Mac's StatesCard: each variant,
+    /// the state its name says and what that does in the player; the states it has no variant for.
+    public struct CopyStates {
+        public struct Row {
+            public let variant: Int?
+            public let name: String
+            /// The state's own name and what it does, when the variant's name says one.
+            public let state: String?
+            public let does: String?
+        }
+        public let copy: UUID
+        public let rows: [Row]
+        /// The states named, or "None".
+        public let summary: String
+        /// The states to add: their keys, names and what each does.
+        public let missing: [(key: String, title: String, does: String)]
+        public let locked: Bool
+    }
+
+    public static func copyStates(_ selection: [UUID]) -> CopyStates? {
+        guard let doc = design, let copy = doc.selectedCopy(selection), let master = doc.component(of: copy) else { return nil }
+        let variants = Components.variants(of: master)
+        let states = Components.states(of: master)
+        let rows = variants.map { v -> CopyStates.Row in
+            let state = Components.state(of: v, in: master)
+            return CopyStates.Row(variant: v, name: Components.name(of: v, in: master), state: state?.title, does: state?.does)
+        }
+        let named = variants.compactMap { Components.state(of: $0, in: master)?.title }
+        let missing = [VariantState.hover, .pressed, .selected, .disabled, .loading].filter { states[$0] == nil }.map { ($0.rawValue, $0.title, $0.does) }
+        return CopyStates(copy: copy.id, rows: rows, summary: named.isEmpty ? say("None") : named.joined(separator: ", "), missing: missing,
+                          locked: copy.locked)
+    }
+
+    /// Every state a variant can be made by its name: its key and name.
+    public static var variantStates: [(key: String, title: String)] { VariantState.allCases.map { ($0.rawValue, $0.title) } }
+
+    /// A new variant, as the copy looks now, named for the state and shown in the copy to change,
+    /// as one step: what is picked then, in the new variant's layers.
+    public static func addState(_ key: String, _ selection: [UUID]) -> [UUID] {
+        guard let state = VariantState(rawValue: key), let doc = design, let copy = doc.selectedCopy(selection), let inst = copy.instance,
+              let master = doc.component(of: copy) else { return selection }
+        var made: Int?
+        edit {
+            made = $0.addVariant(from: copy)
+            if let made { $0.renameVariant(made, of: master.id, to: state.title) }
+        }
+        guard let made, let now = design else { return selection }
+        let k = Deck.key(inst.variant) ^ Deck.key(made)
+        return selection.map { id in now.node(id) == nil && now.node(id.mixed(k)) != nil ? id.mixed(k) : id }.filter { now.node($0) != nil }
+    }
+
+    /// A variant made a state by its name.
+    public static func useAs(_ key: String, variant: Int?, of copy: UUID) {
+        guard let state = VariantState(rawValue: key) else { return }
+        renameVariant(variant, of: copy, to: state.title)
     }
 }

@@ -14,6 +14,8 @@ extension Inspector {
         let screens = WindowsCore.prototypeScreens()
         if ids.isEmpty {
             cards.children.append(startCard(screens))
+            cards.children.append(storyCard())
+            cards.children.append(codeCard())
             return
         }
         guard let look = WindowsCore.flowLook(ids) else { return }
@@ -29,6 +31,8 @@ extension Inspector {
             }
         } else {
             cards.children.append(goesToCard(look, screens: screens))
+            let states = WindowsCore.copyStates(ids)
+            if let states { cards.children.append(statesCard(states)) }
         }
     }
 
@@ -206,26 +210,7 @@ extension Inspector {
         card.width = width
         card.child = stack
 
-        let all = StackPanel()
-        all.spacing = 10
-        all.children.append(card)
-        let story = WindowsCore.flowStory()
-        if !story.isEmpty {
-            let list = StackPanel()
-            list.spacing = 3
-            for row in story.prefix(12) {
-                let line = Theme.text("\(row.from)  →  \(row.to)" + (row.note.map { "  · \($0)" } ?? ""), size: 11.5, ink: 2)
-                line.textTrimming = .characterEllipsis
-                list.children.append(line)
-            }
-            let storyCard = Theme.card(radius: 12)
-            storyCard.width = width
-            storyCard.padding = Theme.inset(12, 10, 12, 10)
-            storyCard.child = list
-            all.children.append(storyCard)
-        }
-        all.children.append(Controls.caption("Pull a thread out of a layer onto a screen to link it, or onto the well beside its screen to go back."))
-        return all
+        return card
     }
 
     /// The screen the prototype starts on, in its device, as tall as 150 and as wide as 210, its
@@ -270,6 +255,281 @@ extension Inspector {
             island.margin = Theme.inset(Double(m.screen.midX) - w * 0.15, Double(m.screen.minY) + max(1.2, w * 0.035), 0, 0)
             holder.children.append(island)
         }
+        return holder
+    }
+
+    /// The ways through the prototype, as a story: from which layer of which screen to where, and
+    /// why, in the designer's words. A row picks that layer on the canvas. With none yet, a small
+    /// drawing shows how one is made.
+    private func storyCard() -> UIElement {
+        let lines = WindowsCore.flowStory()
+        let card = Theme.card(radius: 12)
+        card.width = Theme.cardWidth
+        let stack = StackPanel()
+        card.child = stack
+        guard !lines.isEmpty else {
+            let demo = PullDemo()
+            pullDemo = demo
+            stack.children.append(demo.view)
+            let words = Theme.text(Words.t("Pull a thread from a button onto a screen"), size: 15)
+            words.fontFamily = FontFamily("Segoe Print")
+            words.foreground = Theme.brush(Theme.pencil)
+            words.textWrapping = .wrap
+            words.textAlignment = .center
+            words.horizontalAlignment = .center
+            words.margin = Theme.inset(12, 0, 12, 14)
+            stack.children.append(words)
+            return card
+        }
+        for (i, line) in lines.enumerated() {
+            if i > 0 {
+                let rule = Border()
+                rule.height = 0.5
+                rule.background = Theme.hairline
+                rule.margin = Theme.inset(12, 0, 0, 0)
+                stack.children.append(rule)
+            }
+            let picked = session.selection.contains(line.source)
+            let row = StackPanel()
+            row.spacing = 2
+            row.padding = Theme.inset(12, 8, 12, 8)
+            row.background = picked ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.clear
+            let head = Grid()
+            for w in [GridLength(value: 1, gridUnitType: .star), GridLength(value: 1, gridUnitType: .auto)] {
+                let c = ColumnDefinition()
+                c.width = w
+                head.columnDefinitions.append(c)
+            }
+            let names = StackPanel()
+            names.orientation = .horizontal
+            names.spacing = 5
+            names.children.append(Theme.text(line.title, size: 12, weight: 500))
+            let thread = Glyphs.view(Glyphs.thread(back: line.back, size: 16), size: 16, brush: picked ? Theme.brush(Theme.pencil) : Theme.ink(3))
+            names.children.append(thread)
+            names.children.append(Theme.text(line.to, size: 12, weight: 500))
+            head.children.append(names)
+            if let after = line.after {
+                let time = Theme.text(String(format: "%.1f s", after), size: 11, ink: 3)
+                try? Grid.setColumn(time, 1)
+                head.children.append(time)
+            }
+            row.children.append(head)
+            if let from = line.from { row.children.append(Theme.text(from, size: 11, ink: 3)) }
+            if let note = line.note, !note.isEmpty {
+                let written = Theme.text(note, size: 13)
+                written.fontFamily = FontFamily("Segoe Print")
+                written.foreground = Theme.brush(Theme.pencil)
+                written.textWrapping = .wrap
+                written.maxLines = 2
+                written.margin = Theme.inset(0, 1, 0, 0)
+                row.children.append(written)
+            }
+            row.pointerEntered.addHandler { _, _ in if !picked { row.background = Theme.brush(Theme.ink, 0.035) } }
+            row.pointerExited.addHandler { _, _ in if !picked { row.background = Theme.clear } }
+            let source = line.source
+            row.tapped.addHandler { [weak self] _, _ in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.session.select([source], on: WindowsCore.board(of: source) ?? WindowsCore.boardIndex(of: source))
+                        self.session.reveal?(source)
+                    }
+                }
+            }
+            stack.children.append(row)
+        }
+        return card
+    }
+
+    /// The design as code: its named looks as tokens, copied in a click; and Inspect, to build it
+    /// by hand, a layer at a time.
+    private func codeCard() -> UIElement {
+        let count = WindowsCore.tokenCount
+        let stack = StackPanel()
+        stack.spacing = 10
+        let head = Grid()
+        head.height = 22
+        let title = StackPanel()
+        title.orientation = .horizontal
+        title.spacing = 8
+        title.children.append(Glyphs.view(Glyphs.code(size: 22), size: 22, brush: Theme.ink(2)))
+        title.children.append(Theme.text(Words.t("Code"), size: 12.5, weight: 600))
+        head.children.append(title)
+        let tokens = Theme.text(count == 1 ? Words.t("1 token") : Words.t("%lld tokens", count), size: 12, ink: 2)
+        tokens.horizontalAlignment = .right
+        head.children.append(tokens)
+        stack.children.append(head)
+        let chips = Grid()
+        chips.columnSpacing = 6
+        let name = session.name
+        for (k, format) in [("css", "CSS"), ("swiftui", "SwiftUI"), ("json", "JSON")].enumerated() {
+            let c = ColumnDefinition()
+            c.width = GridLength(value: 1, gridUnitType: .star)
+            chips.columnDefinitions.append(c)
+            let chip = Border()
+            chip.height = 26
+            chip.cornerRadius = Theme.corners(7)
+            chip.background = Theme.brush(Theme.ink, 0.04)
+            chip.borderBrush = Theme.hairline
+            chip.borderThickness = Theme.inset(1)
+            let label = Theme.text(format.1, size: 12, weight: 500)
+            label.horizontalAlignment = .center
+            chip.child = label
+            if count > 0 {
+                chip.pointerEntered.addHandler { _, _ in chip.background = Theme.brush(Theme.ink, 0.07) }
+                chip.pointerExited.addHandler { _, _ in chip.background = Theme.brush(Theme.ink, 0.04) }
+                chip.pointerPressed.addHandler { _, args in args?.handled = true }
+                chip.tapped.addHandler { _, _ in
+                    guard let text = WindowsCore.tokens(format.0, named: name) else { return }
+                    Clipboard.copyText(text)
+                    // Copied: a tick, for a moment.
+                    label.text = "✓ " + format.1
+                    label.foreground = Theme.brush(Theme.pencil)
+                    chip.borderBrush = Theme.brush(Theme.pencil, 0.6)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                        MainActor.assumeIsolated {
+                            label.text = format.1
+                            label.foreground = Theme.ink(1)
+                            chip.borderBrush = Theme.hairline
+                        }
+                    }
+                }
+            }
+            try? Grid.setColumn(chip, Int32(k))
+            chips.children.append(chip)
+        }
+        chips.opacity = count == 0 ? 0.45 : 1
+        try? ToolTipService.setToolTip(chips, Words.t(count == 0 ? "Give colours, type, shadows or corners a name in the design, and they come out here as tokens." : "Copy the design's named looks as tokens"))
+        stack.children.append(chips)
+        let inspect = Controls.cardButton(Words.t("Inspect"), height: 30) { [weak self] in self?.session.mode = 2 }
+        inspect.horizontalAlignment = .stretch
+        if let label = (inspect as? Border)?.child as? TextBlock { label.horizontalAlignment = .center }
+        stack.children.append(inspect)
+        let card = Theme.card(radius: 12)
+        card.width = Theme.cardWidth
+        card.padding = Theme.inset(12)
+        card.child = stack
+        return card
+    }
+
+    /// What a copy of a component shows as it is used: each variant whose name says a state plays
+    /// it in the prototype (Hover while pointed at, Pressed while pressed, Selected turned on by a
+    /// tap); another can be made a state by its name, and a missing state added as a new variant.
+    private func statesCard(_ states: WindowsCore.CopyStates) -> UIElement {
+        card("States", states.summary, glyph: Glyphs.states(), body: { [self] in
+            var rows: [UIElement] = []
+            let list = StackPanel()
+            list.spacing = 2
+            for r in states.rows {
+                let row = Grid()
+                row.minHeight = 34
+                for w in [GridLength(value: 1, gridUnitType: .auto), GridLength(value: 1, gridUnitType: .star), GridLength(value: 1, gridUnitType: .auto)] {
+                    let c = ColumnDefinition()
+                    c.width = w
+                    row.columnDefinitions.append(c)
+                }
+                let dot = Ellipse()
+                dot.width = 6
+                dot.height = 6
+                dot.fill = r.state != nil ? Theme.brush(Theme.pencil) : Theme.ink(4)
+                dot.margin = Theme.inset(0, 0, 8, 0)
+                dot.verticalAlignment = .center
+                row.children.append(dot)
+                let words = StackPanel()
+                words.spacing = 1
+                words.verticalAlignment = .center
+                words.children.append(Theme.text(r.name, size: 12, weight: r.state != nil ? 500 : 400))
+                if let does = r.does { words.children.append(Theme.text(does, size: 10.5, ink: 3)) }
+                else if r.variant == nil { words.children.append(Theme.text(Words.t("As it rests"), size: 10.5, ink: 3)) }
+                try? Grid.setColumn(words, 1)
+                row.children.append(words)
+                if r.variant != nil, r.state == nil, !states.locked {
+                    let copy = states.copy, variant = r.variant
+                    let menu = Controls.menuButton(Words.t("Use As"), width: 92, menus: menus, menuWidth: 200) { [weak self] in
+                        WindowsCore.variantStates.map { s in
+                            MenuHost.Entry.item(s.title) {
+                                WindowsCore.useAs(s.key, variant: variant, of: copy)
+                                self?.edited()
+                            }
+                        }
+                    }
+                    menu.verticalAlignment = .center
+                    try? Grid.setColumn(menu, 2)
+                    row.children.append(menu)
+                }
+                list.children.append(row)
+            }
+            rows.append(list)
+            if !states.missing.isEmpty, !states.locked {
+                let wrap = StackPanel()
+                wrap.spacing = 8
+                var line: Grid?
+                for (k, m) in states.missing.enumerated() {
+                    if k % 3 == 0 {
+                        let g = Grid()
+                        g.columnSpacing = 8
+                        for _ in 0..<3 {
+                            let c = ColumnDefinition()
+                            c.width = GridLength(value: 1, gridUnitType: .star)
+                            g.columnDefinitions.append(c)
+                        }
+                        wrap.children.append(g)
+                        line = g
+                    }
+                    let chip = addStateChip(m.title, does: m.does) { [weak self] in
+                        guard let self else { return }
+                        let now = WindowsCore.addState(m.key, self.session.selection)
+                        self.session.select(now, on: now.first.flatMap(WindowsCore.board(of:)))
+                        self.edited()
+                    }
+                    try? Grid.setColumn(chip, Int32(k % 3))
+                    line?.children.append(chip)
+                }
+                rows.append(wrap)
+            }
+            return rows
+        })
+    }
+
+    /// A dashed chip for a state the component has no variant for, adding one.
+    private func addStateChip(_ title: String, does: String, _ add: @escaping @MainActor () -> Void) -> FrameworkElement {
+        let holder = Grid()
+        holder.height = 24
+        let edge = Rectangle()
+        edge.radiusX = 7
+        edge.radiusY = 7
+        edge.stroke = Theme.ink(4)
+        edge.strokeThickness = 1
+        let dash = DoubleCollection()
+        dash.append(3)
+        dash.append(2.5)
+        edge.strokeDashArray = dash
+        edge.fill = Theme.clear
+        holder.children.append(edge)
+        let row = StackPanel()
+        row.orientation = .horizontal
+        row.spacing = 3
+        row.horizontalAlignment = .center
+        row.verticalAlignment = .center
+        let plus = Glyphs.view(Glyphs.plus(size: 14), size: 14, brush: Theme.ink(2))
+        row.children.append(plus)
+        let label = Theme.text(title, size: 11.5, weight: 500, ink: 2)
+        row.children.append(label)
+        holder.children.append(row)
+        holder.background = Theme.clear
+        holder.pointerEntered.addHandler { _, _ in
+            edge.stroke = Theme.brush(Theme.pencil)
+            edge.fill = Theme.brush(Theme.pencil, Theme.pencilWash)
+            label.foreground = Theme.brush(Theme.pencil)
+        }
+        holder.pointerExited.addHandler { _, _ in
+            edge.stroke = Theme.ink(4)
+            edge.fill = Theme.clear
+            label.foreground = Theme.ink(2)
+        }
+        holder.pointerPressed.addHandler { _, args in args?.handled = true }
+        holder.tapped.addHandler { _, _ in DispatchQueue.main.async { MainActor.assumeIsolated { add() } } }
+        try? ToolTipService.setToolTip(holder, does)
         return holder
     }
 
@@ -415,10 +675,186 @@ extension Glyphs {
         return [Part(data: p.d, mode: .stroke, width: 1.5)]
     }
 
+    /// Code: angle brackets round a slash, as the Mac's CodeGlyph.
+    static func code(size s: Double = 22) -> [Part] {
+        var p = PathData()
+        p.move(s * 0.36, s * 0.3); p.line(s * 0.16, s * 0.5); p.line(s * 0.36, s * 0.7)
+        p.move(s * 0.64, s * 0.3); p.line(s * 0.84, s * 0.5); p.line(s * 0.64, s * 0.7)
+        p.move(s * 0.55, s * 0.24); p.line(s * 0.45, s * 0.76)
+        return [Part(data: p.d, mode: .stroke, width: 1.4)]
+    }
+
+    /// Two states of a button, one over the other, as the Mac's StatesGlyph (18 by 14, centred).
+    static func states(size s: Double = 16) -> [Part] {
+        let w = s * 18 / 18, h = s * 14 / 18, top = (s - h) / 2
+        var back = PathData(), front = PathData()
+        back.rect(w * 0.3, top + 0.5, w * 0.66, h * 0.55, radius: h * 0.27)
+        front.rect(w * 0.04, top + h * 0.4, w * 0.66, h * 0.55, radius: h * 0.27)
+        return [Part(data: back.d, mode: .stroke, width: 1.3), Part(data: front.d, mode: .cover, width: 1.3)]
+    }
+
     /// The start flag: a ribbon notched at its end, with the triangle of play.
     static func flag(size s: Double = 14) -> [Part] {
         var p = PathData()
         p.move(s * 0.05, s * 0.2); p.line(s * 0.95, s * 0.2); p.line(s * 0.95, s * 0.8); p.line(s * 0.05, s * 0.8); p.line(s * 0.25, s * 0.5); p.close()
         return [Part(data: p.d, mode: .fill)]
+    }
+}
+
+/// How a flow is made, shown by doing it, as the Mac's PullDemo: a thread is pulled out of a
+/// button on one screen and tied to the next, which answers; then it starts over. It moves only
+/// while it is on screen.
+@MainActor
+final class PullDemo {
+    let view = Canvas()
+    private let button = Rectangle()
+    private let thread = WinUI.Path()
+    private let end = Ellipse()
+    private let ring = Rectangle()
+    private let tied = Rectangle()
+    private let arrow = WinUI.Path()
+    private var ticking: EventCleanup?
+    private let started = Date()
+
+    private let w = 46.0, h = 84.0
+    private var a = CGRect.zero, b = CGRect.zero
+
+    init() {
+        let width = Theme.cardWidth, height = 112.0
+        view.width = width
+        view.height = height
+        view.margin = Theme.inset(0, 10, 0, 0)
+        view.isHitTestVisible = false
+        a = CGRect(x: width / 2 - 92, y: (height - h) / 2, width: w, height: h)
+        b = CGRect(x: width / 2 + 46, y: (height - h) / 2, width: w, height: h)
+        for r in [a, b] { add(rounded(r, 7, fill: Theme.brush(Theme.card), stroke: Theme.ink(4), width: 1)) }
+        // A few lines of a screen, and the button.
+        for i in 0..<3 {
+            let d = Double(i)
+            add(rounded(CGRect(x: Double(a.minX) + 7, y: Double(a.minY) + 12 + d * 8, width: w - 14 - d * 6, height: 3), 1.5, fill: Theme.ink(4)))
+            add(rounded(CGRect(x: Double(b.minX) + 7, y: Double(b.minY) + 12 + d * 8, width: w - 18 + d * 3, height: 3), 1.5, fill: Theme.ink(4)))
+        }
+        place(button, CGRect(x: Double(a.minX) + 7, y: Double(a.maxY) - 22, width: w - 14, height: 11))
+        button.radiusX = 5.5
+        button.radiusY = 5.5
+        add(button)
+        thread.stroke = Theme.brush(Theme.pencil)
+        thread.strokeThickness = 1.8
+        thread.strokeStartLineCap = .round
+        thread.strokeEndLineCap = .round
+        add(thread)
+        end.width = 7
+        end.height = 7
+        end.fill = Theme.brush(Theme.pencil)
+        add(end)
+        for r in [ring, tied] {
+            r.stroke = Theme.brush(Theme.pencil)
+            r.strokeThickness = 1.5
+            add(r)
+        }
+        arrow.fill = Theme.ink(1)
+        arrow.stroke = Theme.brush(Theme.card)
+        arrow.strokeThickness = 0.8
+        add(arrow)
+        step()
+        view.loaded.addHandler { [weak self] _, _ in self?.start() }
+        view.unloaded.addHandler { [weak self] _, _ in
+            self?.ticking?.dispose()
+            self?.ticking = nil
+        }
+    }
+
+    private func start() {
+        guard ticking == nil else { return }
+        // The demo holds itself while it moves; letting go of the view lets go of it.
+        ticking = CompositionTarget.rendering.addHandler { _, _ in MainActor.assumeIsolated { self.step() } }
+    }
+
+    private func add(_ e: UIElement) { view.children.append(e) }
+
+    private func place(_ e: FrameworkElement, _ r: CGRect) {
+        try? Canvas.setLeft(e, Double(r.minX))
+        try? Canvas.setTop(e, Double(r.minY))
+        e.width = max(0, Double(r.width))
+        e.height = max(0, Double(r.height))
+    }
+
+    private func rounded(_ r: CGRect, _ radius: Double, fill: Brush, stroke: Brush? = nil, width: Double = 0) -> Rectangle {
+        let shape = Rectangle()
+        shape.radiusX = radius
+        shape.radiusY = radius
+        shape.fill = fill
+        if let stroke {
+            shape.stroke = stroke
+            shape.strokeThickness = width
+        }
+        place(shape, r)
+        return shape
+    }
+
+    private func step() {
+        let t = Date().timeIntervalSince(started).truncatingRemainder(dividingBy: 3.4)
+        let knob = CGRect(x: Double(a.minX) + 7, y: Double(a.maxY) - 22, width: w - 14, height: 11)
+        let pull = min(max((t - 0.5) / 1.1, 0), 1)
+        let held = t > 0.25 && t < 2.9
+        button.fill = held ? Theme.brush(Theme.pencil) : Theme.ink(3)
+        let p0 = (x: Double(knob.maxX), y: Double(knob.midY))
+        let p3 = (x: Double(b.minX), y: Double(b.midY) + 10)
+        let e = 1 - pow(1 - pull, 3)
+        let tip = (x: p0.x + (p3.x - p0.x) * e, y: p0.y + (p3.y - p0.y) * e - sin(e * .pi) * 10)
+        let pulling = held && pull > 0
+        thread.visibility = pulling ? .visible : .collapsed
+        end.visibility = pulling ? .visible : .collapsed
+        if pulling {
+            let sag = (1 - e) * 16
+            let figure = PathFigure()
+            figure.startPoint = Point(x: Float(p0.x), y: Float(p0.y))
+            // The curve as short straight steps: the bindings have no Bézier segment.
+            let c1 = (x: p0.x + 30, y: p0.y + sag), c2 = (x: tip.x - 30, y: tip.y + sag)
+            for k in 1...20 {
+                let u = Double(k) / 20, v = 1 - u
+                let x = v * v * v * p0.x + 3 * v * v * u * c1.x + 3 * v * u * u * c2.x + u * u * u * tip.x
+                let y = v * v * v * p0.y + 3 * v * v * u * c1.y + 3 * v * u * u * c2.y + u * u * u * tip.y
+                let line = LineSegment()
+                line.point = Point(x: Float(x), y: Float(y))
+                figure.segments.append(line)
+            }
+            let g = PathGeometry()
+            g.figures.append(figure)
+            thread.data = g
+            try? Canvas.setLeft(end, tip.x - 3.5)
+            try? Canvas.setTop(end, tip.y - 3.5)
+        }
+        // The screen answers once it is tied.
+        let answering = t > 1.6 && t < 2.9
+        ring.visibility = answering ? .visible : .collapsed
+        tied.visibility = answering ? .visible : .collapsed
+        if answering {
+            let u = min((t - 1.6) / 0.7, 1)
+            let grow = 2 + 10 * u
+            place(ring, b.insetBy(dx: -grow, dy: -grow))
+            ring.radiusX = 9 + 5 * u
+            ring.radiusY = ring.radiusX
+            ring.opacity = 1 - u
+            place(tied, b.insetBy(dx: -2, dy: -2))
+            tied.radiusX = 8
+            tied.radiusY = 8
+        }
+        // The pointer that pulls it.
+        arrow.visibility = held ? .visible : .collapsed
+        if held {
+            let at = pull > 0 ? tip : (x: Double(knob.midX), y: Double(knob.midY))
+            let figure = PathFigure()
+            figure.startPoint = Point(x: Float(at.x + 2), y: Float(at.y + 2))
+            figure.isClosed = true
+            for (dx, dy) in [(2.0, 14.0), (5.5, 10.5), (10.5, 10.0)] {
+                let line = LineSegment()
+                line.point = Point(x: Float(at.x + dx), y: Float(at.y + dy))
+                figure.segments.append(line)
+            }
+            let g = PathGeometry()
+            g.figures.append(figure)
+            arrow.data = g
+        }
     }
 }
