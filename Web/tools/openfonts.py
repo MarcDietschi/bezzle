@@ -55,7 +55,9 @@ STANDS_IN = {
 
 
 def fetch(dir, name):
-    path = os.path.join(cache, name)
+    # A licence is kept by family: every family has an OFL.txt of its own, and a cache by name
+    # alone gave all of them the first one's copyright line (every *-OFL.txt said Arimo's).
+    path = os.path.join(cache, dir.replace('/', '-') + '-' + name if name == 'OFL.txt' else name)
     if not os.path.exists(path):
         url = REPO + dir + '/' + urllib.request.quote(name)
         with urllib.request.urlopen(url) as r, open(path, 'wb') as f:

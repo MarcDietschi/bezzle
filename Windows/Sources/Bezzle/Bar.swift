@@ -125,8 +125,12 @@ final class Bar {
     /// app and how to connect one, the designs folder, and the design in front in Explorer.
     /// With a design in front, its spelling's entries too (the Mac's Edit › Spelling and Grammar).
     static func appEntries(front url: URL?, spelling: [MenuHost.Entry] = []) -> [MenuHost.Entry] {
+        // About Bezzle first, and Check for Updates… in a copy that updates itself, as the Mac's
+        // app menu begins.
+        var about: [MenuHost.Entry] = [AboutSheet.menuEntry]
+        if Updates.isAvailable { about.append(.item(Words.t("Check for Updates…")) { Updates.check() }) }
         // A design here is a folder, which Open (Ctrl+O) picks, so files from other apps come in by their own entry.
-        [.item(Words.t("Bring In a Design…"), shortcut: "Ctrl+Shift+I") { Bar.bringIn?() }, WebImporting.menuEntry, .separator]
+        return about + [.separator, .item(Words.t("Bring In a Design…"), shortcut: "Ctrl+Shift+I") { Bar.bringIn?() }, WebImporting.menuEntry, .separator]
             + (spelling.isEmpty ? [] : spelling + [.separator]) + appEntries(showing: url)
     }
 

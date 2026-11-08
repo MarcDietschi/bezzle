@@ -193,6 +193,8 @@ final class BezzleApp: SwiftApplication {
             web.host = { [weak self] in self?.presented?.root }
             web.folder = { Self.designsFolder }
             web.opened = { made, summary in Tabs.shared.open(made, report: summary) }
+            // About Bezzle, over the page in front too.
+            AboutSheet.shared.host = { [weak self] in self?.presented?.root }
             Trace.time("first view made")
             startAIServer()
             // Later starts of this Bezzle.exe hand over what they were asked to open.
@@ -208,6 +210,8 @@ final class BezzleApp: SwiftApplication {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { self.fitWindow(forDesigns: !Tabs.shared.designs.isEmpty, centred: true) }
         }
+        // A copy installed from bezzle.ch looks for a new version once it is on screen (Updates.swift).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { Updates.start() } }
     }
 
     // MARK: The command line
@@ -406,6 +410,7 @@ final class BezzleApp: SwiftApplication {
     @MainActor private func finishQuitting() {
         Tabs.shared.closeAll()
         MCPServer.shared.stop()
+        Updates.stop()
         quitting = true
         Trace.say("quitting, everything saved")
         try? window?.appWindow?.hide()
