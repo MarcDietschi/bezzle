@@ -3,6 +3,7 @@ import WinUI
 import UWP
 import WindowsFoundation
 import BezzleCore
+import WinSDK
 
 /// Bezzle's own menus, as the Mac's MenuHost draws them (Views/Menus.swift), never the system's:
 /// a card of radius 12, lifted, 6 inside, its rows 28 tall with a column for a check, the title
@@ -142,9 +143,20 @@ final class MenuHost {
                 list.children.clear()
                 _ = self.fill(list, matching, width: width, reveal: nil)
             }
+            // Alt+Backspace takes back all that was typed, as ⌥⌫ does in the Mac's menu (before the
+            // field, which would take it as Undo).
+            field.previewKeyDown.addHandler { _, args in
+                guard let args, args.key == .back, GetKeyState(Int32(VK_MENU)) < 0 else { return }
+                args.handled = true
+                field.text = ""
+            }
             field.keyDown.addHandler { [weak self] _, args in
                 guard let self, let args else { return }
-                if args.key == .escape { args.handled = true; self.close() }
+                // Escape takes back the words first, then closes, as on the Mac.
+                if args.key == .escape {
+                    args.handled = true
+                    if field.text.isEmpty { self.close() } else { field.text = "" }
+                }
                 if args.key == .enter, let first = matching.first(where: { !$0.separator && !$0.note && $0.enabled }) {
                     args.handled = true
                     self.close()
