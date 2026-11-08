@@ -114,7 +114,7 @@ public enum WindowsCore {
     /// A design's document as its file has it, its pictures given to Skia by their file names
     /// (each picture's own UUID): a package with its document.json, or a design from before
     /// pictures, one JSON file. Nothing that is open changes.
-    private static func read(_ folder: URL) throws -> BezzleDocument {
+    static func read(_ folder: URL) throws -> BezzleDocument {
         var isFolder: ObjCBool = false
         _ = FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder)
         let json = isFolder.boolValue ? folder.appendingPathComponent("document.json") : folder

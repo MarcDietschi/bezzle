@@ -27,6 +27,11 @@ final class HomeView {
     private var query = ""
     /// The designs' pictures drawn so far, by design, size and when it was last changed.
     private var pictures: [String: WriteableBitmap] = [:]
+    /// Designs looked at for a picture for a Mac's Finder since Bezzle started, and those still to
+    /// be looked at, one after another while home is in front (the Mac's Library.seekPreview).
+    private var previewsSought: Set<URL> = []
+    private var previewsToSeek: [URL] = []
+    private var seeking: Timer?
     private let folder: URL
     private let open: (URL) -> Void
     private let page = StackPanel()
@@ -479,6 +484,31 @@ final class HomeView {
         }
     }
 
+    /// A design on home without a current picture for a Mac's Finder, made before Bezzle kept them,
+    /// brought in from elsewhere or changed while closed, is given one, keeping its date; one open
+    /// in a tab makes its own as it is worked on (the Mac's Library.seekPreview). They are drawn on
+    /// the main thread here, so one at a time, a moment apart, while home is in front.
+    private func seekPreview(_ url: URL) {
+        guard previewsSought.insert(url.standardizedFileURL).inserted else { return }
+        previewsToSeek.append(url)
+        guard seeking == nil else { return }
+        seeking = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.seekNextPreview() }
+        }
+    }
+
+    private func seekNextPreview() {
+        guard Tabs.shared.selected == nil else { return }
+        guard !previewsToSeek.isEmpty else {
+            seeking?.invalidate()
+            seeking = nil
+            return
+        }
+        let url = previewsToSeek.removeFirst()
+        guard Tabs.shared.tab(showing: url) == nil, FileManager.default.fileExists(atPath: url.path) else { return }
+        WindowsCore.catchUpPreview(of: url)
+    }
+
     private func date(_ url: URL) -> Date? {
         let document = url.appendingPathComponent("document.json")
         return (try? document.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
@@ -521,6 +551,7 @@ final class HomeView {
             }
         }
         column.children.append(frame)
+        seekPreview(url)
         let name = Theme.text(url.deletingPathExtension().lastPathComponent, size: 15, serif: true)
         column.children.append(name)
         // How it is shared, under its name.

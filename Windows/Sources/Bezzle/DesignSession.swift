@@ -154,9 +154,13 @@ final class DesignSession {
         shareTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.lookAtShare() }
         }
+        if WindowsCore.designHasPreview { previewed = WindowsCore.designChanges }
     }
 
-    deinit { shareTimer?.invalidate() }
+    deinit {
+        shareTimer?.invalidate()
+        previewTimer?.invalidate()
+    }
 
     nonisolated(unsafe) private var shareTimer: Timer?
 
@@ -166,6 +170,49 @@ final class DesignSession {
         shareTimer = nil
         saveTimer?.invalidate()
         saveTimer = nil
+        previewTimer?.invalidate()
+        previewTimer = nil
+    }
+
+    // MARK: The Finder's picture
+
+    /// Which change of the design the picture a Mac's Finder shows for its file was last made
+    /// from; nil while it has none (the Mac's DocumentStore.previewed). See the core's DesignPreview.
+    private var previewed: Int?
+    nonisolated(unsafe) private var previewTimer: Timer?
+
+    /// The design was saved: if it changed, its picture is made again a little later, once for
+    /// however many changes come meanwhile, as the Mac's schedulePreview does.
+    private func schedulePreview() {
+        guard previewed != WindowsCore.designChanges, previewTimer == nil else { return }
+        previewTimer = Timer.scheduledTimer(withTimeInterval: WindowsCore.previewEvery, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.previewTimer = nil
+                // It is drawn on the main thread here, so not in the middle of a drag: once it ends.
+                let dragging = self.slot.isOpen && WindowsCore.using(self.slot) { WindowsCore.inGesture }
+                if dragging {
+                    self.previewTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+                        MainActor.assumeIsolated { self?.previewTimer = nil; self?.makePreview() }
+                    }
+                } else {
+                    self.makePreview()
+                }
+            }
+        }
+    }
+
+    /// Makes the design's picture as it is now, if it changed since the last was made: after a
+    /// pause in the work, as the tab closes, and as Bezzle quits (the Mac's makePreview).
+    func makePreview() {
+        previewTimer?.invalidate()
+        previewTimer = nil
+        guard slot.isOpen else { return }
+        WindowsCore.using(slot) {
+            guard previewed != WindowsCore.designChanges else { return }
+            previewed = WindowsCore.designChanges
+            WindowsCore.writePreview()
+        }
     }
 
     /// Shows what others sharing the design changed since the last look, if anything: what they
@@ -254,6 +301,7 @@ final class DesignSession {
                 if unsaved != nil { unsaved = nil; onUnsaved?(nil) }
                 // A version is taken by itself as the design is worked on.
                 WindowsCore.versions.saved()
+                schedulePreview()
             } catch {
                 let why = "\(error)"
                 if unsaved != why { unsaved = why; onUnsaved?(why) }

@@ -215,6 +215,8 @@ final class DesignTab {
             view.session.save()
             WindowsCore.versions.saved(closing: true)
         }
+        // A Mac's Finder shows the design as it was closed (the Mac's DesignTab.close).
+        view.session.makePreview()
         view.session.closed()
         WindowsCore.closeSlot(slot)
         self.view = nil
@@ -416,6 +418,8 @@ final class Tabs {
     func saveAll() -> [(name: String, reason: String)] {
         designs.compactMap { tab in
             tab.save()
+            // A Mac's Finder shows the design as it is now, not as it was a few changes ago.
+            tab.view?.session.makePreview()
             return tab.unsaved.map { (tab.name, $0) }
         }
     }

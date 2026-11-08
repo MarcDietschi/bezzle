@@ -117,6 +117,19 @@ do {
     }
     let out = URL(fileURLWithPath: arguments[3])
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    // With BEZZLE_PREVIEW, the picture a Mac's Finder shows for the design is written into its
+    // package as the app writes it (Host/DesignPreview.swift), and how long it took said; with
+    // BEZZLE_PREVIEW=catchup, as home catches up on a design without a current one, its date kept.
+    if let preview = ProcessInfo.processInfo.environment["BEZZLE_PREVIEW"] {
+        let started = Date()
+        if preview == "catchup" {
+            print("Finder's picture: \(WindowsCore.catchUpPreview(of: design) ? "caught up" : "current already") in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+        } else {
+            WindowsCore.writePreview()
+            print("Finder's picture: \(WindowsCore.designHasPreview ? "written" : "none") in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+        }
+        exit(0)
+    }
     // With BEZZLE_CUT (x1,y1,x2,y2 on the canvas), the knife's line is drawn there first, and
     // what it cuts said.
     if let cut = ProcessInfo.processInfo.environment["BEZZLE_CUT"] {
