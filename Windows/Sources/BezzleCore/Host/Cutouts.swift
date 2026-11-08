@@ -352,9 +352,10 @@ extension WindowsCore {
     /// What `bezzle-render <fonts> cutout <out>` does with the photos BEZZLE_PHOTOS names (separated
     /// by ;): each cut out as Bezzle cuts it out, into `out` as <name>-cutout.png with its outline
     /// (<name>-outline.txt), the matte as the model made it (<name>-matte.png, and with
-    /// BEZZLE_MATTE_RAW its 2,048 × 2,048 floats, <name>-matte.f32), and the parts a click keeps or
-    /// drops (<name>-parts.txt); BEZZLE_PICKS ("x,y;x,y") keeps only some. Says how long each step
-    /// took and where the model ran; BEZZLE_MATTE_TWICE runs the model twice, the second time as it runs once warm.
+    /// BEZZLE_MATTE_RAW its 2,048 × 2,048 floats, <name>-matte.f32, and what the model was given,
+    /// <name>-input.f32), and the parts a click keeps or drops (<name>-parts.txt); BEZZLE_PICKS
+    /// ("x,y;x,y") keeps only some. Says how long each step took and where the model ran;
+    /// BEZZLE_MATTE_TWICE runs the model twice, the second time as it runs once warm.
     public static func tryCutouts(_ photos: [URL], into out: URL) async -> [String] {
         var said: [String] = []
         let started = Date()
@@ -396,6 +397,10 @@ extension WindowsCore {
                     if raw {
                         let floats = Data(bytes: learned.p, count: learned.count * 4)
                         try? floats.write(to: out.appendingPathComponent("\(name)-matte.f32"))
+                        // And what the model was given: red, green and blue planes, 2,048 square.
+                        if let input = try? SubjectMatte.square(work) {
+                            try? input.withUnsafeBytes { Data($0) }.write(to: out.appendingPathComponent("\(name)-input.f32"))
+                        }
                     }
                     let small = CutoutMaker.resample(learned, ww, wh)
                     var grey = [UInt8](repeating: 255, count: ww * wh * 4)

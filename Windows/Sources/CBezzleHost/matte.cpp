@@ -338,6 +338,14 @@ extern "C" int32_t bz_matte_run(void* handle, const float* input, int32_t side, 
     const char* inputs[] = {"image"};
     const char* outputs[] = {"matte"};
     OrtValue* out = nullptr;
+    // On the processor, a session for each picture, let go once it is done (below): one kept from
+    // picture to picture held on to the gigabytes the model needs there, and more with each picture.
+    if (!matte->session) matte->session = session(matte->file, nullptr, why);
+    if (!matte->session) {
+        api->ReleaseValue(in);
+        say(error, capacity, why);
+        return 5;
+    }
     why = failed(api->Run(matte->session, nullptr, inputs, &in, 1, outputs, 1, &out));
     if (!why.empty() && matte->onCard) {
         // The graphics card gave up on it (its memory too small for the model at 2,048 pixels, as
@@ -368,6 +376,10 @@ extern "C" int32_t bz_matte_run(void* handle, const float* input, int32_t side, 
     if (why.empty()) why = failed(api->GetTensorMutableData(out, reinterpret_cast<void**>(&values)));
     if (why.empty()) std::memcpy(output, values, size_t(side) * side * sizeof(float));
     api->ReleaseValue(out);
+    if (!matte->onCard) {
+        api->ReleaseSession(matte->session);
+        matte->session = nullptr;
+    }
     if (!why.empty()) {
         say(error, capacity, why);
         return 4;

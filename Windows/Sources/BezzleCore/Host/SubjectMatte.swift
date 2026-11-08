@@ -75,7 +75,7 @@ nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
 
     /// `picture` squeezed into the square the model sees, as the Mac's draws it: red, green and
     /// blue planes, 0…1.
-    private static func square(_ picture: CutoutMaker.Pixels) throws -> [Float] {
+    static func square(_ picture: CutoutMaker.Pixels) throws -> [Float] {
         guard let square = picture.w == side && picture.h == side ? picture : picture.scaled(side, side) else {
             throw CutoutMaker.Failure.unreadable
         }
