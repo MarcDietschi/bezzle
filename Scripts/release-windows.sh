@@ -187,7 +187,7 @@ if [ -z "$PUBLISH" ]; then
   exit 0
 fi
 
-echo "Publishing the GitHub release $TAG…"
+echo "Publishing the GitHub release ${TAG}…"
 python3 "$SRC/Scripts/release/notes.py" github "$VERSION" > "$WORK/notes.md"
 gh release create "$TAG" -R "$SITE_REPO" --title "Bezzle $VERSION for Windows" --notes-file "$WORK/notes.md" "$WORK/out/"*.exe
 for ARCH in $ARCHS; do

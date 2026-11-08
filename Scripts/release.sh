@@ -266,7 +266,9 @@ for _ in $(seq 1 60); do
   sleep 10
 done
 [ -n "$LIVE" ] || fail "After 10 minutes $FEED_URL and $OLD_FEED_URL do not both offer $VERSION, or $SERVED is not there whole: see the Deploy workflow at https://github.com/$SITE_REPO/actions. Once they are, tag the commit: git tag v$VERSION $COMMIT && git push origin refs/tags/v$VERSION"
-curl -fsS "$SITE/download.html?check=$(date +%s)" | grep -qF "Bezzle-$VERSION.zip" || echo "The download page does not show $VERSION yet: check $SITE/download.html" >&2
+# Read whole first: grep -q leaving early would fail the pipe (pipefail) though the page has it.
+PAGE="$(curl -fsS "$SITE/download.html?check=$(date +%s)" 2>/dev/null || true)"
+grep -qF "Bezzle-$VERSION.zip" <<< "$PAGE" || echo "The download page does not show $VERSION yet: check $SITE/download.html" >&2
 
 # The tag comes last, as the mark that this version is out.
 git -C "$ROOT" rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null || git -C "$ROOT" tag "v$VERSION" "$COMMIT"
