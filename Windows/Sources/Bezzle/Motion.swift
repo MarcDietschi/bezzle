@@ -9,7 +9,7 @@ import BezzleCore
 @MainActor
 enum Motion {
     /// A SwiftUI spring, its response in seconds and its damping fraction, as stiffness and damping.
-    static func spring(response: Double, damping fraction: Double) -> (stiffness: Double, damping: Double) {
+    nonisolated static func spring(response: Double, damping fraction: Double) -> (stiffness: Double, damping: Double) {
         let w = 2 * Double.pi / response
         return (w * w, 2 * fraction * w)
     }

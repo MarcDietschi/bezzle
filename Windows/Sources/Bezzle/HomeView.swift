@@ -527,8 +527,29 @@ final class HomeView {
         if let note = ShareHome.note(for: url) { column.children.append(note) }
         let pick = Pressable(radius: 12) { [weak self] in self?.open(url) }
         pick.hoverWash = 0
-        pick.box.pointerEntered.addHandler { _, _ in name.foreground = Theme.brush(Theme.pencil) }
-        pick.box.pointerExited.addHandler { _, _ in name.foreground = Theme.ink(1) }
+        // Pointed at, it lifts off the page and tips a little toward the pointer, as a print held
+        // up to look at (the Mac's DesignPlate: 5 and 6 degrees at most, on a spring of 0.3, 0.84).
+        let lifted = CompositeTransform()
+        column.renderTransform = lifted
+        let size = CGSize(width: frame.width, height: frame.height)
+        let motion = StandMotion(slot: size, tip: Motion.spring(response: 0.3, damping: 0.84))
+        motion.apply = { _, _, tilt in
+            frame.transformMatrix = Motion.turned(size, aboutX: 5 * Double(tilt.y), aboutY: 6 * Double(tilt.x), perspective: 0.5)
+        }
+        pick.box.pointerEntered.addHandler { _, _ in
+            name.foreground = Theme.brush(Theme.pencil)
+            lifted.translateY = -3
+            motion.point(true)
+        }
+        pick.box.pointerMoved.addHandler { _, args in
+            guard let q = try? args?.getCurrentPoint(frame)?.position else { return }
+            motion.tilt(toward: CGPoint(x: Double(q.x), y: Double(q.y)))
+        }
+        pick.box.pointerExited.addHandler { _, _ in
+            name.foreground = Theme.ink(1)
+            lifted.translateY = 0
+            motion.point(false)
+        }
         pick.box.child = column
         // What a right click on a design offers, as on the Mac.
         let box = pick.box
@@ -694,9 +715,13 @@ private final class StandMotion {
 
     private static let lift = Motion.spring(response: 0.32, damping: 0.72)
     private static let pop = Motion.spring(response: 0.3, damping: 0.55)
-    private static let tip = Motion.spring(response: 0.28, damping: 0.82)
+    private let tip: (stiffness: Double, damping: Double)
 
-    init(slot: CGSize) { self.slot = slot }
+    /// The tilt on the Mac's interactive spring for it: a size's (0.28, 0.82) unless said.
+    init(slot: CGSize, tip: (stiffness: Double, damping: Double) = Motion.spring(response: 0.28, damping: 0.82)) {
+        self.slot = slot
+        self.tip = tip
+    }
 
     func point(_ on: Bool) {
         lifted.target = on ? 1 : 0
@@ -713,8 +738,11 @@ private final class StandMotion {
 
     /// The pointer at `p` in the size's place on the stage.
     func tilt(toward p: CGPoint) {
-        tiltX.target = Double(p.x) / max(Double(slot.width), 1) - 0.5
-        tiltY.target = Double(p.y) / max(Double(slot.height), 1) - 0.5
+        // Only over the thing itself, as the Mac follows the pointer over it alone.
+        let x = Double(p.x) / max(Double(slot.width), 1), y = Double(p.y) / max(Double(slot.height), 1)
+        let over = (0...1).contains(x) && (0...1).contains(y)
+        tiltX.target = over ? x - 0.5 : 0
+        tiltY.target = over ? y - 0.5 : 0
         ticker.start()
     }
 
@@ -728,8 +756,8 @@ private final class StandMotion {
         } else {
             plus.step(dt, stiffness: Self.pop.stiffness, damping: Self.pop.damping)
         }
-        tiltX.step(dt, stiffness: Self.tip.stiffness, damping: Self.tip.damping)
-        tiltY.step(dt, stiffness: Self.tip.stiffness, damping: Self.tip.damping)
+        tiltX.step(dt, stiffness: tip.stiffness, damping: tip.damping)
+        tiltY.step(dt, stiffness: tip.stiffness, damping: tip.damping)
         apply(lifted.value, plus.value, CGPoint(x: tiltX.value, y: tiltY.value))
         return !lifted.settled || !plus.settled || plusOut != nil || !tiltX.settled || !tiltY.settled
     }
