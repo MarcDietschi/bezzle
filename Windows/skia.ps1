@@ -1,20 +1,31 @@
 # Builds Skia for Bezzle on Windows into Windows\Packages\skia (git-ignored): the Skia of the web
 # core's CanvasKit 0.42.0, so designs draw and text measures as they do in the browser, with its
 # paragraphs (skparagraph, skshaper, skunicode on ICU, HarfBuzz) and FreeType, as CanvasKit has
-# them. Static libraries for the machine's own architecture, against the DLL C runtime that Swift
-# uses (/MD). Run on Windows in Windows\:
+# them. Static libraries, in out\<arch>, against the DLL C runtime that Swift uses (/MD). Run on
+# Windows in Windows\:
 #
-#   .\skia.ps1 [-Fetch]     # -Fetch: only clone Skia and its dependencies
-param([switch]$Fetch)
+#   .\skia.ps1 [-Arch arm64|x64] [-Jobs 2] [-Fetch]     # -Fetch: only clone Skia and its dependencies
+#
+# The architecture is the machine's own unless named. x64 is made on an Arm machine too: the same
+# clang-cl, told the x64 target (Skia tells it only arm64's), over Visual Studio's x64 libraries.
+param(
+    [ValidateSet('arm64', 'x64')] [string]$Arch = $(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }),
+    [int]$Jobs = 0,
+    [switch]$Fetch
+)
 
 $ErrorActionPreference = 'Stop'
 $commit = 'e2def78fa232884d4aedcf3ad92d4a0dd673b898'   # canvaskit/0.42.0
 $skia = Join-Path $PSScriptRoot 'Packages\skia'
-$cpu = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+$cpu = $Arch
 
 if (-not (Test-Path "$skia\.git")) { git clone --quiet https://skia.googlesource.com/skia.git $skia }
-git -C $skia fetch --quiet origin $commit
-git -C $skia checkout --quiet --force $commit
+# Fetched and checked out only when it is not that commit already, so that building another
+# architecture beside a first leaves the checkout as it is.
+if ((git -C $skia rev-parse HEAD) -ne $commit) {
+    git -C $skia fetch --quiet origin $commit
+    git -C $skia checkout --quiet --force $commit
+}
 Push-Location $skia
 try {
     # Its last step, fetch-gn, fails on Windows on Arm: gn has no arm64 build there (404). The x64
@@ -34,7 +45,9 @@ try {
     if ($Fetch) { return }
 
     # The build's settings, in args.gn, where gn reads them (PowerShell 5 mangles the quotes in
-    # a --args=… argument).
+    # a --args=… argument). clang-cl targets the machine it runs on unless told: Skia's build
+    # says arm64 itself, so x64 is said here (also right on an x64 machine).
+    $flags = if ($cpu -eq 'x64') { '"/MD", "--target=x86_64-pc-windows-msvc"' } else { '"/MD"' }
     $settings = @(
         "target_cpu = `"$cpu`"", 'is_official_build = true', 'is_debug = false', 'is_component_build = false',
         'clang_win = "C:/Program Files/LLVM"',
@@ -45,13 +58,14 @@ try {
         'skia_use_icu = true', 'skia_use_harfbuzz = true',
         'skia_enable_skshaper = true', 'skia_enable_skparagraph = true', 'skia_enable_skunicode = true',
         'skia_enable_pdf = true', 'skia_use_dng_sdk = false', 'skia_use_gl = false',
-        'extra_cflags = [ "/MD" ]'
+        "extra_cflags = [ $flags ]"
     )
     New-Item -ItemType Directory -Force "out\$cpu" | Out-Null
     Set-Content "out\$cpu\args.gn" ($settings -join "`n") -Encoding Ascii
     & bin\gn gen "out\$cpu"
     if ($LASTEXITCODE -ne 0) { throw 'gn gen failed' }
-    ninja -C "out\$cpu" skia skparagraph skshaper skunicode_core skunicode_icu
+    $parallel = if ($Jobs -gt 0) { @('-j', "$Jobs") } else { @() }
+    ninja -C "out\$cpu" @parallel skia skparagraph skshaper skunicode_core skunicode_icu
     if ($LASTEXITCODE -ne 0) { throw 'ninja failed' }
 } finally {
     Pop-Location
