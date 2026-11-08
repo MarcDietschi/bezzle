@@ -19,6 +19,8 @@ final class Inspector {
     let cards = StackPanel()
     /// The place a style goes, for each card that has one, by the card's name (`card(style:)`).
     private var styleKeys: [String: String] = [:]
+    /// Whether a card pointed at outlines the other layers with its look's name.
+    private var cardLit = false
 
     /// The card that is open, one at a time as on the Mac (store.openAspect): Frame to begin with.
     var opened: String? = "Frame" {
@@ -137,6 +139,11 @@ final class Inspector {
 
     func show() {
         cards.children.clear()
+        // The card pointed at goes with them, and the layers it outlined with it.
+        if cardLit {
+            cardLit = false
+            session.litLayers = []
+        }
         // Inspecting: the specs of what is picked, read and copied, never changed.
         if session.mode == 2 { showInspect(); return }
         // As a prototype: where what is picked goes.
@@ -235,6 +242,22 @@ final class Inspector {
         if let style { styleKeys[key] = style }
         let card = Theme.card(radius: 12)
         card.width = Theme.cardWidth
+        // Pointed at, a card whose look has a name outlines every other layer with that name on
+        // the canvas, as the Mac's StyleMarks does for the pointed aspect.
+        if let style {
+            card.pointerEntered.addHandler { [weak self] _, _ in
+                guard let self else { return }
+                let users = WindowsCore.namedLookUsers(at: style, self.session.selection)
+                guard !users.isEmpty else { return }
+                self.cardLit = true
+                self.session.litLayers = users
+            }
+            card.pointerExited.addHandler { [weak self] _, _ in
+                guard let self, self.cardLit else { return }
+                self.cardLit = false
+                self.session.litLayers = []
+            }
+        }
         let stack = StackPanel()
         let line = Grid()
         line.height = 40

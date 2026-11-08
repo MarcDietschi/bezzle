@@ -349,7 +349,12 @@ final class HomeView {
         thing.height = Double(m.size.height)
         thing.verticalAlignment = .bottom
         thing.horizontalAlignment = .center
-        thing.children.append(figure)
+        // What tips toward the pointer: the thing, its screen's pencil and the plus on it.
+        let body = Grid()
+        body.width = thing.width
+        body.height = thing.height
+        thing.children.append(body)
+        body.children.append(figure)
         // The pencil round its screen, with a plus, for when it is pointed at.
         let ring = Rectangle()
         ring.width = Double(m.screen.width)
@@ -362,7 +367,7 @@ final class HomeView {
         ring.verticalAlignment = .top
         ring.margin = Theme.inset(Double(m.screen.minX), Double(m.screen.minY), 0, 0)
         ring.opacity = 0
-        thing.children.append(ring)
+        body.children.append(ring)
         let badge = Border()
         badge.width = 22
         badge.height = 22
@@ -373,7 +378,13 @@ final class HomeView {
         badge.verticalAlignment = .top
         badge.margin = Theme.inset(Double(m.screen.midX) - 11, Double(m.screen.midY) - 11, 0, 0)
         badge.opacity = 0
-        thing.children.append(badge)
+        let badgeGrow = CompositeTransform()
+        badgeGrow.centerX = 11
+        badgeGrow.centerY = 11
+        badgeGrow.scaleX = 0.2
+        badgeGrow.scaleY = 0.2
+        badge.renderTransform = badgeGrow
+        body.children.append(badge)
         room.children.append(thing)
         column.children.append(room)
 
@@ -393,17 +404,31 @@ final class HomeView {
         let pick = Pressable(radius: 10) { [weak self] in self?.make(size) }
         pick.hoverWash = 0
         pick.box.child = column
+        // Pointed at, it lifts and tips toward the pointer, as the Mac's HomeStage: up 9 points on
+        // a spring (response 0.32, damping 0.72), the pencil coming with it; the plus springs up
+        // from a fifth of its size (0.3, 0.55) and fades back (ease out, 0.12 s); the tilt
+        // follows the pointer (0.28, 0.82), 14 degrees about across and 16 about up at most.
+        let motion = StandMotion(slot: CGSize(width: room.width, height: Self.tallest))
+        motion.apply = { lifted, plus, tilt in
+            lift.translateY = -9 * lifted
+            ring.opacity = min(max(lifted, 0), 1)
+            badge.opacity = min(max(plus, 0), 1)
+            badgeGrow.scaleX = max(0.2 + 0.8 * plus, 0.01)
+            badgeGrow.scaleY = max(0.2 + 0.8 * plus, 0.01)
+            body.transformMatrix = Motion.turned(CGSize(width: body.width, height: body.height), aboutX: 14 * Double(tilt.y),
+                                                 aboutY: 16 * Double(tilt.x), perspective: 0.55)
+        }
         pick.box.pointerEntered.addHandler { _, _ in
-            lift.translateY = -5
-            ring.opacity = 1
-            badge.opacity = 1
+            motion.point(true)
             title.foreground = Theme.brush(Theme.pencil)
             numbers.foreground = Theme.brush(Theme.pencil, 0.75)
         }
+        pick.box.pointerMoved.addHandler { _, args in
+            guard let q = try? args?.getCurrentPoint(room)?.position else { return }
+            motion.tilt(toward: CGPoint(x: Double(q.x), y: Double(q.y)))
+        }
         pick.box.pointerExited.addHandler { _, _ in
-            lift.translateY = 0
-            ring.opacity = 0
-            badge.opacity = 0
+            motion.point(false)
             title.foreground = Theme.ink(1)
             numbers.foreground = Theme.ink(3)
         }
@@ -649,5 +674,63 @@ final class HomeView {
     func refresh() {
         shownWidth = 0
         showDesigns()
+    }
+}
+
+/// How a size on home's stage moves while it is pointed at (the Mac's HomeStage): lifted, its
+/// plus shown, and tipped toward the pointer, each on the Mac's spring for it.
+@MainActor
+private final class StandMotion {
+    /// What is drawn from the motion: how far lifted and how far the plus has come, 0 to 1, and
+    /// the tilt, each way from -0.5 to 0.5.
+    var apply: (Double, Double, CGPoint) -> Void = { _, _, _ in }
+    private let slot: CGSize
+    private var lifted = DeckSpring(0)
+    private var plus = DeckSpring(0)
+    private var plusOut: (from: Double, elapsed: Double)?
+    private var tiltX = DeckSpring(0)
+    private var tiltY = DeckSpring(0)
+    private lazy var ticker = Motion.Ticker { [weak self] dt in self?.step(dt) ?? false }
+
+    private static let lift = Motion.spring(response: 0.32, damping: 0.72)
+    private static let pop = Motion.spring(response: 0.3, damping: 0.55)
+    private static let tip = Motion.spring(response: 0.28, damping: 0.82)
+
+    init(slot: CGSize) { self.slot = slot }
+
+    func point(_ on: Bool) {
+        lifted.target = on ? 1 : 0
+        if on {
+            plusOut = nil
+            plus.target = 1
+        } else {
+            plusOut = (min(max(plus.value, 0), 1), 0)
+            tiltX.target = 0
+            tiltY.target = 0
+        }
+        ticker.start()
+    }
+
+    /// The pointer at `p` in the size's place on the stage.
+    func tilt(toward p: CGPoint) {
+        tiltX.target = Double(p.x) / max(Double(slot.width), 1) - 0.5
+        tiltY.target = Double(p.y) / max(Double(slot.height), 1) - 0.5
+        ticker.start()
+    }
+
+    private func step(_ dt: Double) -> Bool {
+        lifted.step(dt, stiffness: Self.lift.stiffness, damping: Self.lift.damping)
+        if var out = plusOut {
+            out.elapsed += dt
+            let k = min(out.elapsed / 0.12, 1)
+            plus = DeckSpring(out.from * (1 - Motion.easeOut(k)))
+            plusOut = k < 1 ? out : nil
+        } else {
+            plus.step(dt, stiffness: Self.pop.stiffness, damping: Self.pop.damping)
+        }
+        tiltX.step(dt, stiffness: Self.tip.stiffness, damping: Self.tip.damping)
+        tiltY.step(dt, stiffness: Self.tip.stiffness, damping: Self.tip.damping)
+        apply(lifted.value, plus.value, CGPoint(x: tiltX.value, y: tiltY.value))
+        return !lifted.settled || !plus.settled || plusOut != nil || !tiltX.settled || !tiltY.settled
     }
 }

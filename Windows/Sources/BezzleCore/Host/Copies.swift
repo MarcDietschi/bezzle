@@ -184,6 +184,7 @@ extension WindowsCore {
         Editing.lastStep = nil
         offered = doc.componentOffer(after: step.before, echo: step.echo)
         styleOffered = nil
+        styleOfferLayers = []
         deckOffered = nil
         guard let offer = offered else {
             // A change in the post in front that every post followed: offered to keep it there alone.
@@ -206,6 +207,7 @@ extension WindowsCore {
         guard let (anchor, olds, places, others) = doc.onlyHereOffer(before: before, selection: selection, changed: changed,
                                                                      users: { users[$0] ?? [] }) else { return nil }
         styleOffered = .onlyHere(styles: olds, places: places)
+        styleOfferLayers = Array(others)
         return CopyOffer(anchor: anchor, words: say("Also on %lld more layers", others.count), buttons: [say("Only Here")], token: UUID(), style: true)
     }
 
@@ -223,7 +225,13 @@ extension WindowsCore {
     public static func dropCopyOffer() {
         offered = nil
         styleOffered = nil
+        styleOfferLayers = []
     }
+
+    /// The layers a style's offer is about, which the canvas outlines while its button is pointed
+    /// at (the Mac's StyleOffer.layers): the others with the style, those that look the same, or
+    /// the artboard made dark.
+    public internal(set) static var styleOfferLayers: [UUID] = []
 
     /// Does what the offer's button `index` offers, as one step; what is picked then, if that changes.
     @discardableResult public static func takeCopyOffer(_ index: Int) -> [UUID]? {

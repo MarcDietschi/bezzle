@@ -209,6 +209,9 @@ final class DesignCanvas {
     private let componentMarks = Canvas()
     private var copyOffer: WindowsCore.CopyOffer?
     private var copyButtons: [(rect: CGRect, index: Int)] = []
+    /// The offer's button under the pointer: a style's lights the layers it is about.
+    private var copyHovered: Int?
+    private var copyLit = false
     /// Something being moved, held still over a shape (the Mac's MaskTool dip): the shape under
     /// the pointer and where it came to rest, whether resting would open it, the shape opened and
     /// the mask it made, and the shapes opened and left again in this drag.
@@ -259,6 +262,15 @@ final class DesignCanvas {
     /// The design inspected (the Mac's InspectTool, ported): its measures.
     var inspect: WindowsCore.InspectHand { session.inspect }
     private let inspectMarks = Canvas()
+    /// What the inspect marks show, and how far they have grown in since it changed.
+    private var inspectShown = ""
+    private var inspectGrow = DeckSpring(1)
+    private lazy var inspectTicker = Motion.Ticker { [weak self] dt in
+        guard let self else { return false }
+        self.inspectGrow.step(dt, stiffness: 420, damping: 24)
+        self.drawInspect()
+        return !self.inspectGrow.settled
+    }
     private var inspecting: Bool { session.mode == 2 }
     /// The design as a prototype (the Mac's FlowTool, ported): its threads and flags.
     var flow: WindowsCore.FlowHand { session.flow }
@@ -1698,14 +1710,49 @@ final class DesignCanvas {
         waveTick = CompositionTarget.rendering.addHandler { _, _ in MainActor.assumeIsolated { step() } }
     }
 
+    /// Whether the style outlines show, and how far they have faded in or out.
+    private var stylesShown = false
+    private var styleFade: (from: Double, to: Double, elapsed: Double)?
+    private lazy var styleTicker = Motion.Ticker { [weak self] dt in self?.stepStyleFade(dt) ?? false }
+
+    private func fadeStyles(to target: Double) {
+        styleFade = (Double(styleMarks.opacity), target, 0)
+        styleTicker.start()
+    }
+
+    private func stepStyleFade(_ dt: Double) -> Bool {
+        guard var f = styleFade else { return false }
+        f.elapsed += dt
+        let k = min(f.elapsed / 0.16, 1)
+        styleMarks.opacity = f.from + (f.to - f.from) * Motion.easeOut(k)
+        styleFade = k < 1 ? f : nil
+        // Faded out: gone.
+        if k >= 1, f.to == 0 { styleMarks.children.clear() }
+        return k < 1
+    }
+
     /// Every layer that uses the style pointed at in the inspector, outlined in pencil.
     private func drawStyleUsers() {
         if !holds(overlay, styleMarks) {
             styleMarks.isHitTestVisible = false
             overlay.children.append(styleMarks)
         }
+        // Coming and going, the outlines fade, as the Mac's do (ease out, 0.16 s); while they
+        // show, they follow what is pointed at at once.
+        guard session.mode == 0, session.pointedStyle != nil || !session.litLayers.isEmpty else {
+            if stylesShown {
+                stylesShown = false
+                fadeStyles(to: 0)
+            }
+            return
+        }
         styleMarks.children.clear()
-        guard session.mode == 0, session.pointedStyle != nil || !session.litLayers.isEmpty else { return }
+        if !stylesShown {
+            stylesShown = true
+            // From nothing, or from as far as fading out had gone.
+            if styleFade == nil { styleMarks.opacity = 0 }
+            fadeStyles(to: 1)
+        }
         var lines = PathData()
         let outlines = session.pointedStyle.map { WindowsCore.styleUserOutlines($0) } ?? []
         for corners in outlines + WindowsCore.layerOutlines(session.litLayers) {
@@ -1796,6 +1843,11 @@ final class DesignCanvas {
               WindowsCore.componentLook(session.selection)?.copy == offer.anchor || session.selection.contains(offer.anchor),
               let frame = WindowsCore.selectionFrame([offer.anchor]) else {
             copyChip.visibility = .collapsed
+            copyHovered = nil
+            if copyLit {
+                copyLit = false
+                session.litLayers = []
+            }
             return
         }
         let row = StackPanel()
@@ -1814,7 +1866,9 @@ final class DesignCanvas {
             pill.cornerRadius = Theme.corners(10)
             // A component's offer in the violet of copies; a style's in the pencil's blue.
             let tint = offer.style ? Theme.pencil : Theme.linked
-            pill.background = i == 0 ? Theme.brush(tint) : Theme.brush(tint, 0.08)
+            // Pointed at, the filled one darker and the others' wash deeper, as on the Mac.
+            let pointed = copyHovered == i
+            pill.background = i == 0 ? Theme.brush(pointed ? Theme.mix(tint, 0, 0.15) : tint) : Theme.brush(tint, pointed ? 0.16 : 0.08)
             let label = Theme.text(Words.match(title), size: 11.5, weight: 600)
             label.foreground = i == 0 ? Theme.brush(0xFFFFFF) : Theme.brush(tint)
             label.margin = Theme.inset(9, 0, 9, 0)
@@ -1842,6 +1896,23 @@ final class DesignCanvas {
             let pw = Double(pill.desiredSize.width)
             copyButtons.append((CGRect(x: left, y: y + 4, width: pw, height: 20), i))
             left += pw + 4
+        }
+    }
+
+    /// The pointer over an offer's buttons: the one under it darkens, and a style's outlines on
+    /// the canvas the layers it is about (the Mac's OfferChip lighting `offer.layers`).
+    private func pointCopyOffer(at p: CGPoint) {
+        let over = copyButtons.first { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }?.index
+        guard over != copyHovered else { return }
+        copyHovered = over
+        placeCopyOffer()
+        let layers = over != nil && copyOffer?.style == true ? WindowsCore.styleOfferLayers : []
+        if !layers.isEmpty {
+            copyLit = true
+            session.litLayers = layers
+        } else if copyLit {
+            copyLit = false
+            session.litLayers = []
         }
     }
 
@@ -2332,6 +2403,17 @@ final class DesignCanvas {
         guard inspecting else { return }
         syncInspect()
         let m = inspect.marks()
+        // Each mark grows in from its middle when what is shown changes, a little past and back
+        // (the Mac's InspectTool: stiffness 420, damping 24): lines drawn out from their middles,
+        // their ticks and dashes once drawn, gaps and numbers coming up.
+        let key = inspect.shownKey
+        if key != inspectShown {
+            inspectShown = key
+            inspectGrow = DeckSpring(0)
+            inspectGrow.target = 1
+            inspectTicker.start()
+        }
+        let g = inspectGrow.value, e = min(max(g, 0), 1), drawn = e >= 0.98
         let pencil: UInt32 = 0x3A63D8, pink: UInt32 = 0xE0457B
         func px(_ v: BezzleCore.CGFloat) -> Double { Double(v).rounded() + 0.5 }
         func path(_ d: PathData, width: Double, ink: UInt32, alpha: Double = 1, dash: String? = nil) {
@@ -2348,6 +2430,7 @@ final class DesignCanvas {
             field.fill = Theme.brush(pink, 0.07)
             try? Canvas.setLeft(field, Double(r.minX))
             try? Canvas.setTop(field, Double(r.minY))
+            field.opacity = e
             inspectMarks.children.append(field)
             var d = PathData()
             var x = Double(r.minX) - Double(r.height)
@@ -2358,14 +2441,14 @@ final class DesignCanvas {
                 if x1 > x0 { d.move(x0, y0); d.line(x1, y1) }
                 x += 4
             }
-            path(d, width: 1, ink: pink, alpha: 0.4)
+            path(d, width: 1, ink: pink, alpha: 0.4 * e)
         }
         for o in m.outlines {
             var d = PathData()
             d.rect(px(o.rect.minX), px(o.rect.minY), Double(o.rect.width).rounded(), Double(o.rect.height).rounded())
             path(d, width: o.width, ink: o.gap ? pink : pencil, dash: o.dashed ? "4 3" : nil)
         }
-        for dash in m.dashes {
+        for dash in m.dashes where drawn {
             var d = PathData()
             d.move(px(dash.from.x), px(dash.from.y))
             d.line(px(dash.to.x), px(dash.to.y))
@@ -2374,9 +2457,11 @@ final class DesignCanvas {
         // The lines over a casing of white, so they read on any layer.
         for gap in [false, true] {
             var d = PathData()
-            for l in m.lines where l.gap == gap {
-                d.move(px(l.from.x), px(l.from.y))
-                d.line(px(l.to.x), px(l.to.y))
+            for l in m.lines where l.gap == gap && (!l.tick || drawn) {
+                let mx = (Double(l.from.x) + Double(l.to.x)) / 2, my = (Double(l.from.y) + Double(l.to.y)) / 2
+                let k = l.tick ? 1 : e
+                d.move(px(BezzleCore.CGFloat(mx + (Double(l.from.x) - mx) * k)), px(BezzleCore.CGFloat(my + (Double(l.from.y) - my) * k)))
+                d.line(px(BezzleCore.CGFloat(mx + (Double(l.to.x) - mx) * k)), px(BezzleCore.CGFloat(my + (Double(l.to.y) - my) * k)))
             }
             path(d, width: 3, ink: 0xFFFFFF, alpha: 0.7)
             path(d, width: 1, ink: gap ? pink : pencil, alpha: gap ? 1 : 0.9)
@@ -2398,6 +2483,16 @@ final class DesignCanvas {
             let w = Double(pill.desiredSize.width)
             try? Canvas.setLeft(pill, (Double(l.at.x) - w / 2).rounded())
             try? Canvas.setTop(pill, (Double(l.at.y) - 8.5).rounded())
+            // Grown about its middle, a little past and back.
+            if g < 0.999 || g > 1.001 {
+                let grow = CompositeTransform()
+                grow.centerX = w / 2
+                grow.centerY = 8.5
+                grow.scaleX = max(g, 0.01)
+                grow.scaleY = max(g, 0.01)
+                pill.renderTransform = grow
+                pill.opacity = e
+            }
             inspectMarks.children.append(pill)
         }
         if let tag = m.nameTag {
@@ -3501,6 +3596,7 @@ final class DesignCanvas {
                     session.previewed(board: nil)
                     placeOffer()
                 }
+                pointCopyOffer(at: p)
             }
             syncGuides()
             guideHand.hover(p)

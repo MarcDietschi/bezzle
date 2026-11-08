@@ -163,6 +163,7 @@ extension WindowsCore {
         Editing.lastStep = nil
         if count > 0, let anchor = selection.first {
             styleOffered = .nameToo(style: style.id, uses: alike)
+            styleOfferLayers = Array(Set(alike.map(\.layer)))
             pendingStyleOffer = CopyOffer(anchor: anchor, words: say("%lld more layers look the same", count), buttons: [say("Name Them Too")],
                                           token: UUID(), style: true)
         }
@@ -173,6 +174,14 @@ extension WindowsCore {
 extension WindowsCore {
     /// Every layer that uses a style, as its corners on the canvas, as the Mac's StyleMarks
     /// outlines them while the style is pointed at.
+    /// The other layers with the style a card's look is named by, which the canvas outlines while
+    /// the card is pointed at (the Mac's StyleMarks.lit): none when it has no name.
+    public static func namedLookUsers(at key: String, _ selection: [UUID]) -> [UUID] {
+        guard let doc = design, let place = stylePlace(key), let style = sharedStyle(place, selection) else { return [] }
+        let mine = Set(selection)
+        return (doc.styleUsers()[style.id] ?? []).filter { !mine.contains($0) }
+    }
+
     public static func styleUserOutlines(_ id: UUID) -> [[CGPoint]] {
         guard let doc = design else { return [] }
         return (doc.styleUsers()[id] ?? []).compactMap { doc.shownCorners(of: $0) }
@@ -391,6 +400,7 @@ extension WindowsCore {
         Editing.lastStep = nil
         if dark, picked {
             styleOffered = .lightTwin(id)
+            styleOfferLayers = [id]
             pendingStyleOffer = CopyOffer(anchor: id, words: say("A light one beside it"), buttons: [say("Add")], token: UUID(), style: true)
         }
         return true

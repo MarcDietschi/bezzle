@@ -87,6 +87,10 @@ extension WindowsCore {
 
         private var hovered: UUID?
 
+        /// What is shown, as words: when it changes, the canvas grows the marks in anew, as the
+        /// Mac's InspectTool does.
+        public var shownKey: String { on ? "\(showing)" : "" }
+
         private var showing: Showing {
             guard let seen = doc else { return .none }
             let picked = selection.count == 1 ? selection.first.flatMap { seen.node($0) != nil ? $0 : nil } : nil
@@ -119,7 +123,8 @@ extension WindowsCore {
         /// the name of what a click picks next over its top left.
         public struct Marks {
             public var outlines: [(rect: CGRect, gap: Bool, width: Double, dashed: Bool)] = []
-            public var lines: [(from: CGPoint, to: CGPoint, gap: Bool)] = []
+            /// A measure's line, or a tick at its end (`tick`), which shows once the line is drawn out.
+            public var lines: [(from: CGPoint, to: CGPoint, gap: Bool, tick: Bool)] = []
             public var dashes: [(from: CGPoint, to: CGPoint)] = []
             public var hatches: [CGRect] = []
             public var labels: [(text: String, at: CGPoint, gap: Bool, solid: Bool)] = []
@@ -180,12 +185,12 @@ extension WindowsCore {
             for s in spans {
                 var a = view(s.from), b = view(s.to)
                 if s.across { b.y = a.y } else { b.x = a.x }
-                m.lines.append((a, b, true))
+                m.lines.append((a, b, true, false))
                 for end in [a, b] {
                     if s.across {
-                        m.lines.append((CGPoint(x: end.x, y: end.y - 3.5), CGPoint(x: end.x, y: end.y + 3.5), true))
+                        m.lines.append((CGPoint(x: end.x, y: end.y - 3.5), CGPoint(x: end.x, y: end.y + 3.5), true, true))
                     } else {
-                        m.lines.append((CGPoint(x: end.x - 3.5, y: end.y), CGPoint(x: end.x + 3.5, y: end.y), true))
+                        m.lines.append((CGPoint(x: end.x - 3.5, y: end.y), CGPoint(x: end.x + 3.5, y: end.y), true, true))
                     }
                 }
                 if let reach = s.reach, reach.count == 2 {
@@ -209,12 +214,12 @@ extension WindowsCore {
             let size = measured(id, in: seen)
             let top = r.minY - 12, right = r.maxX + 12
             if r.width > 30 {
-                m.lines.append((CGPoint(x: r.minX, y: top), CGPoint(x: r.maxX, y: top), false))
-                for x in [r.minX, r.maxX] { m.lines.append((CGPoint(x: x, y: top - 4), CGPoint(x: x, y: top + 4), false)) }
+                m.lines.append((CGPoint(x: r.minX, y: top), CGPoint(x: r.maxX, y: top), false, false))
+                for x in [r.minX, r.maxX] { m.lines.append((CGPoint(x: x, y: top - 4), CGPoint(x: x, y: top + 4), false, true)) }
             }
             if r.height > 30 {
-                m.lines.append((CGPoint(x: right, y: r.minY), CGPoint(x: right, y: r.maxY), false))
-                for y in [r.minY, r.maxY] { m.lines.append((CGPoint(x: right - 4, y: y), CGPoint(x: right + 4, y: y), false)) }
+                m.lines.append((CGPoint(x: right, y: r.minY), CGPoint(x: right, y: r.maxY), false, false))
+                for y in [r.minY, r.maxY] { m.lines.append((CGPoint(x: right - 4, y: y), CGPoint(x: right + 4, y: y), false, true)) }
             }
             let w = Self.number(size.width), h = Self.number(size.height)
             m.labels.append((w, CGPoint(x: r.midX.rounded(), y: (r.width > 30 ? top : r.minY - 14).rounded()), false, true))
