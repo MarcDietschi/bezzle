@@ -1008,6 +1008,8 @@ struct Run {
     bool underline, strike, hasColor;
     SkColor4f color;
     std::string features, axes;
+    /// Skia's word spacing: what each gap between words takes more (justified lines of joining letters).
+    double wordSpacing = 0;
 };
 
 /// "tag=value,tag=value" as pairs of four-letter tags and numbers.
@@ -1049,6 +1051,7 @@ TextStyle style(const Run& run) {
     TextStyle s;
     s.setFontSize(float(run.size));
     s.setLetterSpacing(float(run.tracking));
+    if (run.wordSpacing != 0) s.setWordSpacing(float(run.wordSpacing));
     s.setColor(run.hasColor ? run.color.toSkColor() : SK_ColorTRANSPARENT);
     // The font's OpenType features as the layer sets them, and its axes: the system font's weight
     // and optical size by its face and size, unless the layer sets them itself.
@@ -1089,12 +1092,13 @@ TextStyle style(const Run& run) {
     return s;
 }
 
-/// Runs set as one paragraph `width` wide, aligned 0 left, 1 center, 2 right, 3 justified. A tab is
-/// set as a space, which its spacing widens to its stop.
-std::unique_ptr<Paragraph> paragraph(const std::vector<Run>& runs, const Run& first, double width, int align) {
+/// Runs set as one paragraph `width` wide, aligned 0 left, 1 center, 2 right, 3 justified, read from
+/// right to left when `rtl` says so. A tab is set as a space, which its spacing widens to its stop.
+std::unique_ptr<Paragraph> paragraph(const std::vector<Run>& runs, const Run& first, double width, int align, bool rtl = false) {
     ParagraphStyle ps;
     const TextAlign aligns[] = {TextAlign::kLeft, TextAlign::kCenter, TextAlign::kRight, TextAlign::kJustify};
     ps.setTextAlign(aligns[std::clamp(align, 0, 3)]);
+    ps.setTextDirection(rtl ? TextDirection::kRtl : TextDirection::kLtr);
     ps.setReplaceTabCharacters(true);
     ps.setTextStyle(style(first));
     // Set at the width given, as Text Kit sets lines: Skia otherwise narrows it to whole points
@@ -1206,9 +1210,50 @@ size_t utf16Index(const std::u16string& s, size_t utf8) {
 /// Whether a letter ends a line wherever it is: a paragraph's end or a line break.
 bool breaksLine(char16_t u) { return u == 0x0A || u == 0x0D || u == 0x2028 || u == 0x2029 || u == 0x85; }
 
+/// Whether a letter ends a paragraph, as the Unicode bidi algorithm counts them (a line break,
+/// U+2028, does not).
+bool endsParagraph(char16_t u) { return u == 0x0A || u == 0x0D || u == 0x2029 || u == 0x85 || (u >= 0x1C && u <= 0x1E); }
+
 /// The spaces a justified line is spread at, as Text Kit counts them: a no-break space is a letter.
 bool spreadsAt(char16_t u) {
     return u == 0x20 || u == 0x09 || (u >= 0x2000 && u <= 0x200A && u != 0x2007) || u == 0x205F || u == 0x3000 || u == 0x1680;
+}
+
+/// Whether a letter is of a script whose letters join (Arabic and its like), whose runs Skia
+/// never spaces apart (Run::isCursiveScript).
+bool joins(char16_t u) {
+    return (u >= 0x0600 && u <= 0x08FF && !(u >= 0x0780 && u <= 0x07BF)) || (u >= 0x1800 && u <= 0x18AF) || (u >= 0xA840 && u <= 0xA87F)
+        || (u >= 0xFB50 && u <= 0xFDFF) || (u >= 0xFE70 && u <= 0xFEFF);
+}
+
+/// Which way a letter reads, where it has a way of its own: 1 right to left (Hebrew, Arabic and
+/// their like), -1 left to right (letters of other scripts), 0 none (spaces, digits, punctuation,
+/// symbols). Close enough to Unicode's bidi classes for telling which way a paragraph runs.
+int reads(const std::u16string& s, size_t k) {
+    const char16_t u = s[k];
+    if (u >= 0xD800 && u < 0xDC00 && k + 1 < s.size()) {
+        const uint32_t c = 0x10000 + ((uint32_t(u) - 0xD800) << 10) + (uint32_t(s[k + 1]) - 0xDC00);
+        if ((c >= 0x10800 && c <= 0x10FFF) || (c >= 0x1E800 && c <= 0x1EFFF)) return 1;
+        if (c >= 0x1F000 && c <= 0x1FFFF) return 0;
+        return -1;
+    }
+    if ((u >= 0x0590 && u <= 0x08FF) || (u >= 0xFB1D && u <= 0xFDFF) || (u >= 0xFE70 && u <= 0xFEFE)) return 1;
+    if ((u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') || u == 0xAA || u == 0xB5 || u == 0xBA) return -1;
+    if (u >= 0xC0 && u <= 0x24F) return u == 0xD7 || u == 0xF7 ? 0 : -1;
+    if ((u >= 0x370 && u <= 0x58F) || (u >= 0x900 && u <= 0x1FFF) || (u >= 0x2C00 && u <= 0x2DFF) || (u >= 0x3040 && u <= 0xD7FF)
+        || (u >= 0xF900 && u <= 0xFB1C)) return -1;
+    return 0;
+}
+
+/// Whether the paragraph that `from` is in reads from right to left, as Text Kit takes it (its
+/// paragraphs' writing direction is natural): by its first letter that reads one way or the other.
+bool rightToLeft(const std::u16string& s, size_t from) {
+    size_t start = from;
+    while (start > 0 && !endsParagraph(s[start - 1])) start--;
+    for (size_t k = start; k < s.size() && !endsParagraph(s[k]); k++) {
+        if (const int way = reads(s, k)) return way > 0;
+    }
+    return false;
 }
 
 /// The faces Text Kit spreads as a justification table of their own says (Courier's 'just'
@@ -1224,8 +1269,11 @@ bool ownJustification(const Run& r) { return r.family == "Courier"; }
 /// letters. Courier's spaces grow by up to their size on either side, and its letters not at
 /// all, so that a line of Courier without spaces is not spread. Only what follows a line's last
 /// tab is spread: what comes before stays where the tab stops put it. All of this as the letters
-/// lie from left to right. Each letter takes what it grows to its right as Skia's letter spacing,
-/// which Skia also puts to a letter's right. Empty when it needs no spreading or cannot be spread.
+/// lie from left to right, which is how Text Kit grows them in words read from right to left too.
+/// Each letter takes what it grows to its right as Skia's letter spacing, which Skia also puts
+/// to a letter's right. Letters that join (Arabic) Text Kit lengthens with kashidas, which Skia
+/// cannot set and whose runs it never spaces apart: there the spaces between words take it all,
+/// evenly, as Skia's word spacing. Empty when it needs no spreading or cannot be spread.
 std::vector<Run> spreadOut(const std::vector<Run>& runs, Paragraph* line, double width) {
     std::vector<LineMetrics> lm;
     line->getLineMetrics(lm);
@@ -1258,6 +1306,20 @@ std::vector<Run> spreadOut(const std::vector<Run>& runs, Paragraph* line, double
     const size_t n = letters.size();
     if (n < 2) return {};
     std::vector<double> after(words.size(), 0);
+    bool joined = false;
+    for (const auto& s : letters) joined = joined || joins(words[s.at]);
+    if (joined) {
+        // The gaps between words, in the order they are read, each as wide again as the others.
+        std::vector<size_t> order;
+        for (const auto& s : letters) order.push_back(s.at);
+        std::sort(order.begin(), order.end());
+        int gaps = 0;
+        for (size_t i = 1; i < order.size(); i++) if (spreadsAt(words[order[i - 1]]) && !spreadsAt(words[order[i]])) gaps++;
+        if (gaps == 0) return {};
+        std::vector<Run> out = runs;
+        for (auto& r : out) r.wordSpacing = extra / gaps;
+        return out;
+    }
     std::vector<double> left(n), right(n);
     std::vector<bool> space(n), own(n);
     double spaces = 0, others = 0;
@@ -1305,6 +1367,19 @@ std::vector<Run> spreadOut(const std::vector<Run>& runs, Paragraph* line, double
     return out;
 }
 
+/// Half the spacing of a line's first letter, which Skia puts before the whole line (TextLine's
+/// shift), as Skia picks that letter: the first not of a script whose letters join, whose runs it
+/// never spaces apart; none when every letter that reads one way or the other joins.
+double halfFirstSpacing(const std::vector<Run>& piece) {
+    bool joined = false;
+    for (const auto& r : piece) for (const char16_t u : r.text) joined = joined || joins(u);
+    if (!joined) return piece[0].tracking / 2;
+    for (const auto& r : piece) {
+        for (size_t k = 0; k < r.text.size(); k++) if (reads(r.text, k) != 0 && !joins(r.text[k])) return r.tracking / 2;
+    }
+    return 0;
+}
+
 /// The runs with each tab one of its own, so it can be spaced as wide as its stop needs.
 std::vector<Run> tabsApart(std::vector<Run> runs) {
     std::vector<Run> out;
@@ -1328,8 +1403,9 @@ std::vector<Run> tabsApart(std::vector<Run> runs) {
 /// first stop past where it begins. Skia has no stops and sets a tab as a space
 /// (replaceTabCharacters); each tab's own spacing makes up the rest. Set again after each tab
 /// that moves, as what follows it, and where lines break, moves with it. Past the twelfth stop
-/// (336 points), where Text Kit takes a tab to the next line, a tab stays a space.
-void stopTabs(std::vector<Run>& runs, size_t start, size_t end, double width) {
+/// (336 points), where Text Kit takes a tab to the next line, a tab stays a space. Lines read from
+/// right to left keep their tabs as spaces.
+void stopTabs(std::vector<Run>& runs, size_t start, size_t end, double width, bool rtl) {
     std::u16string words;
     std::vector<size_t> runAt;
     for (size_t r = 0; r < runs.size(); r++) {
@@ -1338,7 +1414,7 @@ void stopTabs(std::vector<Run>& runs, size_t start, size_t end, double width) {
     }
     std::vector<size_t> tabs;
     for (size_t k = start; k < end && k < words.size(); k++) if (words[k] == u'\t') tabs.push_back(k);
-    if (tabs.empty()) return;
+    if (tabs.empty() || rtl) return;
     for (size_t round = 0; round < 2 * tabs.size() + 2; round++) {
         const auto those = slice(runs, start, end);
         if (those.empty()) return;
@@ -1984,7 +2060,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
     for (const auto& r : runs) total += r.text.size();
     // The words in parts set at widths of their own: paragraphs set further in (items of lists)
     // narrower, and drawn that much to the right; the rest as wide as asked. Without any, one part.
-    struct Part { size_t start, end; double indent; };
+    struct Part { size_t start, end; double indent; bool rtl = false; };
     std::vector<Part> parts;
     size_t at = 0;
     for (int32_t k = 0; indents && k < indentCount; k++) {
@@ -1997,8 +2073,26 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
     if (parts.empty() || at < total) parts.push_back({at, total, 0});
     std::u16string letters;
     for (const auto& r : runs) letters += r.text;
+    // Paragraphs read from right to left in parts of their own, where the way they read changes,
+    // as Text Kit takes each paragraph's way from its first letter that reads one way or the other.
+    std::vector<Part> directed;
+    for (const auto& part : parts) {
+        size_t from = part.start;
+        bool rtl = rightToLeft(letters, from);
+        for (size_t k = part.start; k < part.end; k++) {
+            if (!endsParagraph(letters[k]) || k + 1 >= part.end) continue;
+            if (letters[k] == 0x0D && letters[k + 1] == 0x0A) continue;
+            const bool next = rightToLeft(letters, k + 1);
+            if (next == rtl) continue;
+            directed.push_back({from, k + 1, part.indent, rtl});
+            from = k + 1;
+            rtl = next;
+        }
+        directed.push_back({from, part.end, part.indent, rtl});
+    }
+    parts = std::move(directed);
     // Each part's tabs at their stops, as wide as Text Kit sets them.
-    for (const auto& part : parts) stopTabs(runs, part.start, part.end, part.indent > 0 ? std::max(width - part.indent, 1.0) : width);
+    for (const auto& part : parts) stopTabs(runs, part.start, part.end, part.indent > 0 ? std::max(width - part.indent, 1.0) : width, part.rtl);
     Text text;
     const double leading = leadingOf(runs[0]);
     const bool fromLeft = align == 0 || align == 3;
@@ -2011,7 +2105,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
         const std::vector<Run> those = parts.size() == 1 ? runs : slice(runs, part.start, part.end);
         // Justified lines are broken as lines set from the left are, and spread here, never by Skia.
         const int laid = align == 3 ? 0 : align;
-        auto set = paragraph(those.empty() ? runs : those, those.empty() ? runs[0] : those[0], w, laid);
+        auto set = paragraph(those.empty() ? runs : those, those.empty() ? runs[0] : those[0], w, laid, part.rtl);
         std::vector<LineMetrics> metrics;
         set->getLineMetrics(metrics);
         for (size_t j = 0; j < metrics.size(); j++) {
@@ -2022,7 +2116,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             const size_t start = part.start + m.fStartIndex, end = part.start + m.fEndIncludingNewline;
             auto piece = slice(runs, start, part.start + m.fEndExcludingWhitespaces);
             // Each line drawn on its own, so it can sit where the core puts it.
-            std::unique_ptr<Paragraph> line = piece.empty() ? nullptr : paragraph(piece, piece[0], w, laid);
+            std::unique_ptr<Paragraph> line = piece.empty() ? nullptr : paragraph(piece, piece[0], w, laid, part.rtl);
             // Justified, every line but a paragraph's last is spread to the width, as Text Kit spreads it;
             // not one that ends with a tab, as nothing follows its last tab.
             bool spread = false;
@@ -2031,7 +2125,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
                 auto spaced = spreadOut(piece, line.get(), w);
                 if (!spaced.empty()) {
                     piece = std::move(spaced);
-                    line = paragraph(piece, piece[0], 1e6, 0);
+                    line = paragraph(piece, piece[0], 1e6, 0, part.rtl);
                     spread = true;
                 }
             }
@@ -2048,7 +2142,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             if (fromLeft) left = 0;
             std::u16string words;
             for (const auto& r : piece) words += r.text;
-            const double back = (piece.empty() || !fromLeft ? 0 : piece[0].tracking / 2) - part.indent;
+            const double back = (piece.empty() || !fromLeft ? 0 : halfFirstSpacing(piece)) - part.indent;
             // A line with a tab measures as far as its last letter, with the spaces and tabs it
             // ends with, as Text Kit's used rect of such a line does (of no other).
             double measured = spread ? w : m.fWidth;

@@ -407,11 +407,31 @@ extension WindowsCore {
         return k
     }
 
-    /// How far along line `k` the caret before letter `i` stands.
+    /// Whether line `k` is of a paragraph read from right to left, as Text Kit takes it, and the
+    /// host sets it (host.cpp's rightToLeft): by its first letter that reads one way or the other.
+    private static func backwards(_ k: Int, in laid: TextLayout.Laid) -> Bool {
+        let units = Array(laid.string.utf16)
+        func ends(_ u: UInt16) -> Bool { u == 0x0A || u == 0x0D || u == 0x2029 || u == 0x85 || (0x1C...0x1E).contains(u) }
+        var start = min(laid.lines[k].start, units.count)
+        while start > 0, !ends(units[start - 1]) { start -= 1 }
+        var i = start
+        while i < units.count, !ends(units[i]) {
+            let u = units[i]
+            if (0x0590...0x08FF).contains(u) || (0xFB1D...0xFDFF).contains(u) || (0xFE70...0xFEFE).contains(u) { return true }
+            if (0x41...0x5A).contains(u) || (0x61...0x7A).contains(u) || ((0xC0...0x24F).contains(u) && u != 0xD7 && u != 0xF7)
+                || (0x370...0x58F).contains(u) || (0x900...0x1FFF).contains(u) || (0x3040...0xD7FF).contains(u) { return false }
+            i += 1
+        }
+        return false
+    }
+
+    /// How far along line `k` the caret before letter `i` stands: after the letters before it,
+    /// on their left where the line reads from right to left.
     private static func caretX(_ i: Int, line k: Int, in laid: TextLayout.Laid, node: Node) -> CGFloat {
         let line = laid.lines[k]
-        if i > line.start, let b = boxes(laid, line.start, i).first(where: { $0.line == k }) { return b.right }
-        if let b = boxes(laid, i, i + 1).first(where: { $0.line == k }) { return b.left }
+        let back = backwards(k, in: laid)
+        if i > line.start, let b = boxes(laid, line.start, i).first(where: { $0.line == k }) { return back ? b.left : b.right }
+        if let b = boxes(laid, i, i + 1).first(where: { $0.line == k }) { return back ? b.right : b.left }
         // A line with no letters: where its alignment would put them, an item of a list's further in.
         switch node.style?.align ?? .left {
         case .center: return line.indent + (node.frame.width - line.indent) / 2
@@ -432,13 +452,15 @@ extension WindowsCore {
     private static func index(onLine k: Int, x: CGFloat, in laid: TextLayout.Laid, node: Node) -> Int {
         let words = (node.text ?? "") as NSString
         let lo = laid.lines[k].start, hi = lineEnd(k, in: laid, length: words.length)
+        // Along the way the line reads: leftward where it reads from right to left.
+        let way: CGFloat = backwards(k, in: laid) ? -1 : 1
         var a = lo, b = hi
         while a < b {
             let m = (a + b) / 2
-            if caretX(m, line: k, in: laid, node: node) < x { a = m + 1 } else { b = m }
+            if way * caretX(m, line: k, in: laid, node: node) < way * x { a = m + 1 } else { b = m }
         }
         var i = a
-        if i > lo, x - caretX(i - 1, line: k, in: laid, node: node) < caretX(i, line: k, in: laid, node: node) - x { i -= 1 }
+        if i > lo, way * (x - caretX(i - 1, line: k, in: laid, node: node)) < way * (caretX(i, line: k, in: laid, node: node) - x) { i -= 1 }
         if i > 0, i < words.length {
             let whole = words.rangeOfComposedCharacterSequence(at: i)
             if whole.location < i { i = NSMaxRange(whole) - i < i - whole.location ? NSMaxRange(whole) : whole.location }
