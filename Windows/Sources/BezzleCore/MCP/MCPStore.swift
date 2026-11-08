@@ -157,6 +157,15 @@ import Foundation
     /// A picture file copied into the design's own pictures, as a fill.
     func importPicture(_ file: URL) -> ImageFill? { WindowsCore.importPicture(file) }
 
+    /// From Store/CutoutOperations.swift: the pictures filling `ids` cut out by the core, in this
+    /// design (its window shows the work as it goes, as the Mac's canvas does for the assistant).
+    typealias CutoutTrouble = WindowsCore.CutoutTrouble
+    func cutOut(_ ids: [UUID], picks: [CGPoint]? = nil) async throws -> [UUID] {
+        guard slot.isOpen else { throw CutoutTrouble.noPictures }
+        activate()
+        return try await WindowsCore.cutOut(ids, picks: picks)
+    }
+
     /// Where a part, icon or library component would go, as the Mac's store works it out.
     func placing(_ resource: Resource, at point: CGPoint?, on target: UUID? = nil,
                  into boardID: UUID? = nil, dark: Bool? = nil, width: CGFloat? = nil) -> ResourcePlacing? {

@@ -69,6 +69,19 @@ final class DesignSession {
         showCard?("Fill")
         changed()
     }
+    /// Takes the background away from the selected pictures (the Mac's store.removeBackground): the
+    /// canvas and the Fill card show the work as it goes, and the cutout comes as a step of its own.
+    func removeBackground() {
+        WindowsCore.removeBackground(selection)
+        changed()
+    }
+
+    /// Shows the selected pictures whole again (the Mac's store.restoreBackground).
+    func restoreBackground() {
+        WindowsCore.restoreBackground(selection)
+        edited(board: nil)
+    }
+
     /// Design, Prototype or Inspect (0, 1, 2), as the bar's switch says.
     var mode = 0 {
         didSet {

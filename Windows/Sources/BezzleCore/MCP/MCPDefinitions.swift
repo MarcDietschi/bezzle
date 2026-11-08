@@ -176,6 +176,14 @@ extension MCPTools {
             Definition(name: "develop_photo", title: "Develop a photo",
                        description: "Develops the photos filling layers, as a photo editor such as Lightroom does: their light (exposure, contrast, highlights, shadows, whites, blacks), colour (temperature, tint, vibrance, saturation, and each colour on its own) and detail (clarity, texture, dehaze, sharpness). Only what is given changes; 0 takes a setting away. The photo itself is kept, so reset brings it back as taken. get_layers shows a photo's settings as fill.image.develop; render shows the result.",
                        properties: .object(Self.developDefinitionProperties), run: { [unowned self] in try await self.developPhoto($0) }),
+            Definition(name: "remove_background", title: "Remove a picture's background",
+                       description: "Takes the background away from the pictures filling layers, leaving what stands out in them (people, hair included, and what they hold; animals, products) with soft, clean edges, so the layer shows only its subject and casts its shadow from it. Done on this PC: in a few seconds on its graphics card, or a minute or so on its processor where it has none that can. The picture itself is kept: restore shows it whole again. Give picks to keep only some of what stands out, such as one subject of several apart from each other (people who touch are one subject here). get_layers shows backgroundRemoved on a picture cut out.",
+                       properties: .object([
+                           design, layers,
+                           ("picks", ["type": "array", "items": ["type": "object"],
+                                      "description": "Points on the subjects to keep, each {x, y} from 0 to 1 across and down the picture as it was taken, not as it is placed in its layer. Leave it out to keep everything that stands out."]),
+                           ("restore", Self.boolean("Shows the pictures whole again, with their background.")),
+                       ]), run: { [unowned self] in try await self.removeBackground($0) }),
             Definition(name: "repeat_grid", title: "Make or change a repeat grid",
                        description: "Makes layers a repeat grid, or changes one: a layer (several are grouped first) repeated in columns across and rows down, the same gap apart. Every cell is a copy of the first: change any layer in any cell (update_layers, add_layers into a cell's group, delete_layers) and it changes in all of them, but for words and pictures, which each cell holds of its own (fill_repeat_grid). New cells continue a series of numbers, or repeat what the cells before them hold. update_layers' rotation turns a grid as one, and flip_layers mirrors it as one. get_layers on the grid lists its first cell and every cell's words.",
                        properties: .object([

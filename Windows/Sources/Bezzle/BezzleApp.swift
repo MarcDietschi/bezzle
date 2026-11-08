@@ -130,6 +130,15 @@ final class BezzleApp: SwiftApplication {
         MainActor.assumeIsolated { WindowsCore.start() }
         MainActor.assumeIsolated { Theme.readAppearance() }
         WindowsCore.designsFolder = { Self.designsFolder }
+        // A picture cut out, here or by the AI, as it goes: the window of its design shows the work,
+        // and the design once it changes; one behind another shows it as it comes to the front.
+        WindowsCore.cutoutsChanged = { slot, edited in
+            let tabs = Tabs.shared
+            guard let view = (slot.flatMap { tabs.tab(of: $0) } ?? tabs.activeTab)?.view else { return }
+            if edited { view.session.edited(board: nil) } else { view.session.changed() }
+            if view.session.isFront { view.canvas.drawCutouts() }
+        }
+        SubjectModel.log = { Trace.say($0) }
         let window = Window()
         window.title = "Bezzle"
         self.window = window

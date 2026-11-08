@@ -173,6 +173,13 @@ final class DesignCanvas {
     private var pictureGhosts: [(image: Image, bitmap: WriteableBitmap?, key: String?)] = []
     private var pictureTicking: EventCleanup?
     private var drawingPictures = false
+    /// Pictures being cut out, as the pencil goes over them, and the subjects of a cut-out picture
+    /// being placed (the Mac's CutoutTool, ported): one picture over the stage, under the marks.
+    let cutouts = WindowsCore.CutoutHand()
+    private let cutoutImage = Image()
+    private var cutoutBitmap: WriteableBitmap?
+    private var cutoutTicking: EventCleanup?
+    private var drawingCutouts = false
     /// Whether placing took the last press: the double click WinUI tells of after it is then placing's.
     private var pictureTookPress = false
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -426,6 +433,10 @@ final class DesignCanvas {
             self?.session.changed()
         }
         pictures.changed = { [weak self] in self?.session.edited(board: nil) }
+        // A click on a cut-out picture being placed keeps or drops the subject there, once it is
+        // clear it is not the first of a double click.
+        pictures.clicked = { [weak self] v in self?.cutouts.click(at: v, doubleClick: Double(GetDoubleClickTime()) / 1000) }
+        cutouts.redraw = { [weak self] in self?.drawCutouts() }
         maskMarks.view = { [weak self] in
             guard let self else { return (1, .zero, .zero, 1) }
             return (self.zoom, self.pan, CGSize(width: self.stage.actualWidth, height: self.stage.actualHeight), self.pixelScale)
@@ -1405,6 +1416,7 @@ final class DesignCanvas {
         placeOffer()
         placeCopyOffer()
         drawComponents()
+        drawCutouts()
         drawPictures()
         // Something picked inside a mask: the mask's outline, and the ghost of what it cuts off.
         maskMarks.update()
@@ -1418,6 +1430,68 @@ final class DesignCanvas {
     private func syncPictures() {
         pictures.zoom = CGFloat(zoom)
         pictures.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    // MARK: Cutting out
+
+    /// Cutting out sees the canvas as it is now.
+    private func syncCutouts() {
+        cutouts.zoom = CGFloat(zoom)
+        cutouts.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+        cutouts.placing = pictures.editing
+        cutouts.table = Theme.table
+    }
+
+    /// Pictures being cut out and a cut-out picture's subjects, as the Mac's CutoutTool draws
+    /// them over the canvas: one picture over the stage (under the marks), drawn frame by frame
+    /// while anything moves in it.
+    func drawCutouts() {
+        if !holds(overlay, cutoutImage) {
+            cutoutImage.isHitTestVisible = false
+            cutoutImage.stretch = .fill
+            cutoutImage.visibility = .collapsed
+            try? overlay.children.insertAt(0, cutoutImage)
+        }
+        guard !drawingCutouts else { return }
+        drawingCutouts = true
+        defer { drawingCutouts = false }
+        syncCutouts()
+        var bitmap = cutoutBitmap
+        let covered = cutouts.draw(scale: pixelScale, stage: CGSize(width: stage.actualWidth, height: stage.actualHeight)) { width, height in
+            if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
+                bitmap = WriteableBitmap(Int32(width), Int32(height))
+            }
+            return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+        }
+        if let covered {
+            try? bitmap?.invalidate()
+            if cutoutBitmap !== bitmap { cutoutImage.source = bitmap }
+            cutoutBitmap = bitmap
+            try? Canvas.setLeft(cutoutImage, Double(covered.minX))
+            try? Canvas.setTop(cutoutImage, Double(covered.minY))
+            cutoutImage.width = Double(covered.width)
+            cutoutImage.height = Double(covered.height)
+            cutoutImage.visibility = .visible
+        } else {
+            cutoutImage.visibility = .collapsed
+        }
+        tickCutouts()
+    }
+
+    /// Frame by frame while a picture is being cut out, or melting into its cutout.
+    private func tickCutouts() {
+        guard cutoutTicking == nil, cutouts.animating else { return }
+        cutoutTicking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.drawCutouts()
+                if !self.cutouts.animating {
+                    self.cutoutTicking?.dispose()
+                    self.cutoutTicking = nil
+                    self.drawCutouts()
+                }
+            }
+        }
     }
 
     /// The picture being placed, as the Mac's PictureTool draws it: the whole of it past the
@@ -3581,6 +3655,11 @@ final class DesignCanvas {
         let p = point(args)
         lastPoint = p
         liveCanvas.pointerMoved(to: inDesign(p), stage: p)
+        // Placing a cut-out picture, the subject under the pointer lights up.
+        if drag == nil, pictures.editing != nil || cutouts.hovering {
+            syncCutouts()
+            cutouts.hover(at: pictures.editing != nil ? p : nil)
+        }
         if typingPress != nil {
             dragOnTyped(to: p)
             return
@@ -5119,6 +5198,14 @@ final class DesignCanvas {
                         self.session.placePicture()
                     }
                 }]
+            }
+            // The picture's background taken away, or given back, as on the Mac.
+            let ids = session.selection
+            let remove = WindowsCore.canRemoveBackground(ids), restore = WindowsCore.canRestoreBackground(ids)
+            if remove || restore {
+                if !WindowsCore.PictureHand.canPlace(ids) { entries.append(.separator) }
+                if remove { entries.append(.item("Remove Background") { [weak self] in self?.session.removeBackground() }) }
+                if restore { entries.append(.item("Restore Background") { [weak self] in self?.session.restoreBackground() }) }
             }
         } else {
             entries += [

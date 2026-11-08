@@ -5,7 +5,7 @@ import Foundation
 // the Mac's (Ctrl for ⌘, Alt for ⌥ and ⌃, Enter for ↩, see `WindowsKeys`), Explorer for the
 // Finder, the Bezzle menu on the home tab for the Mac's menus, a link for iCloud; sentences only
 // Windows says are in Resources/windows-words.json. A lesson on what Windows cannot do yet is left
-// out until it can (`removesBackground`). The photo is the Mac's own, painted by Bezzle/Store/
+// out where it cannot (`removesBackground`). The photo is the Mac's own, painted by Bezzle/Store/
 // WelcomePhoto.swift on the Mac (Resources/make-welcome-photo.sh) and kept beside Bezzle.exe; the
 // poster's past is kept with each copy as the Mac keeps it.
 //
@@ -25,10 +25,11 @@ public enum Welcome {
     /// The welcome sheet's id, the same in every copy, so the canvas can open on it.
     public static let coverID = UUID(uuidString: "BE22E1C0-0000-4000-8000-00000000C0FE")!
 
-    /// Whether Windows lifts a subject out of its photo (the Mac's Remove Background, its matte
-    /// made on the computer). Until it does, the lesson on it is left out, and the cover counts
-    /// one lesson fewer.
-    static let removesBackground = false
+    /// Whether Windows lifts a subject out of its photo here (the Mac's Remove Background, its
+    /// matte made on the computer): Bezzle's installer brings the subject matte, a copy built
+    /// without it does not. Without it, the lesson on it is left out, and the cover counts one
+    /// lesson fewer.
+    static var removesBackground: Bool { WindowsCore.removesBackground }
 
     /// The photo the tour brings, as the Mac paints it (Resources/make-welcome-photo.sh), where
     /// the app keeps its resources (Bezzle.resources beside the executable).
@@ -963,8 +964,9 @@ public enum Welcome {
         name: { String(localized: "\($0). Remove background") },
         title: String(localized: "Lift out what matters."),
         steps: [
-            String(localized: "Drag a photo of a person, a pet or a thing from the Finder or Photos onto the frame."),
-            String(localized: "With the photo selected, choose Subject alone in the inspector. Bezzle finds the subject right on your Mac."),
+            // Explorer for the Finder, and a PC for the Mac (Resources/windows-words.json).
+            String(localized: "Drag a photo of a person, a pet or a thing from Explorer onto the frame."),
+            String(localized: "With the photo selected, choose Subject alone in the inspector. Bezzle finds the subject right on your PC."),
             String(localized: "Double-click the photo to move or scale it inside the frame. The original is always kept."),
         ],
         scene: photoFrame)

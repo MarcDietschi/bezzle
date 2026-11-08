@@ -226,7 +226,10 @@ enum Controls {
 
     /// The Mac's SegmentedWell: a few words in a well of radius 9, the one chosen on a card
     /// (radius 7) that slides along it; each word given room by how long it is, so they look evenly set.
-    static func segmented<Value: Equatable>(_ selection: Value?, _ options: [(Value, String)], width: Double? = nil,
+    /// `progress`, 0…1, is work the chosen segment has started: its card fills with pencil from the
+    /// left as it runs, the edge of what is done a pencil line, and its word is written in pencil
+    /// until it is done (as the Mac's SegmentedWell does).
+    static func segmented<Value: Equatable>(_ selection: Value?, _ options: [(Value, String)], width: Double? = nil, progress: Double? = nil,
                                             choose: @escaping @MainActor (Value) -> Void) -> FrameworkElement {
         let well = Theme.well(radius: 9)
         if let width { well.width = width }
@@ -237,7 +240,9 @@ enum Controls {
             column.width = GridLength(value: Double(word.count) + 6, gridUnitType: .star)
             grid.columnDefinitions.append(column)
             let on = value == selection
+            let working = on && progress != nil
             let label = Theme.text(Words.t(word), size: 12, weight: on ? 500 : 400, ink: on ? 1 : 2)
+            if working { label.foreground = Theme.brush(Theme.pencil) }
             let box = Border()
             box.height = height - 4
             box.cornerRadius = Theme.corners(7)
@@ -248,7 +253,27 @@ enum Controls {
             }
             label.horizontalAlignment = .center
             label.verticalAlignment = .center
-            box.child = label
+            if working, let progress {
+                // The pencil's wash over what is done, as wide as the work has come.
+                let inside = Grid()
+                let done = min(max(progress, 0.04), 1)
+                for share in [done, 1 - done] {
+                    let column = ColumnDefinition()
+                    column.width = GridLength(value: max(share, 0.0001), gridUnitType: .star)
+                    inside.columnDefinitions.append(column)
+                }
+                let wash = Border()
+                wash.background = Theme.brush(Theme.pencil, Theme.pencilWash)
+                wash.borderBrush = Theme.brush(Theme.pencil, 0.5)
+                wash.borderThickness = Theme.inset(0, 0, done < 1 ? 1.5 : 0, 0)
+                wash.cornerRadius = done < 1 ? CornerRadius(topLeft: 7, topRight: 0, bottomRight: 0, bottomLeft: 7) : Theme.corners(7)
+                inside.children.append(wash)
+                try? Grid.setColumnSpan(label, 2)
+                inside.children.append(label)
+                box.child = inside
+            } else {
+                box.child = label
+            }
             box.pointerPressed.addHandler { _, args in args?.handled = true }
             box.tapped.addHandler { _, args in
                 args?.handled = true

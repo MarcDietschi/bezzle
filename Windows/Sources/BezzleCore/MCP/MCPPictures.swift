@@ -136,4 +136,35 @@ extension MCPTools {
             ("warnings", .array(warnings.map { .string($0) })),
         ]).text)]
     }
+
+    func removeBackground(_ args: Arguments) async throws -> [Content] {
+        let store = try await store(args)
+        let ids = try Self.layers(args, in: store)
+        if try args.bool("restore") == true {
+            let cut = ids.filter { store.node($0)?.fill.image?.cutout != nil }
+            guard try change(store, "Restore Background", { doc in for id in cut { doc.update(id) { $0.fill.image?.cutout = nil } } }) else {
+                throw MCPError("None of these shows a picture with its background taken away.")
+            }
+            return described(ids, in: store, full: true)
+        }
+        var picks: [CGPoint]?
+        if let given = args["picks"] {
+            guard let list = given as? [Any] else { throw MCPError("picks should be a list of points, {\"x\": 0.5, \"y\": 0.4}.") }
+            picks = try list.compactMap { try Read.point($0, "picks") }
+            guard picks?.allSatisfy({ (0...1).contains($0.x) && (0...1).contains($0.y) }) == true else {
+                throw MCPError("picks are 0 to 1 across and down the picture.")
+            }
+        }
+        let pictured = ids.filter { store.node($0)?.fill.image != nil }
+        guard !pictured.isEmpty else { throw MCPError("None of these is filled with a picture; place_image puts one in.") }
+        MCPHost.shared.endEditing()
+        do {
+            guard try await !store.cutOut(pictured, picks: picks).isEmpty else {
+                throw MCPError("The layers changed while their pictures were being cut out, so nothing was changed.")
+            }
+        } catch let trouble as DocumentStore.CutoutTrouble {
+            throw MCPError("\(trouble)")
+        }
+        return described(ids, in: store, full: true)
+    }
 }

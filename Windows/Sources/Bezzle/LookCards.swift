@@ -262,13 +262,36 @@ extension Inspector {
         return card("Fill", paint.summary, id: Self.cardID("Fill", slot), mark: Colours.swatch(paint, size: 15, radius: 4), dial: dial,
                     remove: remove, removal: l.isText ? "Remove colour" : "Remove fill", more: more, restack: restack, style: "fill:\(slot)", body: { [self] in
             var rows: [UIElement] = [paintField(paint, target: .fill(slot), ids: ids, board: board, suggest: true, change: change, preview: preview)]
+            // A subject is cut out of a picture filling a shape; in letters it would leave little to read.
+            if slot == 0, WindowsCore.cutsOut(ids) { rows += backgroundRow(ids) }
             // Placing its picture, the card says how, as the Mac's does.
-            if slot == 0, session.pictures.editing != nil {
-                rows.append(Controls.caption("Drag the picture to move it in its frame, or a corner to resize it. Alt keeps its middle, and Enter ends placing."))
+            if slot == 0, let placing = session.pictures.editing {
+                rows.append(Controls.caption(WindowsCore.showsSubjectAlone([placing]) == true
+                    ? "Click a subject to keep or drop it. Drag the picture to move it in its frame, or a corner to resize it, and Enter ends placing."
+                    : "Drag the picture to move it in its frame, or a corner to resize it. Alt keeps its middle, and Enter ends placing."))
             }
             if !l.isText && slot == 0 { rows.append(blendRow(l, change: change, preview: preview)) }
             return rows
         })
+    }
+
+    /// Whether the selected pictures show whole, or their subject alone (the Mac's backgroundRow).
+    /// The subject is found away from the main thread: meanwhile "Subject alone" fills with pencil
+    /// as the work goes, and the canvas shows it being found. A line under it says why, when
+    /// nothing stands out. On a PC without the subject matte, only cutouts made before (on a Mac)
+    /// can be shown again, so it is left out but for those.
+    private func backgroundRow(_ ids: [UUID]) -> [UIElement] {
+        guard WindowsCore.removesBackground || WindowsCore.canRestoreBackground(ids) else { return [] }
+        let working = WindowsCore.cutoutProgress(ids)
+        let alone = working != nil || WindowsCore.showsSubjectAlone(ids) == true
+        let well = Controls.segmented(alone, [(false, "Whole picture"), (true, "Subject alone")], progress: working) { [weak self] cut in
+            guard let self else { return }
+            if cut { self.session.removeBackground() } else if working == nil { self.session.restoreBackground() }
+        }
+        try? ToolTipService.setToolTip(well, Words.t("Take the background away, leaving what stands out in the picture. Double-click the picture to keep or drop each subject in it. The picture itself is kept, to have it back."))
+        var rows: [UIElement] = [well]
+        if let trouble = WindowsCore.cutoutTrouble { rows.append(Controls.caption(trouble)) }
+        return rows
     }
 
     /// Which of the layers' paints a field or the fill menu is on.
