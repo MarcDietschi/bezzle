@@ -161,11 +161,13 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
 
   const aligns = { left: 'Left', center: 'Center', right: 'Right', justify: 'Justify' }
 
-  // Runs set as one paragraph `width` wide, aligned as `spec` says.
+  // Runs set as one paragraph `width` wide, aligned as `spec` says. A tab is set as a space, which
+  // its spacing widens to its stop (stopTabs).
   function paragraph(spec, runs, width) {
     // Set at the width given, as Text Kit sets lines: Skia otherwise narrows it to whole points
     // and rounds lines' heights and widths, as Flutter wants.
-    const ps = new CK.ParagraphStyle({ textAlign: CK.TextAlign[aligns[spec.align] ?? 'Left'], textStyle: style(runs[0] ?? spec.runs[0]), applyRoundingHack: false })
+    const ps = new CK.ParagraphStyle({ textAlign: CK.TextAlign[aligns[spec.align] ?? 'Left'], textStyle: style(runs[0] ?? spec.runs[0]), applyRoundingHack: false,
+      replaceTabCharacters: true })
     const b = CK.ParagraphBuilder.MakeFromFontProvider(ps, provider)
     for (const r of runs) { b.pushStyle(style(r)); b.addText(r.text); b.pop() }
     const p = b.build()
@@ -201,8 +203,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   // without a table of its own). The spaces grow first, all by the same part of what they can;
   // then the letters; then the spaces again, without end, or, on a line without spaces, the
   // letters. Courier's spaces grow by up to their size on either side, and its letters not at all,
-  // so that a line of Courier without spaces is not spread. All of this as the letters lie from
-  // left to right. Each letter takes what it grows to its right as Skia's letter spacing,
+  // so that a line of Courier without spaces is not spread. Only what follows a line's last tab is
+  // spread: what comes before stays where the tab stops put it. All of this as the letters lie
+  // from left to right. Each letter takes what it grows to its right as Skia's letter spacing,
   // which Skia also puts to a letter's right. Null when it needs no spreading or cannot be spread.
   function spreadOut(runs, line, width) {
     const natural = line.getLineMetrics()[0]?.width ?? 0
@@ -227,9 +230,10 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       }
     }
     spots.sort((a, b) => a.x - b.x)
+    const lastTab = words.lastIndexOf('\t')
     const seen = new Set()
     const letters = spots.filter((s) => {
-      if (s.at >= words.length || seen.has(s.at)) return false
+      if (s.at >= words.length || seen.has(s.at) || s.at <= lastTab) return false
       seen.add(s.at)
       return true
     })
@@ -269,6 +273,54 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       start += r.text.length
     }
     return out
+  }
+
+  // The runs with each tab one of its own, so it can be spaced as wide as its stop needs.
+  function tabsApart(runs) {
+    return runs.flatMap((r) => (r.text.includes('\t') ? r.text.split(/(\t)/).filter((t) => t).map((text) => ({ ...r, text })) : [{ ...r }]))
+  }
+
+  // The tabs of the words from `start` to `end` set at Text Kit's stops (NSParagraphStyle's
+  // default, every 28 points from where a line begins): each as wide as it takes to reach the
+  // first stop past where it begins. Skia has no stops and sets a tab as a space
+  // (replaceTabCharacters); each tab's own spacing makes up the rest. Set again after each tab
+  // that moves, as what follows it, and where lines break, moves with it. Past the twelfth stop
+  // (336 points), where Text Kit takes a tab to the next line, a tab stays a space. As
+  // Host/host.cpp's stopTabs.
+  function stopTabs(runs, start, end, width) {
+    const words = runs.map((r) => r.text).join('')
+    const runAt = []
+    runs.forEach((r, k) => { for (let i = 0; i < r.text.length; i++) runAt.push(k) })
+    const tabs = []
+    for (let k = start; k < end && k < words.length; k++) if (words.charCodeAt(k) === 0x09) tabs.push(k)
+    if (!tabs.length) return
+    for (let round = 0; round < 2 * tabs.length + 2; round++) {
+      const those = slice(runs, start, end)
+      if (!those.length) return
+      const p = paragraph({ align: 'left', runs: those }, those, width)
+      const lines = p.getLineMetrics()
+      const box = (k) => p.getRectsForRange(k, k + 1, CK.RectHeightStyle.Tight, CK.RectWidthStyle.Tight)[0]?.rect
+      let moved = false
+      for (const t of tabs) {
+        const k = t - start
+        const line = lines.find((m) => m.startIndex <= k && k < m.endIncludingNewline)
+        if (!line) continue
+        // As wide as to the next letter, or, at the end of its line, as its own box.
+        const last = k + 1 >= line.endIncludingNewline || breaks(words.charCodeAt(t + 1))
+        const first = box(line.startIndex), at = box(k), next = last ? null : box(k + 1)
+        if (!first || !at || (!last && !next)) continue
+        const x = at[0] - first[0], stop = 28 * (Math.floor(x / 28 + 1e-9) + 1)
+        if (stop > 336 + 1e-6) continue
+        const now = last ? at[2] - at[0] : next[0] - at[0]
+        if (Math.abs(stop - x - now) > 0.005) {
+          runs[runAt[t]].tracking += stop - x - now
+          moved = true
+          break
+        }
+      }
+      p.delete()
+      if (!moved) return
+    }
   }
 
   // Texts set as one line for a curve (WebCurvedText.swift): their letters, each drawn on its
@@ -342,9 +394,11 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       at = z
     }
     if (!indented.length || at < total) indented.push({ start: at, end: total, indent: 0 })
-    const all = spec.runs
+    const all = tabsApart(spec.runs)
     const words = all.map((r) => r.text).join('')
     const parts = indented
+    // Each part's tabs at their stops, as wide as Text Kit sets them.
+    for (const part of parts) stopTabs(all, part.start, part.end, part.indent > 0 ? Math.max(spec.width - part.indent, 1) : spec.width)
     const lines = []
     const out = []
     const baselines = []
@@ -368,9 +422,11 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         let runs = slice(all, start, part.start + m.endExcludingWhitespaces)
         // Each line drawn on its own, so it can sit where the core puts it.
         let line = runs.length ? paragraph(laid, runs, width) : null
-        // Justified, every line but a paragraph's last is spread to the width, as Text Kit spreads it.
+        // Justified, every line but a paragraph's last is spread to the width, as Text Kit spreads
+        // it; not one that ends with a tab, as nothing follows its last tab.
         let spread = false
-        if (line && spec.align === 'justify' && end < words.length && !breaks(words.charCodeAt(end - 1))) {
+        const tabbed = words.slice(part.start + m.endExcludingWhitespaces, end).includes('\t')
+        if (line && spec.align === 'justify' && end < words.length && !breaks(words.charCodeAt(end - 1)) && !tabbed) {
           const spaced = spreadOut(runs, line, width)
           if (spaced) {
             line.delete()
@@ -385,11 +441,20 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         const back = (runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0) - part.indent
         lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back, start, runs })
         baselines.push(top + m.baseline)
+        // A line with a tab measures as far as its last letter, with the spaces and tabs it ends
+        // with, as Text Kit's used rect of such a line does (of no other).
+        let measured = spread ? width : m.width
+        let ends = end
+        while (ends > start && breaks(words.charCodeAt(ends - 1))) ends--
+        if (!spread && fromLeft && words.slice(start, ends).includes('\t')) {
+          const rects = whole.getRectsForRange(start - part.start, ends - part.start, CK.RectHeightStyle.Tight, CK.RectWidthStyle.Tight)
+          if (rects.length) measured = Math.max(...rects.map((b) => b.rect[2])) - Math.min(...rects.map((b) => b.rect[0]))
+        }
         // Skia shares the leading out above and below the line; Text Kit keeps it apart.
         // Set from the left, its letters begin at its indent, as Text Kit's do; Skia's own left
         // there is off by half the spacing it puts before the first letter.
         const left = fromLeft ? 0 : lm ? lm.left : m.left
-        out.push([start, end, spread ? width : m.width, m.ascent - leading / 2, m.descent - leading / 2, leading, part.indent + left])
+        out.push([start, end, measured, m.ascent - leading / 2, m.descent - leading / 2, leading, part.indent + left])
       })
       top += whole.getHeight()
       whole.delete()
