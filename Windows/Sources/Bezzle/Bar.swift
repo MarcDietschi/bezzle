@@ -188,7 +188,7 @@ final class Bar {
         versionsBox.cornerRadius = Theme.corners(8)
         versionsBox.child = centred(Glyphs.view(Glyphs.history(), size: 16, brush: Theme.ink(2)))
         button.box.child = versionsBox
-        try? ToolTipService.setToolTip(button.box, Words.t("Versions  ⌥⌘T"))
+        try? ToolTipService.setToolTip(button.box, Words.t("Versions") + "  Ctrl+Alt+T")
         return button.box
     }
 
