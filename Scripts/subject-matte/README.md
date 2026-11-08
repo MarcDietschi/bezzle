@@ -57,3 +57,17 @@ app's own: `open -n --env BEZZLE_LIBRARY=<scratch> --env BEZZLE_MATTE_MODEL=<pat
 Tests run without the learned matte unless given one this way.
 
 The licence notices are in `LICENSE-BiRefNet.txt` and in the app's About window (`Credits.rtf`).
+
+## For Windows
+
+```
+Scripts/subject-matte/make-onnx.sh [a photo to check it on]
+```
+
+Bezzle for Windows runs the same model with ONNX Runtime. After `make.sh` has made the environment
+and fetched the model, this exports it to ONNX at 2,048 pixels with the two changes `convert.py`
+makes (deformable convolution with grid_sample, Swin's mask made in the model), so the Windows
+matte is the Mac's: `build/onnx/BiRefNet-fp32.onnx`, checked against PyTorch with ONNX Runtime, and
+`build/onnx/BiRefNet.onnx`, half precision but for sampling, as the Mac's, which Windows uses and
+which is checked there (ONNX Runtime has no half-precision kernels on a CPU). Both are ignored by git.
+It runs BiRefNet's own model code, so run it yourself.
