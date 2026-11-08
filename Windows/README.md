@@ -97,3 +97,30 @@ Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O
 and Core Text); home's Bring In… button, the Bezzle menu, files dropped on home and a file given
 on the command line all bring one in.
+
+## Shipping it
+
+Bezzle for Windows is a download from bezzle.ch beside the Mac's, unsigned (Erik, 2026-11-07: no
+Store, no paid certificate), so Windows asks once, for the installer someone downloads, whether to
+run an app from an unknown publisher (More info, then Run anyway).
+
+- **The installer** (`Installer/`) is made with Inno Setup 6, pinned with its SHA-256 like everything
+  `Installer/fetch.ps1` fetches (Inno Setup, WinSparkle, Microsoft's Windows App Runtime installer).
+  `Installer/make-installer.ps1 -Version 1.4.2 -Build 20261108.1200 [-Arch x64]` takes the app
+  `build.ps1 release` laid out, puts the Swift runtime and the C++ runtime beside Bezzle.exe (whatever
+  it needs that Windows has not), strips Bezzle.exe's debugging information (kept beside the
+  installer as `Bezzle-<v>-<arch>.pdb.exe` for reading crashes), writes its icon and version into it,
+  and compiles `Installer/Bezzle.iss`. It installs for the person alone, with no administrator, into
+  `%LOCALAPPDATA%\Programs\Bezzle`: a Start menu entry, an entry in Settings › Apps to remove it, the
+  `bezzle:` links, Open in Bezzle on a `.bezzle` folder in Explorer, and the Windows App Runtime 1.7
+  when it is missing (Microsoft's own installer, run quietly, per user). `-Name 'Bezzle Test'` makes a
+  copy that installs beside Bezzle's own (`%LOCALAPPDATA%\Programs\Bezzle Test`).
+- **Updates** come through WinSparkle, as the Mac's through Sparkle, from
+  https://bezzle.ch/updates/windows/appcast.xml, signed with the Mac's EdDSA key. Only an installed copy
+  has them: `-Feed` and `-PublicKey` put WinSparkle.dll beside Bezzle.exe and the feed and key into its
+  resources (`Sources/Bezzle/Updates.swift` loads it when it is there). An update runs the new installer
+  with `/SILENT /UPDATE=1` from the feed, and Bezzle opens again.
+- **About Bezzle** (the Bezzle menu) lists what Bezzle is made with; the licences are in
+  `Credits/licenses`, which `build.ps1` and the installer put beside Bezzle.exe.
+- **A release** is `Scripts/release-windows.sh` on the Mac (a dry run unless given `--publish`): it
+  builds the commit in the VM, makes the installers for x64 and Arm64, signs them and writes the feed.

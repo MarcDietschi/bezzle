@@ -9,6 +9,8 @@ cd ${here:h:h}
 $here/../Resources/make-cursors.sh
 # The Mac's words in German, French and Italian, for the Windows build to put beside Bezzle.exe.
 $here/../Resources/make-strings.py
+# The Mac's app and document icons, for the installer to put into Bezzle.exe.
+$here/../Resources/make-icons.sh
 COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch --exclude .build --exclude Packages --exclude node_modules --exclude 'Web/out' \
     -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts \
   | $here/win 'New-Item -ItemType Directory -Force C:\src\Bezzle | Out-Null; tar -x -f - -C C:\src\Bezzle'

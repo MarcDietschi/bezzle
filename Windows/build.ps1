@@ -39,6 +39,9 @@ try {
     # Arm builds where it always has; x64 beside it, with Package.swift told to link x64's libraries.
     $triple = if ($Arch -eq 'x64') { 'x86_64' } else { 'aarch64' }
     $scratch = if ($Arch -eq 'x64') { '.build\x64' } else { '.build' }
+    # A release build makes the app alone unless told otherwise: bezzle-share reaches into the core
+    # with @testable, which only a debug build allows.
+    if (-not $Product -and $Configuration -eq 'release') { $Product = 'Bezzle' }
     $options = "-c $Configuration"
     if ($Arch -eq 'x64') { $options += " --arch x86_64 --scratch-path $scratch" }
     if ($Jobs -gt 0) { $options += " -j $Jobs" }
@@ -62,6 +65,9 @@ try {
     # for the Mac's (Web/tools/openfonts.py makes them; git-ignored, so sync.sh brings them).
     # The Mac's words in other languages (Resources/make-strings.py makes them on the Mac).
     if (Test-Path 'Resources\Generated\strings.json') { Copy-Item 'Resources\Generated\strings.json' $app -Force }
+    # The licences of what Bezzle is made with, which About Bezzle shows (Credits/licenses).
+    New-Item -ItemType Directory -Force "$app\licenses" | Out-Null
+    Copy-Item 'Credits\licenses\*' "$app\licenses" -Recurse -Force
     # The icon library, where Foundation looks for an executable's resources on Windows
     # (Bundle.main.resourceURL is Bezzle.resources beside it), as Icons.swift reads it from the Mac's bundle.
     New-Item -ItemType Directory -Force "$app\Bezzle.resources" | Out-Null

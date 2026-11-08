@@ -57,6 +57,13 @@ extension BezzleApp {
     @MainActor func answerLinks() {
         let exe = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path.replacingOccurrences(of: "/", with: "\\")
         let command = "\"\(exe)\" \"%1\""
+        // Open in Bezzle on a design's folder in Explorer, which the installer adds
+        // (Installer/Bezzle.iss): kept with this copy too, once it is there.
+        let verb = "Software\\Classes\\Directory\\shell\\Bezzle"
+        if let given = Self.registry(verb + "\\command", nil), given != command {
+            Self.setRegistry(verb, "Icon", "\"\(exe)\",0")
+            Self.setRegistry(verb + "\\command", nil, command)
+        }
         let open = "Software\\Classes\\bezzle\\shell\\open\\command"
         guard Self.registry(open, nil) != command else { return }
         Self.setRegistry("Software\\Classes\\bezzle", nil, "URL:Bezzle")
