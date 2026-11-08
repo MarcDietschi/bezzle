@@ -50,7 +50,7 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
 # The app as build.ps1 laid it out, without the tools that come with a build.
-Copy-Item "$App\*" $stage -Recurse -Exclude 'bezzle-render.exe', 'bezzle-share.exe', '*.pdb', '*.ilk', '*.exp', '*.lib'
+Copy-Item "$App\*" $stage -Recurse -Exclude 'bezzle-render.exe', 'bezzle-share.exe', '*.pdb', '*.ilk', '*.exp', '*.lib', 'version.txt'
 # The licences as this commit has them (About Bezzle shows them); the fonts' own beside them too,
 # in place of what the font folder was made with.
 if (Test-Path "$stage\licenses") { Remove-Item -Recurse -Force "$stage\licenses" }
@@ -107,12 +107,29 @@ Copy-Item "$stage\Bezzle.exe" $symbols -Force
 if ($LASTEXITCODE -ne 0) { throw 'llvm-strip failed' }
 
 # Its icon, its version, and (for a copy that updates itself) the feed and the key, as resources.
+# And a manifest saying it is made for Windows 10 and 11: without one, Windows tells an app it is
+# Windows 8, and WinSparkle took every update, which asks for Windows 11, as not for this PC.
 $parts = ($Version.Split('.') + @('0', '0', '0'))[0..2] | ForEach-Object { [int]$_ }
 $numeric = "$($parts[0]),$($parts[1]),$($parts[2]),0"
 $icon = "$windows\Resources\Generated\Bezzle.ico"
 if (-not (Test-Path $icon)) { throw "No $icon`: run Resources/make-icons.sh on the Mac (VM/sync.sh does)" }
+$work = Join-Path $Out "$Arch\work"
+New-Item -ItemType Directory -Force $work | Out-Null
+[IO.File]::WriteAllText("$work\Bezzle.manifest", @'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>
+'@, [Text.UTF8Encoding]::new($false))
 $rcText = @"
 #pragma code_page(65001)
+LANGUAGE 0, 0
+1 24 "$("$work\Bezzle.manifest" -replace '\\', '\\')"
+LANGUAGE 9, 1
 1 ICON "$($icon -replace '\\', '\\')"
 1 VERSIONINFO
 FILEVERSION $numeric
@@ -150,8 +167,6 @@ if ($Feed) {
     $sparkleArch = if ($Arch -eq 'arm64') { 'ARM64' } else { 'x64' }
     Copy-Item "$($tools.WinSparkle)\$sparkleArch\Release\WinSparkle.dll" $stage
 }
-$work = Join-Path $Out "$Arch\work"
-New-Item -ItemType Directory -Force $work | Out-Null
 [IO.File]::WriteAllText("$work\stamp.rc", $rcText, [Text.UTF8Encoding]::new($false))
 $rc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter rc.exe -ErrorAction SilentlyContinue |
     Where-Object { $_.Directory.Name -eq ($(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' })) } |
