@@ -2,7 +2,7 @@
 # Sends the subject matte that Remove Background runs on Windows into the Bezzle test VM, where
 # build.ps1 and the installer find it: Windows\Packages\subject-matte\BiRefNet.onnx under C:\src\Bezzle,
 # or under the folder given. It is made on a Mac by Scripts/subject-matte/make-onnx.sh, into
-# Scripts/subject-matte/build/onnx (git-ignored: GitHub takes no file of 471 MB), in this checkout
+# Scripts/subject-matte/build/onnx (git-ignored: GitHub takes no file over 100 MB), in this checkout
 # or, from a git worktree, in the checkout it belongs to. Windows/onnx.ps1 says whether what
 # arrived is the model measured.
 #

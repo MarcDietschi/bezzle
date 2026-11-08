@@ -1,8 +1,10 @@
 #!/bin/zsh
 # Makes the subject matte for Bezzle for Windows (see README.md): the same BiRefNet_HR that make.sh
 # converts for the Mac, at the same revision and weights, exported to ONNX at 2,048 pixels for ONNX
-# Runtime: build/onnx/BiRefNet.onnx (half precision, sampling in full) and BiRefNet-fp32.onnx, which is
-# checked against PyTorch. It runs BiRefNet's own model code, so run it yourself.
+# Runtime: build/onnx/BiRefNet-fp32.onnx, checked against PyTorch; from it BiRefNet.onnx, the one
+# Windows ships, its weights kept to 8 bits as the Mac's are and its layers working in full precision
+# (quantize_onnx.py); and BiRefNet-fp16.onnx, half precision, for comparison. It runs BiRefNet's own
+# model code, so run it yourself.
 #
 #   Scripts/subject-matte/make-onnx.sh [a photo to check it on]
 set -euo pipefail
@@ -33,4 +35,8 @@ VIRTUAL_ENV=$build/env $build/boot/bin/uv pip install -q onnx==1.18.0 onnxruntim
 
 rm -rf $build/onnx
 $py -I $here/export_onnx.py $build/code $build/model 2048 $build/onnx ${1:-}
+# The one Windows ships: 8-bit weights, full-precision layers (README.md, "For Windows").
+$py -I $here/quantize_onnx.py $build/onnx/BiRefNet-fp32.onnx $build/onnx/BiRefNet.onnx
+$py -I -c "import onnx; onnx.checker.check_model('$build/onnx/BiRefNet.onnx')"
 du -sh $build/onnx/*.onnx
+shasum -a 256 $build/onnx/BiRefNet.onnx

@@ -67,15 +67,18 @@ Scripts/subject-matte/make-onnx.sh [a photo to check it on]
 Bezzle for Windows runs the same model with ONNX Runtime. After `make.sh` has made the environment
 and fetched the model, this exports it to ONNX at 2,048 pixels with the two changes `convert.py`
 makes (deformable convolution with grid_sample, Swin's mask made in the model), so the Windows
-matte is the Mac's: `build/onnx/BiRefNet-fp32.onnx`, checked against PyTorch with ONNX Runtime, and
-`build/onnx/BiRefNet.onnx`, half precision but for sampling, as the Mac's, which Windows uses. Both
-are ignored by git. It runs BiRefNet's own model code, so run it yourself. `Windows/VM/send-matte.sh`
-brings the half-precision one to a Windows build machine (`Windows/README.md`).
+matte is the Mac's: `build/onnx/BiRefNet-fp32.onnx`, checked against PyTorch with ONNX Runtime; from
+it `build/onnx/BiRefNet.onnx`, which Windows ships, its weights kept to 8 bits as the Mac's are and its
+layers in full precision (`quantize_onnx.py`; why, below); and `BiRefNet-fp16.onnx`, half precision,
+for comparison. All are ignored by git. It runs BiRefNet's own model code, so run it yourself.
+`Windows/VM/send-matte.sh` brings the shipped one to a Windows build machine (`Windows/README.md`),
+and `Windows/onnx.ps1` pins its checksum.
 
 Windows runs it with ONNX Runtime 1.24.4: on the graphics card through DirectML, else on the
-processor, where ONNX Runtime runs the half-precision nodes it has no half-precision kernels for in
-full precision. Arm processors have many such kernels, and they lose precision (below); x64 ones
-have few, it is thought, which was not measured here.
+processor. Half precision was shipped first and lost whole regions where it was computed in half
+precision (Arm processors, below); the 8-bit model computes in full precision everywhere, keeps every
+photo measured, and is 275 MB rather than 471. Its speed on graphics cards, where full precision is
+slower than half, is not measured yet (the VM has no Direct3D 12 adapter).
 
 ### Measured on Windows (2026-11-08)
 
@@ -85,10 +88,10 @@ the share plainly wrong (off by more than half, %), and the overlap of what is a
 
 | | Mean | Edge | Gross | IoU | File | Compressed |
 |---|---|---|---|---|---|---|
-| Half precision, on the VM's Arm processor (shipped) | 1.52 | 13.0 | 1.46 | 96.9 | 471 MB | 395 MB |
+| Half precision, on the VM's Arm processor (first shipped) | 1.52 | 13.0 | 1.46 | 96.9 | 471 MB | 395 MB |
 | Half precision, on the Mac's processor (8 photos, Pillow's squeeze) | 0.05 | 0.72 | 0 | 99.9 | | |
 | 8 bits, half-precision layers (`quantize_onnx.py BiRefNet.onnx`) | 0.05 | 1.05 | 0 | 99.85 | 252 MB | 199 MB |
-| 8 bits, full-precision layers (`quantize_onnx.py BiRefNet-fp32.onnx`) | 0.05 | 0.75 | 0 | 99.89 | 275 MB | 200 MB |
+| 8 bits, full-precision layers (`quantize_onnx.py BiRefNet-fp32.onnx`, shipped) | 0.05 | 0.75 | 0 | 99.89 | 275 MB | 200 MB |
 | The Mac's own Core ML model on its GPU, for comparison (8 photos) | 0.88 | 11.1 | 0.65 | 97.8 | 225 MB | |
 
 The rows run on the Mac's processor compute in full precision whatever the file keeps (ONNX Runtime

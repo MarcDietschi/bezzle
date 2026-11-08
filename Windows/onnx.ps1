@@ -32,8 +32,10 @@ $downloads = @(
        Sha = '4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9' }
 )
 # The subject matte measured on Windows (Scripts/subject-matte/README.md): BiRefNet_HR at 2,048
-# pixels, half precision but for sampling, as make-onnx.sh exported it on 2026-11-08.
-$matte = '7bc779596b1e6c1d623269d9fe0b80798186297e235019360a1229466cf45c2a'
+# pixels, its weights kept to 8 bits and its layers in full precision, as make-onnx.sh makes it
+# (quantize_onnx.py on the full-precision export of 2026-11-08). Half precision lost whole regions
+# on Arm processors; this keeps every photo measured and halves the download.
+$matte = '98b3c58e3338454f07e01081fcbacc13c221b1c7d0e45976c6f407dadf0b89ac'
 
 $unpacked = @{}
 foreach ($d in $downloads) {

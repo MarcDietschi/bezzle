@@ -3,7 +3,8 @@
 # for Windows, which runs it with ONNX Runtime: 0…1 RGB in, side × side, the matte of what stands out,
 # 0…1, out. As convert.py does for Core ML: deformable convolution done with grid_sample, and Swin's
 # attention mask made in the model from small labels. Writes BiRefNet-fp32.onnx, checks it against
-# PyTorch, then BiRefNet.onnx: half precision throughout but for sampling, as the Mac's model. See README.md.
+# PyTorch, then BiRefNet-fp16.onnx: half precision throughout but for sampling. make-onnx.sh then makes the
+# model Windows ships, BiRefNet.onnx, from the full-precision one (quantize_onnx.py). See README.md.
 import sys, os, importlib, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 code, weights, side, out = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
@@ -83,7 +84,7 @@ print('patched against original: max', np.abs(patched - reference).max(), 'mean'
 
 os.makedirs(out, exist_ok=True)
 fp32 = os.path.join(out, 'BiRefNet-fp32.onnx')
-fp16 = os.path.join(out, 'BiRefNet.onnx')
+fp16 = os.path.join(out, 'BiRefNet-fp16.onnx')
 
 t0 = time.time()
 with torch.no_grad():
@@ -101,4 +102,4 @@ print('onnx runtime (fp32) against pytorch: max', np.abs(got - reference).max(),
 half(fp32, fp16)
 for path in (fp32, fp16):
     print(os.path.basename(path), round(os.path.getsize(path) / 1e6), 'MB')
-print('The half-precision model is checked on Windows, with DirectML: ONNX Runtime has no half-precision kernels on a CPU.')
+print('The half-precision model is for comparison: computing in half precision loses whole regions on some processors.')
