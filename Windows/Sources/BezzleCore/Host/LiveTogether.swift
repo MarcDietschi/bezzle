@@ -227,12 +227,19 @@ public final class LiveTogether {
     private var sentMotion: [Node] = []
     private var wasInGesture = false
     private var takenVersion = -1
+    /// Pictures this computer has offered glimpses of, or had before the room was opened.
+    private var offered: Set<String> = []
+    /// Pictures this computer has asked the room for, and those it found it has.
+    private var wanted: Set<String> = []
+    private var present: Set<String> = []
+    private var lookedForPictures = 0.0
 
     init(session: SharedSession, keys: ShareKeys, relay: URL) {
         self.session = session
         key = LiveKey(keys)
         socket = LiveWebSocket(room: keys.room, read: keys.readToken, relay: relay)
         relayedUpTo = session.changedUpTo
+        offered = session.shownPictures
         socket.onFrame = { [weak self] frame in MainActor.assumeIsolated { self?.handle(frame) } }
         socket.onLink = { [weak self] state in
             MainActor.assumeIsolated {
@@ -384,6 +391,10 @@ public final class LiveTogether {
         dropSilent()
         let inGesture = Editing.gestureStart != nil
         defer { wasInGesture = inGesture }
+        if WindowsCore.now - lookedForPictures > 0.5 {
+            lookedForPictures = WindowsCore.now
+            lookForPictures()
+        }
         guard inCompany else {
             takenVersion = WindowsCore.designVersion
             return
@@ -488,9 +499,10 @@ public final class LiveTogether {
             session.persist()
         case .wink(let at):
             winks.append((peer, at, WindowsCore.now))
-        case .glimpses, .want:
-            // No glimpses on Windows yet (Host/GlimpseStandIns.swift).
-            break
+        case .glimpses(let glimpses):
+            take(glimpses)
+        case .want(let names):
+            sendGlimpses(of: names, to: peer)
         case .version(let version, let data):
             if let data, WindowsCore.sharing === session { WindowsCore.versions.arrived(version, data: data) }
         }
@@ -567,6 +579,63 @@ public final class LiveTogether {
         motion = [:]
         stopFollowing()
         handOutPencils()
+    }
+
+    // MARK: Pictures
+
+    /// The pictures the design shows now, as the shared design takes in what changed here: any
+    /// placed here since go to the others as glimpses at once, to show until the room brings them
+    /// (the Mac's LiveRoom.offer).
+    func offer(_ names: Set<String>) {
+        let new = names.subtracting(offered)
+        guard !new.isEmpty else { return }
+        offered.formUnion(new)
+        guard inCompany else { return }
+        sendGlimpses(of: Array(new), to: nil)
+    }
+
+    /// Glimpses of the pictures this computer has among `names`, made away from the main thread
+    /// (Host/Glimpses.swift), to everyone or to the one who asked.
+    private func sendGlimpses(of names: [String], to peer: UInt32?) {
+        guard let session else { return }
+        let folder = session.url.appendingPathComponent("images", isDirectory: true)
+        let names = names.filter { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
+        guard !names.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let glimpses = names.prefix(200).compactMap { WindowsCore.glimpse(of: folder.appendingPathComponent($0), name: $0) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // A hundred at a time, well inside what the relay passes in one.
+                    for start in stride(from: 0, to: glimpses.count, by: 100) {
+                        self?.send(.glimpses(Array(glimpses[start..<min(start + 100, glimpses.count)])), to: peer)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pictures the design shows and this computer does not have: the others are asked for
+    /// glimpses of them (the Mac's lookForPictures).
+    private func lookForPictures() {
+        guard inCompany, let session else { return }
+        let folder = session.url.appendingPathComponent("images", isDirectory: true)
+        var ask: [String] = []
+        for name in session.shownPictures.subtracting(wanted).subtracting(present) {
+            if FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) { present.insert(name) } else { ask.append(name) }
+        }
+        guard !ask.isEmpty else { return }
+        wanted.formUnion(ask)
+        send(.want(Array(ask.prefix(400))))
+    }
+
+    /// Glimpses someone sent of pictures this computer does not have yet: each shown by its
+    /// glimpse until the picture comes (the Mac's LiveRoom.take).
+    private func take(_ glimpses: [LiveGlimpse]) {
+        guard let session else { return }
+        let folder = session.url.appendingPathComponent("images", isDirectory: true)
+        for g in glimpses where !FileManager.default.fileExists(atPath: folder.appendingPathComponent(g.name).path) {
+            WindowsCore.standIn(g)
+        }
     }
 
     // MARK: Settling and forgetting

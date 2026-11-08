@@ -140,6 +140,8 @@ extension WindowsCore {
         guard let data = try? Data(contentsOf: file) else { return }
         // Asked for again the next time it is drawn: one not there yet is not kept as missing.
         giveSkia(name, data)
+        // One shown by its glimpse until now is drawn as itself from now on.
+        glimpseDone(name)
         pictureCame = true
         tellShareNews()
     }
@@ -366,8 +368,13 @@ final class SharedSession {
         }
         baseDoc = doc
         basePictures = shown
-        cloud?.offer(shown.values.reduce(into: Set<String>()) { $0.formUnion($1) })
+        let pictures = shownPictures
+        cloud?.offer(pictures)
+        live?.offer(pictures)
     }
+
+    /// The pictures the design shows, as last taken in.
+    var shownPictures: Set<String> { basePictures.values.reduce(into: Set<String>()) { $0.formUnion($1) } }
 
     private func absorb(_ now: FlatDesign, since was: FlatDesign) {
         if state.absorb(now, since: was, by: replica, at: WindowsCore.nowMilliseconds) {

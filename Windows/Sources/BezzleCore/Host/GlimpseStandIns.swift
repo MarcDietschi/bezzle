@@ -1,10 +1,9 @@
 import Foundation
 
-// What the shared Model/Live.swift takes from ImageIO and UniformTypeIdentifiers for its glimpses
-// (a picture a few dozen pixels across, sent the moment it is placed, shown blurred until the
-// picture itself comes), beyond what the importers' stand-ins give (Import/ImportStandIns.swift).
-// Here no glimpse is made: a picture on its way shows as a missing one does, a quiet grey, until
-// it comes. Glimpses on Windows would make them with Skia (decode, scale, JPEG) instead.
+// What the shared Model/Live.swift takes from ImageIO and UniformTypeIdentifiers for its glimpses,
+// beyond what the importers' stand-ins give (Import/ImportStandIns.swift), only so that it builds:
+// on Windows glimpses are made and opened by Host/Glimpses.swift with Skia, off the main thread
+// where they are made, as the core's pictures cannot be; LiveGlimpse.of and standIn are not used.
 
 typealias CFURL = URL
 
@@ -21,9 +20,8 @@ nonisolated extension UTType {
 }
 
 nonisolated extension CIImage {
-    /// Only its extent, and no picture: nothing here draws a glimpse grown, so a glimpse sent
-    /// from a Mac (which the importers' Image I/O stand-ins can read) opens to nothing, and the
-    /// picture on its way stays grey rather than showing a corner of itself.
+    /// Only its extent, and no picture: Live.swift's standIn is not used here (Glimpses.swift
+    /// grows and blurs a glimpse in Skia instead).
     func transformed(by t: CGAffineTransform) -> CIImage {
         CIImage(nil, [], extent: extent.applying(t), clamped: clamped)
     }

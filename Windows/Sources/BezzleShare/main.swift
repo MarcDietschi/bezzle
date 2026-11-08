@@ -20,6 +20,9 @@ import Foundation
 //
 // `live`: opens the link and stays in the design's live room until <out>/go, saying where it
 // points; what it heard of the Mac there goes to live.json.
+//
+// `glimpses`: opens the link and, in the live room, sends a glimpse of a picture it places and
+// shows the Mac's by the glimpse the Mac sends, until it comes (see glimpsesRun).
 // BEZZLE_REPLICA names this computer among those sharing it.
 
 let arguments = CommandLine.arguments
@@ -235,6 +238,81 @@ func wait(for file: URL) {
     print("live: \(events)")
 }
 
+/// Glimpses in the live room: once Anna is there, Windows fills Frame with windows.png (beside
+/// link.json), whose glimpse goes to her at once; it asks for the picture Anna put in Photo,
+/// shows it by the glimpse she sends (board-glimpse.png, and the glimpse grown as Skia draws it,
+/// windows-standin-anna.png), says so with a change of its own, and once she sends the picture
+/// itself to the room, shows that (board-arrived.png); until <out>/go. What happened goes to
+/// glimpses.json, the glimpse Windows sent to windows-glimpse.jpg.
+@MainActor func glimpsesRun(_ file: URL, _ out: URL) async throws {
+    let given = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] ?? [:]
+    guard let link = given["link"] as? String else { print("FAIL: no link"); exit(1) }
+    let designs = file.deletingLastPathComponent().appendingPathComponent("designs", isDirectory: true)
+    let url = try await WindowsCore.acceptLink(link, into: designs)
+    _ = try WindowsCore.open(url)
+    await WindowsCore.syncShareNow()
+    guard let live = WindowsCore.live else { print("FAIL: no live room"); exit(1) }
+    live.say(pointer: CGPoint(x: 123, y: 45), view: CGRect(x: 0, y: 0, width: 400, height: 300), selection: [], tool: "select", doing: "looking")
+    print("in the live room as \(WindowsCore.replica)")
+    let images = url.appendingPathComponent("images", isDirectory: true)
+    func png(_ drawn: (width: Int, height: Int, pixels: [UInt8])?, _ name: String) throws {
+        guard let drawn else { print("nothing drawn for \(name)"); return }
+        try WindowsCore.writePNG(drawn.pixels, width: drawn.width, height: drawn.height, to: out.appendingPathComponent(name))
+    }
+    var events: [String] = [], placed: String?, theirs: String?, sizes: [String: [Int]] = [:]
+    var lastLook = Date()
+    let go = out.appendingPathComponent("go"), started = Date()
+    while !FileManager.default.fileExists(atPath: go.path) {
+        guard Date().timeIntervalSince(started) < 600 else { print("FAIL: no go"); exit(1) }
+        live.tick()
+        try await Task.sleep(for: .milliseconds(50))
+        WindowsCore.showOthersIfIdle()
+        // Anna is here: a picture placed, its glimpse sent at once as the design takes it in.
+        if placed == nil, live.people.contains(where: { $0.replica == "anna" }), let frame = layer("Frame"),
+           let box = WindowsCore.design?.node(frame)?.frame {
+            let picture = file.deletingLastPathComponent().appendingPathComponent("windows.png")
+            _ = WindowsCore.drop(files: [picture], text: nil, at: CGPoint(x: box.midX, y: box.midY), on: frame)
+            try WindowsCore.save()
+            placed = WindowsCore.design?.node(frame)?.fill.image?.asset
+            if let name = placed, let g = WindowsCore.glimpse(of: images.appendingPathComponent(name), name: name) {
+                try g.jpeg.write(to: out.appendingPathComponent("windows-glimpse.jpg"))
+                events.append("placed")
+            }
+            print("placed \(placed ?? "nothing")")
+        }
+        // Anna's picture, not here: shown by its glimpse until it comes.
+        if theirs == nil, let photo = layer("Photo"), let name = WindowsCore.design?.node(photo)?.fill.image?.asset, WindowsCore.glimpsed.contains(name) {
+            theirs = name
+            events.append("stand-in")
+            let shown = WindowsCore.pictureShown(named: name)
+            sizes["stand-in"] = [shown?.width ?? 0, shown?.height ?? 0]
+            try png(shown, "windows-standin-anna.png")
+            try png(WindowsCore.render(board: 0, scale: 1), "board-glimpse.png")
+            if let s = layer("S") {
+                WindowsCore.edit { d in d.update(s) { $0.name = "S, glimpse shown" } }
+                try WindowsCore.save()
+            }
+            print("showing \(name) by its glimpse")
+        }
+        // Then the picture itself, from the room.
+        if let name = theirs, !events.contains("arrived") {
+            if Date().timeIntervalSince(lastLook) > 2 {
+                lastLook = Date()
+                await WindowsCore.syncShareNow()
+            }
+            if FileManager.default.fileExists(atPath: images.appendingPathComponent(name).path), !WindowsCore.glimpsed.contains(name) {
+                events.append("arrived")
+                let shown = WindowsCore.pictureShown(named: name)
+                sizes["arrived"] = [shown?.width ?? 0, shown?.height ?? 0]
+                try png(WindowsCore.render(board: 0, scale: 1), "board-arrived.png")
+                print("\(name) came")
+            }
+        }
+    }
+    try write(["events": events, "placed": placed ?? "", "theirs": theirs ?? "", "sizes": sizes], "glimpses.json", in: out)
+    print("glimpses: \(events)")
+}
+
 do {
     try WindowsCore.loadFonts(from: URL(fileURLWithPath: arguments[1]))
     let given = URL(fileURLWithPath: arguments[3]), out = URL(fileURLWithPath: arguments[4])
@@ -243,6 +321,7 @@ do {
     case "folder": try folderRun(given, out)
     case "link": try await linkRun(given, out)
     case "live": try await liveRun(given, out)
+    case "glimpses": try await glimpsesRun(given, out)
     default: print("unknown: \(arguments[2])"); exit(2)
     }
     print("done")

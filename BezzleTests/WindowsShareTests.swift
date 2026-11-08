@@ -412,6 +412,8 @@ struct WindowsShareTests {
         var presence: [UInt32: LivePresence] = [:]
         var changes: [SharedDesign] = []
         var records = 0
+        var glimpses: [LiveGlimpse] = []
+        var wants: [String] = []
     }
 
     /// The live room of a design shared by link, through the relay itself (as aLinkSharedWithWindows):
@@ -549,6 +551,245 @@ struct WindowsShareTests {
             #expect((live["peopleAtTheEnd"] as? [String])?.contains("anna") == false)
             // Windows has the design as Anna has it.
             #expect(try design(in: live).allNodes.map(\.name) == (try design(in: mac)).allNodes.map(\.name))
+            try "3".write(to: stageFile, atomically: true, encoding: .utf8)
+        }
+    }
+
+    // MARK: Glimpses, through the relay
+
+    nonisolated private static let glimpseFolder = ProcessInfo.processInfo.environment["BEZZLE_WINDOWS_GLIMPSES"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+
+    /// A picture with something to see in it, as a JPEG (Anna's) or a PNG (the one Windows places):
+    /// a sky going warm towards a horizon, a sun, and a dark hill.
+    private func photo(width: Int, height: Int, jpeg: Bool) throws -> Data {
+        let ctx = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let sky = try #require(CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                                          colors: [CGColor(srgbRed: 0.16, green: 0.36, blue: 0.78, alpha: 1), CGColor(srgbRed: 0.98, green: 0.62, blue: 0.32, alpha: 1)] as CFArray,
+                                          locations: [0, 1]))
+        ctx.drawLinearGradient(sky, start: CGPoint(x: 0, y: CGFloat(height)), end: CGPoint(x: 0, y: CGFloat(height) * 0.3), options: [.drawsAfterEndLocation])
+        ctx.setFillColor(CGColor(srgbRed: 1, green: 0.93, blue: 0.6, alpha: 1))
+        ctx.fillEllipse(in: CGRect(x: CGFloat(width) * 0.62, y: CGFloat(height) * 0.5, width: CGFloat(height) * 0.22, height: CGFloat(height) * 0.22))
+        ctx.setFillColor(CGColor(srgbRed: 0.12, green: 0.22, blue: 0.16, alpha: 1))
+        ctx.move(to: .zero)
+        ctx.addCurve(to: CGPoint(x: CGFloat(width), y: CGFloat(height) * 0.18), control1: CGPoint(x: CGFloat(width) * 0.3, y: CGFloat(height) * 0.62),
+                     control2: CGPoint(x: CGFloat(width) * 0.6, y: CGFloat(height) * 0.05))
+        ctx.addLine(to: CGPoint(x: CGFloat(width), y: 0))
+        ctx.fillPath()
+        let image = try #require(ctx.makeImage())
+        return try #require(NSBitmapImageRep(cgImage: image).representation(using: jpeg ? .jpeg : .png, properties: jpeg ? [.compressionFactor: 0.9] : [:]))
+    }
+
+    /// A picture file's pixels, as sRGB RGBA, and its size.
+    private func pixels(_ data: Data) throws -> (width: Int, height: Int, bytes: [UInt8]) {
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        return try pixels(image)
+    }
+
+    private func pixels(_ image: CGImage) throws -> (width: Int, height: Int, bytes: [UInt8]) {
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let ctx = try #require(CGContext(data: &bytes, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return (image.width, image.height, bytes)
+    }
+
+    /// How far apart two pictures of one size are: the mean and the largest difference of a channel, out of 255.
+    private func apart(_ a: (width: Int, height: Int, bytes: [UInt8]), _ b: (width: Int, height: Int, bytes: [UInt8])) -> (mean: Double, most: Int) {
+        guard a.width == b.width, a.height == b.height else { return (255, 255) }
+        var sum = 0, most = 0
+        for k in a.bytes.indices where k % 4 != 3 {
+            let d = abs(Int(a.bytes[k]) - Int(b.bytes[k]))
+            sum += d
+            most = max(most, d)
+        }
+        return (Double(sum) / Double(a.width * a.height * 3), most)
+    }
+
+    /// Glimpses between a Mac and Bezzle for Windows (bezzle-share's `glimpses`) in the live room of
+    /// a design shared by link, through the relay itself (as aLinkSharedWithWindows): each shows
+    /// the other's picture by its glimpse until the picture comes, as the Mac shows a Mac's. Off
+    /// unless `TEST_RUNNER_BEZZLE_RELAY_TEST` and `TEST_RUNNER_BEZZLE_WINDOWS_GLIMPSES`:
+    ///
+    /// 0. Anna shares Poster.bezzle, with layers Photo and Frame; the link goes to link.json, beside
+    ///    anna.jpg (hers) and windows.png (for Windows to place).
+    /// 1. Windows is in the room and fills Frame with windows.png: its glimpse comes here at once,
+    ///    and opens as the Mac's own do. Anna fills Photo with anna.jpg, which only she has: Windows
+    ///    asks for a glimpse of it, shows it so (and says so), then gets the picture from the room.
+    ///    What the Mac makes of the same pictures goes to mac/.
+    /// 2. What Windows showed (its out folder copied to windows/): Anna's glimpse grown and blurred
+    ///    as the Mac grows and blurs it, then her picture itself; its glimpse of windows.png as the
+    ///    Mac's glimpse of it.
+    @Test(.enabled(if: glimpseFolder != nil && relay != nil))
+    func glimpsesWithWindows() async throws {
+        let folder = try #require(Self.glimpseFolder), address = try #require(Self.relay)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let server = RelayServer(base: address)
+        Sharing.shared.server = server
+        defer { Sharing.shared.server = nil }
+        let stageFile = folder.appendingPathComponent("stage.txt")
+        let stage = (try? String(contentsOf: stageFile, encoding: .utf8)).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+        let annaURL = folder.appendingPathComponent("anna/Poster.bezzle"), linkFile = folder.appendingPathComponent("link.json")
+        let mac = folder.appendingPathComponent("mac", isDirectory: true)
+
+        switch stage {
+        case 0:
+            let secret = ShareKeys.newSecret()
+            let keys = try #require(ShareKeys(secret: secret))
+            let owner = ShareKeys.newSecret().base64URL
+            try await server.create(keys.room, hashes: ["read": Sharing.hash(keys.readToken), "write": Sharing.hash(keys.writeToken), "owner": Sharing.hash(owner)])
+            Sharing.shared.own(keys.room, with: owner)
+            var board = Node(kind: .artboard, name: "Poster", frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+            board.children = [CanvasTests.rect("Photo", CGRect(x: 10, y: 10, width: 180, height: 120)),
+                              CanvasTests.rect("Frame", CGRect(x: 210, y: 10, width: 180, height: 120)),
+                              CanvasTests.rect("S", CGRect(x: 10, y: 200, width: 50, height: 50))]
+            var doc = BezzleDocument()
+            doc.nodes = [board]
+            try FileManager.default.createDirectory(at: annaURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try DesignFile.write(doc, to: annaURL)
+            let link = ShareLink(secret: secret.base64URL, title: "Poster", ownerName: "Anna")
+            try SharingFiles.write(link, to: annaURL)
+            let anna = try session(annaURL, "anna")
+            try await anna.cloud?.sendMeta(ShareMeta(title: "Poster", owner: "Anna", made: Collaboration.now))
+            await anna.cloud?.syncForTesting()
+            anna.close()
+            DocumentStore.finishSaving()
+            try photo(width: 1200, height: 800, jpeg: true).write(to: folder.appendingPathComponent("anna.jpg"))
+            try photo(width: 900, height: 600, jpeg: false).write(to: folder.appendingPathComponent("windows.png"))
+            try JSONSerialization.data(withJSONObject: ["link": try #require(link.page).absoluteString, "secret": secret.base64URL, "owner": owner]).write(to: linkFile)
+            try "1".write(to: stageFile, atomically: true, encoding: .utf8)
+
+        case 1:
+            let given = try read(linkFile)
+            let secret = try #require(given["secret"] as? String)
+            let keys = try #require(ShareKeys(link: secret))
+            Sharing.shared.own(keys.room, with: try #require(given["owner"] as? String))
+            let anna = try session(annaURL, "anna")
+            // Her picture reaches the room only once Windows has shown its glimpse.
+            anna.cloud?.stop()
+            defer { anna.close(); DocumentStore.finishSaving() }
+            let images = annaURL.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+            let key = LiveKey(keys), heard = Heard()
+            let hello = LiveHello(replica: "anna", name: "Anna", timeZone: "Europe/Zurich")
+            let here = LivePresence(pointer: CGPoint(x: 200, y: 150), view: CGRect(x: 0, y: 0, width: 400, height: 300), selection: [], tool: "select")
+            var parts = URLComponents(url: address, resolvingAgainstBaseURL: false)!
+            parts.scheme = parts.scheme == "https" ? "wss" : "ws"
+            let socket = LiveSocket(room: keys.room, read: keys.readToken, relay: try #require(parts.url))
+            defer { socket.stop() }
+            func send(_ message: LiveMessage, to peer: UInt32? = nil) {
+                guard let sealed = key.seal(message) else { return }
+                socket.send(peer.map { LiveFrame.to($0, sealed) } ?? LiveFrame.toAll(sealed), droppable: false)
+            }
+            socket.onFrame = { frame in
+                switch frame {
+                case .welcome(_, let others) where !others.isEmpty:
+                    send(.hello(hello))
+                    send(.presence(here))
+                case .joined(let peer):
+                    send(.hello(hello), to: peer)
+                    send(.presence(here), to: peer)
+                case .message(let from, let sealed):
+                    switch key.open(sealed) {
+                    case .hello(let h)?:
+                        heard.others[from] = h
+                        if h.ask == true { send(.hello(hello), to: from) }
+                    case .changes(let c)?: heard.changes.append(c)
+                    case .glimpses(let g)?: heard.glimpses += g
+                    case .want(let names)?:
+                        // As the Mac's LiveRoom answers: glimpses of those it has.
+                        heard.wants += names
+                        let made = names.compactMap { name in
+                            FileManager.default.fileExists(atPath: images.appendingPathComponent(name).path)
+                                ? LiveGlimpse.of(images.appendingPathComponent(name), name: name) : nil
+                        }
+                        if !made.isEmpty { send(.glimpses(made), to: from) }
+                    default: break
+                    }
+                default: break
+                }
+            }
+            socket.start()
+            func until(_ seconds: Double, _ done: () -> Bool) async throws {
+                let start = Date()
+                while !done(), Date().timeIntervalSince(start) < seconds { try await Task.sleep(for: .milliseconds(100)) }
+            }
+            try await until(60) { heard.others.values.contains { $0.replica != "anna" } }
+            #expect(heard.others.values.contains { $0.replica != "anna" })
+            // Anna fills Photo with a picture only she has, and says so live.
+            let name = UUID().uuidString + ".jpg"
+            try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: folder.appendingPathComponent("anna.jpg"), to: images.appendingPathComponent(name))
+            var doc = anna.state.flatDesign().document()
+            let photoID = try #require(doc.allNodes.first { $0.name == "Photo" }?.id)
+            doc.update(photoID) {
+                $0.fill.on = true
+                $0.fill.image = ImageFill(asset: name, size: CGSize(width: 1200, height: 800))
+            }
+            let before = anna.state.clock.time
+            anna.takeIn(doc)
+            send(.changes(anna.state.changes(by: "anna", after: before)))
+            // Windows' glimpse of what it placed, sent at once; and Windows asking for Anna's.
+            try await until(60) { !heard.glimpses.isEmpty && heard.wants.contains(name) }
+            #expect(heard.wants.contains(name))
+            let theirs = try #require(heard.glimpses.first { $0.name != name })
+            // It opens as the Mac's own do: a picture a few dozen pixels across, grown and blurred.
+            let small = try pixels(theirs.jpeg)
+            #expect(max(small.width, small.height) == LiveGlimpse.pixels)
+            #expect(theirs.jpeg.count < 4000)
+            let grown = try #require(theirs.standIn())
+            #expect(max(grown.width, grown.height) == 320)
+            // Windows shows Anna's picture by its glimpse, and says so; then it goes to the room.
+            try await until(60) {
+                var merged = anna.state
+                for c in heard.changes { merged.merge(c) }
+                return merged.flatDesign().document().allNodes.contains { $0.name == "S, glimpse shown" }
+            }
+            anna.receive(heard.changes, from: .relay)
+            #expect(layer(anna, "S, glimpse shown") != nil)
+            anna.cloud?.start(for: anna)
+            await anna.cloud?.syncForTesting()
+            // What the Mac makes of the same: Windows' glimpse grown, Anna's glimpse and it grown,
+            // and the Mac's own glimpse of the picture Windows placed.
+            try FileManager.default.createDirectory(at: mac, withIntermediateDirectories: true)
+            func png(_ image: CGImage, _ file: String) throws {
+                try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])).write(to: mac.appendingPathComponent(file))
+            }
+            try theirs.jpeg.write(to: mac.appendingPathComponent("windows-glimpse-received.jpg"))
+            try png(grown, "mac-standin-windows.png")
+            let annas = try #require(LiveGlimpse.of(images.appendingPathComponent(name), name: name))
+            try annas.jpeg.write(to: mac.appendingPathComponent("mac-glimpse-anna.jpg"))
+            try png(try #require(annas.standIn()), "mac-standin-anna.png")
+            let windowsPicture = try #require(LiveGlimpse.of(folder.appendingPathComponent("windows.png"), name: "windows.png"))
+            try windowsPicture.jpeg.write(to: mac.appendingPathComponent("mac-glimpse-windows.jpg"))
+            try JSONSerialization.data(withJSONObject: ["anna": name, "windows": theirs.name, "wanted": heard.wants]).write(to: mac.appendingPathComponent("mac-glimpses.json"))
+            // A moment for Windows to take the picture from the room.
+            try await Task.sleep(for: .seconds(8))
+            try "2".write(to: stageFile, atomically: true, encoding: .utf8)
+
+        default:
+            let windows = folder.appendingPathComponent("windows", isDirectory: true)
+            let said = try read(windows.appendingPathComponent("glimpses.json"))
+            let events = said["events"] as? [String] ?? []
+            #expect(Set(events).isSuperset(of: ["placed", "stand-in", "arrived"]))
+            let macSaid = try read(mac.appendingPathComponent("mac-glimpses.json"))
+            #expect(said["theirs"] as? String == macSaid["anna"] as? String)
+            #expect(said["placed"] as? String == macSaid["windows"] as? String)
+            // Anna's glimpse grown and blurred on Windows as on the Mac, then her picture itself.
+            let grownThere = try pixels(Data(contentsOf: windows.appendingPathComponent("windows-standin-anna.png")))
+            let grownHere = try pixels(Data(contentsOf: mac.appendingPathComponent("mac-standin-anna.png")))
+            let sizes = said["sizes"] as? [String: [Int]] ?? [:]
+            #expect(sizes["stand-in"] == [grownHere.width, grownHere.height])
+            #expect(sizes["arrived"] == [1200, 800])
+            let grownApart = apart(grownThere, grownHere)
+            #expect(grownApart.mean < 2, "stand-ins apart by \(grownApart.mean) on average, \(grownApart.most) at most")
+            // The glimpse Windows sent is the one it made, and much as the Mac's of the same picture.
+            #expect(try Data(contentsOf: windows.appendingPathComponent("windows-glimpse.jpg")) == Data(contentsOf: mac.appendingPathComponent("windows-glimpse-received.jpg")))
+            let sentThere = try pixels(Data(contentsOf: windows.appendingPathComponent("windows-glimpse.jpg")))
+            let sentHere = try pixels(Data(contentsOf: mac.appendingPathComponent("mac-glimpse-windows.jpg")))
+            let sentApart = apart(sentThere, sentHere)
+            #expect(sentApart.mean < 6, "glimpses apart by \(sentApart.mean) on average, \(sentApart.most) at most")
+            print("glimpses: stand-ins \(grownApart), glimpses \(sentApart)")
             try "3".write(to: stageFile, atomically: true, encoding: .utf8)
         }
     }
