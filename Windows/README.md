@@ -45,7 +45,8 @@ See `VM/make-vm.sh` for what the VM is and where its key, password and disks liv
 It looks like the Mac app: `DESIGN.md` has the Mac's numbers, and `Sources/Bezzle/` builds the same
 window from them (Theme, Glyphs, Bar, ToolRail, LayersPanel, Inspector, Rulers, DesignCanvas,
 HomeView). Designs live in Documents › Bezzle and are saved 600 ms after each change, as on the Mac;
-designs shared through their folder (`sharing/people` in the package) are not saved yet.
+designs shared through a synced folder (`sharing/people` in the package) are saved as the Mac saves
+them (Host/Collaborating.swift).
 
 To try it in the VM without anyone at it: `VM/desktop` runs a command in its signed-in session,
 and `VM/input.ps1` there moves the mouse and presses keys (real input, as WinUI needs). With
