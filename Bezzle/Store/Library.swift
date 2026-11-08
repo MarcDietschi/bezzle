@@ -387,7 +387,9 @@ final class Library {
     }
 
     /// Makes a copy of a design next to it.
-    func duplicate(_ url: URL) {
+    /// Copies a design beside it, named "… copy" in the person's language; the copy made.
+    @discardableResult
+    func duplicate(_ url: URL) -> URL {
         let target = freeURL(named: String(localized: "\(url.deletingPathExtension().lastPathComponent) copy"), in: url.deletingLastPathComponent())
         try? FileManager.default.copyItem(at: url, to: target)
         // Its own file may lag behind what everyone's files in its folder have.
@@ -399,6 +401,7 @@ final class Library {
         SharingFiles.forget(target)
         remember(target)
         refresh()
+        return target
     }
 
     // MARK: Thumbnails

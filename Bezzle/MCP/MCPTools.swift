@@ -301,9 +301,8 @@ final class MCPTools {
             store.save()
             DocumentStore.finishSaving()
         }
-        // The same name `Library.duplicate` picks.
-        let copy = Library.shared.freeURL(named: url.deletingPathExtension().lastPathComponent + " copy", in: url.deletingLastPathComponent())
-        Library.shared.duplicate(url)
+        // The name `Library.duplicate` gives it, in the person's language ("Kopie", "copie"…).
+        let copy = Library.shared.duplicate(url)
         guard FileManager.default.fileExists(atPath: copy.path) else { throw MCPError("The copy could not be made.") }
         return [.text(JSONValue.object([("name", .string(copy.deletingPathExtension().lastPathComponent)), ("path", .string(copy.path))]).text)]
     }
