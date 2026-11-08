@@ -131,7 +131,7 @@ BEGIN
             VALUE "FileDescription", "$Name"
             VALUE "FileVersion", "$Version"
             VALUE "InternalName", "Bezzle"
-            VALUE "LegalCopyright", "© 2026 Erik Muffler"
+            VALUE "LegalCopyright", "$([char]0xA9) 2026 Erik Muffler"
             VALUE "OriginalFilename", "Bezzle.exe"
             VALUE "ProductName", "$Name"
             VALUE "ProductVersion", "$Version"

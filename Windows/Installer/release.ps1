@@ -20,14 +20,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $windows = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $windows
-# The packages every Bezzle build shares (Skia, the WinUI bindings, libavif…), never changed here.
+# The packages every Bezzle build shares (Skia, the WinUI bindings, libavif), never changed here.
 if (-not (Test-Path "$windows\Packages")) {
     cmd /c mklink /J "$windows\Packages" 'C:\src\Bezzle\Windows\Packages' | Out-Null
 }
 $native = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 $made = @()
 foreach ($arch in $Archs) {
-    Write-Host "Building Bezzle $Version ($Build) for $arch…"
+    Write-Host "Building Bezzle $Version ($Build) for $arch"
     $started = Get-Date
     if ($arch -eq $native) {
         # Through cmd: PowerShell 5 takes a compiler's warnings on stderr for errors.

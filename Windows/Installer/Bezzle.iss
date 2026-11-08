@@ -1,4 +1,4 @@
-; Bezzle's installer for Windows, compiled by Inno Setup 6 (ISCC). make-installer.ps1 lays the app
+﻿; Bezzle's installer for Windows, compiled by Inno Setup 6 (ISCC). make-installer.ps1 lays the app
 ; out and passes what this needs:
 ;
 ;   Name     "Bezzle", or "Bezzle Test" for a copy that leaves Bezzle's own installation alone
