@@ -46,6 +46,9 @@ enum Editing {
         let base = gestureBase ?? gestureStart ?? doc
         let next = edited(base, start: gestureStart, change)
         guard next != doc else { return doc }
+        // What it did to copies, for the light running between them; with the design before it
+        // when it was made at once, whose copies show until the light reaches them.
+        WindowsCore.noteEcho(lastEcho, was: gestureStart == nil ? doc : nil)
         if gestureStart == nil {
             record(before: doc, after: next)
             lastStep = (doc, lastEcho)

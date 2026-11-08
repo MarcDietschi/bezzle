@@ -15,13 +15,19 @@ extension WindowsCore {
         var made: UUID?
         edit { made = $0.makeComponent(from: ids) }
         guard let made, let doc = design, doc.node(made) != nil else { return nil }
+        // Its outline is drawn round it, as on the Mac.
+        tellEcho(ComponentEcho(from: [made], to: [], made: true), was: nil)
         return (made, doc.lookAlikes(of: made))
     }
 
     /// Makes groups that look the same as a copy's component copies of it, as one step.
     public static func link(_ ids: [UUID], toComponentOf copy: UUID) {
         guard let master = design?.node(copy)?.instance?.of else { return }
-        edit { d in for id in ids { d.link(id, to: master) } }
+        var linked: [UUID] = []
+        edit { d in for id in ids { if let made = d.link(id, to: master) { linked.append(made) } } }
+        // An outline drawn round each that was linked, and the one they were linked to.
+        let first = design?.copies(of: master).first { !linked.contains($0.id) }?.id ?? copy
+        tellEcho(ComponentEcho(from: [first], to: linked, made: true), was: nil)
     }
 
     /// A copy picked, or a layer in one, as its card shows it.
@@ -122,11 +128,19 @@ extension WindowsCore {
     }
 
     /// The copy as one of its variants, drawn to fit `size` (points) at `scale`, for its tile.
-    public static func variantPicture(of copy: UUID, _ v: Int?, size: CGSize, scale: Double,
+    public static func variantPicture(of copy: UUID, _ v: Int?, size: CGSize, scale: Double, asItIs: Bool = false,
                                       into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> Bool {
-        guard let doc = design, let c = doc.node(copy), let master = doc.component(of: c) else { return false }
-        var shown = Components.switched(c, to: v, in: master)
+        // `asItIs`: from the design as it is, not as a change pointed at shows it.
+        guard let doc = asItIs ? previewBase ?? design : design, let c = doc.node(copy), let master = doc.component(of: c) else { return false }
+        // Made as the variant, as the Mac's card and row make it: switching places the copy for
+        // the variant, building gives it the variant's layers and looks.
+        var shown = Components.build(Components.switched(c, to: v, in: master), master: master, masterWas: nil, masters: doc.mastersByID)
         shown.rotation = 0
+        shown.hidden = false
+        var fitted = BezzleDocument()
+        fitted.nodes = [shown]
+        fitted.fitGroups()
+        shown = fitted.nodes[0]
         let box = Geometry.bounds(of: shown)
         guard box.width > 0, box.height > 0 else { return false }
         let k = min(size.width / box.width, size.height / box.height)
@@ -285,18 +299,12 @@ extension WindowsCore {
 // MARK: - On the canvas
 
 extension WindowsCore {
-    /// With a copy picked, every other copy of its component, as its corners on the canvas: what
-    /// will change with it, in sight before anything is changed.
-    public static func otherCopies(_ selection: [UUID]) -> [[CGPoint]] {
-        guard let doc = design, let copy = doc.selectedCopy(selection) ?? doc.selectedCopies(selection).first,
-              let inst = copy.instance else { return [] }
-        return doc.copies(of: inst.of).filter { $0.id != copy.id && !$0.hidden }.compactMap { doc.shownCorners(of: $0.id) }
-    }
+    // With a copy picked, every other copy of its component: `otherCopiesByID` (CopyLights.swift).
 
     /// The component's name over the copy picked, with the variant it shows when it has several,
     /// and where the copy's top left is on the canvas.
     public static func copyTag(_ selection: [UUID]) -> (text: String, at: CGPoint, width: CGFloat)? {
-        guard let doc = design, let copy = doc.selectedCopy(selection), let master = doc.component(of: copy),
+        guard let doc = previewBase ?? design, let copy = doc.selectedCopy(selection), let master = doc.component(of: copy),
               let corners = doc.shownCorners(of: copy.id), let first = corners.first else { return nil }
         var text = master.name
         if (master.master?.variants.isEmpty ?? true) == false { text += "  \u{00B7}  " + Components.name(of: copy.instance?.variant, in: master) }

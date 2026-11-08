@@ -209,6 +209,14 @@ final class DesignCanvas {
     private let copyChip = Border()
     /// The other copies of the copy picked, faintly, and its component's name over it.
     private let componentMarks = Canvas()
+    /// The light running between copies as one is changed, the outline drawn round one just made,
+    /// and the row of variants beside a copy picked (the Mac's ComponentTool).
+    private let copyMarks = CopyMarks()
+    /// Whether the last press dragged: a quick press after it is a press of its own.
+    private var lastPressDragged = false
+    /// Whether the last press went into the group it was on, which WinUI's double tap after it
+    /// then leaves alone.
+    private var pressEntered = false
     private var copyOffer: WindowsCore.CopyOffer?
     private var copyButtons: [(rect: CGRect, index: Int)] = []
     /// The offer's button under the pointer: a style's lights the layers it is about.
@@ -430,6 +438,33 @@ final class DesignCanvas {
             return (self.session.selection, waiting, d?.opened, d?.opened == nil ? d?.leaving : nil, self.editing != nil)
         }
         maskMarks.unwound = { [weak self] in self?.session.previewed(board: nil) }
+        copyMarks.view = { [weak self] in
+            guard let self else { return (1, .zero, .zero, 1) }
+            return (self.zoom, self.pan, CGSize(width: self.stage.actualWidth, height: self.stage.actualHeight), self.pixelScale)
+        }
+        copyMarks.state = { [weak self] in
+            guard let self else { return ([], false) }
+            let free = self.session.tool == .select && self.session.mode == 0 && self.editing == nil && self.drag == nil
+                && !self.builder.active && self.pen.editingPath == nil && !WindowsCore.versions.lookingBack
+            return (self.session.selection, free)
+        }
+        copyMarks.litChanged = { [weak self] in self?.drawCopyOutlines() }
+        copyMarks.preview = { [weak self] copy, variant, on in
+            WindowsCore.previewVariant(variant, of: copy, on)
+            self?.session.previewed(board: nil)
+        }
+        copyMarks.choose = { [weak self] _, variant in
+            guard let self else { return }
+            let picked = WindowsCore.setVariant(variant, self.session.selection)
+            self.session.select(picked, on: self.session.board)
+            self.session.edited(board: nil)
+        }
+        copyMarks.addVariant = { [weak self] _ in
+            guard let self else { return }
+            let picked = WindowsCore.addVariant(self.session.selection)
+            self.session.select(picked, on: self.session.board)
+            self.session.edited(board: nil)
+        }
         session.ringMask = { [weak self] mask, out in self?.maskMarks.ring(mask, out: out) }
         pen.redraw = { [weak self] in self?.drawPen() }
         knife.redraw = { [weak self] in self?.drawPen() }
@@ -523,6 +558,7 @@ final class DesignCanvas {
                 self?.inspect.hover(nil)
                 self?.flow.hover(nil)
                 self?.decks.hover(nil, onCanvas: nil)
+                self?.copyMarks.hover(nil)
             }
         }
         stage.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args) }
@@ -1786,12 +1822,25 @@ final class DesignCanvas {
     private func drawComponents() {
         if !holds(overlay, componentMarks) {
             componentMarks.isHitTestVisible = false
+            // The copies as they were under the dashed outlines; the light and the row over them.
+            overlay.children.append(copyMarks.ghosts)
             overlay.children.append(componentMarks)
+            overlay.children.append(copyMarks.lights)
+            overlay.children.append(copyMarks.row)
         }
+        // What a change just did to copies, run out as light from where it was made.
+        copyMarks.take()
+        copyMarks.draw()
+        drawCopyOutlines()
+    }
+
+    /// The other copies of the one picked, dashed, and its component's name over it.
+    private func drawCopyOutlines() {
         componentMarks.children.clear()
         guard session.tool == .select, !builder.active, session.mode == 0 else { return }
         var lines = PathData()
-        for corners in WindowsCore.otherCopies(session.selection) {
+        // A copy the light is on shows that, rather than its dashed outline.
+        for (id, corners) in WindowsCore.otherCopiesByID(session.selection) where !copyMarks.isLit(id) {
             guard let first = corners.first else { continue }
             let a = onStage(first)
             lines.move(Double(a.x).rounded() + 0.5, Double(a.y).rounded() + 0.5)
@@ -1896,7 +1945,17 @@ final class DesignCanvas {
         let o = onStage(frame.origin)
         let r = CGRect(x: Double(o.x), y: Double(o.y), width: Double(frame.width) * zoom, height: Double(frame.height) * zoom)
         var x = (Double(r.maxX) + 14).rounded(), y = (Double(r.midY) - 14).rounded()
-        if x + w > root.actualWidth - 8 {
+        if let row = copyMarks.layout(), let first = row.cards.first,
+           row.look.copy == offer.anchor || WindowsCore.componentLook(session.selection)?.copy == row.look.copy {
+            // Under the row of variants beside the copy, or under the copy and the row under it.
+            if row.beside {
+                x = Double(first.minX)
+                y = (Double(first.maxY) + 10).rounded()
+            } else {
+                x = (Double(r.midX) - w / 2).rounded()
+                y = (Double(first.maxY) + 12).rounded()
+            }
+        } else if x + w > root.actualWidth - 8 {
             x = min(max((Double(r.midX) - w / 2).rounded(), 8), max(8, root.actualWidth - w - 8))
             y = (Double(r.maxY) + 12).rounded()
         }
@@ -3184,6 +3243,17 @@ final class DesignCanvas {
         session.hovered = id
     }
 
+    /// Whether a press soon after the last is on the group or copy that one picked, alone, and
+    /// was not a drag: the Mac counts it as the second click of a double click wherever on the
+    /// group it lands (macOS keeps a click count by time), so that clicking a copy and then its
+    /// shape goes into it, as the welcome tour has it. Windows' own counting wants the second
+    /// within four pixels of the first.
+    private func secondPressOnGroup(_ p: CGPoint) -> Bool {
+        guard !lastPressDragged, session.tool == .select, session.mode == 0, session.selection.count == 1,
+              let id = session.selection.first, WindowsCore.isGroup(id) else { return false }
+        return pick(p) == id
+    }
+
     private func pressed(_ args: PointerRoutedEventArgs?) {
         // On the words typed into, the press puts the caret; anywhere else it ends the typing.
         if editing != nil {
@@ -3194,11 +3264,17 @@ final class DesignCanvas {
         let p = point(args), c = inDesign(p)
         // A second press soon after the first, where it was, is a double click, as Windows counts them.
         let now = GetTickCount()
-        if let last = lastPress, now - last.time <= GetDoubleClickTime(), abs(Double(last.at.x - p.x)) <= 4, abs(Double(last.at.y - p.y)) <= 4 {
+        let onGroup = secondPressOnGroup(p)
+        if let last = lastPress, now - last.time <= GetDoubleClickTime(),
+           abs(Double(last.at.x - p.x)) <= 4 && abs(Double(last.at.y - p.y)) <= 4 || onGroup {
             lastPress = (p, now, last.clicks + 1)
         } else {
             lastPress = (p, now, 1)
         }
+        // A drag until its release says otherwise.
+        lastPressDragged = true
+        let intoGroup = onGroup && (lastPress?.clicks ?? 1) >= 2
+        pressEntered = false
         // With Space held, or the wheel pressed, the canvas moves round, whatever tool is in hand.
         let middle = (try? args?.getCurrentPoint(stage))?.properties?.isMiddleButtonPressed == true
         if spaceDown || middle {
@@ -3250,6 +3326,9 @@ final class DesignCanvas {
             session.edited(board: nil)
             return
         }
+        // The row of variants beside a copy picked: a card makes the copy that variant, the round
+        // button a new variant of it.
+        if session.mode == 0, copyMarks.down(at: p) { return }
         if let offer = shownOffer, onOffer(p) {
             offerLit = false
             if let mask = WindowsCore.takeOffer(offer) {
@@ -3446,6 +3525,16 @@ final class DesignCanvas {
                 return
             }
         }
+        // A second click soon after on the group or copy just picked goes into it, one level,
+        // wherever on it it lands, as the Mac's double click does (CanvasView.selectDown).
+        if session.tool == .select, intoGroup, !shift, let id = session.selection.first,
+           let inner = WindowsCore.pick(inDesign(p), inGroup: id, zoom: zoom) {
+            session.select([inner], on: WindowsCore.board(of: inner) ?? session.board)
+            pressEntered = true
+            // Each quick click after it goes one level further.
+            lastPressDragged = false
+            return
+        }
         // A double click on a layer filled with a picture places the picture inside it, and a
         // drag straight on moves it, as on the Mac (a text's letters are typed into instead).
         if session.tool == .select, (lastPress?.clicks ?? 1) == 2, !shift, let id = pick(p), !WindowsCore.isText(id),
@@ -3504,6 +3593,13 @@ final class DesignCanvas {
             decks.hover(p, onCanvas: inDesign(p))
             if decks.spreading { showPointer(.arrow); return }
             if decks.points(at: p) { showPointer(.pointingHand); return }
+            // The row of variants beside a copy picked: the canvas leaves what is under it alone.
+            copyMarks.hover(p)
+            if copyMarks.covers(p) {
+                setHover(nil)
+                showPointer(.pointingHand)
+                return
+            }
         }
         if WindowsCore.versions.lookingBack, drag == nil {
             hoverTime(WindowsCore.versions.layer(at: inDesign(p)))
@@ -3783,6 +3879,7 @@ final class DesignCanvas {
         }
         guard let d = drag else { return }
         drag = nil
+        lastPressDragged = d.moved
         try? stage.releasePointerCapture(args?.pointer)
         showGuides([])
         switch d.grab {
@@ -4135,6 +4232,11 @@ final class DesignCanvas {
         // A double click that began placing a picture, or ended it, is placing's alone.
         if pictureTookPress {
             pictureTookPress = false
+            return
+        }
+        // The press that made it a double click went into a group already.
+        if pressEntered {
+            pressEntered = false
             return
         }
         guard let q = try? args?.getPosition(stage) else { return }

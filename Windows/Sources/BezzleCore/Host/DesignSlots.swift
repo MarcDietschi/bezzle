@@ -75,6 +75,7 @@ extension WindowsCore {
         v.visit(&pulling)
         v.visit(&adapting)
         v.visit(&offered)
+        v.visit(&copyEcho)
         v.visit(&styleOffered)
         v.visit(&deckOffered)
         v.visit(&pendingStyleOffer)
