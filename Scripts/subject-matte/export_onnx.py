@@ -13,10 +13,10 @@ import numpy as np
 import torch
 import onnx
 import onnxruntime as ort
-from onnxruntime.transformers.float16 import convert_float_to_float16
 from PIL import Image
 from safetensors.torch import load_file
 import deform
+from half_onnx import half
 
 mod = importlib.import_module('brn.birefnet')
 cfg = importlib.import_module('brn.BiRefNet_config')
@@ -97,11 +97,8 @@ got = ort.InferenceSession(fp32, providers=['CPUExecutionProvider']).run(['matte
 print('onnx runtime (fp32) against pytorch: max', np.abs(got - reference).max(), 'mean', np.abs(got - reference).mean(),
       'in', round(time.time() - t0), 's')
 
-# Half precision, as the Mac's model, but for sampling (GridSample), which half precision ruins; the
-# image in and the matte out stay float 32, so the app hands it the same arrays either way.
-half = convert_float_to_float16(onnx.load(fp32), keep_io_types=True, op_block_list=['GridSample'])
-onnx.save(half, fp16)
-onnx.checker.check_model(fp16)
+# Half precision, as the Mac's model, but for sampling (half_onnx.py).
+half(fp32, fp16)
 for path in (fp32, fp16):
     print(os.path.basename(path), round(os.path.getsize(path) / 1e6), 'MB')
 print('The half-precision model is checked on Windows, with DirectML: ONNX Runtime has no half-precision kernels on a CPU.')
