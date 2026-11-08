@@ -123,7 +123,7 @@ public enum WindowsCore {
         let images = folder.appendingPathComponent("images")
         for name in (try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? [] {
             let data = try Data(contentsOf: images.appendingPathComponent(name))
-            _ = data.withUnsafeBytes { bz_asset_add(name, $0.baseAddress, Int32($0.count)) }
+            giveSkia(name, data)
         }
         return doc
     }

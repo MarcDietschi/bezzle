@@ -139,7 +139,7 @@ extension WindowsCore {
         let file = design.appendingPathComponent("images").appendingPathComponent(name)
         guard let data = try? Data(contentsOf: file) else { return }
         // Asked for again the next time it is drawn: one not there yet is not kept as missing.
-        _ = data.withUnsafeBytes { bz_asset_add(name, $0.baseAddress, Int32($0.count)) }
+        giveSkia(name, data)
         pictureCame = true
         tellShareNews()
     }

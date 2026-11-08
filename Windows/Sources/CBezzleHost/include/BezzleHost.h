@@ -124,9 +124,30 @@ int32_t bz_image_decode(const void *data, int64_t count, int32_t width, int32_t 
 /// holds `capacity`: how many bytes, minus that when they did not fit, -1 if it could not be made.
 /// On any thread.
 int64_t bz_png_encode(int32_t width, int32_t height, const void *pixels, int32_t straight, void *out, int64_t capacity);
+/// A picture as a JPEG file's bytes, as the Mac's Image I/O writes them at `quality` (jpeg.cpp: its
+/// own tables at Bezzle's 0.82 and 0.72), from premultiplied RGBA pixels, into `out`, which holds
+/// `capacity`: how many bytes, minus that when they did not fit, -1 if it could not be made. On
+/// any thread.
+int64_t bz_jpeg_encode(int32_t width, int32_t height, const void *pixels, double quality, void *out, int64_t capacity);
+/// A picture file's picture small, as Image I/O makes a thumbnail with its transform: upright,
+/// its longer side `longest` pixels at most (never larger than it is), into premultiplied sRGB
+/// RGBA in `pixels`, which holds `longest` × `longest` × 4 bytes; its size to `width` and `height`.
+/// Returns 0 if it cannot be read. On any thread.
+int32_t bz_image_thumbnail(const void *data, int64_t count, int32_t longest, int32_t *width, int32_t *height, void *pixels);
+/// 1 when the bytes are an HEIF file of an HEVC picture (HEIC), which Windows reads only with
+/// Microsoft's HEIF and HEVC extensions (heif.cpp), else 0.
+int32_t bz_heif_sniff(const void *data, int64_t count);
+/// Why the last HEIF picture Windows could not read was not read: 0 every one was, 1 no HEIF
+/// Image Extensions, 2 no HEVC Video Extensions, 3 damaged or another reason.
+int32_t bz_heif_problem(void);
 /// Adds one of a design's pictures by name, as its encoded bytes. Returns its asset number, 0
 /// if Skia cannot read it.
 int32_t bz_asset_add(const char *name, const void *data, int32_t count);
+/// Shows a picture that is not here yet by its glimpse (a JPEG a few dozen pixels across, from
+/// whoever placed it in a shared design), until bz_asset_add brings the picture itself: grown to
+/// `longest` across and blurred, as the Mac's LiveGlimpse.standIn makes it. Returns its asset
+/// number, 0 when the picture is here already or the glimpse cannot be read.
+int32_t bz_asset_stand_in(const char *name, const void *data, int32_t count, int32_t longest);
 /// The pictures a drawing made, by the core's numbers (CGImage.Source).
 void bz_picture_asset(int32_t id, int32_t asset);
 void bz_picture_recording(int32_t id, int32_t width, int32_t height, const double *commands, int64_t count);

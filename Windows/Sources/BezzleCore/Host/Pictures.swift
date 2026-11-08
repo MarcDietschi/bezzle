@@ -7,8 +7,12 @@ import CBezzleHost
 // wherever the design does.
 
 extension WindowsCore {
-    /// The kinds of picture the drawing here reads (AVIF when the build has libavif).
-    static var pictureKinds: Set<String> { bz_avif_available() != 0 ? ["png", "jpg", "jpeg", "webp", "avif"] : ["png", "jpg", "jpeg", "webp"] }
+    /// The kinds of picture the drawing here reads (AVIF when the build has libavif): HEIC too, as
+    /// on the Mac, which Windows reads with Microsoft's extensions (Host/PictureReading.swift).
+    static var pictureKinds: Set<String> {
+        let kinds: Set<String> = ["png", "jpg", "jpeg", "webp", "heic", "heif"]
+        return bz_avif_available() != 0 ? kinds.union(["avif"]) : kinds
+    }
 
     /// The pictures among some files, and those in any folders among them, by name.
     public static func pictureFiles(in urls: [URL]) -> [URL] {
@@ -61,7 +65,7 @@ extension WindowsCore {
             try FileManager.default.copyItem(at: file, to: images.appendingPathComponent(asset))
             // Skia is given it by its name, as it was given the others when the design was opened.
             let data = try Data(contentsOf: images.appendingPathComponent(asset))
-            _ = data.withUnsafeBytes { bz_asset_add(asset, $0.baseAddress, Int32($0.count)) }
+            giveSkia(asset, data)
             return ImageFill(asset: asset, mode: .cover, size: size)
         } catch {
             return nil

@@ -4,7 +4,9 @@
 
 #include "BezzleHost.h"
 #include "avif-files.h"
+#include "picture-files.h"
 
+#include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
@@ -171,6 +173,8 @@ std::vector<double> pathOp(const double* v, size_t n) {
 struct Asset { sk_sp<SkImage> image; };
 std::vector<Asset> assets;                      // by number - 1
 std::map<std::string, int> assetsByName;
+/// The pictures shown by a glimpse of them until they come (bz_asset_stand_in).
+std::set<std::string> standIns;
 
 /// What an AVIF file's colours mean, as the Mac's Image I/O reads them: by its ICC profile when it
 /// has one, else by its numbers (ITU-T H.273). Unspecified reads as sRGB, and so does the video
@@ -212,6 +216,42 @@ sk_sp<SkImage> avifPicture(const void* data, size_t count, bool upright) {
     return SkImages::RasterFromData(info, std::move(bytes), row);
 }
 
+/// A picture turned and mirrored as an Exif orientation says, to stand upright.
+sk_sp<SkImage> turned(const sk_sp<SkImage>& image, SkEncodedOrigin origin) {
+    if (!image || origin == kTopLeft_SkEncodedOrigin) return image;
+    const bool across = SkEncodedOriginSwapsWidthHeight(origin);
+    const int w = across ? image->height() : image->width(), h = across ? image->width() : image->height();
+    auto surface = SkSurfaces::Raster(image->imageInfo().makeWH(w, h));
+    if (!surface) return nullptr;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    canvas->concat(SkEncodedOriginToMatrix(origin, image->width(), image->height()));
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    canvas->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
+    return surface->makeImageSnapshot();
+}
+
+/// An HEIF file's picture (HEIC), which Skia's codecs do not read, as Windows reads it where it
+/// can (heif.cpp): upright as its rotation and mirror turn it, or as kept; in its own colours.
+/// Null where Windows cannot read it, heif::lastProblem() saying why.
+sk_sp<SkImage> heifPicture(const void* data, size_t count, bool upright) {
+    heif::Picture p;
+    if (heif::read(data, count, p) != heif::none) return nullptr;
+    sk_sp<SkColorSpace> colors = SkColorSpace::MakeSRGB();
+    if (!p.icc.empty()) {
+        skcms_ICCProfile profile;
+        if (skcms_Parse(p.icc.data(), p.icc.size(), &profile)) {
+            if (auto c = SkColorSpace::Make(profile)) colors = c;
+        }
+    }
+    const SkImageInfo info = SkImageInfo::Make(p.width, p.height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, colors);
+    auto* pixels = new std::vector<uint8_t>(std::move(p.pixels));
+    auto bytes = SkData::MakeWithProc(pixels->data(), pixels->size(), [](const void*, void* kept) { delete static_cast<std::vector<uint8_t>*>(kept); }, pixels);
+    auto image = SkImages::RasterFromData(info, std::move(bytes), size_t(p.width) * 4);
+    return upright ? turned(image, SkEncodedOrigin(std::clamp(p.orientation, 1, 8))) : image;
+}
+
 sk_sp<SkImage> decode(const void* data, size_t count) {
     static std::once_flag registered;
     std::call_once(registered, [] {
@@ -225,6 +265,10 @@ sk_sp<SkImage> decode(const void* data, size_t count) {
         auto image = avifPicture(data, count, true);
         return image ? image->withDefaultMipmaps() : nullptr;
     }
+    if (heif::sniff(data, count)) {
+        auto image = heifPicture(data, count, true);
+        return image ? image->withDefaultMipmaps() : nullptr;
+    }
     auto image = SkImages::DeferredFromEncodedData(SkData::MakeWithCopy(data, count));
     // With mipmaps, as the page makes them, for pictures drawn smaller.
     auto raster = image ? image->makeRasterImage(nullptr) : nullptr;
@@ -235,6 +279,13 @@ extern "C" int32_t bz_image_size(const void* data, int32_t count, int32_t* width
     if (avif::sniff(data, size_t(count))) {
         int w = 0, h = 0;
         if (!avif::size(data, size_t(count), true, &w, &h)) return 0;
+        *width = w;
+        *height = h;
+        return 1;
+    }
+    if (heif::sniff(data, size_t(count))) {
+        int w = 0, h = 0;
+        if (heif::size(data, size_t(count), true, &w, &h) != heif::none) return 0;
         *width = w;
         *height = h;
         return 1;
@@ -263,6 +314,13 @@ extern "C" int32_t bz_image_pixel_size(const void* data, int64_t count, int32_t*
         *height = h;
         return 1;
     }
+    if (heif::sniff(data, size_t(count))) {
+        int w = 0, h = 0;
+        if (heif::size(data, size_t(count), false, &w, &h) != heif::none) return 0;
+        *width = w;
+        *height = h;
+        return 1;
+    }
     decode(nullptr, 0);
     auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
     if (!codec) return 0;
@@ -277,6 +335,12 @@ extern "C" int32_t bz_image_decode(const void* data, int64_t count, int32_t widt
         auto image = avifPicture(data, size_t(count), false);
         if (!image || image->width() != width || image->height() != height) return 1;
         // In sRGB, as Skia's codecs give the others.
+        const SkImageInfo info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+        return image->readPixels(nullptr, info, pixels, size_t(width) * 4, 0, 0) ? 0 : 2;
+    }
+    if (heif::sniff(data, size_t(count))) {
+        auto image = heifPicture(data, size_t(count), false);
+        if (!image || image->width() != width || image->height() != height) return 1;
         const SkImageInfo info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
         return image->readPixels(nullptr, info, pixels, size_t(width) * 4, 0, 0) ? 0 : 2;
     }
@@ -302,6 +366,87 @@ extern "C" int64_t bz_png_encode(int32_t width, int32_t height, const void* pixe
     stream.copyTo(out);
     return size;
 }
+
+extern "C" int64_t bz_jpeg_encode(int32_t width, int32_t height, const void* pixels, double quality, void* out, int64_t capacity) {
+    std::vector<uint8_t> bytes;
+    if (!jpeg::write(width, height, static_cast<const uint8_t*>(pixels), quality, bytes)) return -1;
+    const int64_t size = int64_t(bytes.size());
+    if (size > capacity) return -size;
+    std::memcpy(out, bytes.data(), bytes.size());
+    return size;
+}
+
+extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t longest, int32_t* width, int32_t* height, void* pixels) {
+    if (!data || count <= 0 || longest <= 0) return 0;
+    // The picture upright, as large as needed to come out sharp at its small size: a JPEG read
+    // straight at a half, a quarter or an eighth, which is quick even for a large photo.
+    sk_sp<SkImage> source;
+    SkEncodedOrigin origin = kTopLeft_SkEncodedOrigin;
+    // Its size as kept, whatever size it is read at.
+    SkISize kept = {0, 0};
+    if (avif::sniff(data, size_t(count))) {
+        source = avifPicture(data, size_t(count), true);
+        if (source) kept = source->dimensions();
+    } else if (heif::sniff(data, size_t(count))) {
+        source = heifPicture(data, size_t(count), true);
+        if (source) kept = source->dimensions();
+    } else {
+        decode(nullptr, 0);
+        auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
+        if (!codec) return 0;
+        origin = codec->getOrigin();
+        const auto full = codec->dimensions();
+        kept = full;
+        const float want = std::min(1.0f, 2.0f * float(longest) / float(std::max(full.width(), full.height())));
+        for (const SkISize size : {codec->getScaledDimensions(want), full}) {
+            SkBitmap bitmap;
+            if (!bitmap.tryAllocPixels(SkImageInfo::Make(size, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB()))) return 0;
+            const auto result = codec->getPixels(bitmap.pixmap());
+            if (result == SkCodec::kSuccess || result == SkCodec::kIncompleteInput || result == SkCodec::kErrorInInput) {
+                bitmap.setImmutable();
+                source = bitmap.asImage();
+                break;
+            }
+        }
+    }
+    if (!source) return 0;
+    const bool across = SkEncodedOriginSwapsWidthHeight(origin);
+    // Upright: as read, and as kept.
+    const double uw = across ? source->height() : source->width(), uh = across ? source->width() : source->height();
+    // As large as Image I/O makes a thumbnail, measured on macOS 27 (900 by 600 to 32 by 21, 1200
+    // by 800 to 32 by 22, 1000 by 360 to 32 by 11): halved, rounding down, for as long as its
+    // longer side stays `longest` or more, then brought to `longest` along it, rounding; never
+    // larger than it is.
+    double fw = across ? kept.height() : kept.width(), fh = across ? kept.width() : kept.height();
+    if (std::max(fw, fh) > longest) {
+        while (std::floor(std::max(fw, fh) / 2) >= longest) {
+            fw = std::floor(fw / 2);
+            fh = std::floor(fh / 2);
+        }
+        const double k = double(longest) / std::max(fw, fh);
+        fw *= k;
+        fh *= k;
+    }
+    const int w = std::max(1, int(std::lround(fw))), h = std::max(1, int(std::lround(fh)));
+    const SkImageInfo info = SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    auto surface = SkSurfaces::Raster(info);
+    if (!surface) return 0;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    canvas->scale(float(w / uw), float(h / uh));
+    canvas->concat(SkEncodedOriginToMatrix(origin, source->width(), source->height()));
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    canvas->drawImage(source->withDefaultMipmaps(), 0, 0, SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear), &paint);
+    if (!surface->readPixels(info, pixels, size_t(w) * 4, 0, 0)) return 0;
+    *width = w;
+    *height = h;
+    return 1;
+}
+
+extern "C" int32_t bz_heif_sniff(const void* data, int64_t count) { return heif::sniff(data, size_t(count)) ? 1 : 0; }
+
+extern "C" int32_t bz_heif_problem(void) { return int32_t(heif::lastProblem()); }
 
 /// A picture by name: its number, width and height, or 0 when there is none (bezzle.mjs's image).
 std::vector<double> imageByName(const double* v, size_t n) {
@@ -1954,6 +2099,46 @@ extern "C" int32_t bz_asset_add(const char* name, const void* data, int32_t coun
     assets.push_back({image});
     const int number = int(assets.size());
     assetsByName[name] = number;
+    // The picture itself, come in place of its glimpse.
+    standIns.erase(name);
+    return number;
+}
+
+extern "C" int32_t bz_asset_stand_in(const char* name, const void* data, int32_t count, int32_t longest) {
+    std::lock_guard<std::mutex> guard(lock);
+    // The picture itself is here already.
+    if (assetsByName.count(name) && !standIns.count(name)) return 0;
+    auto small = decode(data, size_t(count));
+    if (!small || longest <= 0) return 0;
+    // As Core Image does it on the Mac (LiveGlimpse.standIn): in light, its edges carried on
+    // outward, grown to `longest` across, blurred by 1.1 of its pixels as they are grown, and cut to
+    // its grown size; back in sRGB.
+    const double s = double(longest) / std::max(small->width(), small->height());
+    const int w = std::max(1, int(std::ceil(small->width() * s - 1e-6))), h = std::max(1, int(std::ceil(small->height() * s - 1e-6)));
+    const auto light = [](int w, int h) { return SkImageInfo::Make(w, h, kRGBA_F16_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGBLinear()); };
+    SkPaint copy;
+    copy.setBlendMode(SkBlendMode::kSrc);
+    auto inLight = SkSurfaces::Raster(light(small->width(), small->height()));
+    auto grown = SkSurfaces::Raster(light(w, h));
+    auto blurred = SkSurfaces::Raster(light(w, h));
+    if (!inLight || !grown || !blurred) return 0;
+    inLight->getCanvas()->drawImage(small, 0, 0, SkSamplingOptions(), &copy);
+    SkPaint grow;
+    grow.setBlendMode(SkBlendMode::kSrc);
+    grow.setShader(inLight->makeImageSnapshot()->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, SkSamplingOptions(SkFilterMode::kLinear),
+                                                            SkMatrix::Scale(float(s), float(s))));
+    grown->getCanvas()->drawPaint(grow);
+    SkPaint blur;
+    blur.setBlendMode(SkBlendMode::kSrc);
+    const float sigma = float(s * 1.1);
+    blur.setImageFilter(SkImageFilters::Blur(sigma, sigma, SkTileMode::kClamp, nullptr));
+    blurred->getCanvas()->drawImage(grown->makeImageSnapshot(), 0, 0, SkSamplingOptions(), &blur);
+    auto shown = raster(w, h, [&](SkCanvas* canvas) { canvas->drawImage(blurred->makeImageSnapshot(), 0, 0, SkSamplingOptions(), &copy); });
+    if (!shown) return 0;
+    assets.push_back({shown->withDefaultMipmaps()});
+    const int number = int(assets.size());
+    assetsByName[name] = number;
+    standIns.insert(name);
     return number;
 }
 
