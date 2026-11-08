@@ -12,7 +12,13 @@ import PackageDescription
 // - bezzle-render: draws a design's artboards to PNG files, to compare with the Mac.
 // - bezzle-share: works on shared designs headless, for the Mac's tests to check.
 
-let arch = Context.environment["PROCESSOR_ARCHITECTURE"] == "ARM64" ? "aarch64" : "x86_64"
+// The architecture built for: the machine's own, or the one build.ps1 -Arch names (BEZZLE_ARCH,
+// with `swift build --arch`), whose libraries are linked: an Arm machine makes x64 too.
+let arch = switch Context.environment["BEZZLE_ARCH"] {
+case "x64": "x86_64"
+case "arm64": "aarch64"
+default: Context.environment["PROCESSOR_ARCHITECTURE"] == "ARM64" ? "aarch64" : "x86_64"
+}
 let skiaOut = Context.packageDirectory + "\\Packages\\skia\\out\\" + (arch == "aarch64" ? "arm64" : "x64")
 
 // SwiftPM links executables with -nostartfiles, leaving out swiftrt.obj, which registers an image's
