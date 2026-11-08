@@ -610,7 +610,8 @@ final class HomeView {
             .item(Words.t("Duplicate")) { [weak self] in
                 // One open in a tab is copied as it is now.
                 Tabs.shared.tab(showing: url)?.save()
-                let folder = url.deletingLastPathComponent(), base = url.deletingPathExtension().lastPathComponent + " copy"
+                // Named as the Mac's Library.duplicate names it, in the person's language.
+                let folder = url.deletingLastPathComponent(), base = Words.t("%@ copy", url.deletingPathExtension().lastPathComponent)
                 var copy = folder.appendingPathComponent("\(base).bezzle")
                 var i = 2
                 while FileManager.default.fileExists(atPath: copy.path) {

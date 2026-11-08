@@ -210,7 +210,7 @@ import Foundation
         let wanted = try args.string("name")?.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: "\\", with: "-")
         let folder = MCPHost.shared.designsFolder()
-        let base = wanted.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled"
+        let base = wanted.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "Untitled")
         var url = folder.appendingPathComponent("\(base).bezzle")
         var i = 2
         while FileManager.default.fileExists(atPath: url.path) {
@@ -291,7 +291,8 @@ import Foundation
         let open = Self.openStore(ref)
         let url = try open?.url ?? locate(ref)
         open?.save()
-        let folder = url.deletingLastPathComponent(), base = url.deletingPathExtension().lastPathComponent + " copy"
+        // Named as the Mac's Library.duplicate names it, in the person's language.
+        let folder = url.deletingLastPathComponent(), base = String(localized: "\(url.deletingPathExtension().lastPathComponent) copy")
         var copy = folder.appendingPathComponent("\(base).bezzle")
         var i = 2
         while FileManager.default.fileExists(atPath: copy.path) {

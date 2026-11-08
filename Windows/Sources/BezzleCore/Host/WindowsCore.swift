@@ -312,18 +312,21 @@ extension WindowsCore {
     }
 
     /// Makes a new design in `folder`, with one artboard of `size`, as the Mac's Library.create
-    /// does: "Untitled", then "Untitled 2"…; returns where it is.
+    /// does: "Untitled", then "Untitled 2"…, in the person's language; returns where it is. Its
+    /// artboard is named for its size, as the Mac's home names it (HomeStage: the preset's title).
     public static func createDesign(in folder: URL, size: Size?) throws -> URL {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        var url = folder.appendingPathComponent("Untitled.bezzle")
+        let untitled = String(localized: "Untitled")
+        var url = folder.appendingPathComponent("\(untitled).bezzle")
         var i = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            url = folder.appendingPathComponent("Untitled \(i).bezzle")
+            url = folder.appendingPathComponent("\(untitled) \(i).bezzle")
             i += 1
         }
         var doc = BezzleDocument()
         if let size {
-            doc.nodes = [Node(kind: .artboard, name: "Artboard", frame: CGRect(x: 0, y: 0, width: size.width, height: size.height))]
+            let name = Preset.all.first { $0.name == size.name }.map { String(localized: $0.title) } ?? String(localized: "Artboard")
+            doc.nodes = [Node(kind: .artboard, name: name, frame: CGRect(x: 0, y: 0, width: size.width, height: size.height))]
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
