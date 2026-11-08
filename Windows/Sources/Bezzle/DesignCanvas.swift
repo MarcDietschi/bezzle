@@ -1852,7 +1852,9 @@ final class DesignCanvas {
         copyButtons = []
         guard let offer = copyOffer, drag == nil, editing == nil,
               WindowsCore.componentLook(session.selection)?.copy == offer.anchor || session.selection.contains(offer.anchor),
-              let frame = WindowsCore.selectionFrame([offer.anchor]) else {
+              // On the canvas, not in its artboard as the Frame card counts (selectionFrame):
+              // else the word lands off screen for anything on an artboard away from the origin.
+              let frame = WindowsCore.bounds(of: [offer.anchor]) else {
             copyChip.visibility = .collapsed
             copyHovered = nil
             if copyLit {
