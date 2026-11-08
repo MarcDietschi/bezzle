@@ -84,6 +84,9 @@ extension WindowsCore {
         v.visit(&invited)
         v.visit(&openShadow)
         v.visit(&measure)
+        // Its pictures being cut out, and why one could not be.
+        v.visit(&cuttingOut)
+        v.visit(&cutoutTrouble)
         visitHolding(&v)
     }
 

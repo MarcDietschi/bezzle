@@ -43,6 +43,13 @@ let avifCxx: [CXXSetting] = hasAVIF ? [.headerSearchPath("../../" + avifFolder.r
 let avifLinking: [LinkerSetting] = hasAVIF
     ? [.unsafeFlags(["-L" + Context.packageDirectory + "\\" + avifFolder + "\\lib"]), .linkedLibrary("avif"), .linkedLibrary("aom")] : []
 
+// ONNX Runtime and DirectML, which Remove Background runs the subject matte with (onnx.ps1 fetches
+// them into Packages/onnxruntime): their headers here, their DLLs beside Bezzle.exe, loaded when a
+// matte is first wanted (CBezzleHost/matte.cpp). Built without them, Remove Background says it cannot.
+let hasONNX = FileManager.default.fileExists(atPath: Context.packageDirectory + "\\Packages\\onnxruntime\\include\\onnxruntime_c_api.h")
+let onnxCxx: [CXXSetting] = hasONNX ? [.headerSearchPath("../../Packages/onnxruntime/include"), .define("BEZZLE_ONNX", to: "1")] : []
+let onnxLinking: [LinkerSetting] = hasONNX ? [.linkedLibrary("dxgi"), .linkedLibrary("d3d12")] : []
+
 let frameworks = ["CoreGraphics", "AppKit", "CryptoKit", "ImageIO", "UniformTypeIdentifiers", "CoreImage", "CoreText", "QuartzCore"]
 
 // What Skia's own build defines for code that uses it (gn desc … defines), so its headers agree.
@@ -90,10 +97,10 @@ let package = Package(
             cxxSettings: [.headerSearchPath("../../Packages/skia")] + skiaDefines.map { define in
                 let parts = define.split(separator: "=", maxSplits: 1).map(String.init)
                 return .define(parts[0], to: parts.count > 1 ? parts[1] : nil)
-            } + avifCxx + webView2Settings,
+            } + avifCxx + webView2Settings + onnxCxx,
             linkerSettings: [.unsafeFlags(["-L" + skiaOut])] + skiaLibraries.map { .linkedLibrary($0) } + avifLinking
                 + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt", "dwmapi", "shell32", "oleaut32", "dwrite", "windowscodecs"].map { .linkedLibrary($0) }
-                + webView2Linking
+                + webView2Linking + onnxLinking
         ),
         .target(
             name: "BezzleCore",

@@ -2318,6 +2318,22 @@ extern "C" int32_t bz_image_write(const char* path, int32_t width, int32_t heigh
 
 extern "C" int32_t bz_avif_available(void) { return avif::available() ? 1 : 0; }
 
+extern "C" int32_t bz_pixels_scale(const void* pixels, int32_t width, int32_t height, void* out, int32_t toWidth, int32_t toHeight) {
+    if (!pixels || !out || width <= 0 || height <= 0 || toWidth <= 0 || toHeight <= 0) return 1;
+    const SkImageInfo from = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    const SkImageInfo to = SkImageInfo::Make(toWidth, toHeight, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    auto image = SkImages::RasterFromPixmap(SkPixmap(from, pixels, size_t(width) * 4), nullptr, nullptr);
+    auto surface = SkSurfaces::Raster(to);
+    if (!image || !surface) return 2;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    canvas->scale(float(toWidth) / float(width), float(toHeight) / float(height));
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    canvas->drawImage(image->withDefaultMipmaps(), 0, 0, SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear), &paint);
+    return surface->readPixels(to, out, size_t(toWidth) * 4, 0, 0) ? 0 : 3;
+}
+
 extern "C" int32_t bz_image_encode(int32_t width, int32_t height, const void* pixels, int32_t format, double quality) {
     std::lock_guard<std::mutex> guard(lock);
     SkDynamicMemoryWStream stream;

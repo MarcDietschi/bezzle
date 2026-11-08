@@ -196,6 +196,29 @@ int32_t bz_image_encode(int32_t width, int32_t height, const void *pixels, int32
 int32_t bz_image_write(const char *path, int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
 /// 1 when this build reads and writes AVIF (Windows/avif.ps1 made libavif and libaom for it), else 0.
 int32_t bz_avif_available(void);
+/// Premultiplied RGBA pixels `width` by `height` drawn again at `toWidth` by `toHeight`, smoothly
+/// (mipmaps and straight lines between pixels, as a thumbnail is made), into `out`. Returns 0
+/// when done. On any thread.
+int32_t bz_pixels_scale(const void *pixels, int32_t width, int32_t height, void *out, int32_t toWidth, int32_t toHeight);
+
+// MARK: The subject matte (matte.cpp)
+//
+// BiRefNet with ONNX Runtime, for Remove Background: on the graphics card through DirectML where
+// it can be, else on the processor. Error and device texts are UTF-8, into buffers of `capacity`.
+
+/// 2 when ONNX Runtime with DirectML is beside Bezzle, 1 with ONNX Runtime alone, 0 without.
+int32_t bz_matte_available(void);
+/// Opens the model at `path`: `device` 0 on the graphics card if it can be, else the processor;
+/// 1 the processor; 2 DirectML on any adapter, Windows' software one too. Says where it runs in
+/// `device_out`. Returns a handle, or null and why in `error`.
+void *bz_matte_open(const char *path, int32_t device, char *error, int32_t capacity, char *device_out, int32_t deviceCapacity);
+/// Runs the model on `input`, red, green and blue planes of `side` × `side` floats 0…1, into
+/// `output`, `side` × `side` floats 0…1. Returns 0 when done, else why in `error`. On any thread;
+/// one at a time. Should the graphics card give up on it, it runs on the processor from then on.
+int32_t bz_matte_run(void *matte, const float *input, int32_t side, float *output, char *error, int32_t capacity);
+/// Where the model runs now, in words, into `out`: 1 on the graphics card, 0 on the processor.
+int32_t bz_matte_device(void *matte, char *out, int32_t capacity);
+void bz_matte_close(void *matte);
 /// A PDF: begun at a path (0 if it cannot be), given pages, each a recorded picture the core made
 /// at `scale` pixels a point and `width` by `height` points, and ended, which writes it.
 int32_t bz_pdf_begin(const char *path);

@@ -77,6 +77,23 @@ try {
     Copy-Item 'Sources\BezzleCore\Shared\Model\Kits\Icons.deflate' "$app\Bezzle.resources" -Force
     # The welcome tour's photo, as the Mac paints it (Resources/make-welcome-photo.sh makes it on the Mac).
     if (Test-Path 'Resources\Generated\welcome-lake.jpg') { Copy-Item 'Resources\Generated\welcome-lake.jpg' "$app\Bezzle.resources" -Force }
+    # Remove Background's: ONNX Runtime and DirectML beside Bezzle.exe and the tools (onnx.ps1 fetches
+    # them), and the subject matte they run where Bezzle looks for it (Host/SubjectMatte.swift), made
+    # on a Mac and sent by VM/send-matte.sh. The model is linked rather than copied when it can be:
+    # it is 471 MB, and the same file each build.
+    if (Test-Path "Packages\onnxruntime\$Arch\onnxruntime.dll") {
+        Copy-Item "Packages\onnxruntime\$Arch\*.dll" $app -Force
+        Copy-Item "Packages\onnxruntime\$Arch\*.dll" $products -Force
+    }
+    if (Test-Path 'Packages\subject-matte\BiRefNet.onnx') {
+        $model = Get-Item 'Packages\subject-matte\BiRefNet.onnx'
+        $placed = "$app\Bezzle.resources\BiRefNet.onnx"
+        $same = (Test-Path $placed) -and (Get-Item $placed).Length -eq $model.Length -and (Get-Item $placed).LastWriteTimeUtc -eq $model.LastWriteTimeUtc
+        if (-not $same) {
+            if (Test-Path $placed) { Remove-Item -Force $placed }
+            try { New-Item -ItemType HardLink -Path $placed -Target $model.FullName | Out-Null } catch { Copy-Item $model.FullName $placed -Force }
+        }
+    }
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $app -Force
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $products -Force
     if (Test-Path '..\Web\site\openfonts\manifest.json') {

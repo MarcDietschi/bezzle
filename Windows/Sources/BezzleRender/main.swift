@@ -37,6 +37,14 @@ do {
     // "welcome": the welcome tour is made in the out folder first, as Bezzle makes it, with the
     // photo BEZZLE_WELCOME_PHOTO names, in the language BEZZLE_LANGUAGE names (de, fr or it) from
     // the words in BEZZLE_STRINGS (Resources/Generated/strings.json).
+    // "cutout": the photos BEZZLE_PHOTOS names (separated by ;) cut out as Bezzle cuts them out,
+    // into the out folder, with the subject matte BEZZLE_MATTE_MODEL names (WindowsCore.tryCutouts).
+    if arguments[2] == "cutout" {
+        SubjectModel.log = { print($0) }
+        let photos = (ProcessInfo.processInfo.environment["BEZZLE_PHOTOS"] ?? "").split(separator: ";").map { URL(fileURLWithPath: String($0)) }
+        for line in await WindowsCore.tryCutouts(photos, into: URL(fileURLWithPath: arguments[3])) { print(line) }
+        exit(0)
+    }
     if arguments[2] == "welcome" {
         if let language = ProcessInfo.processInfo.environment["BEZZLE_LANGUAGE"], let file = ProcessInfo.processInfo.environment["BEZZLE_STRINGS"],
            let data = try? Data(contentsOf: URL(fileURLWithPath: file)),

@@ -31,6 +31,9 @@ extension WindowsCore {
         /// Draws the canvas's marks again, and the design, as it changes here.
         public var redraw: () -> Void = {}
         public var changed: () -> Void = {}
+        /// A press on the picture let go without moving it, where it was pressed on the stage: a
+        /// cut-out picture keeps or drops the subject there (the Mac's PictureTool.clicked).
+        public var clicked: (CGPoint) -> Void = { _ in }
 
         /// The layer being placed in, and the ways between its own coordinates and the stage.
         struct Look {
@@ -255,8 +258,8 @@ extension WindowsCore {
                 rest = nil
                 redraw()
             }
+            if !moved, case .move = drag { clicked(downView) }
             guard moved, let look else { return }
-            _ = drag
             // Let go past covering, it springs back; the gesture ends once it is there.
             if let rest, !Self.same(rest, look.rect) {
                 settling = (look.id, look.rect, rest, WindowsCore.now, look.image)
