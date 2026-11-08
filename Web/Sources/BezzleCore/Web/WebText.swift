@@ -88,21 +88,94 @@ nonisolated enum TextLayout {
         let string: String
         /// The markers of its lists' items, as the Mac draws them with the letters.
         let markers: [Marker]
+        /// What the page was asked to set, and which of its runs have a colour of their own: for
+        /// setting them again for painting (`parts`).
+        let spec: [String: Any]
+        let own: [Bool]
+        /// The words set again, as these are, with only the letters of a colour of their own
+        /// seen, and with only the others: made when the text is first painted.
+        private var parts: (own: Int, painted: Int)?
 
-        init(id: Int, lines: [Line], usedSize: CGSize, string: String, markers: [Marker] = []) {
+        init(id: Int, lines: [Line], usedSize: CGSize, string: String, markers: [Marker] = [], spec: [String: Any] = [:], own: [Bool] = []) {
             self.id = id
             self.lines = lines
             self.usedSize = usedSize
             self.string = string
             self.markers = markers
+            self.spec = spec
+            self.own = own
         }
 
-        /// Draws with the text's top left at `origin`, y down, into the context the renderer made current.
+        /// Draws with the text's top left at `origin`, y down, into the context the renderer
+        /// made current: the letters of the text's own colour painted by `painting`, when they
+        /// are painted with a gradient or a picture, as the Mac's TextLayout.Manager paints them.
+        /// Letters of a colour of their own are drawn in it first; the others, with their lines
+        /// under and through them and their list markers, are drawn into a layer of their own,
+        /// and the paint over them keeps only what lies on them.
         func draw(at origin: CGPoint, painting: ((CGContext) -> Void)? = nil) {
             guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-            ctx.drawText(id, at: origin, color: nil)
             // Each marker's baseline was placed where it is drawn: only its left end moves it.
-            for marker in markers { ctx.drawText(marker.id, at: CGPoint(x: origin.x + marker.at.x, y: origin.y), color: nil) }
+            func drawMarkers(own: Bool?) {
+                for marker in markers where own.map({ $0 == (marker.look.color != nil) }) ?? true {
+                    ctx.drawText(marker.id, at: CGPoint(x: origin.x + marker.at.x, y: origin.y), color: nil)
+                }
+            }
+            guard let painting else {
+                ctx.drawText(id, at: origin, color: nil)
+                drawMarkers(own: nil)
+                return
+            }
+            let painted = own.contains(false) || markers.contains { $0.look.color == nil }
+            let mixed = own.contains(true)
+            let ids = mixed ? split() : (own: 0, painted: id)
+            if mixed { ctx.drawText(ids.own, at: origin, color: nil) }
+            drawMarkers(own: true)
+            guard painted else { return }
+            ctx.saveGState()
+            defer { ctx.restoreGState() }
+            let used = bounds.offsetBy(dx: origin.x, dy: origin.y)
+            let room = used.insetBy(dx: -max(used.height, 24), dy: -max(used.height, 24))
+            ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
+            if own.contains(false) { ctx.drawText(ids.painted, at: origin, color: nil) }
+            drawMarkers(own: false)
+            ctx.setBlendMode(.sourceIn)
+            ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
+            ctx.saveGState()
+            painting(ctx)
+            ctx.restoreGState()
+            ctx.endTransparencyLayer()
+            ctx.endTransparencyLayer()
+        }
+
+        /// Where its letters and markers lie, from its top left, as Text Kit's bounds of its glyphs.
+        private var bounds: CGRect {
+            var box = CGRect.null
+            for line in lines { box = box.union(CGRect(x: line.left, y: line.top, width: max(line.width, 1), height: line.height)) }
+            for marker in markers { box = box.union(CGRect(x: marker.at.x, y: 0, width: max(marker.size, 1), height: max(usedSize.height, 1))) }
+            return box.isNull ? CGRect(origin: .zero, size: usedSize) : box
+        }
+
+        /// The text set again twice, its lines where these are: the letters of a colour of their
+        /// own alone, and the others alone, every other letter unseen.
+        private func split() -> (own: Int, painted: Int) {
+            if let parts { return parts }
+            func set(keeping own: Bool) -> Int {
+                var s = spec
+                let runs = (spec["runs"] as? [[String: Any]]) ?? []
+                s["runs"] = runs.enumerated().map { k, run -> [String: Any] in
+                    var r = run
+                    if (self.own.indices.contains(k) ? self.own[k] : false) != own { r["color"] = nil }
+                    return r
+                }
+                let json = (try? JSONSerialization.data(withJSONObject: s)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                let answer = Host.call(.textLayout, string: json)
+                guard let reply = (try? JSONSerialization.jsonObject(with: Data(answer.utf8))) as? [String: Any], let made = reply["id"] as? Int else { return 0 }
+                _ = Host.call(.textLayout, string: "{\"place\":\(made),\"baselines\":\(Recording.json(lines.map { Double($0.drawn) }))}")
+                return made
+            }
+            let made = (own: set(keeping: true), painted: set(keeping: false))
+            parts = made
+            return made
         }
     }
 
@@ -362,7 +435,8 @@ nonisolated enum TextLayout {
                 _ = Host.call(.textLayout, string: "{\"place\":\(set.id),\"baselines\":\(Recording.json([Double(at.y)]))}")
             }
         }
-        let laid = Laid(id: id, lines: lines, usedSize: used, string: string, markers: markers)
+        let looks = node.runs.isEmpty ? [TextSpan(text: "")] : node.runs
+        let laid = Laid(id: id, lines: lines, usedSize: used, string: string, markers: markers, spec: spec, own: looks.map { $0.look.color != nil })
         // The page draws each line where it is placed here.
         _ = Host.call(.textLayout, string: "{\"place\":\(id),\"baselines\":\(Recording.json(lines.map { Double($0.drawn) }))}")
         return laid

@@ -1095,6 +1095,159 @@ SkColor4f color(const double* c, size_t& i, double alpha) {
     return out;
 }
 
+/// Whether the recording being played goes into a PDF (bz_pdf_page).
+bool playingPDF = false;
+
+/// Where the drawing call after one begins, from just after its number.
+size_t skipCall(int op, const double* c, size_t i, size_t n) {
+    switch (op) {
+        case 1: case 2: case 11: return i;
+        case 3: return i + 6;
+        case 4: return i + 1 < n && c[i + 1] == 0 ? i + 2 : i + 2 + size_t(i + 1 < n ? c[i + 1] : 0);
+        case 5: { const size_t j = i + 15; return j < n ? j + 1 + size_t(c[j]) : n; }
+        case 6: {
+            if (i + 16 > n) return n;
+            const size_t j = i + 16 + size_t(c[i + 15]) + 4;
+            return j < n ? j + 1 + size_t(c[j]) : n;
+        }
+        case 7: case 8: { const size_t j = i + 10 + (op == 7 ? 4 : 6); return j + 2 < n ? j + 3 + 5 * size_t(c[j + 2]) : n; }
+        case 9: return i + 16;
+        case 10: return i + 15;
+        case 12: return i + 18;
+        case 13: return i + 16;
+    }
+    return n;
+}
+
+/// Letters painted with a gradient or a picture (WebText.swift's and WebCurvedText.swift's draw:
+/// a layer of the letters, and in it a layer of the paint kept only where they are) as a PDF
+/// keeps them, as the Mac's TextLayout.Manager does: the paint cut to the letters' outlines,
+/// which keeps them sharp, the lines under and through them in their own colour. A PDF has no
+/// layers that keep only what lies on what is there: Skia makes them groups masked by others,
+/// in which the Mac's own PDF reader shows gradients moved off their letters. `i` is just after
+/// the outer layer's number; false when what follows is not letters painted so, played as it is.
+bool paintedLetters(SkCanvas* canvas, const double* c, size_t i, size_t n, size_t* next) {
+    if (i + 15 > n || c[i] != 1 || c[i + 1] != 0 || c[i + 2] != 0) return false;
+    size_t j = i + 15;
+    // The letters, until the paint's layer: their outlines in the outer layer's space.
+    SkPathBuilder outlines;
+    struct Rule { SkRect rect; SkColor4f color; SkMatrix matrix; };
+    std::vector<Rule> rules;
+    std::vector<SkMatrix> saved;
+    SkMatrix m;
+    size_t paint = 0;
+    while (j < n && !paint) {
+        const int op = int(c[j++]);
+        switch (op) {
+            case 1: saved.push_back(m); break;
+            case 2: if (saved.empty()) return false; m = saved.back(); saved.pop_back(); break;
+            case 3: m.preConcat(SkMatrix::MakeAll(float(c[j]), float(c[j + 2]), float(c[j + 4]), float(c[j + 1]), float(c[j + 3]), float(c[j + 5]), 0, 0, 1)); break;
+            case 5: {
+                const double rule = c[j + 10];
+                size_t k = j + 15;
+                outlines.addPath(path(c, k, n, rule).makeTransform(m));
+                break;
+            }
+            case 12: {
+                const int id = int(c[j + 10]);
+                const double x = c[j + 11], y = c[j + 12];
+                auto it = texts.find(id);
+                if (it == texts.end()) break;
+                const auto& t = it->second;
+                for (size_t k = 0; k < t.lines.size(); k++) {
+                    const auto& line = t.lines[k];
+                    if (!line.paragraph) continue;
+                    const double baseline = k < t.baselines.size() ? t.baselines[k] : 0;
+                    const double dx = x - line.back, dy = y + baseline - line.baseline;
+                    line.paragraph->visit([&](int, const Paragraph::VisitorInfo* info) {
+                        if (!info) return;
+                        SkFontMetrics fm;
+                        info->font.getMetrics(&fm);
+                        std::map<size_t, std::pair<double, double>> spans;
+                        for (int g = 0; g < info->count; g++) {
+                            const size_t inLine = utf16Index(line.words, info->utf8Starts[g]);
+                            size_t run = 0, from = 0;
+                            while (run + 1 < line.runs.size() && inLine >= from + line.runs[run].text.size()) { from += line.runs[run].text.size(); run++; }
+                            // Letters left unseen (those of a colour of their own) are not painted.
+                            if (run >= line.runs.size() || !line.runs[run].hasColor || line.runs[run].color.fA <= 0) continue;
+                            const double gx = dx + info->origin.fX + info->positions[g].fX, gy = dy + info->origin.fY + info->positions[g].fY;
+                            if (auto glyph = info->font.getPath(info->glyphs[g])) outlines.addPath(glyph->makeTransform(SkMatrix::Translate(float(gx), float(gy)).postConcat(m)));
+                            SkScalar w = 0;
+                            info->font.getWidths({&info->glyphs[g], 1}, {&w, 1});
+                            auto [at, made] = spans.try_emplace(run, gx, gx + double(w));
+                            if (!made) { at->second.first = std::min(at->second.first, gx); at->second.second = std::max(at->second.second, gx + double(w)); }
+                        }
+                        const double ry = dy + info->origin.fY;
+                        for (const auto& [run, span] : spans) {
+                            const Run& r = line.runs[run];
+                            SkScalar position = 0, thickness = 0;
+                            if (r.underline) {
+                                if (!fm.hasUnderlinePosition(&position)) position = -fm.fAscent * 0.1f;
+                                if (!fm.hasUnderlineThickness(&thickness)) thickness = info->font.getSize() / 14;
+                                rules.push_back({SkRect::MakeLTRB(float(span.first), float(ry + position), float(span.second), float(ry + position + thickness)), r.color, m});
+                            }
+                            if (r.strike) {
+                                if (!fm.hasStrikeoutPosition(&position)) position = fm.fAscent * 0.3f;
+                                if (!fm.hasStrikeoutThickness(&thickness)) thickness = info->font.getSize() / 14;
+                                rules.push_back({SkRect::MakeLTRB(float(span.first), float(ry + position), float(span.second), float(ry + position + thickness)), r.color, m});
+                            }
+                        }
+                    });
+                }
+                break;
+            }
+            case 13: {
+                const int id = int(c[j + 10]), k = int(c[j + 11]);
+                auto it = glyphLines.find(id);
+                if (c[j + 15] > 0 && it != glyphLines.end() && k >= 0 && k < int(it->second.size())) {
+                    const Glyph& g = it->second[size_t(k)];
+                    if (auto glyph = g.font.getPath(g.id)) outlines.addPath(glyph->makeTransform(m));
+                }
+                break;
+            }
+            case 10:
+                // The paint's layer, keeping only what lies on the letters.
+                if (j + 15 > n || int(c[j + 1]) != 18) return false;
+                paint = j + 15;
+                break;
+            default:
+                return false;
+        }
+        if (!paint) j = skipCall(op, c, j, n);
+    }
+    if (!paint || !saved.empty()) return false;
+    // Where the paint's layer ends, and the letters' after it.
+    size_t k = paint;
+    int depth = 1;
+    size_t end = 0;
+    while (k < n) {
+        const int op = int(c[k]);
+        if (op == 10) depth++;
+        if (op == 11 && --depth == 0) { end = k; break; }
+        k = skipCall(op, c, k + 1, n);
+    }
+    if (!end || end + 1 >= n || int(c[end + 1]) != 11) return false;
+    // The lines under and through the letters in their own colour, then the paint cut to the letters.
+    for (const auto& r : rules) {
+        SkPaint p;
+        p.setAntiAlias(true);
+        p.setColor4f(r.color);
+        canvas->save();
+        canvas->concat(r.matrix);
+        canvas->drawRect(r.rect, p);
+        canvas->restore();
+    }
+    const SkPath shape = outlines.detach();
+    if (!shape.isEmpty()) {
+        canvas->save();
+        canvas->clipPath(shape, SkClipOp::kIntersect, true);
+        play(canvas, c + paint, end - paint);
+        canvas->restore();
+    }
+    *next = end + 2;
+    return true;
+}
+
 void play(SkCanvas* canvas, const double* c, size_t n) {
     size_t i = 0;
     while (i < n) {
@@ -1195,6 +1348,8 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                 break;
             }
             case 10: {
+                size_t after = 0;
+                if (playingPDF && paintedLetters(canvas, c, i, n, &after)) { i = after; break; }
                 SkPaint paint;
                 const Look l = look(c, i, paint, canvas);
                 paint.setAlphaf(float(l.alpha));
@@ -1926,7 +2081,9 @@ extern "C" int32_t bz_pdf_page(int32_t pdf, int32_t picture, double width, doubl
     // The recording, at `scale` pixels a point, played as shapes and text rather than pixels.
     canvas->scale(float(1 / scale), float(1 / scale));
     canvas->concat(SkMatrix::MakeAll(1, 0, 0, 0, -1, float(p->second.height), 0, 0, 1));
+    playingPDF = true;
     play(canvas, p->second.commands.data(), p->second.commands.size());
+    playingPDF = false;
     it->second.document->endPage();
     return 0;
 }
