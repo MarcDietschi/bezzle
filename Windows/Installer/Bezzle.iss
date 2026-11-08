@@ -6,7 +6,8 @@
 ;   Version  the version people see (1.4.2), Build the one updates compare (20261108.1200)
 ;   Source   the app laid out, as it will be in its folder
 ;   Runtime  the Windows App Runtime's installer for Arch, from Microsoft
-;   Icon     Bezzle's icon (Resources/make-icons.sh), Output the folder the installer goes into
+;   Icon     Bezzle's icon and Pictures the folder of the installer's pictures (Resources/make-icons.sh),
+;            Output the folder the installer goes into
 ;
 ; It installs for the person running it alone, without administrator rights, into
 ; %LOCALAPPDATA%\Programs\Bezzle: a Start menu entry, an entry in Settings › Apps to remove it, the
@@ -63,6 +64,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; Windows 11, as WinUI and the Windows App Runtime that Bezzle is built with are tested there.
 MinVersion=10.0.22000
 SetupIconFile={#Icon}
+; Bezzle's icon at the top of the pages, and on its paper beside the last one.
+WizardSmallImageFile={#Pictures}\SetupSmall.png
+WizardImageFile={#Pictures}\SetupPanel.png
 UninstallDisplayIcon={app}\Bezzle.exe
 UninstallDisplayName={#Name}
 WizardStyle=modern
@@ -89,10 +93,10 @@ Name: "it"; MessagesFile: "compiler:Languages\Italian.isl"
 ; Bezzle's own words on the screens the installer shows, in the app's voice (German with du, French
 ; with vous, Italian with tu, as the app speaks), with no dashes as punctuation.
 [Messages]
-en.SetupWindowTitle=%1 Setup
-de.SetupWindowTitle=%1 installieren
-fr.SetupWindowTitle=Installation de %1
-it.SetupWindowTitle=Installazione di %1
+en.SetupWindowTitle={#Name} Setup
+de.SetupWindowTitle={#Name} installieren
+fr.SetupWindowTitle=Installation de {#Name}
+it.SetupWindowTitle=Installazione di {#Name}
 en.UninstallAppFullTitle=Remove %1
 de.UninstallAppFullTitle=%1 entfernen
 fr.UninstallAppFullTitle=Supprimer %1
@@ -246,13 +250,14 @@ end;
 
 // Whether this person lacks a Windows App Runtime 1.7 for Bezzle's architecture; any 1.7 serves,
 // as Bezzle asks for no smallest one. Its installer is run only then: it takes a while even when
-// there is nothing to do.
+// there is nothing to do. /RUNTIME=1 runs it all the same (to try it).
 function NeedsRuntime: Boolean;
 var
   Arch: String;
 begin
   Arch := '{#Arch}';
-  Result := not (HasPackage('Microsoft.WindowsAppRuntime.1.7_', '_' + Arch + Publisher)
+  Result := (ExpandConstant('{param:RUNTIME|0}') = '1')
+    or not (HasPackage('Microsoft.WindowsAppRuntime.1.7_', '_' + Arch + Publisher)
     and HasPackage('MicrosoftCorporationII.WinAppRuntime.Main.1.7_', '_' + Arch + Publisher)
     and HasPackage('Microsoft.WinAppRuntime.DDLM.7000.', '_' + Arch + Publisher));
 end;

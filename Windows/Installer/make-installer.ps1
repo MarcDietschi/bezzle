@@ -35,7 +35,8 @@ $ErrorActionPreference = 'Stop'
 $windows = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $App) {
     $native = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
-    $App = if ($Arch -eq $native) { "$windows\.build\Bezzle" } else { "$windows\.build\Bezzle-$Arch" }
+    # build.ps1 lays the machine's own architecture out in .build\Bezzle, another in .build\<arch>\Bezzle.
+    $App = if ($Arch -eq $native) { "$windows\.build\Bezzle" } else { "$windows\.build\$Arch\Bezzle" }
 }
 if (-not (Test-Path "$App\Bezzle.exe")) { throw "No Bezzle.exe in ${App}: lay the app out with build.ps1 first" }
 if ($Version -notmatch '^\d+(\.\d+){0,2}$') { throw "A version reads like 1.4.2, not $Version" }
@@ -62,10 +63,9 @@ $toolchain = Split-Path (Get-Command swiftc.exe).Source
 $readobj = Join-Path $toolchain 'llvm-readobj.exe'
 if (-not $RuntimeDirs) {
     # The Swift runtime of the toolchain in use, which carries the C++ runtime it is built against.
-    $RuntimeDirs = @($env:PATH -split ';' | Where-Object { $_ -match '\\Swift\\Runtimes\\[^\\]+\\usr\\bin\\?$' } | Select-Object -First 1)
-    if ($Arch -ne $(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' })) {
-        throw "Name the $Arch Swift runtime's folder with -RuntimeDirs"
-    }
+    # Another architecture's layout carries its runtimes itself (build.ps1 -Arch puts them there).
+    $own = $Arch -eq $(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' })
+    $RuntimeDirs = if ($own) { @($env:PATH -split ';' | Where-Object { $_ -match '\\Swift\\Runtimes\\[^\\]+\\usr\\bin\\?$' } | Select-Object -First 1) } else { @() }
 }
 $system = "$env:SystemRoot\System32"
 $cppRuntime = '^(vcruntime|msvcp|concrt|vccorlib|vcomp)\d'
@@ -97,6 +97,12 @@ while ($queue.Count -gt 0) {
 foreach ($dir in $RuntimeDirs) {
     Get-ChildItem $dir -Filter *.dll | Where-Object { $_.Name -match $cppRuntime -and $_.Name -notmatch 'd\.dll$' } |
         ForEach-Object { if (-not (Test-Path (Join-Path $stage $_.Name))) { Copy-Item $_.FullName $stage } }
+}
+
+# The Mac's pointers must be in it (build.ps1 compiles them before Swift links them in; a manifest
+# SwiftPM read before Resources\Generated\Bezzle.res was there leaves them out).
+if (-not (& $readobj --coff-resources "$stage\Bezzle.exe" | Select-String 'GROUP_CURSOR')) {
+    throw 'Bezzle.exe has no pointers: run build.ps1 (it compiles Bezzle.rc) after touching Package.swift'
 }
 
 # Bezzle.exe without its debugging information, which takes most of its size; the whole one is
@@ -162,14 +168,14 @@ if ($LASTEXITCODE -ne 0) { throw 'rc failed' }
 
 # Each resource of the compiled script written into Bezzle.exe (UpdateResource), as a resource
 # editor would: no relinking, so the same build serves every version stamped onto it.
-Add-Type -TypeDefinition @'
+if (-not ('BezzleResources' -as [type])) { Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
 public static class BezzleResources {
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern IntPtr BeginUpdateResource(string file, bool deleteExisting);
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool UpdateResource(IntPtr update, IntPtr type, IntPtr name, ushort language, byte[] data, uint size);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool EndUpdateResource(IntPtr update, bool discard);
@@ -212,7 +218,7 @@ public static class BezzleResources {
         return count;
     }
 }
-'@
+'@ }
 $written = [BezzleResources]::Apply("$stage\Bezzle.exe", "$work\stamp.res")
 Write-Host "Bezzle.exe: $written resources (icon, version $Version ($Build)$(if ($Feed) { ', feed and key' }))"
 
@@ -221,7 +227,7 @@ $output = Join-Path $Out 'setup'
 New-Item -ItemType Directory -Force $output | Out-Null
 $iscc = @(
     "/DName=$Name", "/DArch=$Arch", "/DVersion=$Version", "/DBuild=$Build", "/DSource=$stage",
-    "/DRuntime=$($tools.Runtime[$Arch])", "/DIcon=$icon", "/DOutput=$output", '/Q', "$PSScriptRoot\Bezzle.iss"
+    "/DRuntime=$($tools.Runtime[$Arch])", "/DIcon=$icon", "/DPictures=$(Split-Path $icon)", "/DOutput=$output", '/Q', "$PSScriptRoot\Bezzle.iss"
 )
 & $tools.ISCC @iscc
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup could not make the installer' }

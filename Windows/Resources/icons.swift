@@ -83,4 +83,26 @@ app.size = NSSize(width: 1024, height: 1024)
 try iconFile(app).write(to: out.appendingPathComponent("Bezzle.ico"))
 guard let document = NSImage(contentsOf: documentIcon) else { fatalError("no \(documentIcon.path)") }
 try iconFile(document).write(to: out.appendingPathComponent("BezzleDocument.ico"))
-print("Bezzle.ico and BezzleDocument.ico in \(out.path)")
+
+/// The installer's pictures (Installer/Bezzle.iss), at twice the size it shows them: the icon on
+/// the top right of its pages, and the panel beside its last page, Bezzle's paper with the icon.
+func picture(width: Int, height: Int, paper: Bool, icon side: Int, top: Int) -> Data {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                               hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: width * 4, bitsPerPixel: 32)!
+    rep.size = NSSize(width: width, height: height)
+    NSGraphicsContext.saveGraphicsState()
+    let context = NSGraphicsContext(bitmapImageRep: rep)!
+    context.imageInterpolation = .high
+    NSGraphicsContext.current = context
+    // The paper of Bezzle's home, lighter at the top, as the Mac's document icon is cut from.
+    let gradient = NSGradient(starting: NSColor(srgbRed: 0.976, green: 0.965, blue: 0.941, alpha: 1),
+                              ending: NSColor(srgbRed: 0.937, green: 0.922, blue: 0.890, alpha: 1))!
+    if paper { gradient.draw(in: NSRect(x: 0, y: 0, width: width, height: height), angle: -90) }
+    else { NSColor.white.setFill(); NSRect(x: 0, y: 0, width: width, height: height).fill() }
+    app.draw(in: NSRect(x: (width - side) / 2, y: height - top - side, width: side, height: side), from: .zero, operation: .sourceOver, fraction: 1)
+    NSGraphicsContext.restoreGraphicsState()
+    return rep.representation(using: .png, properties: [:])!
+}
+try picture(width: 110, height: 110, paper: false, icon: 110, top: 0).write(to: out.appendingPathComponent("SetupSmall.png"))
+try picture(width: 328, height: 628, paper: true, icon: 200, top: 150).write(to: out.appendingPathComponent("SetupPanel.png"))
+print("Bezzle.ico, BezzleDocument.ico and the installer's pictures in \(out.path)")

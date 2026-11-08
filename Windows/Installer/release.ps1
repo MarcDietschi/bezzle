@@ -30,13 +30,12 @@ foreach ($arch in $Archs) {
     Write-Host "Building Bezzle $Version ($Build) for $arch"
     $started = Get-Date
     if ($arch -eq $native) {
-        # Through cmd: PowerShell 5 takes a compiler's warnings on stderr for errors.
-        $log = cmd /c "swift build -c release -j $Jobs --product Bezzle 2>&1"
-        if ($LASTEXITCODE -ne 0) { $log | Select-String 'error' | Select-Object -Last 20; throw "Bezzle did not build for $arch" }
+        # build.ps1 compiles the pointers' resources before Swift links them in, then lays it out.
         .\build.ps1 release | Out-Null
     } else {
-        # Another architecture is built across (build.ps1 -Arch), into .build\Bezzle-<arch>.
-        .\build.ps1 release -Arch $arch | Out-Null
+        # Another architecture is built across (build.ps1 -Arch, from the x64 work), into
+        # .build\<arch>\Bezzle, with its Swift and C++ runtimes laid beside it.
+        .\build.ps1 release -Arch $arch -Product Bezzle -Jobs $Jobs | Out-Null
     }
     Write-Host "  built in $([int]((Get-Date) - $started).TotalMinutes) min"
     $result = & "$PSScriptRoot\make-installer.ps1" -Arch $arch -Version $Version -Build $Build -Feed $Feed -PublicKey $PublicKey -Cache $Cache | Select-Object -Last 1
