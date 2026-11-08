@@ -243,10 +243,20 @@ enum Spelling {
             })
             guard n >= 0 else { continue }
             let found = (0..<min(n, 512)).map { NSRange(location: Int(ranges[$0 * 2]), length: Int(ranges[$0 * 2 + 1])) }
+                .filter { !isKey($0, in: words as NSString) }
             if best == nil || found.count < best!.ranges.count { best = (language, found) }
             if found.isEmpty { break }
         }
         return best ?? (nil, [])
+    }
+
+    /// Whether a word found misspelt is a key as Windows names it where the Mac writes a symbol
+    /// (Ctrl+B for ⌘B, as the welcome tour has them), which the Mac's spelling passes over and
+    /// no dictionary has.
+    private static func isKey(_ r: NSRange, in words: NSString) -> Bool {
+        guard NSMaxRange(r) <= words.length else { return false }
+        let word = words.substring(with: r)
+        return word.contains("+") || ["Ctrl", "Alt", "Shift", "Esc", "Enter"].contains(word)
     }
 
     /// The words said twice in a row (the second of each), as Windows' checker for `language` finds them.

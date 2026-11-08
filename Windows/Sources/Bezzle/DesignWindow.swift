@@ -331,6 +331,10 @@ final class DesignWindow {
         session.cameToFront()
         versionsChanged()
         news.refresh()
+        // Other designs, as libraries, read again where they changed meanwhile (one just changed
+        // in another tab, which saved it as it went behind), so what they offer shows, as the
+        // Mac's library sees its folder change.
+        resources.readLibraries()
         if find.isOpen { find.refresh() }
         let canvas = canvas
         DispatchQueue.main.async { MainActor.assumeIsolated { canvas.takeKeys() } }
