@@ -457,27 +457,41 @@ nonisolated enum CutoutMaker {
     struct Pixels: @unchecked Sendable {
         let w: Int, h: Int
         var bytes: [UInt8]
+        /// The colours its numbers are in, as an ICC profile, where they are not sRGB's: the
+        /// picture's own, as the Mac's `Pixels` keeps its CGImage's colour space.
+        var colors: Data?
 
-        init(w: Int, h: Int, bytes: [UInt8]) {
+        init(w: Int, h: Int, bytes: [UInt8], colors: Data? = nil) {
             self.w = w
             self.h = h
             self.bytes = bytes
+            self.colors = colors
         }
 
-        /// A picture file's picture at its own size, upright as its orientation turns it, in sRGB
-        /// (the Mac keeps a picture's own colour space; Skia reads into sRGB). Nil if it cannot be read.
+        /// A picture file's picture at its own size, upright as its orientation turns it, in its
+        /// own colours as the Mac's CutoutMaker takes them: its colour space when that is RGB
+        /// (an iPhone's Display P3), sRGB otherwise. Nil if it cannot be read.
         init?(file data: Data) {
             var w: Int32 = 0, h: Int32 = 0
             guard data.withUnsafeBytes({ bz_image_size($0.baseAddress, Int32(clamping: $0.count), &w, &h) }) != 0, w > 0, h > 0 else { return nil }
             let longest = Int(max(w, h))
             // As large as its longer side square, which the reading asks room for.
             var bytes = [UInt8](repeating: 0, count: longest * longest * 4)
-            let read = data.withUnsafeBytes { d in
-                bytes.withUnsafeMutableBytes { bz_image_thumbnail(d.baseAddress, Int64(d.count), Int32(longest), &w, &h, $0.baseAddress) }
+            // Room for its colour profile; a larger one is read again with room enough.
+            var icc = [UInt8](repeating: 0, count: 64 * 1024)
+            var size: Int32 = -1
+            for _ in 0..<2 {
+                size = data.withUnsafeBytes { d in
+                    bytes.withUnsafeMutableBytes { b in
+                        icc.withUnsafeMutableBytes { bz_image_thumbnail_own(d.baseAddress, Int64(d.count), Int32(longest), &w, &h, b.baseAddress, $0.baseAddress, Int32($0.count)) }
+                    }
+                }
+                guard Int(size) > icc.count else { break }
+                icc = [UInt8](repeating: 0, count: Int(size))
             }
-            guard read != 0, w > 0, h > 0 else { return nil }
+            guard size >= 0, Int(size) <= icc.count, w > 0, h > 0 else { return nil }
             bytes.removeSubrange(Int(w) * Int(h) * 4..<bytes.count)
-            self.init(w: Int(w), h: Int(h), bytes: bytes)
+            self.init(w: Int(w), h: Int(h), bytes: bytes, colors: size > 0 ? Data(icc.prefix(Int(size))) : nil)
         }
 
         /// A picture file's picture made small, its longer side `longest` at most, upright, for
@@ -506,7 +520,19 @@ nonisolated enum CutoutMaker {
             let done = bytes.withUnsafeBytes { from in
                 out.withUnsafeMutableBytes { bz_pixels_scale(from.baseAddress, Int32(w), Int32(h), $0.baseAddress, Int32(width), Int32(height)) }
             }
-            return done == 0 ? Pixels(w: width, h: height, bytes: out) : nil
+            return done == 0 ? Pixels(w: width, h: height, bytes: out, colors: colors) : nil
+        }
+
+        /// The same in sRGB, as the Mac draws a picture for the learned matte to see.
+        func inSRGB() -> Pixels? {
+            guard let colors else { return self }
+            var out = [UInt8](repeating: 0, count: w * h * 4)
+            let done = bytes.withUnsafeBytes { from in
+                colors.withUnsafeBytes { icc in
+                    out.withUnsafeMutableBytes { bz_pixels_convert(from.baseAddress, Int32(w), Int32(h), icc.baseAddress, Int32(icc.count), nil, 0, $0.baseAddress) }
+                }
+            }
+            return done == 0 ? Pixels(w: w, h: h, bytes: out) : nil
         }
 
         /// Over white where it is see-through, as the Mac draws it to work on, solid all over.
@@ -521,7 +547,7 @@ nonisolated enum CutoutMaker {
                     px[i + 3] = 255
                 }
             }
-            return Pixels(w: w, h: h, bytes: out)
+            return Pixels(w: w, h: h, bytes: out, colors: colors)
         }
 
         /// Its colours, 0…1, red, green and blue.

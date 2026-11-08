@@ -31,6 +31,7 @@
 #include "include/codec/SkPngDecoder.h"
 #include "include/codec/SkWebpDecoder.h"
 #include "include/effects/SkDashPathEffect.h"
+#include "include/encode/SkICC.h"
 #include "include/encode/SkPngEncoder.h"
 #include "include/encode/SkWebpEncoder.h"
 #include "include/docs/SkPDFDocument.h"
@@ -203,13 +204,47 @@ sk_sp<SkColorSpace> avifColors(const avif::Picture& p) {
     return colors ? colors : SkColorSpace::MakeSRGB();
 }
 
+/// The colours a picture is worked on in where the Mac keeps its own (CutoutMaker: "its colour
+/// space when that is RGB, sRGB otherwise"): `space`, null for sRGB, and the ICC profile that
+/// says so, the file's own bytes where it has one, so a cutout carries the profile its photo did.
+struct OwnColors {
+    sk_sp<SkColorSpace> space;
+    std::vector<uint8_t> icc;
+};
+
+/// A picture's own colours, from its colour space as read and the ICC profile it carries, if any:
+/// none (sRGB) where it is sRGB already, where its profile is not RGB (grey, CMYK, which the Mac
+/// works on in sRGB), or where its light goes past white (PQ, HLG), which drawing brings down
+/// to what a screen shows first.
+OwnColors ownColors(const SkColorSpace* space, const uint8_t* icc, size_t iccSize) {
+    OwnColors own;
+    if (!space || space->isSRGB()) return own;
+    skcms_TransferFunction fn;
+    if (!space->isNumericalTransferFn(&fn)) return own;
+    if (icc && iccSize) {
+        skcms_ICCProfile profile;
+        if (!skcms_Parse(icc, iccSize, &profile) || profile.data_color_space != skcms_Signature_RGB) return own;
+        own.icc.assign(icc, icc + iccSize);
+    } else {
+        skcms_ICCProfile profile;
+        space->toProfile(&profile);
+        auto written = SkWriteICCProfile(&profile, "");
+        if (!written) return own;
+        own.icc.assign(written->bytes(), written->bytes() + written->size());
+    }
+    own.space = sk_ref_sp(space);
+    return own;
+}
+
 /// An AVIF file's picture (Skia's codecs read none here): upright as its rotation and mirror turn
-/// it, or as kept; null if it is none.
-sk_sp<SkImage> avifPicture(const void* data, size_t count, bool upright) {
+/// it, or as kept; null if it is none. Its own colours go to `own`, when asked.
+sk_sp<SkImage> avifPicture(const void* data, size_t count, bool upright, OwnColors* own = nullptr) {
     avif::Picture p;
     if (!avif::read(data, count, upright, p)) return nullptr;
+    const auto colors = avifColors(p);
+    if (own) *own = ownColors(colors.get(), p.icc.data(), p.icc.size());
     const SkImageInfo info = SkImageInfo::Make(p.width, p.height, p.sixteen ? kR16G16B16A16_unorm_SkColorType : kRGBA_8888_SkColorType,
-                                               p.opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType, avifColors(p));
+                                               p.opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType, colors);
     const size_t row = size_t(p.width) * (p.sixteen ? 8 : 4);
     auto* pixels = new std::vector<uint8_t>(std::move(p.pixels));
     auto bytes = SkData::MakeWithProc(pixels->data(), pixels->size(), [](const void*, void* kept) { delete static_cast<std::vector<uint8_t>*>(kept); }, pixels);
@@ -234,8 +269,9 @@ sk_sp<SkImage> turned(const sk_sp<SkImage>& image, SkEncodedOrigin origin) {
 
 /// An HEIF file's picture (HEIC), which Skia's codecs do not read, as Windows reads it where it
 /// can (heif.cpp): upright as its rotation and mirror turn it, or as kept; in its own colours.
-/// Null where Windows cannot read it, heif::lastProblem() saying why.
-sk_sp<SkImage> heifPicture(const void* data, size_t count, bool upright) {
+/// Null where Windows cannot read it, heif::lastProblem() saying why. Its own colours go to
+/// `own`, when asked.
+sk_sp<SkImage> heifPicture(const void* data, size_t count, bool upright, OwnColors* own = nullptr) {
     heif::Picture p;
     if (heif::read(data, count, p) != heif::none) return nullptr;
     sk_sp<SkColorSpace> colors = SkColorSpace::MakeSRGB();
@@ -245,6 +281,7 @@ sk_sp<SkImage> heifPicture(const void* data, size_t count, bool upright) {
             if (auto c = SkColorSpace::Make(profile)) colors = c;
         }
     }
+    if (own) *own = ownColors(colors.get(), p.icc.data(), p.icc.size());
     const SkImageInfo info = SkImageInfo::Make(p.width, p.height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, colors);
     auto* pixels = new std::vector<uint8_t>(std::move(p.pixels));
     auto bytes = SkData::MakeWithProc(pixels->data(), pixels->size(), [](const void*, void* kept) { delete static_cast<std::vector<uint8_t>*>(kept); }, pixels);
@@ -376,7 +413,9 @@ extern "C" int64_t bz_jpeg_encode(int32_t width, int32_t height, const void* pix
     return size;
 }
 
-extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t longest, int32_t* width, int32_t* height, void* pixels) {
+/// A picture file's picture small, as Image I/O makes a thumbnail with its transform (see
+/// bz_image_thumbnail): in sRGB, or with `own`, in the picture's own colours, which go to `colors`.
+int32_t thumbnail(const void* data, int64_t count, int32_t longest, int32_t* width, int32_t* height, void* pixels, OwnColors* colors) {
     if (!data || count <= 0 || longest <= 0) return 0;
     // The picture upright, as large as needed to come out sharp at its small size: a JPEG read
     // straight at a half, a quarter or an eighth, which is quick even for a large photo.
@@ -385,11 +424,12 @@ extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t l
     // Its size as kept, whatever size it is read at; whether it is a JPEG.
     SkISize kept = {0, 0};
     bool jpeg = false;
+    OwnColors own;
     if (avif::sniff(data, size_t(count))) {
-        source = avifPicture(data, size_t(count), true);
+        source = avifPicture(data, size_t(count), true, colors ? &own : nullptr);
         if (source) kept = source->dimensions();
     } else if (heif::sniff(data, size_t(count))) {
-        source = heifPicture(data, size_t(count), true);
+        source = heifPicture(data, size_t(count), true, colors ? &own : nullptr);
         if (source) kept = source->dimensions();
     } else {
         decode(nullptr, 0);
@@ -397,12 +437,22 @@ extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t l
         if (!codec) return 0;
         origin = codec->getOrigin();
         jpeg = codec->getEncodedFormat() == SkEncodedImageFormat::kJPEG;
+        if (colors) {
+            const skcms_ICCProfile* profile = codec->getICCProfile();
+            if (profile && profile->data_color_space != skcms_Signature_RGB) {
+                // Grey or CMYK: sRGB, as the Mac works on it.
+            } else {
+                const bool kept = profile && profile->buffer && profile->size;
+                own = ownColors(codec->getInfo().colorSpace(), kept ? profile->buffer : nullptr, kept ? profile->size : 0);
+            }
+        }
         const auto full = codec->dimensions();
         kept = full;
         const float want = std::min(1.0f, 2.0f * float(longest) / float(std::max(full.width(), full.height())));
         for (const SkISize size : {codec->getScaledDimensions(want), full}) {
             SkBitmap bitmap;
-            if (!bitmap.tryAllocPixels(SkImageInfo::Make(size, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB()))) return 0;
+            if (!bitmap.tryAllocPixels(SkImageInfo::Make(size, kRGBA_8888_SkColorType, kPremul_SkAlphaType,
+                                                         own.space ? own.space : SkColorSpace::MakeSRGB()))) return 0;
             const auto result = codec->getPixels(bitmap.pixmap());
             if (result == SkCodec::kSuccess || result == SkCodec::kIncompleteInput || result == SkCodec::kErrorInInput) {
                 bitmap.setImmutable();
@@ -431,7 +481,8 @@ extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t l
         fh *= k;
     }
     const int w = std::max(1, int(std::lround(fw))), h = std::max(1, int(std::lround(fh)));
-    const SkImageInfo info = SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
+    const SkImageInfo info = SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType,
+                                               own.space ? own.space : SkColorSpace::MakeSRGB());
     auto surface = SkSurfaces::Raster(info);
     if (!surface) return 0;
     SkCanvas* canvas = surface->getCanvas();
@@ -444,7 +495,36 @@ extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t l
     if (!surface->readPixels(info, pixels, size_t(w) * 4, 0, 0)) return 0;
     *width = w;
     *height = h;
+    if (colors) *colors = std::move(own);
     return 1;
+}
+
+extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t longest, int32_t* width, int32_t* height, void* pixels) {
+    return thumbnail(data, count, longest, width, height, pixels, nullptr);
+}
+
+extern "C" int32_t bz_image_thumbnail_own(const void* data, int64_t count, int32_t longest, int32_t* width, int32_t* height, void* pixels,
+                                          void* icc, int32_t iccCapacity) {
+    OwnColors own;
+    if (!thumbnail(data, count, longest, width, height, pixels, &own)) return -1;
+    if (!own.icc.empty() && int64_t(own.icc.size()) <= int64_t(iccCapacity)) std::memcpy(icc, own.icc.data(), own.icc.size());
+    return int32_t(own.icc.size());
+}
+
+/// The colour space an ICC profile says, null for sRGB (none given) or a profile Skia cannot take.
+sk_sp<SkColorSpace> profileColors(const void* icc, int32_t count) {
+    if (!icc || count <= 0) return SkColorSpace::MakeSRGB();
+    skcms_ICCProfile profile;
+    if (!skcms_Parse(icc, size_t(count), &profile)) return nullptr;
+    return SkColorSpace::Make(profile);
+}
+
+extern "C" int32_t bz_pixels_convert(const void* pixels, int32_t width, int32_t height, const void* fromICC, int32_t fromCount,
+                                     const void* toICC, int32_t toCount, void* out) {
+    const auto from = profileColors(fromICC, fromCount), to = profileColors(toICC, toCount);
+    if (!from || !to || width <= 0 || height <= 0) return 1;
+    const SkPixmap source(SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, from), pixels, size_t(width) * 4);
+    return source.readPixels(SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType, to), out, size_t(width) * 4) ? 0 : 2;
 }
 
 extern "C" int32_t bz_heif_sniff(const void* data, int64_t count) { return heif::sniff(data, size_t(count)) ? 1 : 0; }
@@ -666,17 +746,29 @@ void dehaze(std::vector<float>& px, int w, int h, double amount, const float air
     }
 }
 
+/// Light from one gamut's primaries to another's (linear sRGB to linear Display P3 and back).
+inline void mix(const skcms_Matrix3x3& m, const float* in, float* out) {
+    for (int r = 0; r < 3; r++) out[r] = m.vals[r][0] * in[0] + m.vals[r][1] * in[1] + m.vals[r][2] * in[2];
+}
+
 /// Each colour, as it looks, through the cube, as Core Image's colour cube in sRGB takes it:
-/// unpremultiplied, the nearest eight of its steps mixed.
-void cube(std::vector<float>& px, const std::vector<float>& lut, int n) {
+/// unpremultiplied, the nearest eight of its steps mixed. With `into` and `back`, in another
+/// colour space with sRGB's curve, as the Mac takes a Display P3 photo's colours through it in
+/// Display P3 (CIColorCubeWithColorSpace): its light into that space's primaries and back.
+void cube(std::vector<float>& px, const std::vector<float>& lut, int n, const skcms_Matrix3x3* into = nullptr, const skcms_Matrix3x3* back = nullptr) {
     if (n < 2 || lut.size() < size_t(n) * n * n * 3) return;
     const float top = float(n - 1);
     for (size_t i = 0; i < px.size(); i += 4) {
         float* p = &px[i];
         const float a = p[3];
         if (a <= 0.0001f) continue;
-        float c[3];
-        for (int k = 0; k < 3; k++) c[k] = std::clamp(encode(p[k] / a), 0.0f, 1.0f) * top;
+        float c[3], light[3] = {p[0] / a, p[1] / a, p[2] / a};
+        if (into) {
+            float there[3];
+            mix(*into, light, there);
+            std::copy(there, there + 3, light);
+        }
+        for (int k = 0; k < 3; k++) c[k] = std::clamp(encode(light[k]), 0.0f, 1.0f) * top;
         const int r0 = std::min(int(c[0]), n - 2), g0 = std::min(int(c[1]), n - 2), b0 = std::min(int(c[2]), n - 2);
         const float tr = c[0] - r0, tg = c[1] - g0, tb = c[2] - b0;
         float out[3] = {0, 0, 0};
@@ -685,7 +777,13 @@ void cube(std::vector<float>& px, const std::vector<float>& lut, int n) {
             const float* e = &lut[((size_t(b0 + db) * n + (g0 + dg)) * n + (r0 + dr)) * 3];
             for (int k = 0; k < 3; k++) out[k] += e[k] * wgt;
         }
-        for (int k = 0; k < 3; k++) p[k] = decode(out[k]) * a;
+        for (int k = 0; k < 3; k++) light[k] = decode(out[k]);
+        if (back) {
+            float here[3];
+            mix(*back, light, here);
+            std::copy(here, here + 3, light);
+        }
+        for (int k = 0; k < 3; k++) p[k] = light[k] * a;
     }
 }
 
@@ -743,27 +841,51 @@ void detail(std::vector<float>& px, int w, int h, double clarity, double texture
 
 }  // namespace develop
 
-/// A photo developed as the Mac's Developer develops it, from the picture as it is.
+/// Whether a picture's colours are Display P3's, by its primaries and white, as the Mac's
+/// Developer asks whether its colour space is a P3 one.
+bool isP3(const SkColorSpace* space) {
+    skcms_Matrix3x3 m;
+    if (!space || !space->toXYZD50(&m)) return false;
+    for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
+        if (std::fabs(m.vals[r][c] - SkNamedGamut::kDisplayP3.vals[r][c]) > 0.002f) return false;
+    }
+    return true;
+}
+
+/// A photo developed as the Mac's Developer develops it, from the picture as it is: in Display P3
+/// when it is a Display P3 photo, so its brightest colours are kept, and sRGB otherwise.
 sk_sp<SkImage> developed(const sk_sp<SkImage>& from, const Picture& d) {
     const int w = from->width(), h = from->height();
     auto px = develop::read(from, w, h);
     if (px.empty()) return from;
+    const auto p3 = isP3(from->colorSpace()) ? SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kDisplayP3) : nullptr;
     if (d.dehaze != 0) {
         float air[3];
         develop::air(from, air);
         develop::dehaze(px, w, h, d.dehaze, air);
     }
-    if (!d.cube.empty()) develop::cube(px, d.cube, d.cubeSize);
+    if (!d.cube.empty()) {
+        if (p3) {
+            skcms_Matrix3x3 into, back;
+            SkColorSpace::MakeSRGB()->gamutTransformTo(p3.get(), &into);
+            p3->gamutTransformTo(SkColorSpace::MakeSRGB().get(), &back);
+            develop::cube(px, d.cube, d.cubeSize, &into, &back);
+        } else {
+            develop::cube(px, d.cube, d.cubeSize);
+        }
+    }
     if (d.clarity != 0 || d.texture != 0 || d.sharpness != 0) develop::detail(px, w, h, d.clarity, d.texture, d.sharpness);
-    // Back into sRGB, eight bits a channel, as the Mac's developed pictures are.
+    // Back into sRGB (or Display P3), eight bits a channel, as the Mac's developed pictures are.
     SkPixmap done(develop::linear(w, h), px.data(), size_t(w) * 16);
     auto image = SkImages::RasterFromPixmapCopy(done);
     if (!image) return from;
-    return raster(w, h, [&](SkCanvas* canvas) {
-        SkPaint paint;
-        paint.setBlendMode(SkBlendMode::kSrc);
-        canvas->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
-    });
+    auto surface = SkSurfaces::Raster(SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType, p3 ? p3 : SkColorSpace::MakeSRGB()));
+    if (!surface) return from;
+    surface->getCanvas()->clear(SK_ColorTRANSPARENT);
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    surface->getCanvas()->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
+    return surface->makeImageSnapshot();
 }
 
 sk_sp<SkImage> make(const Picture& d) {
@@ -2662,6 +2784,68 @@ extern "C" int64_t bz_inflate_into(const void* bytes, int64_t count, void* out, 
     inflateEnd(&z);
     if (result != Z_OK && result != Z_STREAM_END && result != Z_BUF_ERROR) return -1;
     return capacity - outLeft;
+}
+
+/// A PNG file's bytes with its colour profile, the 'iCCP' chunk Skia wrote, made `icc` itself:
+/// the profile the picture it was made from carried, byte for byte, as Image I/O writes it.
+bool withProfile(std::vector<uint8_t>& png, const void* icc, size_t count) {
+    static const char name[] = "ICC Profile";
+    uLongf packed = compressBound(uLong(count));
+    // Its name and the 0 ending it, then 0 for zlib, the one way a profile is packed.
+    std::vector<uint8_t> body(sizeof(name) + 1 + packed);
+    std::memcpy(body.data(), name, sizeof(name));
+    body[sizeof(name)] = 0;
+    if (compress2(body.data() + sizeof(name) + 1, &packed, static_cast<const Bytef*>(icc), uLong(count), 9) != Z_OK) return false;
+    body.resize(sizeof(name) + 1 + packed);
+    auto be = [](uint32_t v) { return std::array<uint8_t, 4>{uint8_t(v >> 24), uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)}; };
+    std::vector<uint8_t> chunk;
+    const auto length = be(uint32_t(body.size()));
+    chunk.insert(chunk.end(), length.begin(), length.end());
+    const uint8_t type[4] = {'i', 'C', 'C', 'P'};
+    chunk.insert(chunk.end(), type, type + 4);
+    chunk.insert(chunk.end(), body.begin(), body.end());
+    uLong crc = crc32(0, type, 4);
+    crc = crc32(crc, body.data(), uInt(body.size()));
+    const auto sum = be(uint32_t(crc));
+    chunk.insert(chunk.end(), sum.begin(), sum.end());
+    // In place of Skia's own, or after the header when there is none; what else says the colours goes.
+    size_t at = 8, place = 0;
+    while (at + 12 <= png.size()) {
+        const uint32_t n = uint32_t(png[at]) << 24 | uint32_t(png[at + 1]) << 16 | uint32_t(png[at + 2]) << 8 | png[at + 3];
+        const std::string kind(reinterpret_cast<const char*>(&png[at + 4]), 4);
+        const size_t end = at + 12 + n;
+        if (end > png.size()) return false;
+        if (kind == "IHDR") place = end;
+        if (kind == "iCCP" || kind == "sRGB" || kind == "gAMA" || kind == "cHRM") {
+            png.erase(png.begin() + std::ptrdiff_t(at), png.begin() + std::ptrdiff_t(end));
+            continue;
+        }
+        if (kind == "IDAT" || kind == "IEND") break;
+        at = end;
+    }
+    if (!place) return false;
+    png.insert(png.begin() + std::ptrdiff_t(place), chunk.begin(), chunk.end());
+    return true;
+}
+
+extern "C" int64_t bz_png_encode_own(int32_t width, int32_t height, const void* pixels, int32_t straight, const void* icc, int32_t iccCount,
+                                     void* out, int64_t capacity) {
+    const auto colors = profileColors(icc, iccCount);
+    if (!colors) return -1;
+    const SkImageInfo info = SkImageInfo::Make(std::max(1, width), std::max(1, height), kRGBA_8888_SkColorType,
+                                               straight ? kUnpremul_SkAlphaType : kPremul_SkAlphaType, colors);
+    SkDynamicMemoryWStream stream;
+    // Packed as bz_png_encode packs them.
+    SkPngEncoder::Options options;
+    options.fZLibLevel = 3;
+    if (!SkPngEncoder::Encode(&stream, SkPixmap(info, pixels, size_t(width) * 4), options)) return -1;
+    std::vector<uint8_t> png(stream.bytesWritten());
+    stream.copyTo(png.data());
+    if (icc && iccCount > 0 && !withProfile(png, icc, size_t(iccCount))) return -1;
+    const int64_t size = int64_t(png.size());
+    if (size > capacity) return -size;
+    std::memcpy(out, png.data(), png.size());
+    return size;
 }
 
 extern "C" int32_t bz_png_write(const char* path, int32_t width, int32_t height, const void* pixels) {

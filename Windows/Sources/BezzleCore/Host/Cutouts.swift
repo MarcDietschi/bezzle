@@ -49,13 +49,19 @@ extension WindowsCore {
         return outline
     }
 
-    /// Pixels as a PNG file's bytes.
+    /// Pixels as a PNG file's bytes, carrying the profile of their colours, as Image I/O writes the
+    /// Mac's cutouts: a Display P3 photo's cutout stays Display P3.
     nonisolated static func encodePNG(_ p: CutoutMaker.Pixels) -> Data? {
-        var capacity = Int64(p.w * p.h * 4 + 65536)
+        var capacity = Int64(p.w * p.h * 4 + 65536 + (p.colors?.count ?? 0))
+        let icc = p.colors ?? Data()
         for _ in 0..<2 {
             var out = Data(count: Int(capacity))
             let written = p.bytes.withUnsafeBytes { from in
-                out.withUnsafeMutableBytes { bz_png_encode(Int32(p.w), Int32(p.h), from.baseAddress, 0, $0.baseAddress, capacity) }
+                icc.withUnsafeBytes { profile in
+                    out.withUnsafeMutableBytes {
+                        bz_png_encode_own(Int32(p.w), Int32(p.h), from.baseAddress, 0, profile.baseAddress, Int32(profile.count), $0.baseAddress, capacity)
+                    }
+                }
             }
             if written > 0 { return out.prefix(Int(written)) }
             guard written < -1 else { return nil }

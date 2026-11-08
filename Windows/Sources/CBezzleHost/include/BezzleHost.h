@@ -133,6 +133,21 @@ int64_t bz_jpeg_encode(int32_t width, int32_t height, const void *pixels, double
 /// RGBA in `pixels`, which holds `longest` × `longest` × 4 bytes; its size to `width` and `height`.
 /// Returns 0 if it cannot be read. On any thread.
 int32_t bz_image_thumbnail(const void *data, int64_t count, int32_t longest, int32_t *width, int32_t *height, void *pixels);
+/// The same in the picture's own colours, as the Mac's CutoutMaker works on a picture: its colour
+/// space when that is RGB (Display P3, Adobe RGB…), sRGB when it is sRGB, grey, CMYK or HDR.
+/// Returns how many bytes the ICC profile of those colours has (the file's own, or one made from
+/// its numbers), written to `icc` when they fit in `iccCapacity`; 0 for sRGB; -1 if the picture
+/// cannot be read. On any thread.
+int32_t bz_image_thumbnail_own(const void *data, int64_t count, int32_t longest, int32_t *width, int32_t *height, void *pixels,
+                               void *icc, int32_t iccCapacity);
+/// Premultiplied RGBA pixels from the colours one ICC profile says to another's (none: sRGB), into
+/// `out`. Returns 0 when done. On any thread.
+int32_t bz_pixels_convert(const void *pixels, int32_t width, int32_t height, const void *fromICC, int32_t fromCount,
+                          const void *toICC, int32_t toCount, void *out);
+/// bz_png_encode for pixels in the colours of the ICC profile `icc` (none: sRGB), which the file
+/// carries byte for byte, as Image I/O writes a picture's profile. On any thread.
+int64_t bz_png_encode_own(int32_t width, int32_t height, const void *pixels, int32_t straight, const void *icc, int32_t iccCount,
+                          void *out, int64_t capacity);
 /// 1 when the bytes are an HEIF file of an HEVC picture (HEIC), which Windows reads only with
 /// Microsoft's HEIF and HEVC extensions (heif.cpp), else 0.
 int32_t bz_heif_sniff(const void *data, int64_t count);

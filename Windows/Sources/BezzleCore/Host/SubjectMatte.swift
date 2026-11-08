@@ -74,9 +74,9 @@ nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
     func remembers(_ key: String) -> Bool { keeping.withLock { kept.contains { $0.key == key } } }
 
     /// `picture` squeezed into the square the model sees, as the Mac's draws it: red, green and
-    /// blue planes, 0…1.
+    /// blue planes, 0…1, in sRGB whatever colours the picture is in.
     static func square(_ picture: CutoutMaker.Pixels) throws -> [Float] {
-        guard let square = picture.w == side && picture.h == side ? picture : picture.scaled(side, side) else {
+        guard let square = (picture.w == side && picture.h == side ? picture : picture.scaled(side, side))?.inSRGB() else {
             throw CutoutMaker.Failure.unreadable
         }
         let n = side * side
