@@ -1336,6 +1336,28 @@ SkColor4f color(const double* c, size_t& i, double alpha) {
 /// Whether the recording being played goes into a PDF (bz_pdf_page).
 bool playingPDF = false;
 
+// Faded layers in a PDF. SkPDF draws a layer (saveLayer, which every faded layer and group becomes)
+// into a device of its own, writes that as a transparency group Form XObject and places it with a
+// `cm` inside the page's flip. A gradient in it becomes a shading Pattern whose /Matrix SkPDF gives
+// in the form's own space (SkPDFDevice's populate_graphic_state_entry_from_paint concatenates the
+// layer device's initial transform, which is the identity), as ISO 32000 8.7.2 has patterns in forms.
+// Quartz (Preview, PDFKit, Quick Look, Safari) takes the matrix in the page's default space instead,
+// ignoring where the form is put: the gradient lands as if the layer stood unflipped at the page's
+// bottom left, shifted by the layer's place and, top to bottom, off its shape, so a faded rectangle's
+// gradient moves and a faded ellipse's or letters' shows one flat end colour. pdfium (Chrome, Edge)
+// follows the standard and draws them in place. The Mac's own PDFs keep their forms in the page's
+// space and paint gradients with `sh`, so both draw them alike. Here a faded layer that holds a
+// gradient is played without a layer of its own where that draws the same (`carryLayer`): its
+// alpha carried into each drawing in it, which then lies in the page itself, where both readers
+// agree. A gradient still inside a layer is drawn as pixels (`paintAsPixels`), which every reader
+// places alike.
+
+/// How much of the layers played without a layer of their own (`carryLayer`) shows: carried into
+/// the alpha of each drawing in them.
+double carried = 1;
+/// How many layers of a PDF are open, and what was carried when each was opened.
+std::vector<double> carriedBefore;
+
 /// Where the drawing call after one begins, from just after its number.
 size_t skipCall(int op, const double* c, size_t i, size_t n) {
     switch (op) {
@@ -1364,6 +1386,7 @@ size_t skipCall(int op, const double* c, size_t i, size_t n) {
 /// layers that keep only what lies on what is there: Skia makes them groups masked by others,
 /// in which the Mac's own PDF reader shows gradients moved off their letters. `i` is just after
 /// the outer layer's number; false when what follows is not letters painted so, played as it is.
+/// With no canvas, only whether it is so, and where it ends.
 bool paintedLetters(SkCanvas* canvas, const double* c, size_t i, size_t n, size_t* next) {
     if (i + 15 > n || c[i] != 1 || c[i + 1] != 0 || c[i + 2] != 0) return false;
     size_t j = i + 15;
@@ -1466,10 +1489,14 @@ bool paintedLetters(SkCanvas* canvas, const double* c, size_t i, size_t n, size_
     }
     if (!end || end + 1 >= n || int(c[end + 1]) != 11) return false;
     // The lines under and through the letters in their own colour, then the paint cut to the letters.
+    if (!canvas) {
+        *next = end + 2;
+        return true;
+    }
     for (const auto& r : rules) {
         SkPaint p;
         p.setAntiAlias(true);
-        p.setColor4f(r.color);
+        p.setColor4f({r.color.fR, r.color.fG, r.color.fB, float(r.color.fA * carried)});
         canvas->save();
         canvas->concat(r.matrix);
         canvas->drawRect(r.rect, p);
@@ -1484,6 +1511,137 @@ bool paintedLetters(SkCanvas* canvas, const double* c, size_t i, size_t n, size_
     }
     *next = end + 2;
     return true;
+}
+
+/// What a layer of a recording draws (from `i`, just after its number, look and bounds, on to the
+/// end of the layer, `i` then just after it), with `m` and `clip` (in the page's own space) as
+/// they are where it begins: the areas its drawings cover, whether a gradient is among them.
+/// False when something in it needs the layer: a blend, a shadow, a layer of its own that does.
+bool scanLayer(const double* c, size_t& i, size_t n, SkMatrix m, SkRect clip, std::vector<SkRect>& areas, bool& paints) {
+    std::vector<std::pair<SkMatrix, SkRect>> saved;
+    while (i < n) {
+        const int op = int(c[i++]);
+        switch (op) {
+            case 1: saved.push_back({m, clip}); break;
+            case 2:
+                if (saved.empty()) return false;
+                m = saved.back().first, clip = saved.back().second;
+                saved.pop_back();
+                break;
+            case 3: m.preConcat(SkMatrix::MakeAll(float(c[i]), float(c[i + 2]), float(c[i + 4]), float(c[i + 1]), float(c[i + 3]), float(c[i + 5]), 0, 0, 1)); break;
+            case 4: {
+                if (i + 1 >= n || c[i + 1] == 0) {
+                    clip.setEmpty();
+                    break;
+                }
+                size_t k = i + 1;
+                if (!clip.intersect(m.mapRect(path(c, k, n, c[i]).getBounds()))) clip.setEmpty();
+                break;
+            }
+            case 5: case 6: case 7: case 8: case 9: case 12: case 13: {
+                if (i + 10 > n || c[i + 1] != 0 || c[i + 2] != 0) return false;
+                // What it may cover: its shape, or wherever the clip lets it (a paint, letters).
+                SkRect area = clip;
+                if (op == 5) {
+                    size_t k = i + 15;
+                    area = m.mapRect(path(c, k, n, c[i + 10]).getBounds());
+                } else if (op == 6 && i + 16 <= n) {
+                    size_t k = i + 16 + size_t(c[i + 15]) + 4;
+                    const float reach = float(c[i + 10] * std::max(1.0, c[i + 13])) / 2 + 1;
+                    area = m.mapRect(path(c, k, n, 0).getBounds().makeOutset(reach, reach));
+                } else if (op == 9) {
+                    area = m.mapRect(SkRect::MakeXYWH(float(c[i + 11]), float(c[i + 12]), float(c[i + 13]), float(c[i + 14])));
+                }
+                if (!area.intersect(clip)) area.setEmpty();
+                if (!area.isEmpty()) areas.push_back(area);
+                if (op == 7 || op == 8) paints = true;
+                break;
+            }
+            case 10: {
+                // Letters painted with a gradient or a picture: drawn as one, wherever they are.
+                size_t after = 0;
+                const bool has = i + 15 <= n && c[i + 10] != 0;
+                SkRect inner = clip;
+                if (has && !inner.intersect(m.mapRect(SkRect::MakeXYWH(float(c[i + 11]), float(c[i + 12]), float(c[i + 13]), float(c[i + 14])))))
+                    inner.setEmpty();
+                if (paintedLetters(nullptr, c, i, n, &after)) {
+                    if (!inner.isEmpty()) areas.push_back(inner);
+                    paints = true;
+                    i = after;
+                    continue;
+                }
+                if (i + 15 > n || c[i + 1] != 0 || c[i + 2] != 0) return false;
+                size_t k = i + 15;
+                if (!scanLayer(c, k, n, m, inner, areas, paints)) return false;
+                i = k;
+                continue;
+            }
+            case 11: return saved.empty();
+            default: return false;
+        }
+        i = skipCall(op, c, i, n);
+    }
+    return false;
+}
+
+/// A layer of a recording played into a PDF without a layer of its own, its alpha carried into
+/// each drawing in it (see `carried`), when that draws the same and it holds a gradient: when it
+/// has no blend or shadow of its own, nor anything in it, and no two of its drawings overlap, so
+/// that none shows through another. `i` is just after its number; false when it is played as a
+/// layer.
+bool carryLayer(SkCanvas* canvas, const double* c, size_t i, size_t n, size_t* next) {
+    if (i + 15 > n || c[i + 1] != 0 || c[i + 2] != 0) return false;
+    const bool has = c[i + 10] != 0;
+    const SkRect bounds = SkRect::MakeXYWH(float(c[i + 11]), float(c[i + 12]), float(c[i + 13]), float(c[i + 14]));
+    const SkMatrix m = canvas->getTotalMatrix();
+    SkRect clip = SkRect::Make(canvas->getDeviceClipBounds());
+    if (has && !clip.intersect(m.mapRect(bounds))) clip.setEmpty();
+    std::vector<SkRect> areas;
+    bool paints = false;
+    size_t end = i + 15;
+    if (!scanLayer(c, end, n, m, clip, areas, paints) || !paints || areas.size() > 64) return false;
+    for (size_t a = 0; a < areas.size(); a++) {
+        for (size_t b = a + 1; b < areas.size(); b++) {
+            if (SkRect::Intersects(areas[a], areas[b])) return false;
+        }
+    }
+    const double before = carried;
+    carried *= c[i];
+    canvas->save();
+    if (has) canvas->clipRect(bounds, SkClipOp::kIntersect, true);
+    play(canvas, c + i + 15, end - 1 - (i + 15));
+    canvas->restore();
+    carried = before;
+    *next = end;
+    return true;
+}
+
+/// A gradient inside a layer of a PDF (see `carried`) drawn as pixels where the clip lets it show,
+/// two to a point as Bezzle's PDFs have their other pixels (fewer for one over 2048 points), placed
+/// as a picture is, which every reader puts where it belongs.
+void paintAsPixels(SkCanvas* canvas, const SkPaint& paint) {
+    SkRect area = SkRect::Make(canvas->getDeviceClipBounds());
+    if (!area.intersect(SkRect::Make(canvas->getBaseLayerSize()))) return;
+    const float density = std::min(2.0f, 4096.0f / std::max(area.width(), area.height()));
+    const int w = std::max(1, int(std::ceil(area.width() * density))), h = std::max(1, int(std::ceil(area.height() * density)));
+    auto surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(w, h, SkColorSpace::MakeSRGB()));
+    if (!surface) return;
+    SkCanvas* pixels = surface->getCanvas();
+    pixels->clear(SK_ColorTRANSPARENT);
+    pixels->scale(float(w) / area.width(), float(h) / area.height());
+    pixels->translate(-area.left(), -area.top());
+    pixels->concat(canvas->getTotalMatrix());
+    SkPaint whole = paint;
+    whole.setAlphaf(1);
+    whole.setBlendMode(SkBlendMode::kSrcOver);
+    pixels->drawPaint(whole);
+    SkPaint put;
+    put.setAlphaf(paint.getAlphaf());
+    put.setBlendMode(paint.asBlendMode().value_or(SkBlendMode::kSrcOver));
+    canvas->save();
+    canvas->resetMatrix();
+    canvas->drawImageRect(surface->makeImageSnapshot(), area, SkSamplingOptions(SkFilterMode::kLinear), &put);
+    canvas->restore();
 }
 
 void play(SkCanvas* canvas, const double* c, size_t n) {
@@ -1510,7 +1668,7 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                 const Look l = look(c, i, paint, canvas);
                 if (op == 5) {
                     const double rule = c[i++];
-                    paint.setColor4f(color(c, i, l.alpha));
+                    paint.setColor4f(color(c, i, l.alpha * carried));
                     canvas->drawPath(path(c, i, n, rule), paint);
                 } else {
                     paint.setStyle(SkPaint::kStroke_Style);
@@ -1530,7 +1688,7 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                         paint.setPathEffect(SkDashPathEffect::Make(dashes, float(phase)));
                     }
                     i += nd;
-                    paint.setColor4f(color(c, i, l.alpha));
+                    paint.setColor4f(color(c, i, l.alpha * carried));
                     canvas->drawPath(path(c, i, n, 0), paint);
                 }
                 break;
@@ -1562,8 +1720,12 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                                                                 {float(g[3]), float(g[4])}, float(g[5]), gradient);
                 }
                 paint.setShader(shader);
-                paint.setAlphaf(float(l.alpha));
-                canvas->drawPaint(paint);
+                paint.setAlphaf(float(l.alpha * carried));
+                if (playingPDF && !carriedBefore.empty()) {
+                    paintAsPixels(canvas, paint);
+                } else {
+                    canvas->drawPaint(paint);
+                }
                 break;
             }
             case 9: {
@@ -1574,7 +1736,7 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                 const float x = float(c[i + 1]), y = float(c[i + 2]), w = float(c[i + 3]), h = float(c[i + 4]);
                 i += 6;
                 if (auto image = get(id)) {
-                    paint.setAlphaf(float(l.alpha));
+                    paint.setAlphaf(float(l.alpha * carried));
                     // Core Graphics draws a picture with its top row at the rectangle's top, which is up.
                     canvas->save();
                     canvas->concat(SkMatrix::MakeAll(1, 0, 0, 0, -1, 2 * y + h, 0, 0, 1));
@@ -1588,16 +1750,28 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
             case 10: {
                 size_t after = 0;
                 if (playingPDF && paintedLetters(canvas, c, i, n, &after)) { i = after; break; }
+                if (playingPDF && carryLayer(canvas, c, i, n, &after)) { i = after; break; }
                 SkPaint paint;
                 const Look l = look(c, i, paint, canvas);
-                paint.setAlphaf(float(l.alpha));
+                paint.setAlphaf(float(l.alpha * carried));
                 const bool has = c[i] != 0;
                 const SkRect bounds = SkRect::MakeXYWH(float(c[i + 1]), float(c[i + 2]), float(c[i + 3]), float(c[i + 4]));
                 i += 5;
                 canvas->saveLayer(has ? &bounds : nullptr, &paint);
+                // What was carried goes into the layer's own alpha, not again into what is in it.
+                if (playingPDF) {
+                    carriedBefore.push_back(carried);
+                    carried = 1;
+                }
                 break;
             }
-            case 11: canvas->restore(); break;
+            case 11:
+                canvas->restore();
+                if (playingPDF && !carriedBefore.empty()) {
+                    carried = carriedBefore.back();
+                    carriedBefore.pop_back();
+                }
+                break;
             case 13: {
                 // One letter of a line set for a curve, its baseline's left end at the origin.
                 SkPaint paint;
@@ -1605,7 +1779,7 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                 const Look l = look(c, i, paint, canvas);
                 const int id = int(c[i]), k = int(c[i + 1]);
                 i += 2;
-                paint.setColor4f(color(c, i, l.alpha));
+                paint.setColor4f(color(c, i, l.alpha * carried));
                 if (auto it = glyphLines.find(id); it != glyphLines.end() && k >= 0 && k < int(it->second.size())) {
                     const Glyph& g = it->second[size_t(k)];
                     const SkPoint origin = {0, 0};
@@ -1619,8 +1793,8 @@ void play(SkCanvas* canvas, const double* c, size_t n) {
                 const int id = int(c[i]);
                 const float x = float(c[i + 1]), y = float(c[i + 2]);
                 i += 3 + 5;
-                const bool layered = l.alpha < 1 || l.shadowed || l.blend != 0;
-                if (layered) { paint.setAlphaf(float(l.alpha)); canvas->saveLayer(nullptr, &paint); }
+                const bool layered = l.alpha * carried < 1 || l.shadowed || l.blend != 0;
+                if (layered) { paint.setAlphaf(float(l.alpha * carried)); canvas->saveLayer(nullptr, &paint); }
                 if (auto it = texts.find(id); it != texts.end()) {
                     auto& t = it->second;
                     for (size_t k = 0; k < t.lines.size(); k++) {
@@ -2390,8 +2564,12 @@ extern "C" int32_t bz_pdf_page(int32_t pdf, int32_t picture, double width, doubl
     canvas->scale(float(1 / scale), float(1 / scale));
     canvas->concat(SkMatrix::MakeAll(1, 0, 0, 0, -1, float(p->second.height), 0, 0, 1));
     playingPDF = true;
+    carried = 1;
+    carriedBefore.clear();
     play(canvas, p->second.commands.data(), p->second.commands.size());
     playingPDF = false;
+    carried = 1;
+    carriedBefore.clear();
     it->second.document->endPage();
     return 0;
 }
