@@ -91,6 +91,23 @@ do {
         design = made
     }
     var boards = try WindowsCore.open(design)
+    // With BEZZLE_DEVELOPING (a JSON file: name, glimpse, picture, zoom, frames of since, now,
+    // glimpsed and arrived), the first artboard is drawn with its picture on its way as a shared
+    // design's live room shows it at each moment (Host/Developing.swift), for the Mac's to be
+    // compared with.
+    if let file = ProcessInfo.processInfo.environment["BEZZLE_DEVELOPING"] {
+        let spec = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: file))) as? [String: Any] ?? [:]
+        let frames = (spec["frames"] as? [[String: Any]] ?? []).map { f in
+            (since: f["since"] as? Double ?? 0, now: f["now"] as? Double ?? 0, glimpsed: f["glimpsed"] as? Bool ?? false, arrived: f["arrived"] as? Double)
+        }
+        let out = URL(fileURLWithPath: arguments[3])
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let said = try WindowsCore.developingCheck(name: spec["name"] as? String ?? "", glimpse: Data(contentsOf: URL(fileURLWithPath: spec["glimpse"] as? String ?? "")),
+                                                   picture: URL(fileURLWithPath: spec["picture"] as? String ?? ""), zoom: spec["zoom"] as? Double ?? 1,
+                                                   frames: frames, out: out)
+        for line in said { print(line) }
+        exit(0)
+    }
     // With BEZZLE_GLIMPSE (picture files, separated by ;), the glimpse a shared design sends of
     // each is written to the out folder, and how large it is said (Host/Glimpses.swift).
     for path in (ProcessInfo.processInfo.environment["BEZZLE_GLIMPSE"] ?? "").split(separator: ";") {

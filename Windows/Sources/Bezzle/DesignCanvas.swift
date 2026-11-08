@@ -180,6 +180,10 @@ final class DesignCanvas {
     private var cutoutBitmap: WriteableBitmap?
     private var cutoutTicking: EventCleanup?
     private var drawingCutouts = false
+    /// Pictures on their way in sight, by the artboard they are on, as the live room last showed
+    /// them, and the grain's frame they were drawn at (`drawDeveloping`).
+    private var developingShown: [Int: [WindowsCore.LiveDeveloping]] = [:]
+    private var developingFrame = -1
     /// Whether placing took the last press: the double click WinUI tells of after it is then placing's.
     private var pictureTookPress = false
     /// The pen and a path's points (the shared PenTool), and what it shows over the design.
@@ -745,6 +749,8 @@ final class DesignCanvas {
             sheet.bitmap = bitmap
             sheet.image.visibility = .visible
             looseSheets[item.index] = sheet
+            // Pictures on their way in it, drawn developing again over what was drawn anew.
+            if developingShown[item.index] != nil { developInto(loose: item) }
             shown.insert(item.index)
         }
         for (k, sheet) in looseSheets where !shown.contains(k) { sheet.image.visibility = .collapsed }
@@ -847,6 +853,8 @@ final class DesignCanvas {
         sheet.shadowPad = Double(pad) / pixelScale
         sheet.name.text = board.name
         sheets[k] = sheet
+        // Pictures on their way on it, drawn developing again over what was drawn anew.
+        if developingShown[board.index] != nil { developInto(k) }
     }
 
     /// Everything where the zoom and pan put it.
@@ -5982,7 +5990,72 @@ extension DesignCanvas {
         }
         live.move = { [weak self] origin, z, last in self?.flyView(origin, z, last: last) }
         live.redraw = { [weak self] places in self?.redrawLive(places) }
+        live.develop = { [weak self] scene in self?.drawDeveloping(scene) }
         live.rulers = { WindowsCore.showsRulers ? Rulers.thickness : 0 }
+    }
+
+    /// Pictures on their way drawn where they are, developing (Host/Developing.swift): into the
+    /// artboard's own picture, over what it shows there, so the grain and the light mix with the
+    /// photo as on the Mac; every frame while they clear at first or come into focus, a dozen
+    /// times a second as their grain moves otherwise. An artboard that had some and has none now
+    /// is drawn again without.
+    func drawDeveloping(_ scene: WindowsCore.LiveScene) {
+        let now = Dictionary(grouping: scene.developing, by: \.place)
+        let gone = Set(developingShown.keys).subtracting(now.keys)
+        let changed = now.mapValues { $0.map(\.box) } != developingShown.mapValues { $0.map(\.box) }
+        developingShown = now
+        for (k, board) in boards.enumerated() where gone.contains(board.index) { draw(k) }
+        if loose.contains(where: { gone.contains($0.index) }) { drawLoose() }
+        guard scene.developingMoves || scene.grainFrame != developingFrame || changed else { return }
+        developingFrame = scene.grainFrame
+        for (k, board) in boards.enumerated() where now[board.index] != nil { developInto(k) }
+        for item in loose where now[item.index] != nil { developInto(loose: item) }
+    }
+
+    /// Artboard `k`'s picture with its pictures on their way drawn developing over it.
+    func developInto(_ k: Int) {
+        guard boards.indices.contains(k), let bitmap = sheets[k]?.bitmap else { return }
+        let board = boards[k]
+        develop(place: board.index, over: board.drawn.isEmpty ? board.frame : board.drawn, into: bitmap)
+    }
+
+    /// A layer on the canvas's picture with its pictures on their way drawn developing over it.
+    func developInto(loose item: WindowsCore.Loose) {
+        guard let bitmap = looseSheets[item.index]?.bitmap else { return }
+        develop(place: item.index, over: item.reach, into: bitmap)
+    }
+
+    /// The picture of the design's layer at `place`, `drawn` over that part of the canvas, with its
+    /// pictures on their way drawn developing over it, as far as they are in sight, on its own pixels.
+    private func develop(place: Int, over drawn: CGRect, into bitmap: WriteableBitmap) {
+        guard let items = developingShown[place] else { return }
+        let s = zoom * pixelScale
+        let w = Int(bitmap.pixelWidth), h = Int(bitmap.pixelHeight)
+        let box = items.map(\.box).reduce(CGRect.null) { $0.union($1) }.intersection(visibleOnCanvas)
+        guard !box.isNull else { return }
+        let x0 = max(0, Int((Double(box.minX - drawn.minX) * s).rounded(.down))), x1 = min(w, Int((Double(box.maxX - drawn.minX) * s).rounded(.up)))
+        let y0 = max(0, Int((Double(box.minY - drawn.minY) * s).rounded(.down))), y1 = min(h, Int((Double(box.maxY - drawn.minY) * s).rounded(.up)))
+        guard x1 > x0, y1 > y0, let target = (try? bitmap.pixelBuffer.buffer).flatMap({ $0 }) else { return }
+        // On the artboard picture's own pixels, so what is drawn again lines up with the rest.
+        let part = CGRect(x: Double(drawn.minX) + Double(x0) / s, y: Double(drawn.minY) + Double(y0) / s,
+                          width: Double(x1 - x0) / s, height: Double(y1 - y0) / s)
+        var patch = [UInt8](repeating: 0, count: (x1 - x0) * (y1 - y0) * 4)
+        var drew = false
+        WindowsCore.drawingOthersMotion {
+            drew = patch.withUnsafeMutableBytes { p in
+                WindowsCore.drawDeveloping(place: place, part: part, scale: s, zoom: zoom, hiding: hiding(on: place)) { pw, ph in
+                    pw == x1 - x0 && ph == y1 - y0 ? p.baseAddress : nil
+                }
+            }
+        }
+        guard drew else { return }
+        let row = (x1 - x0) * 4
+        patch.withUnsafeBytes { p in
+            for y in 0..<(y1 - y0) {
+                UnsafeMutableRawPointer(target).advanced(by: ((y0 + y) * w + x0) * 4).copyMemory(from: p.baseAddress!.advanced(by: y * row), byteCount: row)
+            }
+        }
+        try? bitmap.invalidate()
     }
 
     /// The view the live room's camera gives: placed at once, drawn again at its zoom once it rests.

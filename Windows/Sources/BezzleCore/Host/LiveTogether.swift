@@ -233,6 +233,12 @@ public final class LiveTogether {
     private var wanted: Set<String> = []
     private var present: Set<String> = []
     private var lookedForPictures = 0.0
+    /// The pictures on their way, developing where they are (Host/Developing.swift).
+    let onTheirWay = PicturesOnTheirWay()
+    private var developing: [String: PicturesOnTheirWay.Developing] {
+        get { onTheirWay.all }
+        set { onTheirWay.all = newValue }
+    }
 
     init(session: SharedSession, keys: ShareKeys, relay: URL) {
         self.session = session
@@ -614,29 +620,51 @@ public final class LiveTogether {
         }
     }
 
-    /// Pictures the design shows and this computer does not have: the others are asked for
-    /// glimpses of them (the Mac's lookForPictures).
+    /// Pictures the design shows and this computer does not have develop where they are, and the
+    /// others are asked for glimpses of them (the Mac's lookForPictures).
     private func lookForPictures() {
-        guard inCompany, let session else { return }
+        guard let session else { return }
         let folder = session.url.appendingPathComponent("images", isDirectory: true)
+        let now = WindowsCore.now
         var ask: [String] = []
-        for name in session.shownPictures.subtracting(wanted).subtracting(present) {
-            if FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) { present.insert(name) } else { ask.append(name) }
+        for name in session.shownPictures.subtracting(present) {
+            if FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) {
+                present.insert(name)
+                continue
+            }
+            if developing[name] == nil {
+                developing[name] = .init(since: now, standIn: WindowsCore.glimpseImages[name])
+                changed()
+            }
+            if !wanted.contains(name) { ask.append(name) }
         }
-        guard !ask.isEmpty else { return }
+        guard inCompany, !ask.isEmpty else { return }
         wanted.formUnion(ask)
         send(.want(Array(ask.prefix(400))))
     }
 
     /// Glimpses someone sent of pictures this computer does not have yet: each shown by its
-    /// glimpse until the picture comes (the Mac's LiveRoom.take).
+    /// glimpse until the picture comes, developing again from it (the Mac's LiveRoom.take).
     private func take(_ glimpses: [LiveGlimpse]) {
         guard let session else { return }
         let folder = session.url.appendingPathComponent("images", isDirectory: true)
+        let now = WindowsCore.now
         for g in glimpses where !FileManager.default.fileExists(atPath: folder.appendingPathComponent(g.name).path) {
-            WindowsCore.standIn(g)
+            guard WindowsCore.standIn(g) else { continue }
+            // It starts developing again from its glimpse, now that there is something to see.
+            developing[g.name] = .init(since: now, standIn: WindowsCore.glimpseImages[g.name])
+            changed()
         }
     }
+
+    /// A picture that was not here has come: it is drawn into focus (the Mac's LiveRoom.arrived).
+    func arrived(_ name: String) {
+        present.insert(name)
+        guard developing[name] != nil, developing[name]?.arrived == nil else { return }
+        developing[name]?.arrived = WindowsCore.now
+        changed()
+    }
+
 
     // MARK: Settling and forgetting
 

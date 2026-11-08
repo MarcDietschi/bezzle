@@ -58,6 +58,12 @@ extension WindowsCore {
         let n = g.jpeg.withUnsafeBytes { bz_asset_stand_in(g.name, $0.baseAddress, Int32($0.count), glimpseShown) }
         guard n > 0 else { return false }
         glimpsed.insert(g.name)
+        // Kept as itself, so it can still be drawn fading off the picture once that has come; Skia
+        // told of it now, as it is made outside any drawing.
+        if let image = Assets(folder: nil).image(g.name) {
+            send(image)
+            glimpseImages[g.name] = image
+        }
         // Drawn again: the picture looked for before and not found is asked for again.
         pictureCame = true
         tellShareNews()
@@ -67,9 +73,14 @@ extension WindowsCore {
     /// A picture shown by its glimpse came: the open design's pictures are looked up again, as
     /// what it drew before was the glimpse.
     static func glimpseDone(_ name: String) {
+        glimpseImages[name] = nil
         guard glimpsed.remove(name) != nil else { return }
         assets = Assets(folder: assets.folder)
     }
+
+    /// The glimpses shown in place of pictures not here yet, grown and blurred, by name: what a
+    /// picture on its way develops from (Host/Developing.swift).
+    nonisolated(unsafe) static var glimpseImages: [String: CGImage] = [:]
 
     /// What Skia draws for the open design's picture `name`, itself or its glimpse grown, as
     /// premultiplied RGBA: for bezzle-share to show the Mac's tests.

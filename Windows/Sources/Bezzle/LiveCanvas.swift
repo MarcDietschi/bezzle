@@ -30,6 +30,8 @@ final class LiveCanvas {
     var move: (_ origin: CGPoint, _ zoom: Double, _ last: Bool) -> Void = { _, _, _ in }
     /// The design's layers at these places drawn again, with what the others drag.
     var redraw: (Set<Int>) -> Void = { _ in }
+    /// Pictures on their way drawn where they are, developing (Host/Developing.swift).
+    var develop: (WindowsCore.LiveScene) -> Void = { _ in }
     /// How far the rulers reach into the canvas, when they show.
     var rulers: () -> Double = { 0 }
     /// The bar's tokens changed: the window shows them.
@@ -131,6 +133,7 @@ final class LiveCanvas {
         }
         let scene = live.scene(origin: v.origin, zoom: v.zoom, size: v.size)
         if !scene.moving.isEmpty { redraw(scene.moving) }
+        develop(scene)
         draw(scene)
         people.pulse(now)
         if people.show(live) { peopleChanged?() }
@@ -146,6 +149,8 @@ final class LiveCanvas {
     }
 
     private func clear() {
+        // Pictures on their way no longer drawn developing: the room is gone.
+        develop(WindowsCore.LiveScene())
         lights.children.clear()
         marks.children.clear()
         rim.children.clear()

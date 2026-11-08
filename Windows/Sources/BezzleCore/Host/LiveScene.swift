@@ -98,6 +98,15 @@ extension WindowsCore {
         /// The design's layers (by their place among its artboards and loose layers) drawn with
         /// what others drag this frame, or to be drawn again now that it settled.
         public var moving: Set<Int> = []
+        /// Pictures on their way in sight, developing where they are (`drawDeveloping`).
+        public var developing: [LiveDeveloping] = []
+        /// Whether those change every frame, clearing at first or coming into focus; otherwise
+        /// only their grain moves, at `grainFrame`, a dozen times a second.
+        public var developingMoves = false
+        public var grainFrame = 0
+
+        /// Nothing to draw.
+        public init() {}
     }
 
     /// Draws with what the others drag this moment in the design: the artboards `body` draws
@@ -188,7 +197,13 @@ extension LiveTogether {
             scene.crop = .init(alpha: marks.crop, pencil: person.pencil, name: person.name)
         }
         scene.tokens = tokens(vp, size, now)
-        scene.animating = marks.isAnimating || camera.moving || !winks.isEmpty || !glows.isEmpty
+        // Pictures on their way, developing where they are until they come and are in focus.
+        onTheirWay.developed(before: now)
+        scene.developing = onTheirWay.shown(doc, vp, size)
+        scene.developingMoves = onTheirWay.all.values.contains { now - $0.since < PicturesOnTheirWay.clearing || $0.arrived != nil }
+        scene.grainFrame = Int(now * 12)
+        // Drawn on while any is on its way, so one comes into sight as the view moves to it.
+        scene.animating = marks.isAnimating || camera.moving || !winks.isEmpty || !glows.isEmpty || !onTheirWay.all.isEmpty
         return scene
     }
 

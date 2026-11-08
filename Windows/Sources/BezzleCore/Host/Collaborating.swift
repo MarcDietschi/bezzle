@@ -140,8 +140,9 @@ extension WindowsCore {
         guard let data = try? Data(contentsOf: file) else { return }
         // Asked for again the next time it is drawn: one not there yet is not kept as missing.
         giveSkia(name, data)
-        // One shown by its glimpse until now is drawn as itself from now on.
+        // One shown by its glimpse until now is drawn as itself from now on, coming into focus.
         glimpseDone(name)
+        sharing?.live?.arrived(name)
         pictureCame = true
         tellShareNews()
     }
