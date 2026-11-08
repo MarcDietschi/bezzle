@@ -28,6 +28,8 @@ final class DesignWindow {
     private lazy var resources = ResourcesPanel(session: session)
     /// What changed in other designs since this one took from them, at the top of the canvas.
     private lazy var news = LibraryNewsChip(session: session)
+    /// Why HEIC photos show in grey, where Windows cannot read them, near the top of the canvas.
+    private lazy var pictureNote = PictureNote(session: session)
     /// Looking through the design's words, at the top of the canvas while it is open.
     private lazy var find = FindBar(session: session)
     /// Where the note on a design just brought in from another app goes (`showImportReport`).
@@ -86,6 +88,7 @@ final class DesignWindow {
         session.listenToEdits { [weak self] _ in
             self?.resources.edited()
             self?.news.refresh()
+            self?.pictureNote.refresh()
             if self?.find.isOpen == true { self?.find.refresh() }
         }
         // Read away from the main thread: what it says of this design is looked at in front only.
@@ -110,6 +113,9 @@ final class DesignWindow {
         // News from other designs, floating at the canvas's top.
         try? Grid.setColumn(news.root, 2)
         body.children.append(news.root)
+        try? Grid.setColumn(pictureNote.root, 2)
+        body.children.append(pictureNote.root)
+        pictureNote.refresh()
         // What came across, when the design was just brought in from another app, at its foot.
         try? Grid.setColumn(importReport, 2)
         body.children.append(importReport)
@@ -331,6 +337,7 @@ final class DesignWindow {
         session.cameToFront()
         versionsChanged()
         news.refresh()
+        pictureNote.refresh()
         // Other designs, as libraries, read again where they changed meanwhile (one just changed
         // in another tab, which saved it as it went behind), so what they offer shows, as the
         // Mac's library sees its folder change.
