@@ -112,6 +112,8 @@ nonisolated enum TextLayout {
         let style: TextStyle
         let color: RGBA?
         let width: CGFloat?
+        /// The look typed on an empty item of a list at the end, which its marker shows.
+        var trailing: TextLook? = nil
     }
 
     nonisolated(unsafe) private static var kept: [Key: Laid] = [:]
@@ -288,7 +290,13 @@ nonisolated enum TextLayout {
         return out
     }
 
-    private static func lay(_ node: Node, width: CGFloat) -> Laid {
+    /// The look the text being typed into goes on in, when its words end with a paragraph's end
+    /// and that look is an item of a list: the empty line at the end, which no letters carry, then
+    /// shows its marker, as the Mac's editor does (CanvasView.markTrailingItem). Windows sets it
+    /// while typing; nothing in the browser.
+    nonisolated(unsafe) static var typedTrailing: ((Node) -> TextLook?)?
+
+    private static func lay(_ node: Node, width: CGFloat, trailing: TextLook? = nil) -> Laid {
         let style = node.style ?? TextStyle()
         let runs = runs(node)
         // Items of lists begin further in, each list as far as its markers need.
@@ -331,6 +339,27 @@ nonisolated enum TextLayout {
                 let look = node.runs.indices.contains(i.item.index) ? node.runs[i.item.index].look : .plain
                 markers.append(Marker(text: i.text, id: i.id, at: at, size: CGFloat((i.item.run["size"] as? Double) ?? Double(style.size)), look: look))
                 _ = Host.call(.textLayout, string: "{\"place\":\(i.id),\"baselines\":\(Recording.json([Double(at.y)]))}")
+            }
+        }
+        // The empty line at the end of a list being typed: the next number after a numbered item
+        // before it, or a bullet, in the look typed, as far in as that item's list or as its own
+        // marker needs.
+        if let typed = trailing, let list = typed.list, let line = lines.last {
+            var probe = node
+            probe.setRuns([TextSpan(text: "X", look: typed)])
+            if let run = TextLayout.runs(probe).first {
+                let size = CGFloat((run["size"] as? Double) ?? Double(style.size))
+                let end = string.utf16.count
+                let before = items.last.flatMap { $0.item.end == end ? $0 : nil }
+                var number = 1
+                if list == .number, let before, before.item.list == .number, let n = Int(before.text.dropLast()) { number = n + 1 }
+                let text = list == .number ? "\(number)." : "•"
+                let set = setMarker(markerRun(text, from: run, style: style))
+                let gap = (size * 0.5).rounded()
+                let indent = max(before?.indent ?? 0, ceil(size * 0.6 + gap))
+                let at = CGPoint(x: indent - gap - set.width, y: line.drawn - lift(style, natural: Fonts.naturalLineHeight(style)))
+                markers.append(Marker(text: text, id: set.id, at: at, size: size, look: typed))
+                _ = Host.call(.textLayout, string: "{\"place\":\(set.id),\"baselines\":\(Recording.json([Double(at.y)]))}")
             }
         }
         let laid = Laid(id: id, lines: lines, usedSize: used, string: string, markers: markers)
@@ -446,9 +475,16 @@ nonisolated enum TextLayout {
     static func layout(_ node: Node) -> Laid {
         let style = node.style ?? TextStyle()
         let width = style.sizing == .autoWidth ? naturalWidth(node) + 0.5 : max(node.frame.width, 1)
-        let key = Key(text: node.text ?? "", spans: node.spans, style: style, color: node.letterColor, width: width)
+        let words = node.text ?? ""
+        // A list being typed shows the empty item at its end; any other text, none.
+        var trailing: TextLook?
+        if let hook = typedTrailing, words.isEmpty || words.last.map(TextSpan.endsParagraph) == true,
+           let typed = hook(node), typed.list != nil {
+            trailing = typed
+        }
+        let key = Key(text: words, spans: node.spans, style: style, color: node.letterColor, width: width, trailing: trailing)
         if let laid = kept[key] { return laid }
-        let laid = lay(node, width: width)
+        let laid = lay(node, width: width, trailing: trailing)
         kept[key] = laid
         return laid
     }

@@ -61,7 +61,22 @@ extension WindowsCore {
         }
         let words = design?.node(id)?.text ?? ""
         typing?.picked = NSRange(location: 0, length: (words as NSString).length)
+        // An empty item of a list at the end shows its marker while it is typed, as on the Mac.
+        if TextLayout.typedTrailing == nil {
+            TextLayout.typedTrailing = { node in
+                guard Thread.isMainThread else { return nil }
+                return MainActor.assumeIsolated { WindowsCore.typedLook(of: node) }
+            }
+        }
         return words
+    }
+
+    /// The look what is typed next in `node` has, while it is typed into: as the letters before
+    /// the caret, unless a look was given for it (the Mac's typing attributes).
+    static func typedLook(of node: Node) -> TextLook? {
+        guard let t = typing, t.id == node.id else { return nil }
+        let runs = node.runs
+        return t.typed ?? (runs.isEmpty ? nil : TextSpan.look(at: max(t.picked.location - 1, 0), in: runs))
     }
 
     /// Typing is done: everything typed, and every look given while typing, is one step.
