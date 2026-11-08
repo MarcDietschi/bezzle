@@ -11,12 +11,12 @@
 namespace jpeg {
 
 /// Premultiplied sRGB RGBA pixels (8 bits, rows top first, `width` × 4 bytes a row) as a JPEG
-/// file, as the Mac's Image I/O writes one at `quality` (0…1, kCGImageDestinationLossyCompressionQuality):
-/// at the qualities Bezzle writes (the Finder's picture of a design, 0.82; a glimpse, 0.72) with
-/// Image I/O's own quantisation tables, read from the files it writes; at any other, as Skia
-/// writes JPEG (libjpeg's tables, its quality × 100). 4:2:0, baseline, what is see-through left as
-/// it is premultiplied (black), as Image I/O leaves it. On any thread.
-bool write(int width, int height, const uint8_t *pixels, double quality, std::vector<uint8_t> &out);
+/// file, as the Mac's Image I/O writes one at `quality` (0…1, kCGImageDestinationLossyCompressionQuality)
+/// and `dpi` (kCGImagePropertyDPIWidth and Height; 0 or less when none is given): Image I/O's own
+/// quantisation tables and colour sampling at every quality, its Huffman tables, restarts and
+/// markers (jpeg.cpp tells what they are). What is see-through is left as it is premultiplied
+/// (black), as Image I/O leaves it. On any thread.
+bool write(int width, int height, const uint8_t *pixels, double quality, double dpi, std::vector<uint8_t> &out);
 
 }  // namespace jpeg
 

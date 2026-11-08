@@ -104,6 +104,20 @@ do {
         try glimpse.jpeg.write(to: out)
         print("glimpse of \(file.lastPathComponent): \(glimpse.width)×\(glimpse.height), \(glimpse.jpeg.count) bytes")
     }
+    // With BEZZLE_JPEG_OF (picture files, separated by ;), each is written to the out folder as an
+    // exported JPEG is written, at BEZZLE_QUALITY (0.9 otherwise) and BEZZLE_DPI (72 otherwise),
+    // for comparing with the Mac's Image I/O writing the same pixels.
+    if let pictures = ProcessInfo.processInfo.environment["BEZZLE_JPEG_OF"] {
+        let quality = ProcessInfo.processInfo.environment["BEZZLE_QUALITY"].flatMap { Double($0) } ?? 0.9
+        let dpi = ProcessInfo.processInfo.environment["BEZZLE_DPI"].flatMap { Double($0) } ?? 72
+        for path in pictures.split(separator: ";") {
+            let file = URL(fileURLWithPath: String(path))
+            let out = URL(fileURLWithPath: arguments[3]).appendingPathComponent(file.deletingPathExtension().lastPathComponent + ".jpg")
+            try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
+            print("\(file.lastPathComponent): \(WindowsCore.exportJPEG(of: file, to: out, quality: quality, dpi: dpi) ? "written" : "not written")")
+        }
+        exit(0)
+    }
     // With BEZZLE_TEXTS (a file), how the core measures the design's texts and probe texts is
     // written there instead (TextReport.swift), for comparing with Text Kit; BEZZLE_TEXTS_PROBES=0
     // leaves the probes out.

@@ -32,7 +32,6 @@
 #include "include/codec/SkWebpDecoder.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/encode/SkPngEncoder.h"
-#include "include/encode/SkJpegEncoder.h"
 #include "include/encode/SkWebpEncoder.h"
 #include "include/docs/SkPDFDocument.h"
 #include "include/docs/SkPDFJpegHelpers.h"
@@ -370,7 +369,7 @@ extern "C" int64_t bz_png_encode(int32_t width, int32_t height, const void* pixe
 
 extern "C" int64_t bz_jpeg_encode(int32_t width, int32_t height, const void* pixels, double quality, void* out, int64_t capacity) {
     std::vector<uint8_t> bytes;
-    if (!jpeg::write(width, height, static_cast<const uint8_t*>(pixels), quality, bytes)) return -1;
+    if (!jpeg::write(width, height, static_cast<const uint8_t*>(pixels), quality, 0, bytes)) return -1;
     const int64_t size = int64_t(bytes.size());
     if (size > capacity) return -size;
     std::memcpy(out, bytes.data(), bytes.size());
@@ -2288,15 +2287,17 @@ extern "C" int32_t bz_png_write(const char* path, int32_t width, int32_t height,
     return SkPngEncoder::Encode(&file, pixmap, {}) ? 0 : 2;
 }
 
-extern "C" int32_t bz_image_write(const char* path, int32_t width, int32_t height, const void* pixels, int32_t format, double quality) {
+extern "C" int32_t bz_image_write(const char* path, int32_t width, int32_t height, const void* pixels, int32_t format, double quality,
+                                  double dpi) {
     SkFILEWStream file(path);
     if (!file.isValid()) return 1;
     const SkPixmap pixmap(rgba(width, height), pixels, size_t(width) * 4);
     switch (format) {
         case 1: {
-            SkJpegEncoder::Options options;
-            options.fQuality = std::clamp(int(quality * 100 + 0.5), 0, 100);
-            return SkJpegEncoder::Encode(&file, pixmap, options) ? 0 : 2;
+            // As the Mac's Image I/O writes JPEG (jpeg.cpp).
+            std::vector<uint8_t> bytes;
+            if (!jpeg::write(width, height, static_cast<const uint8_t*>(pixels), quality, dpi, bytes)) return 2;
+            return file.write(bytes.data(), bytes.size()) ? 0 : 2;
         }
         case 2: {
             // At the very top, lossless, as the Mac's WebP writer makes it.
@@ -2340,9 +2341,9 @@ extern "C" int32_t bz_image_encode(int32_t width, int32_t height, const void* pi
     const SkPixmap pixmap(rgba(width, height), pixels, size_t(width) * 4);
     bool done = false;
     if (format == 1) {
-        SkJpegEncoder::Options options;
-        options.fQuality = std::clamp(int(quality * 100 + 0.5), 0, 100);
-        done = SkJpegEncoder::Encode(&stream, pixmap, options);
+        // As the Mac's NSBitmapImageRep writes JPEG, which is Image I/O's with no DPI (jpeg.cpp).
+        std::vector<uint8_t> bytes;
+        done = jpeg::write(width, height, static_cast<const uint8_t*>(pixels), quality, 0, bytes) && stream.write(bytes.data(), bytes.size());
     } else {
         done = SkPngEncoder::Encode(&stream, pixmap, {});
     }

@@ -124,10 +124,9 @@ int32_t bz_image_decode(const void *data, int64_t count, int32_t width, int32_t 
 /// holds `capacity`: how many bytes, minus that when they did not fit, -1 if it could not be made.
 /// On any thread.
 int64_t bz_png_encode(int32_t width, int32_t height, const void *pixels, int32_t straight, void *out, int64_t capacity);
-/// A picture as a JPEG file's bytes, as the Mac's Image I/O writes them at `quality` (jpeg.cpp: its
-/// own tables at Bezzle's 0.82 and 0.72), from premultiplied RGBA pixels, into `out`, which holds
-/// `capacity`: how many bytes, minus that when they did not fit, -1 if it could not be made. On
-/// any thread.
+/// A picture as a JPEG file's bytes, as the Mac's Image I/O writes them at `quality` with no DPI
+/// given (jpeg.cpp), from premultiplied RGBA pixels, into `out`, which holds `capacity`: how many
+/// bytes, minus that when they did not fit, -1 if it could not be made. On any thread.
 int64_t bz_jpeg_encode(int32_t width, int32_t height, const void *pixels, double quality, void *out, int64_t capacity);
 /// A picture file's picture small, as Image I/O makes a thumbnail with its transform: upright,
 /// its longer side `longest` pixels at most (never larger than it is), into premultiplied sRGB
@@ -187,13 +186,14 @@ int32_t bz_inflate(const void *bytes, int32_t count);
 int64_t bz_inflate_into(const void *bytes, int64_t count, void *out, int64_t capacity);
 /// Writes pixels as bz_picture_read makes them to a PNG file at `path` (UTF-8). Returns 0 when done.
 int32_t bz_png_write(const char *path, int32_t width, int32_t height, const void *pixels);
-/// Premultiplied RGBA pixels as a picture file's bytes, `format` 0 PNG, 1 JPEG, `quality` 0…1:
-/// how many bytes, which `bz_host_take` hands over; 0 when it could not be made.
+/// Premultiplied RGBA pixels as a picture file's bytes, `format` 0 PNG, 1 JPEG (as the Mac's
+/// NSBitmapImageRep writes it, jpeg.cpp), `quality` 0…1: how many bytes, which `bz_host_take`
+/// hands over; 0 when it could not be made.
 int32_t bz_image_encode(int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
-/// Writes premultiplied RGBA pixels as a picture file: `format` 0 PNG, 1 JPEG, 2 WebP (lossless at
-/// a quality of 1), 3 AVIF (as the Mac's Image I/O writes it, avif.cpp), `quality` 0…1. Returns 0
-/// when written.
-int32_t bz_image_write(const char *path, int32_t width, int32_t height, const void *pixels, int32_t format, double quality);
+/// Writes premultiplied RGBA pixels as a picture file: `format` 0 PNG, 1 JPEG (as the Mac's Image
+/// I/O writes it, jpeg.cpp, saying `dpi` when more than 0), 2 WebP (lossless at a quality of 1),
+/// 3 AVIF (as the Mac's Image I/O writes it, avif.cpp), `quality` 0…1. Returns 0 when written.
+int32_t bz_image_write(const char *path, int32_t width, int32_t height, const void *pixels, int32_t format, double quality, double dpi);
 /// 1 when this build reads and writes AVIF (Windows/avif.ps1 made libavif and libaom for it), else 0.
 int32_t bz_avif_available(void);
 /// Premultiplied RGBA pixels `width` by `height` drawn again at `toWidth` by `toHeight`, smoothly

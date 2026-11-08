@@ -210,7 +210,10 @@ extension WindowsCore {
             case .avif: 3
             default: 0
             }
-            return drawn.pixels.withUnsafeBytes { bz_image_write(url.path, Int32(drawn.width), Int32(drawn.height), $0.baseAddress, kind, quality) } == 0
+            // Marked with how many pixels it has to a point, as the Mac's Exporter marks its JPEGs (and
+            // its PNGs, which say none here yet).
+            let dpi = Double(72 * scale)
+            return drawn.pixels.withUnsafeBytes { bz_image_write(url.path, Int32(drawn.width), Int32(drawn.height), $0.baseAddress, kind, quality, dpi) } == 0
         case .svg:
             guard let item = file.items.first else { return false }
             let bounds = item.bounds(assets: assets)
@@ -224,6 +227,27 @@ extension WindowsCore {
             let svg = SVGWriter.document(for: item, bounds: bounds, assets: assets)
             return (try? svg.write(to: url, atomically: true, encoding: .utf8)) != nil
         }
+    }
+}
+
+extension WindowsCore {
+    /// A picture file written again as an exported JPEG is written (on white, at `quality`, marked
+    /// `dpi`), for comparing Windows' JPEG with the Mac's from the same pixels (bezzle-render
+    /// BEZZLE_JPEG_OF); false when it cannot be read or written.
+    public static func exportJPEG(of picture: URL, to url: URL, quality: Double, dpi: Double) -> Bool {
+        guard let data = try? Data(contentsOf: picture) else { return false }
+        var w: Int32 = 0, h: Int32 = 0
+        guard data.withUnsafeBytes({ bz_image_pixel_size($0.baseAddress, Int64($0.count), &w, &h) }) != 0, w > 0, h > 0 else { return false }
+        var pixels = [UInt8](repeating: 0, count: Int(w) * Int(h) * 4)
+        let read = data.withUnsafeBytes { d in pixels.withUnsafeMutableBytes { bz_image_decode(d.baseAddress, Int64(d.count), w, h, $0.baseAddress) } }
+        guard read == 0 else { return false }
+        // On white, as ExportItem.pixels puts what a JPEG shows.
+        for k in stride(from: 0, to: pixels.count, by: 4) {
+            let clear = 255 - Int(pixels[k + 3])
+            for c in 0..<3 { pixels[k + c] = UInt8(min(255, Int(pixels[k + c]) + clear)) }
+            pixels[k + 3] = 255
+        }
+        return pixels.withUnsafeBytes { bz_image_write(url.path, w, h, $0.baseAddress, 1, quality, dpi) } == 0
     }
 }
 
