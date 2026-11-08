@@ -56,6 +56,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -708,10 +709,141 @@ sk_sp<SkUnicode> unicode;
 std::map<std::string, sk_sp<SkTypeface>> faces;   // "family|face"
 std::map<std::string, double> leadings;
 
+}  // namespace
+
+extern "C" int32_t bz_fallback_font(uint32_t character, int32_t emoji, int32_t weight, int32_t italic, int32_t stretch,
+                                    wchar_t* path, int32_t capacity, int32_t* index);
+
+namespace {
+
+/// The font Windows falls back on for a letter (fallback.cpp asks DirectWrite which), read by
+/// Skia: each file once, mapped rather than copied, and kept; nothing where there is none.
+/// The families of the fonts fallen back on, for telling their letters from the text's own.
+std::set<std::string> fallbackFamilies;
+
+sk_sp<SkTypeface> fallenBackOn(SkUnichar character, bool emoji, const SkFontStyle& style) {
+    static std::map<std::wstring, sk_sp<SkTypeface>> read;
+    constexpr int32_t room = 1024;
+    wchar_t path[room] = {0};
+    int32_t index = 0;
+    if (!bz_fallback_font(uint32_t(character), emoji, style.weight(), style.slant() != SkFontStyle::kUpright_Slant, style.width(),
+                          path, room, &index)) {
+        return nullptr;
+    }
+    const std::wstring key = std::wstring(path) + L"|" + std::to_wstring(index);
+    if (auto it = read.find(key); it != read.end()) return it->second;
+    sk_sp<SkTypeface> typeface;
+    if (FILE* file = _wfopen(path, L"rb")) {
+        if (auto data = SkData::MakeFromFILE(file)) typeface = fontManager()->makeFromData(std::move(data), index);
+        fclose(file);
+    }
+    if (typeface) {
+        SkString family;
+        typeface->getFamilyName(&family);
+        fallbackFamilies.insert(family.c_str());
+    }
+    read[key] = typeface;
+    return typeface;
+}
+
+/// How far the fonts fallen back on reach above and below a line's baseline, and their leading
+/// (the most of each), for a line as tall as Text Kit makes one whose letters some other font
+/// has; nought where the line has none of theirs.
+std::array<double, 3> fallbackRise(Paragraph* line) {
+    std::array<double, 3> rise = {0, 0, 0};
+    if (!line || fallbackFamilies.empty()) return rise;
+    line->visit([&](int, const Paragraph::VisitorInfo* info) {
+        if (!info || !info->font.getTypeface()) return;
+        SkString family;
+        info->font.getTypeface()->getFamilyName(&family);
+        if (!fallbackFamilies.count(family.c_str())) return;
+        SkFontMetrics m;
+        info->font.getMetrics(&m);
+        rise[0] = std::max(rise[0], double(-m.fAscent));
+        rise[1] = std::max(rise[1], double(m.fDescent));
+        rise[2] = std::max(rise[2], double(m.fLeading));
+    });
+    return rise;
+}
+
+/// Windows' own fonts for letters none of a text's fonts has, as Core Text falls back on the
+/// Mac's: Skia asks only for those letters, after the run's own font and the system font's
+/// stand-in, at the weight and slant of the run's face, and for an emoji without a family,
+/// which then is to be in colour.
+class SystemFallback final : public SkFontMgr {
+protected:
+    int onCountFamilies() const override { return 0; }
+    void onGetFamilyName(int, SkString*) const override {}
+    sk_sp<SkFontStyleSet> onCreateStyleSet(int) const override { return nullptr; }
+    sk_sp<SkFontStyleSet> onMatchFamily(const char[]) const override { return nullptr; }
+    sk_sp<SkTypeface> onMatchFamilyStyle(const char[], const SkFontStyle&) const override { return nullptr; }
+    sk_sp<SkTypeface> onMatchFamilyStyleCharacter(const char family[], const SkFontStyle& style, const char*[], int,
+                                                  SkUnichar character) const override {
+        return fallenBackOn(character, family == nullptr, style);
+    }
+    sk_sp<SkTypeface> onMakeFromData(sk_sp<SkData>, int) const override { return nullptr; }
+    sk_sp<SkTypeface> onMakeFromStreamIndex(std::unique_ptr<SkStreamAsset>, int) const override { return nullptr; }
+    sk_sp<SkTypeface> onMakeFromStreamArgs(std::unique_ptr<SkStreamAsset>, const SkFontArguments&) const override { return nullptr; }
+    sk_sp<SkTypeface> onMakeFromFile(const char[], int) const override { return nullptr; }
+    sk_sp<SkTypeface> onLegacyMakeTypeface(const char[], SkFontStyle) const override { return nullptr; }
+};
+
+/// Whether letters asked to look like emoji (U+FE0F after them) are set in Windows' colour emoji
+/// first, as Core Text sets them in Apple Color Emoji whatever font the text is in: the open
+/// fonts have plain outlines of some (a heart, a sun) that the Mac's fonts do not. Registered
+/// as the family "Emoji|" the first time it is needed.
+bool colourEmoji() {
+    static int state = 0;
+    if (state == 0) {
+        auto typeface = getenv("BEZZLE_NO_FALLBACK") ? nullptr : fallenBackOn(0x1F600, true, SkFontStyle());
+        if (typeface) provider->registerTypeface(typeface, SkString("Emoji|"));
+        state = typeface ? 1 : 2;
+    }
+    return state == 1;
+}
+
+/// Where letters asked to look like emoji begin and end in `text` (UTF-16): each one before a
+/// U+FE0F, with the selector, a keycap, skin tones, tags and what a joiner joins to them.
+std::vector<std::pair<size_t, size_t>> emojiAsked(const std::u16string& text) {
+    std::vector<std::pair<size_t, size_t>> out;
+    if (text.find(u'\uFE0F') == std::u16string::npos) return out;
+    auto next = [&](size_t at) -> std::pair<uint32_t, size_t> {
+        const char16_t c = text[at];
+        if (c >= 0xD800 && c < 0xDC00 && at + 1 < text.size()) return {0x10000 + ((uint32_t(c) - 0xD800) << 10) + (uint32_t(text[at + 1]) - 0xDC00), 2};
+        return {uint32_t(c), 1};
+    };
+    size_t at = 0;
+    while (at < text.size()) {
+        const auto [c, n] = next(at);
+        if (at + n < text.size() && text[at + n] == 0xFE0F) {
+            size_t end = at + n + 1;
+            while (end < text.size()) {
+                const auto [d, m] = next(end);
+                const bool joins = d == 0x200D && end + m < text.size();
+                if (d == 0xFE0F || d == 0x20E3 || (d >= 0x1F3FB && d <= 0x1F3FF) || (d >= 0xE0020 && d <= 0xE007F)) {
+                    end += m;
+                } else if (joins) {
+                    end += m;
+                    end += next(end).second;
+                } else {
+                    break;
+                }
+            }
+            if (!out.empty() && out.back().second == at) out.back().second = end; else out.push_back({at, end});
+            at = end;
+        } else {
+            at += n;
+        }
+    }
+    return out;
+}
+
 sk_sp<FontCollection> fonts() {
     if (!collection) {
         collection = sk_make_sp<FontCollection>();
         collection->setDefaultFontManager(provider);
+        // Asked for letters only when no font of the run has them: it knows no families.
+        if (!getenv("BEZZLE_NO_FALLBACK")) collection->setDynamicFontManager(sk_make_sp<SystemFallback>());
         collection->enableFontFallback();
         unicode = SkUnicodes::ICU::Make();
     }
@@ -791,6 +923,10 @@ TextStyle style(const Run& run) {
         arguments.setVariationDesignPosition({axes.data(), int(axes.size())});
         s.setFontArguments(arguments);
     }
+    // How heavy and leaning the face is, which a font fallen back on for letters it lacks takes.
+    const bool leans = run.face.find("Italic") != std::string::npos || run.face.find("Oblique") != std::string::npos;
+    s.setFontStyle(SkFontStyle(int(run.weight > 0 ? run.weight : 400), SkFontStyle::kNormal_Width,
+                               leans ? SkFontStyle::kItalic_Slant : SkFontStyle::kUpright_Slant));
     int decoration = TextDecoration::kNoDecoration;
     if (run.underline) decoration |= TextDecoration::kUnderline;
     if (run.strike) decoration |= TextDecoration::kLineThrough;
@@ -809,13 +945,31 @@ std::unique_ptr<Paragraph> paragraph(const std::vector<Run>& runs, const Run& fi
     // Set at the width given, as Text Kit sets lines: Skia otherwise narrows it to whole points
     // and rounds lines' heights and widths, as Flutter wants.
     ps.setApplyRoundingHack(false);
+    // Each face as it is: never made bolder or slanted where it is not, as the Mac does not.
+    ps.setFakeMissingFontStyles(false);
     // fonts() first: it makes `unicode` too, and arguments are evaluated in no set order.
     auto collection = fonts();
     auto builder = ParagraphBuilder::make(ps, collection, unicode);
     for (const auto& r : runs) {
-        builder->pushStyle(style(r));
-        builder->addText(r.text);
-        builder->pop();
+        const auto asked = emojiAsked(r.text);
+        if (asked.empty() || !colourEmoji()) {
+            builder->pushStyle(style(r));
+            builder->addText(r.text);
+            builder->pop();
+            continue;
+        }
+        // Letters asked to look like emoji in Windows' colour emoji, the rest as they are.
+        TextStyle plain = style(r), emoji = plain;
+        emoji.setFontFamilies({SkString("Emoji|"), SkString("System")});
+        size_t at = 0;
+        for (const auto& [a, z] : asked) {
+            if (a > at) { builder->pushStyle(plain); builder->addText(r.text.substr(at, a - at)); builder->pop(); }
+            builder->pushStyle(emoji);
+            builder->addText(r.text.substr(a, z - a));
+            builder->pop();
+            at = z;
+        }
+        if (at < r.text.size()) { builder->pushStyle(plain); builder->addText(r.text.substr(at)); builder->pop(); }
     }
     auto p = builder->Build();
     p->layout(float(width));
@@ -1216,7 +1370,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             text.baselines.push_back(top + m.fBaseline);
             if (written < capacity) {
                 // Skia shares the leading out above and below the line; Text Kit keeps it apart.
-                double* out = lines + written * 7;
+                double* out = lines + written * 10;
                 out[0] = double(start);
                 out[1] = double(end);
                 out[2] = m.fWidth;
@@ -1224,6 +1378,10 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
                 out[4] = m.fDescent - leading / 2;
                 out[5] = leading;
                 out[6] = part.indent + left;
+                const auto rise = fallbackRise(text.lines.back().paragraph.get());
+                out[7] = rise[0];
+                out[8] = rise[1];
+                out[9] = rise[2];
                 written++;
             }
             all++;

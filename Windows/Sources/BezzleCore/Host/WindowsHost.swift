@@ -93,7 +93,7 @@ nonisolated enum TextHost {
             default: 0
         }
         let capacity = 512
-        var lines = [Double](repeating: 0, count: capacity * 7)
+        var lines = [Double](repeating: 0, count: capacity * 10)
         var count: Int32 = 0
         // Paragraphs set further in, items of lists: where each begins and ends, and how far in.
         let indents = (spec["indents"] as? [Any] ?? []).flatMap { ($0 as? [Any] ?? []).prefix(3).compactMap { ($0 as? NSNumber)?.doubleValue } }
@@ -105,7 +105,7 @@ nonisolated enum TextHost {
                 }
             }
         }
-        let laid = (0..<min(Int(count), capacity)).map { k in "[" + lines[k * 7..<k * 7 + 7].map { String($0) }.joined(separator: ",") + "]" }
+        let laid = (0..<min(Int(count), capacity)).map { k in "[" + lines[k * 10..<k * 10 + 10].map { String($0) }.joined(separator: ",") + "]" }
         return "{\"id\":\(id),\"lines\":[" + laid.joined(separator: ",") + "]}"
     }
 
@@ -129,6 +129,22 @@ nonisolated enum TextHost {
         }
     }
 
+    /// How heavy a face is, as CSS and DirectWrite count it, from its name.
+    private static func cssWeight(_ face: String) -> Double {
+        switch Fonts.traits(named: face).weight {
+        case ...1: 100
+        case 2: 200
+        case 3: 100
+        case 4: 300
+        case 5: 400
+        case 6, 7: 500
+        case 8: 600
+        case 9: 700
+        case 10: 800
+        default: 900
+        }
+    }
+
     /// The runs as the host takes them, for as long as `body` runs.
     private static func given<Result>(_ runs: [[String: Any]], _ body: (UnsafeBufferPointer<bz_text_run>) -> Result) -> Result {
         // The runs' strings, kept alive for the call: the system font's runs ask for "System",
@@ -147,7 +163,8 @@ nonisolated enum TextHost {
             return bz_text_run(
                 text: s[0], family: s[1], face: s[2], size: size,
                 tracking: (run["tracking"] as? NSNumber)?.doubleValue ?? 0,
-                weight: system ? SystemFont.weights[face] ?? 400 : 0,
+                // The face's weight, which letters set in a font fallen back on take (CBezzleHost/fallback.cpp).
+                weight: system ? SystemFont.weights[face] ?? 400 : cssWeight(face),
                 opticalSize: system ? SystemFont.opticalSizes.map { min(max(size, $0.lowerBound), $0.upperBound) } ?? 0 : 0,
                 underline: (run["underline"] as? Bool ?? false) ? 1 : 0, strike: (run["strike"] as? Bool ?? false) ? 1 : 0,
                 hasColor: color.count == 4 ? 1 : 0,

@@ -92,7 +92,7 @@ let package = Package(
                 return .define(parts[0], to: parts.count > 1 ? parts[1] : nil)
             } + avifCxx + webView2Settings,
             linkerSettings: [.unsafeFlags(["-L" + skiaOut])] + skiaLibraries.map { .linkedLibrary($0) } + avifLinking
-                + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt", "dwmapi", "shell32", "oleaut32"].map { .linkedLibrary($0) }
+                + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt", "dwmapi", "shell32", "oleaut32", "dwrite"].map { .linkedLibrary($0) }
                 + webView2Linking
         ),
         .target(

@@ -31,7 +31,7 @@ typedef struct bz_text_run {
     const char *face;
     double size;
     double tracking;            // letter spacing, in points
-    double weight;              // for "System": its wght axis, else 0
+    double weight;              // CSS weight of the face (100 to 900); for "System" also its wght axis
     double opticalSize;         // for "System": its opsz axis, 0 for none
     int32_t underline;
     int32_t strike;
@@ -42,10 +42,12 @@ typedef struct bz_text_run {
 } bz_text_run;
 
 /// Sets `count` runs `width` wide, aligned 0 left, 1 center, 2 right, 3 justified. Returns the
-/// text's id and writes, for up to `capacity` lines, seven numbers each to `lines`: its start and
+/// text's id and writes, for up to `capacity` lines, ten numbers each to `lines`: its start and
 /// end (UTF-16), width, ascent and descent (less half the leading, as Skia shares it out), the
-/// font's leading, and where its letters begin from the text's left (its indent and as far again
-/// as its alignment moves it); `*lineCount` is how many lines there are. `indents` holds
+/// font's leading, where its letters begin from the text's left (its indent and as far again as
+/// its alignment moves it), and the ascent, descent and leading of the fonts fallen back on for
+/// letters the text's fonts lack (the most of each; nought without); `*lineCount` is how many
+/// lines there are. `indents` holds
 /// `indentCount` paragraphs set further in, three numbers each: where they begin and end (UTF-16)
 /// and how far in their lines begin (items of lists).
 int32_t bz_text_lay(const bz_text_run *runs, int32_t count, double width, int32_t align,

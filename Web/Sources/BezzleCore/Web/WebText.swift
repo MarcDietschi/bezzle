@@ -352,8 +352,10 @@ nonisolated enum TextLayout {
     ///
     /// The fonts' measures are the Mac's own where they are known (MacFonts), for the faces the
     /// open fonts stand in for, else the host's. `metrics` per line: start, end, width, ascent,
-    /// descent, leading, the host font's own, and where its letters begin (an item of a list's
-    /// indent and its alignment); `runs` as `runs(_:)` makes them, `string` their words.
+    /// descent, leading, the host font's own, where its letters begin (an item of a list's indent
+    /// and its alignment), and, where the host falls back on fonts of its own for letters the
+    /// text's lack, their ascent, descent and leading; `runs` as `runs(_:)` makes them, `string`
+    /// their words.
     private static func place(_ metrics: [[Double]], runs: [[String: Any]], string: String, style: TextStyle) -> [Line] {
         // Where each run lies in the words (UTF-16), and its face on the Mac.
         var spans: [(start: Int, end: Int, face: MacFonts.Face?, size: CGFloat)] = []
@@ -385,6 +387,15 @@ nonisolated enum TextLayout {
                 descent = CGFloat(m[4]).rounded()
                 above = CGFloat(m[3]).rounded()
                 below = descent + CGFloat(m[5])
+            }
+            // Letters none of the line's fonts has, set in a font fallen back on (Windows' own,
+            // for other scripts and emoji), make it taller where that font reaches further, as
+            // Text Kit counts every font on a line; not where lines are set a spacing apart.
+            if m.count > 9, m[7] > 0, (style.lineSpacing ?? 0) <= 0 {
+                let a = CGFloat(m[7]).rounded(), d = CGFloat(m[8]).rounded()
+                above = max(above, a)
+                descent = max(descent, d)
+                below = max(below, d + CGFloat(m[9]))
             }
             let letters = units[min(start, units.count)..<min(max(end, start), units.count)]
             let blank = letters.allSatisfy(ends)
