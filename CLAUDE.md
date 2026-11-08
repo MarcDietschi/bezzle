@@ -47,6 +47,14 @@ Whenever the version is raised, or Erik asks for a release:
    the feed. Pull `~/Sites/bezzle-web` afterwards, since both releases commit there.
 5. **Check** https://bezzle.ch/download.html, `/updates/appcast.xml` and `/updates/windows/appcast.xml`.
 
+When a release says the website did not go live within 10 minutes, everything is already published
+on GitHub; only the site's deploy is late. Look at bezzle-web's Deploy runs (`gh run list -R
+mfrports/bezzle-web --workflow Deploy`): runs queue one at a time, and a newer push takes the place of
+a waiting one, so the newest run carries every release's feed. Once the feeds offer the version and
+bezzle.ch serves the files at their full length, tag the commit as the script's message says
+(1.5.1, 2026-11-08: a deploy hung on its live check, since fixed with time limits in bezzle-web
+b559a45).
+
 How to write the notes: for the people who use Bezzle, not for developers. Say what they can do now
 and why it matters, benefit first. Only what really shipped. Quiet and plain, no exclamation marks,
 and no dashes as punctuation in any language. No internal names (Sparkle, CI, file names). Use the
