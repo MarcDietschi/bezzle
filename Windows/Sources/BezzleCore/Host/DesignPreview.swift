@@ -1,12 +1,17 @@
 import Foundation
 import CBezzleHost
+import WinSDK
 
 // The picture of a design that the Mac's Finder shows for its file, written on Windows exactly as
 // the Mac writes it (from Bezzle/Store/DesignPreview.swift): QuickLook/Thumbnail.jpg in the
 // design's package, which the Mac's Quick Look extension (BezzleThumbnails) lays on a sheet of
 // Bezzle's paper. So a design worked on here shows as it now is in a Mac's Finder, as one worked on
-// there does. What Explorer shows for a design is another matter, not decided yet; nothing else
-// is written for it.
+// there does.
+//
+// Explorer shows a design as the folder it is on Windows, and Windows 11 draws a folder with a
+// peek of what lies in it: a design's would be document.json, a blank page. Beside the Finder's
+// picture goes a hidden folder.jpg, the same picture, which Explorer draws on the folder instead
+// (as it does a music folder's cover), so a design looks as it is there too. The Mac ignores it.
 //
 // It is what lies on the sheet: a design of one artboard is that artboard, edge to edge; one of
 // several is its canvas on the paper, come in close as the home screen does, so the first
@@ -24,6 +29,38 @@ nonisolated enum DesignPreview {
 
     static func exists(for design: URL) -> Bool {
         FileManager.default.fileExists(atPath: file(of: design).path)
+    }
+
+    /// The picture Explorer draws on the design's folder: the Finder's, hidden at the top.
+    static let explorerName = "folder.jpg"
+
+    static func explorerFile(of design: URL) -> URL { design.appendingPathComponent(explorerName) }
+
+    /// Writes Explorer's picture, hidden, over one there already: a hidden file can be written
+    /// over only once it is no longer hidden.
+    private static func writeHidden(_ data: Data, to file: URL) throws {
+        let path = file.path.replacingOccurrences(of: "/", with: "\\")
+        _ = path.withCString(encodedAs: UTF16.self) { SetFileAttributesW($0, DWORD(FILE_ATTRIBUTE_NORMAL)) }
+        try data.write(to: file, options: .atomic)
+        _ = path.withCString(encodedAs: UTF16.self) { SetFileAttributesW($0, DWORD(FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) }
+    }
+
+    /// Explorer's picture brought up to the Finder's: written where it is missing or older, as
+    /// for a design whose picture a Mac made, and taken away where the design has none.
+    static func keepExplorerPicture(of design: URL) {
+        let fm = FileManager.default
+        let finder = file(of: design), explorer = explorerFile(of: design)
+        func date(_ url: URL) -> Date? { (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate }
+        guard let made = date(finder) else {
+            if fm.fileExists(atPath: explorer.path) { try? fm.removeItem(at: explorer) }
+            return
+        }
+        if let copied = date(explorer), copied >= made { return }
+        guard let data = try? Data(contentsOf: finder) else { return }
+        // The design keeps its date, and its place on the home screen.
+        let kept = (try? fm.attributesOfItem(atPath: design.path))?[.modificationDate] as? Date
+        try? writeHidden(data, to: explorer)
+        if let kept { try? fm.setAttributes([.modificationDate: kept], ofItemAtPath: design.path) }
     }
 
     /// Whether it shows the design as last saved: made since, as Bezzle makes it after saving.
@@ -146,6 +183,7 @@ nonisolated enum DesignPreview {
         let date = (try? fm.attributesOfItem(atPath: design.path))?[.modificationDate] as? Date
         guard let data else {
             try? fm.removeItem(at: folder)
+            try? fm.removeItem(at: explorerFile(of: design))
             return
         }
         do {
@@ -153,6 +191,7 @@ nonisolated enum DesignPreview {
                 try fm.createDirectory(at: folder, withIntermediateDirectories: false)
             }
             try data.write(to: file, options: .atomic)
+            try? writeHidden(data, to: explorerFile(of: design))
             if let when = keepingDate ? date : Date() {
                 try? fm.setAttributes([.modificationDate: when], ofItemAtPath: design.path)
             }
@@ -186,8 +225,12 @@ extension WindowsCore {
     /// its own: the design that is open stays as it is. True when it had to be made.
     @discardableResult public static func catchUpPreview(of url: URL) -> Bool {
         var isFolder: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue,
-              !DesignPreview.isCurrent(for: url), let doc = try? read(url) else { return false }
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue else { return false }
+        guard !DesignPreview.isCurrent(for: url), let doc = try? read(url) else {
+            // Its picture is current (a Mac's, perhaps): Explorer's is brought up to it.
+            DesignPreview.keepExplorerPicture(of: url)
+            return false
+        }
         DesignPreview.write(doc, assets: Assets(folder: url.appendingPathComponent("images")), to: url, keepingDate: true)
         return true
     }
