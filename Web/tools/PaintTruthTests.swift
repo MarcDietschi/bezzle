@@ -147,8 +147,42 @@ struct PaintTruthTests {
                  name: "spaced lines", at: CGPoint(x: 380, y: 760)),
             text(words(craft), family: TextStyle.system, size: 13, sizing: .autoHeight, width: 300, align: j, name: "system 13", at: CGPoint(x: 30, y: 960)),
         ])
+        // Justified lines in the cases Text Kit spreads by rules of their own: several sizes on a
+        // line, spaces together while letters are spread too, tabs, Courier (whose font says how
+        // it is spread), and words read from right to left.
+        func sized(_ parts: [(String, CGFloat)]) -> [TextSpan] { parts.map { TextSpan(text: $0.0, look: TextLook(size: $0.1)) } }
+        let cases = board("Cases", x: 1560, height: 1240, [
+            text(sized([("Tiny ", 11), ("HUGE ", 30), ("words ", 11), ("mixed ", 20), ("in ", 11), ("one ", 30), ("narrow ", 11), ("column ", 20),
+                        ("of type that ", 11), ("wraps ", 26), ("over many lines.", 11)]),
+                 size: 11, sizing: .autoHeight, width: 160, align: j, name: "mixed helvetica", at: CGPoint(x: 30, y: 30)),
+            text(sized([("A ", 15), ("Capital ", 32), ("start, then words ", 15), ("of the size ", 22), ("of the rest of the ", 15), ("paragraph ", 28),
+                        ("that wraps on and on to the end.", 15)]),
+                 family: "Georgia", size: 15, sizing: .autoHeight, width: 190, align: j, name: "mixed georgia", at: CGPoint(x: 220, y: 30)),
+            text(words("Hi  extraordinarily marvellous an  unbelievably wonderful of  typographically experimental to  the end of it all."),
+                 sizing: .autoHeight, width: 190, align: j, name: "double spaces", at: CGPoint(x: 440, y: 30)),
+            text(words("Few  words  in a  narrow  column  spread  far  apart  over  lines"), size: 24, sizing: .autoHeight, width: 150, align: j,
+                 name: "double narrow", at: CGPoint(x: 30, y: 300)),
+            text(words("Name\tA value that runs on for a while and wraps\tthen more words after a second tab that wrap again over lines."),
+                 size: 15, sizing: .autoHeight, width: 300, align: j, name: "tabs", at: CGPoint(x: 220, y: 300)),
+            text(words("Price\tUnbelievable\tExtraordinarily\tand then more words to wrap"), sizing: .autoHeight, width: 200, align: j,
+                 name: "tab letters", at: CGPoint(x: 220, y: 420)),
+            text(words(prose), family: "Courier", size: 15, sizing: .autoHeight, width: 260, align: j, name: "courier", at: CGPoint(x: 30, y: 560)),
+            text(words("A  narrow column of Courier words that spread  apart over lines"), family: "Courier", size: 14, sizing: .autoHeight,
+                 width: 150, align: j, name: "courier narrow", at: CGPoint(x: 330, y: 560)),
+            text(words("Unbelievably extraordinary words"), family: "Courier", size: 14, sizing: .autoHeight, width: 120, align: j,
+                 name: "courier word", at: CGPoint(x: 520, y: 560)),
+            text(words("שלום עולם, זה טקסט בעברית שמיושר לשני הצדדים כדי לבדוק איך הוא מתפרש על פני השורות השונות של הפסקה."),
+                 family: "Arial", sizing: .autoHeight, width: 220, align: j, name: "hebrew", at: CGPoint(x: 30, y: 940)),
+            text(words("هذا نص عربي مضبوط من الجانبين لكي نرى كيف يتوزع على السطور المختلفة في الفقرة الواحدة."),
+                 family: "Arial", sizing: .autoHeight, width: 220, align: j, name: "arabic", at: CGPoint(x: 290, y: 940)),
+            // Set from the left, for where tabs stop and which way lines read without spreading.
+            text(words("Name\tA value that runs on for a while and wraps\tthen more words after a second tab that wrap again over lines."),
+                 size: 15, sizing: .autoHeight, width: 300, name: "tabs left", at: CGPoint(x: 30, y: 1080)),
+            text(words("שלום עולם, זה טקסט בעברית שמיושר לשני הצדדים כדי לבדוק איך הוא מתפרש על פני השורות השונות של הפסקה."),
+                 family: "Arial", sizing: .autoHeight, width: 220, name: "hebrew left", at: CGPoint(x: 380, y: 1080)),
+        ])
         var doc = BezzleDocument()
-        doc.nodes = [painted, justified]
+        doc.nodes = [painted, justified, cases]
         // The box of fixed size as tall as its lines.
         if let k = doc.nodes[1].children.firstIndex(where: { $0.name == "spaced lines" }) {
             doc.nodes[1].children[k].frame.size.height = ceil(TextLayout.layout(doc.nodes[1].children[k]).usedSize.height)

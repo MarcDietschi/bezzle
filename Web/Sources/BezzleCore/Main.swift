@@ -103,7 +103,7 @@ nonisolated func bz_texts() -> Int32 {
                     let f = TextLayout.fittedFrame(n)
                     out.append("{\"id\":\(quoted(n.id.uuidString)),\"text\":\(quoted(laid.string)),\"used\":[\(laid.usedSize.width),\(laid.usedSize.height)],"
                         + "\"natural\":\(TextLayout.naturalWidth(n)),\"firstBaseline\":\(TextLayout.firstBaseline(n)),\"fitted\":[\(f.width),\(f.height)],"
-                        + "\"lines\":[\(lines.joined(separator: ","))]}")
+                        + "\"lines\":[\(lines.joined(separator: ","))],\"laid\":\(laid.id)}")
                 }
                 walk(n.children)
             }

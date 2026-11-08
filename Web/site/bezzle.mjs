@@ -365,7 +365,7 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         // Where Skia paints the line's letters: its ascent down, rounded to a whole point, which is
         // not where its line metrics put the baseline.
         const back = (runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0) - part.indent
-        lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back })
+        lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back, start: part.start + m.startIndex, runs })
         baselines.push(top + m.baseline)
         // Skia shares the leading out above and below the line; Text Kit keeps it apart.
         // Set from the left, its letters begin at its indent, as Text Kit's do; Skia's own left
@@ -824,6 +824,28 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       return { image: img, coreMs: r.ms, totalMs: performance.now() - t0, playMs: performance.now() - t1 }
     },
     texts() { return reply(x.bz_texts()) },
+    // Where each letter of a text the core laid (texts()' laid) is set along its line, from the
+    // text's left, by where in the words it is from, per line: for comparing with the Mac.
+    letters(laid) {
+      const t = texts.get(laid)
+      return (t?.lines ?? []).map((line) => {
+        if (!line.paragraph) return []
+        const words = line.runs.map((r) => r.text).join('')
+        const at16 = new Map()
+        let u8 = 0
+        for (let k = 0; k < words.length; k++) {
+          at16.set(u8, k)
+          const c = words.charCodeAt(k)
+          if (c >= 0xD800 && c < 0xDC00 && k + 1 < words.length) { u8 += 4; k++ } else u8 += c < 0x80 ? 1 : c < 0x800 ? 2 : 3
+        }
+        const out = []
+        for (const shaped of line.paragraph.getShapedLines()) {
+          for (const run of shaped.runs) for (let g = 0; g < run.glyphs.length; g++) out.push([line.start + (at16.get(run.offsets[g]) ?? 0), run.positions[2 * g] - line.back])
+        }
+        return out
+      })
+    },
+
 
     // Shared designs: records are each record's packed data, base64, as CloudKit gives it.
     openShared(records, replica, pictures = new Map()) {

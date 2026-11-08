@@ -8,15 +8,17 @@
 // - justified texts: where each line breaks, and where each word of each line begins and ends
 //   in the drawing (found from its ink: the nearest edge of ink to each of the Mac's), as the
 //   greatest difference from the Mac's, in points, and how far each spread line's last word ends
-//   from the frame's right edge; with BEZZLE_TEXTS_LETTERS, where each letter is set, from the
-//   report (Windows).
+//   from the frame's right edge;
+// - every text: where each letter is set, as the page's letters() gives it and, with
+//   BEZZLE_TEXTS_LETTERS, from the report (Windows). The browser's letters are written to
+//   paint-letters.<fonts>.web.json, in the shape of Windows' report.
 //
 // Fonts: "open", the open fonts the published page has (site/openfonts); "apple", Apple's fonts
 // in site/fonts; "mac", those and this Mac's own Georgia, Arial and Helvetica, for checking how
 // lines are spread in the very letters the Mac sets. --host and --wasm draw with another
 // bezzle.mjs and core, such as those of an earlier commit, for a before and after.
 //
-//   node tools/paint-compare.mjs --truth <dir> [--fonts open|apple|mac] [--windows <dir of 00.png, 01.png>]
+//   node tools/paint-compare.mjs --truth <dir> [--fonts open|apple|mac] [--windows <dir of 00.png, 01.png, …>]
 //        [--windows-texts <file>] [--host <bezzle.mjs>] [--wasm <core>] [--out <dir>] [--detail]
 
 import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises'
@@ -71,8 +73,11 @@ function pixels(img) {
 }
 const decoded = async (file) => { const img = CK.MakeImageFromEncoded(await readFile(file)); const p = pixels(img); img.delete(); return p }
 
+// Every artboard the Mac drew, in order.
+const boardCount = (await readdir(path.join(truthDir, 'png'))).filter((f) => /^Paints-\d+\.png$/.test(f)).length
+const indices = [...Array(boardCount).keys()]
 const browser = []
-for (const index of [0, 1]) {
+for (const index of indices) {
   const r = bz.render(index, scale)
   await writeFile(path.join(out, `Paints-${String(index).padStart(2, '0')}.${fontsKind}.web.png`), r.image.encodeToBytes())
   browser.push(pixels(r.image))
@@ -80,9 +85,11 @@ for (const index of [0, 1]) {
 const browserTexts = Object.fromEntries(bz.texts().map((t) => [t.id, t]))
 
 const mac = JSON.parse(await readFile(path.join(truthDir, 'paints-mac.json'), 'utf8')).samples
-const macPNG = [await decoded(path.join(truthDir, 'png', 'Paints-00.png')), await decoded(path.join(truthDir, 'png', 'Paints-01.png'))]
+// The artboards' names in the order they were drawn: as the texts first name them.
+const boardNames = [...new Set(mac.map((m) => m.board))]
+const macPNG = await Promise.all(indices.map((k) => decoded(path.join(truthDir, 'png', `Paints-${String(k).padStart(2, '0')}.png`))))
 const winDir = arg('windows')
-const winPNG = winDir ? [await decoded(path.join(winDir, '00.png')), await decoded(path.join(winDir, '01.png'))] : null
+const winPNG = winDir ? await Promise.all(indices.map((k) => decoded(path.join(winDir, `${String(k).padStart(2, '0')}.png`)))) : null
 const winReport = arg('windows-texts') ? JSON.parse(await readFile(arg('windows-texts'), 'utf8')) : null
 const winTexts = winReport ? Object.fromEntries(winReport.samples.map((s) => [s.key.split('/')[1], s])) : {}
 
@@ -181,11 +188,13 @@ function wordDifference(a, b) {
   return missed ? `${Math.round(worst * 100) / 100} (${missed} far)` : worst
 }
 
+// The browser's letters, for looking closer (in the shape of Windows' text report).
+const webLetters = []
 const fmt = (v) => (v === null || v === undefined ? '-' : typeof v === 'number' ? (Math.round(v * 100) / 100).toString() : v)
 const rows = []
 for (const m of mac) {
   const id = m.key.split('/')[1]
-  const board = m.board === 'Painted' ? 0 : 1
+  const board = boardNames.indexOf(m.board)
   // In its artboard's own coordinates.
   const frame = m.frame
   const row = { name: `${m.board}/${m.name}` }
@@ -201,6 +210,29 @@ for (const m of mac) {
     row.inkMac = Math.round(mg.ink * 100), row.inkWeb = Math.round(bg.ink * 100)
     if (winPNG) { const wg = grid(winPNG[board], frame); row.colourWin = colourDifference(mg, wg); row.inkWin = Math.round(wg.ink * 100) }
   }
+  // Where each letter of any text is set along its line, against the Mac's, by its place in the
+  // words: the greatest difference (letters drawn with several glyphs, as kashidas lengthen
+  // Arabic, by their first).
+  const lettersOff = (theirs) => {
+    let worst = 0
+    m.letters.forEach((xs, i) => {
+      const at = new Map()
+      for (const [c, x] of theirs[i] ?? []) if (!at.has(c)) at.set(c, x)
+      const seen = new Set()
+      for (const [c, x] of xs) {
+        if (seen.has(c)) continue
+        seen.add(c)
+        if (at.has(c) && !/\s/.test(m.text[c])) worst = Math.max(worst, Math.abs(at.get(c) - x))
+      }
+    })
+    return worst
+  }
+  if (w?.letters) row.lettersWin = lettersOff(w.letters)
+  if (b?.laid !== undefined) {
+    const letters = bz.letters(b.laid)
+    row.lettersWeb = lettersOff(letters)
+    webLetters.push({ id, letters, lines: b.lines })
+  }
   if (m.align === 'justify') {
     const lines = m.lines.map((l) => [l[0], l[1], l[2] + m.offset, l[3]])
     const mw = wordsOf(macPNG[board], frame, lines)
@@ -212,15 +244,6 @@ for (const m of mac) {
     row.edgeMac = edge(mw)
     row.edgeWeb = edge(wordsOf(browser[board], frame, lines))
     if (winPNG) row.edgeWin = edge(wordsOf(winPNG[board], frame, lines))
-    if (w?.letters) {
-      // Where each letter is set along its line, against the Mac's, by its place in the words.
-      let worst = 0
-      m.letters.forEach((xs, i) => {
-        const theirs = new Map((w.letters[i] ?? []).map(([c, x]) => [c, x]))
-        for (const [c, x] of xs) if (theirs.has(c) && !/\s/.test(m.text[c])) worst = Math.max(worst, Math.abs(theirs.get(c) - x))
-      })
-      row.lettersWin = worst
-    }
     if (flag('detail')) {
       const r = (words) => words.map((ws) => ws.map((x) => x.map((v) => Math.round(v * 10) / 10)))
       row.detail = { mac: r(mw), web: r(wordsOf(browser[board], frame, lines)) }
@@ -236,9 +259,11 @@ for (const m of mac) {
 for (const r of rows) {
   const parts = [r.name.padEnd(28), `breaks web ${fmt(r.breaksWeb)} win ${fmt(r.breaksWin)}`]
   if (r.colourWeb) parts.push(`colour web ${r.colourWeb.worst}/${r.colourWeb.mean}` + (r.colourWin ? ` win ${r.colourWin.worst}/${r.colourWin.mean}` : '') + `  ink mac ${r.inkMac}% web ${r.inkWeb}%` + (r.inkWin !== undefined ? ` win ${r.inkWin}%` : ''))
-  if ('wordsWeb' in r) parts.push(`words web ${fmt(r.wordsWeb)} win ${fmt(r.wordsWin)} pt  right edge mac ${fmt(r.edgeMac)} web ${fmt(r.edgeWeb)} win ${fmt(r.edgeWin)}` + (r.lettersWin !== undefined ? `  letters win ${fmt(r.lettersWin)} pt` : ''))
+  if ('wordsWeb' in r) parts.push(`words web ${fmt(r.wordsWeb)} win ${fmt(r.wordsWin)} pt  right edge mac ${fmt(r.edgeMac)} web ${fmt(r.edgeWeb)} win ${fmt(r.edgeWin)}`)
+  if (r.lettersWin !== undefined || r.lettersWeb !== undefined) parts.push(`letters web ${fmt(r.lettersWeb)} win ${fmt(r.lettersWin)} pt`)
   console.log(parts.join('  '))
   if (r.breaks) console.log('    breaks', JSON.stringify(r.breaks))
   if (r.detail) console.log('   ', JSON.stringify(r.detail))
 }
 await writeFile(path.join(out, `paint-compare.${fontsKind}.json`), JSON.stringify(rows, null, 1))
+await writeFile(path.join(out, `paint-letters.${fontsKind}.web.json`), JSON.stringify(webLetters))
