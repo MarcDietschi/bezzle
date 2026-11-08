@@ -13,6 +13,13 @@ extension WindowsCore {
         return Picking(doc: doc, selection: selection, fronts: fronts, zoom: CGFloat(zoom)).pick(p)
     }
 
+    /// The topmost layer under `p` on the canvas that a click would select, groups not gone into
+    /// (the Mac's CanvasView.hit): what the Text tool types into when it is a text.
+    public static func hit(_ p: CGPoint, zoom: Double) -> UUID? {
+        guard let doc = design else { return nil }
+        return Picking(doc: doc, fronts: fronts, zoom: CGFloat(zoom)).hit(p)
+    }
+
     /// What a double click on a group picks inside it, one level down.
     public static func pick(_ p: CGPoint, inGroup id: UUID, zoom: Double) -> UUID? {
         guard let doc = design, let group = doc.node(id), group.isGroup else { return nil }

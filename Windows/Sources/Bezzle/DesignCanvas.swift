@@ -160,6 +160,9 @@ final class DesignCanvas {
         case picture
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
+    /// The text a press with the Text tool began on: a click types into it, a drag draws a new
+    /// one over it, as on the Mac.
+    private var textUnderPress: UUID?
     /// A picture being placed inside its layer (the Mac's PictureTool, ported): the whole of it
     /// past the layer's outline, faded, in a picture of its own (one more for one fading out),
     /// and its edges, the outline and the crop marks over it.
@@ -3179,6 +3182,9 @@ final class DesignCanvas {
         if margin.notes.openThread != nil { margin.notes.openThread = nil }
         if let kind = drawn(session.tool) {
             let on = kind == "artboard" ? nil : WindowsCore.board(at: c)
+            // A click with the Text tool on a text types into it, all its words picked out; a
+            // drag, over one or not, draws a new one.
+            textUnderPress = kind == "text" ? WindowsCore.hit(c, zoom: zoom).flatMap { WindowsCore.isText($0) ? $0 : nil } : nil
             _ = try? stage.capturePointer(args?.pointer)
             drag = (p, on ?? -1, false, .draw(id: UUID(), kind: kind, start: CGPoint(x: Double(c.x).rounded(), y: Double(c.y).rounded()), board: on))
             WindowsCore.beginGesture()
@@ -3629,6 +3635,14 @@ final class DesignCanvas {
         showGuides([])
         switch d.grab {
         case .draw(let id, let kind, let start, let board):
+            let under = textUnderPress
+            textUnderPress = nil
+            if kind == "text", !d.moved, let under, let at = WindowsCore.board(of: under) {
+                WindowsCore.endGesture()
+                session.select([under], on: at)
+                beginEditing(under, board: at)
+                return
+            }
             if !d.moved { WindowsCore.draw(id, kind: kind, from: start, to: start, board: board, click: true) }
             WindowsCore.endGesture()
             // What was drawn is picked; the tool is put down, but for Text, which stays in hand.
