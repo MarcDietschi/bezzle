@@ -1203,7 +1203,7 @@ public enum Welcome {
         steps: [
             String(localized: "Switch to Inspect at the top, or press ⌃I. Nothing can be moved by mistake there: it is for looking."),
             String(localized: "Click the word Follow, then once more: Bezzle climbs to the whole button and draws its size in blue. Point at the portrait to see how far apart they are."),
-            String(localized: "The inspector shows the button’s CSS and SwiftUI, ready to copy. Copy its picture there too, and paste it into any app."),
+            String(localized: "The inspector shows the button’s CSS and SwiftUI, ready to copy. Drag its picture from the inspector into any app."),
         ],
         tip: String(localized: "Esc climbs one level up. ⌃I again goes back to designing."),
         scene: profile)

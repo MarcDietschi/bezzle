@@ -476,15 +476,64 @@ extension Inspector {
             lift.scaleY = 1
             file.opacity = 0
         }
-        // Taken: the layer written as a file of its own, shown in Explorer, from where it goes
-        // wherever it is dragged. (WinUI's own drag out of the window fails here, for now.)
-        holder.pointerPressed.addHandler { _, args in args?.handled = true }
-        holder.tapped.addHandler { _, _ in
-            guard let url = WindowsCore.assetFile(id, format: format, scale: scale) else { return }
-            Explorer.show(url)
+        // Dragged out of the window: the layer written as a file of its own the moment the drag
+        // begins, named as an export names it, and carried to Explorer or into another app as
+        // that file, as the Mac's DragPicture does (InspectCopy.dragged).
+        // Begun by hand once the pointer has moved a little while pressed: the press is kept
+        // from the panel, which would otherwise take it, and with it WinUI's own drag.
+        var pressedAt: WindowsFoundation.Point?
+        holder.pointerPressed.addHandler { _, args in
+            args?.handled = true
+            pressedAt = try? args?.getCurrentPoint(holder)?.position
         }
-        try? ToolTipService.setToolTip(holder, WindowsCore.formatTitle(format) + (isPicture(format) ? " @\(Int(scale))x" : "") + "  ·  " + Words.t("Show in Explorer"))
+        holder.pointerReleased.addHandler { _, _ in pressedAt = nil }
+        holder.pointerMoved.addHandler { _, args in
+            guard let from = pressedAt, let args, let point = try? args.getCurrentPoint(holder) else { return }
+            guard point.properties?.isLeftButtonPressed == true else {
+                Trace.say("inspect drag: moved without the button")
+                pressedAt = nil
+                return
+            }
+            let at = point.position
+            guard abs(Double(at.x - from.x)) > 4 || abs(Double(at.y - from.y)) > 4 else { return }
+            pressedAt = nil
+            do {
+                _ = try holder.startDragAsync(point)
+            } catch {
+                Trace.say("inspect drag: not begun, \(error)")
+            }
+        }
+        holder.dragStarting.addHandler { _, args in
+            Trace.say("inspect drag: starting")
+            guard let args else { return }
+            Self.dragOut(id, format: format, scale: scale, args)
+        }
+        try? ToolTipService.setToolTip(holder, WindowsCore.formatTitle(format) + (isPicture(format) ? " @\(Int(scale))x" : ""))
         return holder
+    }
+
+    /// A layer's file, made now, given to the drag that has begun: as a file Explorer, a mail or
+    /// a chat takes in, copied, never moved.
+    private static func dragOut(_ id: UUID, format: String, scale: Double, _ args: DragStartingEventArgs) {
+        guard let url = WindowsCore.assetFile(id, format: format, scale: scale), let data = args.data else {
+            args.cancel = true
+            return
+        }
+        args.allowedOperations = .copy
+        data.requestedOperation = .copy
+        let path = (url.withUnsafeFileSystemRepresentation { $0.map { String(cString: $0) } } ?? url.path).replacingOccurrences(of: "/", with: "\\")
+        // Windows hands the file over once it is found, which takes a moment: the drag waits.
+        let deferral = try? args.getDeferral()
+        Task { @MainActor in
+            defer { try? deferral?.complete() }
+            guard let file = try? await StorageFile.getFileFromPathAsync(path)?.get() else {
+                Trace.say("inspect drag: no file at \(path)")
+                return
+            }
+            let items: [AnyIStorageItem?] = [file]
+            try? data.setStorageItems(items.toVector())
+            Trace.say("inspect drag: carrying \(path)")
+        }
     }
 
     /// A checkerboard of squares 6 across, light, or dark for what is light.
