@@ -855,6 +855,9 @@ sk_sp<TypefaceFontProvider> provider = sk_make_sp<TypefaceFontProvider>();
 sk_sp<FontCollection> collection;
 sk_sp<SkUnicode> unicode;
 std::map<std::string, sk_sp<SkTypeface>> faces;   // "family|face"
+/// The faces Windows has of its own that an open font was given under the same name before, which
+/// Skia knows by that name and "|own" (bz_font_add_at).
+std::set<std::string> owned;
 std::map<std::string, double> leadings;
 
 }  // namespace
@@ -1063,7 +1066,8 @@ TextStyle style(const Run& run) {
         if (!has("wght")) axes.push_back({SkSetFourByteTag('w', 'g', 'h', 't'), float(run.weight > 0 ? run.weight : 400)});
         if (run.opticalSize > 0 && !has("opsz")) axes.push_back({SkSetFourByteTag('o', 'p', 's', 'z'), float(run.opticalSize)});
     } else {
-        s.setFontFamilies({SkString((run.family + "|" + run.face).c_str()), SkString("System")});
+        const std::string name = run.family + "|" + run.face;
+        s.setFontFamilies({SkString((owned.count(name) ? name + "|own" : name).c_str()), SkString("System")});
     }
     for (const auto& [tag, value] : set) axes.push_back({fourBytes(tag), float(value)});
     if (!axes.empty()) {
@@ -1856,7 +1860,12 @@ extern "C" int32_t bz_font_add_at(const char* family, const char* face, const vo
     auto typeface = fontManager()->makeFromData(SkData::MakeWithCopy(data, size_t(count)), index);
     if (!typeface) return 0;
     const std::string name = std::string(family) + "|" + face;
-    provider->registerTypeface(typeface, SkString(name.c_str()));
+    // Windows' own face of a family an open font stood in for (Arial for Arimo) under a name of
+    // its own, which letters then ask for: under the same name Skia would go on showing the
+    // first it was given of a face.
+    const bool before = faces.count(name) > 0;
+    provider->registerTypeface(typeface, SkString((before ? name + "|own" : name).c_str()));
+    if (before) owned.insert(name);
     faces[name] = typeface;
     leadings.clear();
     if (collection) collection->clearCaches();
