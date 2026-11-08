@@ -1048,6 +1048,96 @@ size_t utf16Index(const std::u16string& s, size_t utf8) {
     return s.size();
 }
 
+/// Whether a letter ends a line wherever it is: a paragraph's end or a line break.
+bool breaksLine(char16_t u) { return u == 0x0A || u == 0x0D || u == 0x2028 || u == 0x2029 || u == 0x85; }
+
+/// The spaces a justified line is spread at, as Text Kit counts them: a no-break space is a letter.
+bool spreadsAt(char16_t u) {
+    return u == 0x20 || u == 0x09 || (u >= 0x2000 && u <= 0x200A && u != 0x2007) || u == 0x205F || u == 0x3000 || u == 0x1680;
+}
+
+/// A justified line's runs spread to `width`, as Text Kit spreads a line that is not its
+/// paragraph's last (measured on the Mac, as bezzle.mjs's spreadOut): first its spaces, each by
+/// up to half its letters' size (where several stand together, each but the last as much again
+/// as one alone); then the gaps between letters too, each by up to 0.289 of their size, a space by
+/// half as much as a gap; what is left, its spaces alone. A line without spaces is spread between
+/// its letters, as far as it takes. Each letter takes its share after it as letter spacing
+/// (Skia's), the last letter of a word none, its space that much less. Empty when it needs no
+/// spreading.
+std::vector<Run> spreadOut(const std::vector<Run>& runs, Paragraph* line, double width) {
+    std::vector<LineMetrics> lm;
+    line->getLineMetrics(lm);
+    const double extra = width - (lm.empty() ? 0 : lm[0].fWidth);
+    if (!(extra > 0.001)) return {};
+    std::u16string words;
+    for (const auto& r : runs) words += r.text;
+    // Each letter as Skia sets it, by where it begins in the words.
+    std::vector<size_t> glyphs;
+    line->visit([&](int, const Paragraph::VisitorInfo* info) {
+        if (!info) return;
+        for (int k = 0; k < info->count; k++) glyphs.push_back(utf16Index(words, info->utf8Starts[k]));
+    });
+    if (glyphs.size() < 2) return {};
+    auto sizeAt = [&](size_t k) {
+        size_t n = 0;
+        for (const auto& r : runs) { n += r.text.size(); if (k < n) return r.size; }
+        return runs.back().size;
+    };
+    std::vector<bool> space(glyphs.size());
+    for (size_t i = 0; i < glyphs.size(); i++) space[i] = glyphs[i] < words.size() && spreadsAt(words[glyphs[i]]);
+    // How many shares each space takes (each but the last of several together, two), the gaps
+    // between letters, and the sizes the most each takes is measured by.
+    std::vector<int> shares(glyphs.size(), 0);
+    int units = 0, gaps = 0, letters = 0;
+    double spaceSize = 0, letterSize = 0;
+    for (size_t i = 0; i < glyphs.size(); i++) {
+        if (space[i]) {
+            shares[i] = i + 1 < glyphs.size() && space[i + 1] ? 2 : 1;
+            units += shares[i];
+            spaceSize += shares[i] * sizeAt(glyphs[i]);
+        } else {
+            letterSize += sizeAt(glyphs[i]);
+            letters++;
+            if (i + 1 < glyphs.size() && !space[i + 1]) gaps++;
+        }
+    }
+    double unit = 0, gap = 0;
+    if (units == 0) {
+        if (gaps == 0) return {};
+        gap = extra / gaps;
+    } else {
+        const double most = 0.5 * spaceSize / units, mostGap = 0.2890625 * (letters ? letterSize / letters : spaceSize / units);
+        if (extra <= units * most) {
+            unit = extra / units;
+        } else {
+            const double rest = extra - units * most;
+            gap = std::min(rest / (gaps + units / 2.0), mostGap);
+            unit = most + gap / 2 + (rest - gap * (gaps + units / 2.0)) / units;
+        }
+    }
+    // What each letter of the words takes after it, by its place in them.
+    std::vector<double> after(words.size(), gap);
+    for (size_t i = 0; i < glyphs.size(); i++) {
+        if (space[i] && glyphs[i] < words.size()) after[glyphs[i]] = shares[i] * unit - (i > 0 && !space[i - 1] ? gap : 0);
+    }
+    std::vector<Run> out;
+    size_t start = 0;
+    for (const auto& r : runs) {
+        size_t a = 0;
+        while (a < r.text.size()) {
+            size_t z = a + 1;
+            while (z < r.text.size() && after[start + z] == after[start + a] && !spreadsAt(r.text[z])) z++;
+            Run part = r;
+            part.text = r.text.substr(a, z - a);
+            part.tracking = r.tracking + after[start + a];
+            out.push_back(std::move(part));
+            a = z;
+        }
+        start += r.text.size();
+    }
+    return out;
+}
+
 // MARK: Playing a recording (bezzle.mjs's look and play)
 
 const SkBlendMode blends[] = {
@@ -1489,6 +1579,8 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
     Text text;
     const double leading = leadingOf(runs[0]);
     const bool fromLeft = align == 0 || align == 3;
+    std::u16string letters;
+    for (const auto& r : runs) letters += r.text;
     int32_t written = 0, all = 0;
     double top = 0;
     for (size_t p = 0; p < parts.size(); p++) {
@@ -1508,6 +1600,16 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             auto piece = slice(runs, start, part.start + m.fEndExcludingWhitespaces);
             // Each line drawn on its own, so it can sit where the core puts it.
             std::unique_ptr<Paragraph> line = piece.empty() ? nullptr : paragraph(piece, piece[0], w, align);
+            // Justified, every line but a paragraph's last is spread to the width, as Text Kit spreads it.
+            bool spread = false;
+            if (line && align == 3 && end < letters.size() && end > 0 && !breaksLine(letters[end - 1])) {
+                auto spaced = spreadOut(piece, line.get(), w);
+                if (!spaced.empty()) {
+                    piece = std::move(spaced);
+                    line = paragraph(piece, piece[0], 1e6, 0);
+                    spread = true;
+                }
+            }
             double baseline = m.fBaseline, left = m.fLeft;
             if (line) {
                 std::vector<LineMetrics> lm;
@@ -1529,7 +1631,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
                 double* out = lines + written * 10;
                 out[0] = double(start);
                 out[1] = double(end);
-                out[2] = m.fWidth;
+                out[2] = spread ? w : m.fWidth;
                 out[3] = m.fAscent - leading / 2;
                 out[4] = m.fDescent - leading / 2;
                 out[5] = leading;

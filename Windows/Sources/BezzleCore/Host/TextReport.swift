@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CBezzleHost
 
 // How the core measures text here, for comparing with Text Kit on the Mac: the open design's
 // texts and probe texts in every family the open fonts stand in for, each with its lines (start,
@@ -251,7 +252,7 @@ extension WindowsCore {
         var refit = n
         refit.refit()
         let fitted = TextLayout.fittedFrame(n)
-        return [
+        var d: [String: Any] = [
             "name": n.name, "text": laid.string,
             "frame": [n.frame.minX, n.frame.minY, n.frame.width, n.frame.height],
             "family": style.family, "face": style.face, "size": style.size, "sizing": "\(style.sizing)",
@@ -269,5 +270,24 @@ extension WindowsCore {
                                        Double($0.left), Double($0.left)] },
             "markers": laid.markers.map { [$0.text, Double($0.at.x), Double($0.at.y), Double($0.size)] as [Any] },
         ]
+        // With BEZZLE_TEXTS_LETTERS=1, where each letter is set along its line, from the text's
+        // left, by where in the words it is from, as the Mac's side gives them (PaintTruthTests).
+        if ProcessInfo.processInfo.environment["BEZZLE_TEXTS_LETTERS"] == "1" { d["letters"] = letters(laid) }
+        return d
+    }
+
+    /// Each line's letters as the host sets them: where in the words each is from, and where along the line.
+    private static func letters(_ laid: TextLayout.Laid) -> [[[Double]]] {
+        guard laid.id != 0 else { return [] }
+        var count: Int32 = 0
+        var out = [Double](repeating: 0, count: 9 * 4096)
+        _ = out.withUnsafeMutableBufferPointer { bz_text_letters(Int32(laid.id), $0.baseAddress, 4096, &count) }
+        var lines = [[[Double]]](repeating: [], count: laid.lines.count)
+        for k in 0..<min(Int(count), 4096) {
+            let at = Int(out[k * 9 + 8])
+            guard let line = laid.lines.lastIndex(where: { $0.start <= at }) else { continue }
+            lines[line].append([Double(at), out[k * 9]])
+        }
+        return lines
     }
 }
