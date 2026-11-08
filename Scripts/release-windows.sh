@@ -139,6 +139,7 @@ zsh "$SRC/Web/prepare.sh"
 "$SRC/Windows/Resources/make-cursors.sh" >/dev/null
 python3 "$SRC/Windows/Resources/make-strings.py" >/dev/null
 "$SRC/Windows/Resources/make-icons.sh" >/dev/null
+echo "$VERSION" > "$SRC/Windows/Resources/Generated/version.txt"
 mkdir -p "$SRC/Web/site"
 cp -R "$ROOT/Web/site/openfonts" "$SRC/Web/site/openfonts"
 

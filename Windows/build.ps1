@@ -65,6 +65,9 @@ try {
     # for the Mac's (Web/tools/openfonts.py makes them; git-ignored, so sync.sh brings them).
     # The Mac's words in other languages (Resources/make-strings.py makes them on the Mac).
     if (Test-Path 'Resources\Generated\strings.json') { Copy-Item 'Resources\Generated\strings.json' $app -Force }
+    # Its version, the Mac's (VM/sync.sh writes it from Bezzle.xcodeproj), for a copy built here;
+    # a released one has it in Bezzle.exe itself (Installer/make-installer.ps1).
+    if (Test-Path 'Resources\Generated\version.txt') { Copy-Item 'Resources\Generated\version.txt' $app -Force }
     # The licences of what Bezzle is made with, which About Bezzle shows (Credits/licenses).
     New-Item -ItemType Directory -Force "$app\licenses" | Out-Null
     Copy-Item 'Credits\licenses\*' "$app\licenses" -Recurse -Force

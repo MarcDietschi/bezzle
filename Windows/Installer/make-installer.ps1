@@ -93,12 +93,6 @@ while ($queue.Count -gt 0) {
         $queue.Enqueue((Join-Path $stage $dll))
     }
 }
-# The C++ runtime as a whole, as Microsoft has it put beside an app (app-local deployment).
-foreach ($dir in $RuntimeDirs) {
-    Get-ChildItem $dir -Filter *.dll | Where-Object { $_.Name -match $cppRuntime -and $_.Name -notmatch 'd\.dll$' } |
-        ForEach-Object { if (-not (Test-Path (Join-Path $stage $_.Name))) { Copy-Item $_.FullName $stage } }
-}
-
 # The Mac's pointers must be in it (build.ps1 compiles them before Swift links them in; a manifest
 # SwiftPM read before Resources\Generated\Bezzle.res was there leaves them out).
 if (-not (& $readobj --coff-resources "$stage\Bezzle.exe" | Select-String 'GROUP_CURSOR')) {

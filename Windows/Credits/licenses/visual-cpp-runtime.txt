@@ -1,0 +1,14 @@
+Microsoft Visual C++ Redistributable files
+
+Bezzle for Windows carries, beside Bezzle.exe, files of the Microsoft Visual C++ runtime
+(vcruntime140.dll and, where needed, vcruntime140_1.dll, msvcp140.dll and their companions), which
+the Swift runtime and Bezzle are built against.
+
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+These files are "Distributable Code" under the Microsoft Software License Terms of Visual Studio,
+which allow an application to carry them beside itself (app-local deployment). Microsoft lists the
+files and the terms at:
+
+  https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files
+  https://learn.microsoft.com/visualstudio/releases/2022/redistribution

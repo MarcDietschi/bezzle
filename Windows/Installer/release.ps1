@@ -30,8 +30,9 @@ foreach ($arch in $Archs) {
     Write-Host "Building Bezzle $Version ($Build) for $arch"
     $started = Get-Date
     if ($arch -eq $native) {
-        # build.ps1 compiles the pointers' resources before Swift links them in, then lays it out.
-        .\build.ps1 release | Out-Null
+        # build.ps1 compiles the pointers' resources before Swift links them in, lays the app out,
+        # and with -Runtime puts Swift's and Visual C++'s runtimes beside it (runtime.ps1).
+        .\build.ps1 release -Runtime -Jobs $Jobs | Out-Null
     } else {
         # Another architecture is built across (build.ps1 -Arch, from the x64 work), into
         # .build\<arch>\Bezzle, with its Swift and C++ runtimes laid beside it.

@@ -20,21 +20,15 @@ enum Updates {
     /// Whether this copy updates itself: WinSparkle beside it, and a feed to read.
     static var isAvailable: Bool { sparkle != nil }
 
-    /// The version people see and the build number updates are compared by, from Bezzle.exe's
-    /// version resource (the installer writes them there); nil for a copy built here.
-    static let version: (short: String, build: String)? = {
-        guard let short = versionString("ProductVersion"), let build = versionString("Build") else { return nil }
-        return (short, build)
-    }()
-
     /// Starts the updater, once, once Bezzle is on screen.
     static func start() {
-        guard !started, let s = sparkle, let version else { return }
+        // A released copy's version, and the build number its updates are compared by (AppVersion).
+        guard !started, let s = sparkle, let build = AppVersion.build else { return }
         started = true
         "Bezzle".withCString(encodedAs: UTF16.self) { company in
-            version.short.withCString(encodedAs: UTF16.self) { s.setAppDetails(company, company, $0) }
+            AppVersion.short.withCString(encodedAs: UTF16.self) { s.setAppDetails(company, company, $0) }
         }
-        version.build.withCString(encodedAs: UTF16.self) { s.setBuildVersion($0) }
+        build.withCString(encodedAs: UTF16.self) { s.setBuildVersion($0) }
         // Its own words in Bezzle's language (it has German, French and Italian of its own).
         Words.language.withCString { s.setLanguage($0) }
         // Where it keeps when it last looked and a version skipped; the uninstaller takes it away.
@@ -78,35 +72,6 @@ enum Updates {
               let dll = path.withCString(encodedAs: UTF16.self, LoadLibraryW) else { return nil }
         return WinSparkle(dll)
     }()
-
-    /// One value of Bezzle.exe's version resource (StringFileInfo, US English, Unicode).
-    private static func versionString(_ name: String) -> String? {
-        typealias Size = @convention(c) (UnsafePointer<UInt16>?, UnsafeMutablePointer<DWORD>?) -> DWORD
-        typealias Info = @convention(c) (UnsafePointer<UInt16>?, DWORD, DWORD, UnsafeMutableRawPointer?) -> Int32
-        typealias Query = @convention(c) (UnsafeRawPointer?, UnsafePointer<UInt16>?, UnsafeMutablePointer<UnsafeMutableRawPointer?>?, UnsafeMutablePointer<UINT>?) -> Int32
-        guard let dll = "version.dll".withCString(encodedAs: UTF16.self, LoadLibraryW),
-              let sizeOf = GetProcAddress(dll, "GetFileVersionInfoSizeW"), let infoOf = GetProcAddress(dll, "GetFileVersionInfoW"),
-              let query = GetProcAddress(dll, "VerQueryValueW") else { return nil }
-        let exe = CommandLine.arguments[0]
-        var ignored: DWORD = 0
-        let size = exe.withCString(encodedAs: UTF16.self) { unsafeBitCast(sizeOf, to: Size.self)($0, &ignored) }
-        guard size > 0 else { return nil }
-        var block = [UInt8](repeating: 0, count: Int(size))
-        let read = exe.withCString(encodedAs: UTF16.self) { path in
-            block.withUnsafeMutableBytes { unsafeBitCast(infoOf, to: Info.self)(path, 0, size, $0.baseAddress) }
-        }
-        guard read != 0 else { return nil }
-        return block.withUnsafeBytes { bytes -> String? in
-            var value: UnsafeMutableRawPointer?
-            var length: UINT = 0
-            let found = "\\StringFileInfo\\040904B0\\\(name)".withCString(encodedAs: UTF16.self) {
-                unsafeBitCast(query, to: Query.self)(bytes.baseAddress, $0, &value, &length)
-            }
-            guard found != 0, let value, length > 0 else { return nil }
-            let text = String(decodingCString: value.assumingMemoryBound(to: UInt16.self), as: UTF16.self)
-            return text.isEmpty ? nil : text
-        }
-    }
 }
 
 /// The part of WinSparkle's C API (winsparkle.h) that Bezzle calls, found by name in the DLL.

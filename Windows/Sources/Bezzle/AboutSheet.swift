@@ -44,7 +44,7 @@ enum Credits {
         Part(line: "WinUI and the Windows App Runtime are by Microsoft, under the license terms of the Windows App SDK.",
              files: ["windows-app-sdk.txt", "windows-app-sdk-notice.txt"]),
         Part(line: "Web pages are read in WebView2, whose loader is by Microsoft, under the BSD licence.", files: ["webview2.txt"]),
-        Part(line: "The Microsoft Visual C++ runtime comes with Bezzle, as Microsoft lets apps bring it along.", files: []),
+        Part(line: "The Microsoft Visual C++ runtime comes with Bezzle, as Microsoft lets apps bring it along.", files: ["visual-cpp-runtime.txt"]),
         Part(line: "Updates come through WinSparkle, by Vaclav Slavik, under the MIT licence, with wxWidgets, Expat, OpenSSL and ed25519 by Orson Peters.",
              notice: "This product includes software developed by the OpenSSL Project for use in the OpenSSL Toolkit (http://www.openssl.org/). This product includes cryptographic software written by Eric Young (eay@cryptsoft.com).",
              files: ["winsparkle.txt", "wxwidgets.txt", "winsparkle-expat.txt", "openssl.txt", "ed25519.txt"]),
@@ -151,7 +151,9 @@ final class AboutSheet {
         try? ToolTipService.setToolTip(closer.box, Words.t("Close"))
         title.children.append(closer.box)
         top.children.append(title)
-        let version = Updates.version.map { Words.t("Version %@ (%@)", $0.short, $0.build) } ?? Words.t("A copy built on this computer")
+        // The version, as the Mac's About shows it with its build; a copy built here says so.
+        let version = AppVersion.build.map { Words.t("Version %@ (%@)", AppVersion.short, $0) }
+            ?? Words.t("Version %@, built on this computer", AppVersion.short)
         top.children.append(Theme.text(version, size: 12.5, ink: 2))
         top.children.append(Theme.text("© 2026 Erik Muffler", size: 12.5, ink: 3))
         let thanks = Theme.text(Words.t("Bezzle is made with these, with thanks to their makers."), size: 13, weight: 500)

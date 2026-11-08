@@ -426,6 +426,8 @@ final class BezzleApp: SwiftApplication {
     /// What it asks about one design is about the design the core works on at that moment
     /// (`Tabs.activeTab`): the tab in front, or the one a tool works on.
     @MainActor private func startAIServer() {
+        // What it says it is when an assistant connects: Bezzle's version, the Mac's (AppVersion).
+        MCPServer.shared.version = AppVersion.short
         guard ProcessInfo.processInfo.environment["BEZZLE_NO_MCP"] == nil else { return }
         let host = MCPHost.shared
         let tabs = Tabs.shared
