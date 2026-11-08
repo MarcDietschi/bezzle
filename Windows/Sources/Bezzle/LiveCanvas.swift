@@ -743,7 +743,8 @@ final class LivePeople {
     private let grow = CompositeTransform()
     private lazy var ticker = Motion.Ticker { [weak self] dt in self?.step(dt) ?? false }
 
-    private static let spacing = 26.0
+    /// From one token to the next, as the Mac's: each 28 wide (24 and its paper round it), 4 over the one before.
+    private static let spacing = 24.0
     private static let pop = Motion.spring(response: 0.32, damping: 0.58)
     private static let open = Motion.spring(response: 0.24, damping: 0.86)
 
@@ -791,7 +792,7 @@ final class LivePeople {
             token.pointed = false
             token.box.isHitTestVisible = false
         }
-        root.width = Double(max(people.count, 1)) * Self.spacing + 4
+        root.width = Double(max(people.count, 1)) * Self.spacing + 6
         if !people.isEmpty, !hasPeople || row.target == 0 {
             if !hasPeople { row = DeckSpring(0) }
             row.target = 1
@@ -971,9 +972,10 @@ final class LivePeople {
 
     /// How a token looks for who it is: their pencil and initial, ringed at work, dimmed away.
     private func look(_ token: Token, _ person: WindowsCore.LivePerson, following: Bool) {
-        if token.pencil != person.pencil || token.initial.text != person.initial {
+        if token.pencil != person.pencil || token.initial.text != person.initial || token.away != person.away {
             token.pencil = person.pencil
-            token.disc.fill = Theme.brush(person.pencil)
+            // Away, the pencil greyer as well as fainter, as the Mac's saturation(0.4).
+            token.disc.fill = Theme.brush(person.away ? Self.greyer(person.pencil, keeping: 0.4) : person.pencil)
             token.ring.stroke = Theme.brush(person.pencil, 0.55)
             token.initial.text = person.initial
             tag(token, person, live: WindowsCore.live)
@@ -982,5 +984,14 @@ final class LivePeople {
         token.working = person.doing != "looking" && !person.away
         token.ring.visibility = token.working ? .visible : .collapsed
         token.follow.target = following ? 1 : 0
+    }
+
+    /// A colour with only `keeping` of its saturation, toward its own luminance (Rec. 709), as
+    /// SwiftUI's saturation modifier takes it.
+    static func greyer(_ rgb: UInt32, keeping k: Double) -> UInt32 {
+        let r = Double(rgb >> 16 & 0xFF), g = Double(rgb >> 8 & 0xFF), b = Double(rgb & 0xFF)
+        let l = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        func c(_ v: Double) -> UInt32 { UInt32(min(max(l + (v - l) * k, 0), 255).rounded()) }
+        return c(r) << 16 | c(g) << 8 | c(b)
     }
 }
