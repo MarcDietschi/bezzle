@@ -1012,7 +1012,8 @@ struct Text {
     /// Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
     /// lines set from the left (centred or set from the right, Skia's lines lie where the Mac's do).
     /// Its words too, from `start` on in the text's (UTF-16), for telling which a letter is of.
-    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; double back; size_t start = 0; std::u16string words; };
+    /// Its runs too, for the lines under and through its letters when it is outlined.
+    struct Line { std::unique_ptr<Paragraph> paragraph; double baseline; double back; size_t start = 0; std::u16string words; std::vector<Run> runs; };
     std::vector<Line> lines;
     std::vector<double> baselines;
 };
@@ -1366,7 +1367,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             std::u16string words;
             for (const auto& r : piece) words += r.text;
             const double back = (piece.empty() || !fromLeft ? 0 : piece[0].tracking / 2) - part.indent;
-            text.lines.push_back({std::move(line), baseline, back, start, std::move(words)});
+            text.lines.push_back({std::move(line), baseline, back, start, std::move(words), piece});
             text.baselines.push_back(top + m.fBaseline);
             if (written < capacity) {
                 // Skia shares the leading out above and below the line; Text Kit keeps it apart.
@@ -1562,6 +1563,125 @@ extern "C" int32_t bz_text_letters(int32_t id, double* out, int32_t capacity, in
     const int letters = nextText++;
     glyphLines[letters] = std::move(kept);
     return letters;
+}
+
+namespace {
+/// Whether a font draws its letters as pictures (emoji in colour), which have no outlines to take.
+bool drawsPictures(const SkFont& font) {
+    const SkTypeface* t = font.getTypeface();
+    if (!t) return false;
+    for (const char* tag : {"COLR", "CBDT", "sbix", "SVG "}) {
+        if (t->getTableSize(SkSetFourByteTag(tag[0], tag[1], tag[2], tag[3])) > 0) return true;
+    }
+    return false;
+}
+}  // namespace
+
+extern "C" int32_t bz_text_outline(int32_t id, int32_t start, int32_t end) {
+    std::lock_guard<std::mutex> guard(lock);
+    answer.clear();
+    auto it = texts.find(id);
+    if (it == texts.end() || end <= start) return 0;
+    const auto& t = it->second;
+    SkPathBuilder letters;
+    std::vector<SkRect> lineRects;
+    bool pictures = false;
+    for (size_t k = 0; k < t.lines.size(); k++) {
+        const auto& line = t.lines[k];
+        if (!line.paragraph) continue;
+        // Where drawing call 12 paints the line, from the text's top left.
+        const double baseline = k < t.baselines.size() ? t.baselines[k] : 0;
+        const double dx = -line.back, dy = baseline - line.baseline;
+        line.paragraph->visit([&](int, const Paragraph::VisitorInfo* info) {
+            if (!info) return;
+            SkFontMetrics m;
+            info->font.getMetrics(&m);
+            // Where the letters asked for begin and end in each of the line's runs, for the lines
+            // under and through them: Skia shapes runs of one font together, whatever their styles.
+            std::map<size_t, std::pair<double, double>> spans;
+            for (int g = 0; g < info->count; g++) {
+                const size_t inLine = utf16Index(line.words, info->utf8Starts[g]);
+                const int32_t at = int32_t(line.start + inLine);
+                if (at < start || at >= end) continue;
+                if (drawsPictures(info->font)) { pictures = true; continue; }
+                const double x = dx + info->origin.fX + info->positions[g].fX, y = dy + info->origin.fY + info->positions[g].fY;
+                if (auto glyph = info->font.getPath(info->glyphs[g])) letters.addPath(*glyph, float(x), float(y));
+                SkScalar w = 0;
+                info->font.getWidths({&info->glyphs[g], 1}, {&w, 1});
+                size_t run = 0, from = 0;
+                while (run + 1 < line.runs.size() && inLine >= from + line.runs[run].text.size()) { from += line.runs[run].text.size(); run++; }
+                auto [it, made] = spans.try_emplace(run, x, x + double(w));
+                if (!made) { it->second.first = std::min(it->second.first, x); it->second.second = std::max(it->second.second, x + double(w)); }
+            }
+            // Each run's own lines under and through its letters, as Skia draws them.
+            const double y = dy + info->origin.fY;
+            for (const auto& [run, span] : spans) {
+                if (run >= line.runs.size() || span.first >= span.second) continue;
+                const Run& r = line.runs[run];
+                if (r.underline) {
+                    SkScalar position = 0, thickness = 0;
+                    if (!m.hasUnderlinePosition(&position)) position = -m.fAscent * 0.1f;
+                    if (!m.hasUnderlineThickness(&thickness)) thickness = info->font.getSize() / 14;
+                    lineRects.push_back(SkRect::MakeLTRB(float(span.first), float(y + position), float(span.second), float(y + position + thickness)));
+                }
+                if (r.strike) {
+                    SkScalar position = 0, thickness = 0;
+                    if (!m.hasStrikeoutPosition(&position)) position = m.fAscent * 0.3f;
+                    if (!m.hasStrikeoutThickness(&thickness)) thickness = info->font.getSize() / 14;
+                    lineRects.push_back(SkRect::MakeLTRB(float(span.first), float(y + position), float(span.second), float(y + position + thickness)));
+                }
+            }
+        });
+    }
+    if (pictures) return -1;
+    SkPath shapes = letters.detach();
+    // The lines made one with the letters they cross, as the Mac's TextOutlines does, so that
+    // where they overlap is filled whichever way each winds: Skia's union, wound to fill by the
+    // winding rule paths are filled with (its own may be even-odd). Where that cannot be wound,
+    // the lines run the way the letters' outsides do, which fills the same.
+    SkPath out = shapes;
+    if (!lineRects.empty()) {
+        SkPathBuilder joined(shapes);
+        joined.setFillType(SkPathFillType::kWinding);
+        // Which way the letters' outsides run: the larger areas, whose sign the sum takes.
+        double area = 0;
+        SkPath::Iter it(shapes, false);
+        SkPoint first = {0, 0}, last = {0, 0};
+        while (auto r = it.next()) {
+            const auto& q = r->fPoints;
+            auto edge = [&](SkPoint a, SkPoint b) { area += double(a.fX) * b.fY - double(b.fX) * a.fY; };
+            switch (r->fVerb) {
+                case SkPathVerb::kMove: first = last = q[0]; break;
+                case SkPathVerb::kLine: edge(last, q[1]); last = q[1]; break;
+                case SkPathVerb::kQuad: case SkPathVerb::kConic: edge(last, q[1]); edge(q[1], q[2]); last = q[2]; break;
+                case SkPathVerb::kCubic: edge(last, q[1]); edge(q[1], q[2]); edge(q[2], q[3]); last = q[3]; break;
+                case SkPathVerb::kClose: edge(last, first); last = first; break;
+            }
+        }
+        const auto direction = area >= 0 ? SkPathDirection::kCW : SkPathDirection::kCCW;
+        SkPathBuilder ruled;
+        for (const auto& rect : lineRects) { ruled.addRect(rect, direction); joined.addRect(rect, direction); }
+        auto united = Op(shapes, ruled.detach(), kUnion_SkPathOp);
+        auto wound = united ? AsWinding(*united) : std::nullopt;
+        out = wound ? *wound : joined.detach();
+    }
+    std::vector<double> numbers;
+    writePath(out, numbers);
+    keep(numbers);
+    return int32_t(answer.size());
+}
+
+extern "C" int32_t bz_glyph_outline(int32_t line, int32_t index) {
+    std::lock_guard<std::mutex> guard(lock);
+    answer.clear();
+    auto it = glyphLines.find(line);
+    if (it == glyphLines.end() || index < 0 || index >= int32_t(it->second.size())) return 0;
+    const Glyph& g = it->second[size_t(index)];
+    if (drawsPictures(g.font)) return -1;
+    std::vector<double> numbers;
+    if (auto glyph = g.font.getPath(g.id)) writePath(*glyph, numbers);
+    keep(numbers);
+    return int32_t(answer.size());
 }
 
 extern "C" void bz_text_forget(void) {

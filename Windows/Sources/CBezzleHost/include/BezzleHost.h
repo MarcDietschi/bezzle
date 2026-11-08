@@ -78,6 +78,15 @@ int32_t bz_glyph_starts(int32_t line, int32_t *starts, int32_t capacity);
 /// draws it, its own width, ascent and descent, where its underline is and how thick, its font's
 /// x height, and where in the words (UTF-16) it is from. `*letterCount` is how many there are.
 int32_t bz_text_letters(int32_t text, double *letters, int32_t capacity, int32_t *letterCount);
+/// The outlines of the letters of a text set by `bz_text_lay` whose words lie from `start` to
+/// `end` (UTF-16), and of the lines under and through them, made one with them, where drawing
+/// call 12 draws them from the text's top left: in the path numbers of `bz_host_call`'s path
+/// operations, taken with `bz_host_take`. Returns how many bytes, or -1 when some of those letters
+/// are pictures (emoji in colour), which have no outlines.
+int32_t bz_text_outline(int32_t text, int32_t start, int32_t end);
+/// The outline of letter `index` of a line set by `bz_text_glyphs`, its baseline's left end at
+/// nought and y running down, as `bz_text_outline` gives it; -1 when it is a picture.
+int32_t bz_glyph_outline(int32_t line, int32_t index);
 /// Forgets every text set, as when fonts were added.
 void bz_text_forget(void);
 

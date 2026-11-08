@@ -101,6 +101,12 @@ do {
         if v.count == 4 { print(WindowsCore.debugCut(from: BezzleCore.CGPoint(x: v[0], y: v[1]), to: BezzleCore.CGPoint(x: v[2], y: v[3]))) }
         boards = WindowsCore.boards()
     }
+    // With BEZZLE_OUTLINE (a file), every text is first made the outlines of its letters, as
+    // Convert to Path makes them, and what each became written there (Host/Outlining.swift).
+    if let file = ProcessInfo.processInfo.environment["BEZZLE_OUTLINE"] {
+        try Data(WindowsCore.outlineEveryText().utf8).write(to: URL(fileURLWithPath: file))
+        boards = WindowsCore.boards()
+    }
     // With BEZZLE_EXPORT (png, jpeg, webp, avif, svg or pdf), every artboard is exported there as
     // the Export sheet exports them, at the scale given, at BEZZLE_QUALITY (0…1, 0.9 otherwise);
     // with BEZZLE_SCOPE=marked, what is marked for export instead, as each is marked.

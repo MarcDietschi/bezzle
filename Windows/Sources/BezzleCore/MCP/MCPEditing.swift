@@ -495,15 +495,14 @@ extension MCPTools {
     func convertToPath(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         let ids = try Self.layers(args, in: store)
-        let shapes = ids.filter { store.doc.node($0).map { !$0.locked && $0.asPath() != nil } == true }
-        guard !shapes.isEmpty else {
-            throw MCPError(ids.contains { store.doc.node($0)?.kind == .text } ? "Bezzle for Windows cannot outline letters yet: texts stay texts. Rectangles, ellipses and lines become paths."
-                                                                             : "Only rectangles, ellipses and lines become paths, and none of these can (they are locked, or paths already).")
+        // Words being typed are the text's before it is outlined.
+        MCPHost.shared.endEditing()
+        // Texts become the outlines of their letters, as on the Mac (Host/Outlining.swift).
+        guard let made = WindowsCore.pathConversion(ids, in: store.doc).change else {
+            throw MCPError("Only rectangles, ellipses, lines and texts become paths, and none of these can (they are locked, or texts with emoji or in a repeat grid, a component copy or a deck).")
         }
-        try change(store, "Convert to Path") { doc in
-            for id in shapes { doc.update(id) { n in if let path = n.asPath() { n = path } } }
-        }
-        return described(shapes, in: store, full: true)
+        try change(store, "Convert to Path") { doc in made(&doc) }
+        return described(ids, in: store, full: true)
     }
 
     func selectLayers(_ args: Arguments) async throws -> [Content] {

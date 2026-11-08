@@ -3940,6 +3940,20 @@ final class DesignCanvas {
         session.edited(board: nil)
     }
 
+    /// Rectangles, ellipses and lines become paths, and texts the outlines of their letters
+    /// (Ctrl+8, the Mac's ⌘8), as one step; a beep for texts whose letters are pictures (emoji).
+    private func convertToPath() {
+        let selection = session.selection
+        guard WindowsCore.canConvertToPath(selection) else { MessageBeep(0); return }
+        // Words being typed are the text's before it is outlined.
+        if editing != nil { endEditing() }
+        let done = WindowsCore.convertToPath(selection)
+        if done.refused { MessageBeep(0) }
+        guard done.changed else { return }
+        session.select(selection, on: session.board)
+        session.edited(board: nil)
+    }
+
     /// Each selected layer's border made a shape of its own (Ctrl+Alt+O, the Mac's ⌥⌘O).
     private func outlineBorders() {
         let made = WindowsCore.outlineBorders(session.selection)
@@ -4764,6 +4778,10 @@ final class DesignCanvas {
                 entries += formatEntries()
                 entries.append(.separator)
             }
+            // Shapes and texts as paths, as the Mac's menu has it (a path itself has its points).
+            if WindowsCore.canConvertToPath(selection) {
+                entries += [.item("Convert to Path", shortcut: "Ctrl+8") { [weak self] in self?.convertToPath() }, .separator]
+            }
             // Borders as shapes of their own, as the Mac's Object menu has it.
             if WindowsCore.canOutlineBorders(selection) {
                 entries += [.item(selection.count == 1 ? "Outline Border" : "Outline Borders", shortcut: "Ctrl+Alt+O") { [weak self] in self?.outlineBorders() }, .separator]
@@ -5082,6 +5100,7 @@ final class DesignCanvas {
         case .i where control && option: combine("intersect"); args.handled = true; return
         case .x where control && option: combine("exclude"); args.handled = true; return
         case .o where control && option: outlineBorders(); args.handled = true; return
+        case .number8 where control && !shift && !option: convertToPath(); args.handled = true; return
         case .m where control && shift:
             if let mask = WindowsCore.selectedMask(selection) { releaseMask(mask) } else { MessageBeep(0) }
             args.handled = true
