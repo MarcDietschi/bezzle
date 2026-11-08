@@ -232,6 +232,14 @@ final class DesignWindow {
                 self.toggleVersions()
                 return
             }
+            // The Mac's Control keys are Alt here: Alt+R, Alt+comma and Alt+G the rulers, guides and
+            // layout grids, Alt+P and Alt+I the prototype and inspect modes; Alt+Y the layers (⌘Y).
+            if GetKeyState(Int32(VK_MENU)) < 0, GetKeyState(Int32(VK_CONTROL)) >= 0, GetKeyState(Int32(VK_SHIFT)) >= 0,
+               let action = self.altKey(args.key) {
+                args.handled = true
+                action()
+                return
+            }
             // With the ruler out: Escape puts it away, and the arrows step through the versions,
             // unless at now they have something selected to move. Looking back, the canvas's other
             // keys rest.
@@ -401,9 +409,9 @@ final class DesignWindow {
         let board = session.board.flatMap { index in boards.first { $0.index == index }?.id }
             ?? boards.first { $0.frame.contains(middle) }?.id ?? boards.first?.id
         return [
-            .item("Rulers", checked: WindowsCore.showsRulers) { WindowsCore.showsRulers.toggle(); aids() },
-            .item("Guides", checked: WindowsCore.showsGuides) { WindowsCore.showsGuides.toggle(); aids() },
-            .item("Layout Grids", checked: WindowsCore.showsGrids) { WindowsCore.showsGrids.toggle(); aids() },
+            .item("Rulers", shortcut: "Alt+R", checked: WindowsCore.showsRulers) { WindowsCore.showsRulers.toggle(); aids() },
+            .item("Guides", shortcut: "Alt+,", checked: WindowsCore.showsGuides) { WindowsCore.showsGuides.toggle(); aids() },
+            .item("Layout Grids", shortcut: "Alt+G", checked: WindowsCore.showsGrids) { WindowsCore.showsGrids.toggle(); aids() },
             .separator,
             .item("Lock Guides", checked: WindowsCore.guidesLocked) { WindowsCore.guidesLocked.toggle(); aids() },
             .item("Remove Guides", enabled: board.map(WindowsCore.hasGuides) == true) {
@@ -411,5 +419,29 @@ final class DesignWindow {
                 aids()
             },
         ]
+    }
+
+    /// What an Alt key does, as the Mac's Control keys do there (Erik's mapping): the helpers as
+    /// the menu above switches them, the modes as the bar's switch, the layers as their button.
+    private func altKey(_ key: VirtualKey) -> (() -> Void)? {
+        let canvas = canvas, session = session
+        func aids() {
+            canvas.aidsChanged()
+            session.edited(board: nil)
+        }
+        switch key {
+        case .r: return { WindowsCore.showsRulers.toggle(); aids() }
+        case .g: return { WindowsCore.showsGrids.toggle(); aids() }
+        case .p: return { session.mode = session.mode == 1 ? 0 : 1 }
+        case .i: return { session.mode = session.mode == 2 ? 0 : 2 }
+        case .y:
+            return {
+                if session.showsResources { session.showsResources = false; session.showsLayers = true } else { session.showsLayers.toggle() }
+            }
+        default:
+            // The comma (VK_OEM_COMMA), unshifted on every layout Bezzle knows, as ⌃, on the Mac.
+            guard key.rawValue == 188 else { return nil }
+            return { WindowsCore.showsGuides.toggle(); aids() }
+        }
     }
 }

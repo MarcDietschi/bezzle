@@ -498,7 +498,8 @@ final class Tabs {
 
     /// The tabs' keys, as the Mac's menus have them, with Ctrl for ⌘: Ctrl+Tab and Ctrl+Shift+Tab
     /// (Show Next Tab, Show Previous Tab), Ctrl+N (New…, home), Ctrl+O (Open…), Ctrl+Shift+I
-    /// (bring in), Ctrl+W (Close Tab, or on home Close, which quits) and Ctrl+Shift+W (Close Window).
+    /// (bring in), Ctrl+W (Close Tab, or on home Close, which quits), Ctrl+Shift+W (Close Window) and
+    /// Ctrl+Q (Quit).
     /// True when it was one of them.
     func key(_ args: KeyRoutedEventArgs) -> Bool {
         let ctrl = GetKeyState(Int32(VK_CONTROL)) < 0, shift = GetKeyState(Int32(VK_SHIFT)) < 0, alt = GetKeyState(Int32(VK_MENU)) < 0
@@ -510,6 +511,8 @@ final class Tabs {
         case .o where !shift: action = { self.openPanel() }
         case .i where shift: action = { self.bringInPanel() }
         case .w: action = shift ? { self.closeWindow() } : { self.closeFront() }
+        // Quit, as ⌘Q: every design saved first (Alt+F4 quits too).
+        case .q where !shift: action = { self.quit() }
         default: action = nil
         }
         guard let action else { return false }

@@ -53,8 +53,8 @@ final class ToolRail {
         layers.box.horizontalAlignment = .center
         // As far from the bottom as from the left, level with the canvas's bottom edge.
         layers.box.margin = Theme.inset(0, 0, 0, 9)
-        // Ctrl+Y is Redo on Windows, so the layers have no key of their own (the Mac's ⌘Y).
-        try? ToolTipService.setToolTip(layers.box, Words.t("Layers"))
+        // Alt+Y, as the Mac's ⌘Y: Ctrl+Y is Redo on Windows.
+        try? ToolTipService.setToolTip(layers.box, Words.t("Layers") + "  Alt+Y")
         buttons.append((nil, layers, Glyphs.layers()))
         root.children.append(layers.box)
 
