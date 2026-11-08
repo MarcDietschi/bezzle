@@ -60,23 +60,30 @@ extension Inspector {
         cards.append(opacityCard(looks, change: change, preview: preview))
         let firstFill = kinds.contains("text") || looks.fillOn != false
         if fills && (firstFill || looks.fills.count > 1) {
-            cards.append(pile(looks.fills.indices.filter { $0 > 0 || firstFill }.reversed().map { slot in
-                fillCard(looks, slot: slot, ids: ids, board: board, change: change, preview: preview)
+            // A picture stays at the bottom, where a repeat grid's cells keep their own.
+            let pile = makePile("fill", slots: looks.fills.indices.filter { $0 > 0 || firstFill }.reversed(), count: looks.fills.count,
+                                lowest: looks.pictureUnder ? 1 : 0, ids: ids, board: board)
+            cards.append(hold(pile, pile.slots.map { slot in
+                fillCard(looks, slot: slot, ids: ids, board: board, restack: pile.restack(slot), change: change, preview: preview)
             }))
         }
         // What the pictures have of light, colour and detail, when every layer shows one.
         if let photo = photoCard(ids, board: board) { cards.append(photo) }
         let firstBorder = kinds.contains("line") || looks.borderOn != false
         if borders && (firstBorder || looks.borders.count > 1) {
-            cards.append(pile(looks.borders.indices.filter { $0 > 0 || firstBorder }.reversed().map { slot in
-                borderCard(looks, slot: slot, ids: ids, board: board, lineOnly: kinds == ["line"], change: change, preview: preview)
+            let pile = makePile("border", slots: looks.borders.indices.filter { $0 > 0 || firstBorder }.reversed(), count: looks.borders.count,
+                                lowest: 0, ids: ids, board: board)
+            cards.append(hold(pile, pile.slots.map { slot in
+                borderCard(looks, slot: slot, ids: ids, board: board, lineOnly: kinds == ["line"], restack: pile.restack(slot), change: change, preview: preview)
             }))
         }
         let firstShadow = looks.shadowOn != false
         if firstShadow || looks.shadows.count > 1 {
             let canSpread = kinds.isSubset(of: ["rectangle", "ellipse", "path", "line"])
-            cards.append(pile(looks.shadows.indices.filter { $0 > 0 || firstShadow }.reversed().map { slot in
-                shadowCard(looks, slot: slot, canInset: !kinds.contains("line"), canSpread: canSpread, change: change, preview: preview)
+            let pile = makePile("shadow", slots: looks.shadows.indices.filter { $0 > 0 || firstShadow }.reversed(), count: looks.shadows.count,
+                                lowest: 0, ids: ids, board: board)
+            cards.append(hold(pile, pile.slots.map { slot in
+                shadowCard(looks, slot: slot, canInset: !kinds.contains("line"), canSpread: canSpread, restack: pile.restack(slot), change: change, preview: preview)
             }))
         }
         // Only shapes have an outline to show what is behind them through.
@@ -113,13 +120,44 @@ extension Inspector {
         return cards
     }
 
+    /// The pile of a look's cards, for `slots` top first, of the `count` the layers have: a card
+    /// dragged up or down it and let go in another place is put there, as one step (the Mac's
+    /// Reorder Fills), the open card staying open on what it showed.
+    private func makePile(_ look: String, slots: [Int], count: Int, lowest: Int, ids: [UUID], board: Int) -> Pile {
+        // The card just put down lands in each pile made for a moment after (the panel may be made
+        // more than once as the change goes round), from where it was let go.
+        let landing = pileLanding.flatMap { $0.look == look && WindowsCore.now - $0.at < 0.5 ? (slot: $0.slot, offset: $0.offset) : nil }
+        let pile = Pile(look: look, slots: slots, count: count, lowest: lowest, landing: landing)
+        piles.append(pile)
+        let kind = ["fill": "Fill", "border": "Border", "shadow": "Shadow"][look] ?? "Fill"
+        pile.holding = { [weak self] on in self?.dialing = on }
+        pile.commit = { [weak self] from, to, landing in
+            guard let self else { return }
+            self.pileLanding = (look, to, landing, WindowsCore.now)
+            // The open card stays open on what it showed, wherever that went.
+            if let open = self.opened {
+                let at: Int? = open == kind ? 0 : open.hasPrefix(kind + " ") ? Int(open.dropFirst(kind.count + 1)) : nil
+                if let at {
+                    let now = at == from ? to : from < at && at <= to ? at - 1 : to <= at && at < from ? at + 1 : at
+                    self.opened = Self.cardID(kind, now)
+                }
+            }
+            self.dialing = false
+            // Once the release is over: the panel is made again with the card in its new place.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    WindowsCore.change(ids, .restack(look, from: from, to: to))
+                    self.session.edited(board: board)
+                }
+            }
+        }
+        return pile
+    }
+
     /// Several cards of one kind close together, 4 apart, so they read as one.
-    private func pile(_ cards: [UIElement]) -> UIElement {
+    private func hold(_ pile: Pile, _ cards: [UIElement]) -> UIElement {
         if cards.count == 1 { return cards[0] }
-        let stack = StackPanel()
-        stack.spacing = 4
-        for c in cards { stack.children.append(c) }
-        return stack
+        return pile.hold(cards)
     }
 
     private func said(_ v: Double) -> String { number(v) }
@@ -195,14 +233,14 @@ extension Inspector {
         })
     }
 
-    private func fillCard(_ l: WindowsCore.Looks, slot: Int, ids: [UUID], board: Int,
+    private func fillCard(_ l: WindowsCore.Looks, slot: Int, ids: [UUID], board: Int, restack: ((Double?) -> Void)?,
                           change: @escaping @MainActor (WindowsCore.LookChange) -> Void,
                           preview: @escaping @MainActor (WindowsCore.LookChange?) -> Void) -> UIElement {
         let paint = l.fills[slot]
         // Letters picked out while typing take a colour of their own, and only that, as on the
         // Mac: one colour's field, its swatch opening the colours, nothing for the whole layer.
         if l.lettersPicked, slot == 0 {
-            return card("Fill", paint.summary, id: Self.cardID("Fill", slot), mark: Colours.swatch(paint, size: 15, radius: 4), body: { [self] in
+            return card("Fill", paint.summary, id: Self.cardID("Fill", slot), mark: Colours.swatch(paint, size: 15, radius: 4), restack: restack, body: { [self] in
                 let used = WindowsCore.designColours.filter { $0.hex != paint.colour?.hex }
                 let open: @MainActor (FrameworkElement) -> Void = { [weak self] anchor in
                     self?.openColourPanel(below: anchor, start: paint.first) { c in change(.fillColour(0, c)) }
@@ -222,7 +260,7 @@ extension Inspector {
             more = ("Add another fill", { on in preview(on ? .moreFill : nil) }, { [self] in self.opened = next; change(.moreFill) })
         }
         return card("Fill", paint.summary, id: Self.cardID("Fill", slot), mark: Colours.swatch(paint, size: 15, radius: 4), dial: dial,
-                    remove: remove, removal: l.isText ? "Remove colour" : "Remove fill", more: more, style: "fill:\(slot)", body: { [self] in
+                    remove: remove, removal: l.isText ? "Remove colour" : "Remove fill", more: more, restack: restack, style: "fill:\(slot)", body: { [self] in
             var rows: [UIElement] = [paintField(paint, target: .fill(slot), ids: ids, board: board, suggest: true, change: change, preview: preview)]
             // Placing its picture, the card says how, as the Mac's does.
             if slot == 0, session.pictures.editing != nil {
@@ -301,7 +339,7 @@ extension Inspector {
     // MARK: Border
 
     /// One of the borders, or of a line's strokes. The drag sets its weight, clicking at each preset.
-    private func borderCard(_ l: WindowsCore.Looks, slot: Int, ids: [UUID], board: Int, lineOnly: Bool,
+    private func borderCard(_ l: WindowsCore.Looks, slot: Int, ids: [UUID], board: Int, lineOnly: Bool, restack: ((Double?) -> Void)?,
                             change: @escaping @MainActor (WindowsCore.LookChange) -> Void,
                             preview: @escaping @MainActor (WindowsCore.LookChange?) -> Void) -> UIElement {
         let b = l.borders[slot]
@@ -318,7 +356,7 @@ extension Inspector {
         return card(lineOnly ? "Line" : "Border", b.summary, id: Self.cardID("Border", slot), glyph: Glyphs.border((b.dash ?? 0) > 0 ? nil : b.firstWidth), dial: dial,
                     remove: remove, removal: lineOnly ? "Remove line" : "Remove border",
                     more: (lineOnly ? "Add another line" : "Add another border", { on in preview(on ? .moreBorder : nil) }, { [self] in self.opened = next; change(.moreBorder) }),
-                    style: "border:\(slot)", body: { [self] in
+                    restack: restack, style: "border:\(slot)", body: { [self] in
             var rows: [UIElement] = []
             rows.append(Controls.presetStrip(presets.enumerated().map { k, p in
                 (Glyphs.view(Glyphs.border(p.width), size: 16, brush: Theme.ink(b.preset == k ? 1 : 2)), b.preset == k)
@@ -343,7 +381,7 @@ extension Inspector {
 
     /// One of the shadows under the layers, or inside them. The drag lifts them, from none through
     /// each preset to floating.
-    private func shadowCard(_ l: WindowsCore.Looks, slot: Int, canInset: Bool, canSpread: Bool,
+    private func shadowCard(_ l: WindowsCore.Looks, slot: Int, canInset: Bool, canSpread: Bool, restack: ((Double?) -> Void)?,
                             change: @escaping @MainActor (WindowsCore.LookChange) -> Void,
                             preview: @escaping @MainActor (WindowsCore.LookChange?) -> Void) -> UIElement {
         let s = l.shadows[slot]
@@ -361,7 +399,7 @@ extension Inspector {
         return card(inset ? "Inner shadow" : "Shadow", s.summary, id: Self.cardID("Shadow", slot), mark: mark, dial: dial,
                     remove: { change(.remove("shadow", slot)) }, removal: "Remove shadow",
                     more: ("Add another shadow", { on in preview(on ? .moreShadow : nil) }, { [self] in self.opened = next; change(.moreShadow) }),
-                    style: "shadow:\(slot)", body: { [self] in
+                    restack: restack, style: "shadow:\(slot)", body: { [self] in
             var rows: [UIElement] = []
             if canInset {
                 rows.append(Controls.segmented(inset, [(false, "Outside"), (true, "Inside")], width: Self.content) { change(.shadowInset(slot, $0)) })

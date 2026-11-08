@@ -100,6 +100,9 @@ extension WindowsCore {
         public let isLine: Bool
         /// Whether a picture fills the first fill of every layer.
         public let pictures: Bool
+        /// Whether any of them has a picture in its first fill, which stays at the bottom of the
+        /// pile, where a repeat grid's cells keep their own.
+        public var pictureUnder = false
         /// The blur, while any of the layers has one on; `blurOn` whether all, none or some do.
         public let blur: BlurLook?
         public let blurOn: Bool?
@@ -347,6 +350,7 @@ extension WindowsCore {
                      blur: blurLook(nodes), blurOn: alike(nodes) { $0.blur?.on == true },
                      depth: depthLook(nodes), depthOn: alike(nodes) { $0.transform3D != nil })
         looks.lettersPicked = picked != nil
+        looks.pictureUnder = nodes.contains { $0.fill.image != nil }
         return looks
     }
 
@@ -361,6 +365,9 @@ extension WindowsCore {
         case shadowX(Int, Double), shadowY(Int, Double), shadowBlur(Int, Double), shadowSpread(Int, Double), shadowColour(Int, Colour)
         case addFill, addBorder, addShadow, addInnerShadow, moreFill, moreBorder, moreShadow
         case remove(String, Int)
+        /// One of the fills, borders or shadows put in another place, those between moving up
+        /// or down a place (the Mac's pile restacked): slots counted from the bottom.
+        case restack(String, from: Int, to: Int)
         /// The blur: how much (whole points from the dial), a preset, of what is behind or of the
         /// layer, all over or growing, toward a preset edge or between two points, how light and
         /// how much fill over it (per cent); added, taken away.
@@ -535,6 +542,9 @@ extension WindowsCore {
         case .remove(let look, let slot):
             let which: Look = look == "fill" ? .fill : look == "border" ? .border : .shadow
             return { $0.remove(which, at: slot) }
+        case .restack(let look, let from, let to):
+            let which: Look = look == "fill" ? .fill : look == "border" ? .border : .shadow
+            return { $0.move(which, from: from, to: to) }
         }
     }
 }

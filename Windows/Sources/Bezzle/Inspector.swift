@@ -35,6 +35,10 @@ final class Inspector {
     }
     /// While a dial turns, the cards are not made again: the card under the pointer must stay.
     var dialing = false
+    /// The piles of fills, borders and shadows shown, and the card of one just put in another
+    /// place, which lands there from where it was let go once the panel is made again.
+    var piles: [Pile] = []
+    var pileLanding: (look: String, slot: Int, offset: Double, at: Double)?
     /// Bezzle's own menus, for the cards' menu buttons.
     var menus: MenuHost?
     /// Whether a variable font's axes are shown, which they are anyway once one is set.
@@ -139,6 +143,7 @@ final class Inspector {
 
     func show() {
         cards.children.clear()
+        piles = []
         // The card pointed at goes with them, and the layers it outlined with it.
         if cardLit {
             cardLit = false
@@ -237,7 +242,7 @@ final class Inspector {
     func card(_ title: String, _ summary: String, id: String? = nil, glyph: [Glyphs.Part]? = nil, mark: FrameworkElement? = nil,
               swatch: WindowsCore.Paint? = nil, dial: Dial? = nil, remove: (@MainActor () -> Void)? = nil, removal: String = "Remove",
               accessory: FrameworkElement? = nil, more: (help: String, preview: @MainActor (Bool) -> Void, add: @MainActor () -> Void)? = nil,
-              style: String? = nil, body: (@MainActor () -> [UIElement])? = nil) -> UIElement {
+              restack: ((Double?) -> Void)? = nil, style: String? = nil, body: (@MainActor () -> [UIElement])? = nil) -> UIElement {
         let key = id ?? title
         if let style { styleKeys[key] = style }
         let card = Theme.card(radius: 12)
@@ -409,24 +414,44 @@ final class Inspector {
         }
         card.child = stack
 
-        // Pressing the line: a drag turns the dial, a click opens or folds the card.
-        var start: (x: Double, fraction: Double)?
+        // Pressing the line: a drag across turns the dial, one up or down picks a card of a pile up
+        // (`restack`), a click opens or folds the card. Measured in the window, not on the card,
+        // which moves under the pointer as it is carried: else each move would be counted less
+        // the last, and the card would shake (as on the Mac).
+        var start: (x: Double, y: Double, fraction: Double)?
         var turned = false
+        var carrying = false
         var tearing = false
         line.pointerEntered.addHandler { _, _ in if dial != nil, start == nil { fill.opacity = 0.55 } }
         line.pointerExited.addHandler { _, _ in if start == nil { fill.opacity = 0 } }
         line.pointerPressed.addHandler { [weak self] sender, args in
-            guard let self, let p = try? args?.getCurrentPoint(line)?.position else { return }
-            start = (Double(p.x), dial?.fraction ?? 0)
+            guard let self, let p = try? args?.getCurrentPoint(nil)?.position else { return }
+            start = (Double(p.x), Double(p.y), dial?.fraction ?? 0)
             turned = false
+            carrying = false
             tearing = false
             _ = try? (sender as? UIElement)?.capturePointer(args?.pointer)
-            if dial != nil { WindowsCore.beginGesture(); self.dialing = true }
+            if dial != nil || restack != nil { self.dialing = true }
         }
         line.pointerMoved.addHandler { [weak self] _, args in
-            guard let self, let s = start, let dial, let p = try? args?.getCurrentPoint(line)?.position else { return }
-            let dx = Double(p.x) - s.x
-            guard turned || abs(dx) > 3 else { return }
+            guard let self, let s = start, let p = try? args?.getCurrentPoint(nil)?.position else { return }
+            let dx = Double(p.x) - s.x, dy = Double(p.y) - s.y
+            if carrying {
+                restack?(dy)
+                return
+            }
+            if !turned {
+                // Up or down, a card in a pile is picked up; sideways, its dial turns.
+                if let restack, abs(dy) >= 4, abs(dy) > abs(dx) {
+                    carrying = true
+                    line.protectedCursor = Pointer.grab.cursor
+                    restack(dy)
+                    return
+                }
+                guard dial != nil, abs(dx) > 3 else { return }
+                WindowsCore.beginGesture()
+            }
+            guard let dial else { return }
             turned = true
             fill.opacity = 1
             named?.visibility = .collapsed
@@ -445,7 +470,16 @@ final class Inspector {
         line.pointerReleased.addHandler { [weak self] sender, args in
             guard let self, start != nil else { return }
             start = nil
+            // Before letting the pointer go, which tells of the capture lost at once.
+            let carried = carrying
+            carrying = false
             try? (sender as? UIElement)?.releasePointerCapture(args?.pointer)
+            if carried {
+                // Put down in the place it was carried to, as one step, or back where it was.
+                line.protectedCursor = nil
+                restack?(nil)
+                return
+            }
             if tearing, let remove {
                 // Taken away in one step, not turned down to nothing first.
                 WindowsCore.cancelGesture()
@@ -454,10 +488,8 @@ final class Inspector {
                 DispatchQueue.main.async { MainActor.assumeIsolated { remove() } }
                 return
             }
-            if dial != nil {
-                WindowsCore.endGesture()
-                self.dialing = false
-            }
+            if turned { WindowsCore.endGesture() }
+            self.dialing = false
             if turned {
                 fill.opacity = 0.55
                 self.session.edited(board: self.session.board)
@@ -465,6 +497,15 @@ final class Inspector {
                 self.opened = self.opened == key ? nil : key
                 self.show()
             }
+        }
+        // A card carried when the pointer is taken away from it (another window coming up) is put
+        // down as if let go.
+        line.pointerCaptureLost.addHandler { _, _ in
+            guard carrying else { return }
+            carrying = false
+            start = nil
+            line.protectedCursor = nil
+            restack?(nil)
         }
         return card
     }
