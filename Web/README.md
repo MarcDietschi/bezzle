@@ -181,9 +181,16 @@ and open http://127.0.0.1:8765/Web/site/index.html.
 ## Hosting
 
 The page is static files and the core is single-threaded, so it needs no cross-origin isolation
-headers. It sits in bezzle-web's `public/app/`, published at https://bezzle.ch/app/ (`publish.sh`).
-What does not fit there: Apple's fonts (designs set in SF Pro need another answer before a public
-version), and threads for drawing tiles in parallel (they need those headers, which the website's
+headers. It sits in bezzle-web's `public/app/`, published at https://bezzle.ch/app/, view only.
+
+To publish a new core or page (at Erik's word only): build the core as above, run
+`venv/bin/python -I tools/openfonts.py` once (it makes the git-ignored `site/openfonts/`, the open
+look-alikes the page uses in place of Apple's faces, from `tools/mac-faces.json`; the Windows build
+takes them too), then `./publish.sh ~/Sites/bezzle-web`, which writes
+`public/app/` there and commits nothing. Committing and pushing bezzle-web then deploys it to bezzle.ch
+(its `README.md` › Deploying). Apple's own fonts never go into it.
+
+What does not fit there: threads for drawing tiles in parallel (they need those headers, which the website's
 `.htaccess` could send now that it is on its own server). The invitation page, open.html, is the way
 in: without Bezzle installed it can open the design in the browser instead. A first visit loads
 about 22 MB; a core on FoundationEssentials alone would be a fraction of that.

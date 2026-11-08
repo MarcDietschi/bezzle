@@ -1,11 +1,15 @@
 # Bezzle
 
+`README.md` is the map: what is where, how to build and test, and which document has each process.
+
 ## Releases
 
 Bezzle ships from its website alone, https://bezzle.ch/download.html, at the
 version set in Xcode (`MARKETING_VERSION`); there is no App Store version (Erik, 2026-11-06).
 `Scripts/release.sh` builds it with the Swift condition `BEZZLE_DIRECT`, and Sparkle keeps it up to
-date (`Bezzle/App/Updates.swift`).
+date (`Bezzle/App/Updates.swift`). Bezzle for Windows ships beside it at the same version, an
+installer from the same page that WinSparkle keeps up to date (`Scripts/release-windows.sh`,
+`Windows/README.md` › Shipping it).
 
 Sparkle is not in the Xcode project and its `SU…` keys are not in Info.plist: `release.sh` puts the
 framework, the keys and the installer's sandbox entitlements into the released copy, and the app
@@ -22,14 +26,26 @@ Whenever the version is raised, or Erik asks for a release:
    update window in each Mac's language, on the GitHub release and on the site's What's New page.
 2. **Run the tests**, then push. A release is made from the pushed commit, never the working tree.
 3. **Run `Scripts/release.sh`** (about 15 minutes; `--dry-run` first puts a notarized zip on the
-   Desktop and publishes nothing). It builds from `git archive` of the commit plus the git-ignored
+   Desktop and publishes nothing). This Mac has no notary keychain profile (the script's default,
+   `harness-notary`), so give it the App Store Connect API key:
+   `ASC_KEY_PATH=$HOME/Desktop/AuthKey_P85NK4PS34.p8 ASC_KEY_ID=P85NK4PS34
+   ASC_ISSUER=a4b709c7-f491-4dbe-aad0-b1643daf9bc2 Scripts/release.sh`. If the key is gone from the
+   Desktop, ask Erik for it rather than looking elsewhere. It builds from `git archive` of the commit plus the git-ignored
    subject matte, exports with the Developer ID, adds Sparkle, signs, notarizes and staples. It then
    publishes the zip and delta updates as the GitHub release `v<version>` of mfrports/bezzle-web. It
    then commits the new feed and a copy of `RELEASE_NOTES.md` there, which rebuilds and deploys the
    site; the site's Deploy copies the zip and deltas from that GitHub release to bezzle.ch/downloads/,
    where the feed points. Once the feed is live on bezzle.ch and on GitHub Pages and bezzle.ch serves
    the zip whole, it tags the commit `v<version>`, which marks the version as released.
-4. **Check** https://bezzle.ch/download.html and `/updates/appcast.xml`.
+4. **Release Windows** with `Scripts/release-windows.sh` (a dry run, putting the installers and a
+   feed on the Desktop), then `Scripts/release-windows.sh --publish`. It needs the Windows VM running
+   with its packages built and the subject matte sent (`Windows/README.md`), builds the pushed commit
+   there for x64 and Arm64 (about 30 minutes), signs the installers with the same EdDSA key, publishes
+   them as the GitHub release `windows-v<version>` of mfrports/bezzle-web with the feed
+   `public/updates/windows/appcast.xml`, waits until bezzle.ch serves them and tags the commit
+   `windows-v<version>`. The site turns to "Mac and Windows" by itself once a Windows version is in
+   the feed. Pull `~/Sites/bezzle-web` afterwards, since both releases commit there.
+5. **Check** https://bezzle.ch/download.html, `/updates/appcast.xml` and `/updates/windows/appcast.xml`.
 
 How to write the notes: for the people who use Bezzle, not for developers. Say what they can do now
 and why it matters, benefit first. Only what really shipped. Quiet and plain, no exclamation marks,
@@ -82,3 +98,39 @@ fix with nothing to show gets a title and a lede, no list.
   fetches the update within seconds. `NSRunningApplication.terminate()` quits it, and the newer
   version is in place a moment later. Done this way on 2026-11-04, with `SUAutomaticallyUpdate`,
   which releases no longer set: without it, the older copy shows Sparkle's window with the notes.
+
+## Working in this repository
+
+What every session here keeps to (Erik's rules, gathered from many sessions):
+
+- **Decide, then say what was chosen.** Make the product and technical calls that follow from where
+  Erik is heading, build them, and report. Ask only before publishing, pushing, spending money, a Mac
+  release or a change to the file format, or where Erik has stated a taste of his own.
+- **Git:** commit on `main`, with a pathspec (`git commit -- <paths>`, or check
+  `git diff --cached --name-only`: other sessions stage their own files in the same tree). Push only
+  when Erik says, or as a release's step. A push to bezzle-web deploys the website, and
+  `Web/publish.sh` publishes the browser viewer: both only at Erik's word.
+- **Builds for others:** archive, sign for distribution or notarize only when Erik asks.
+- **Erik's designs are never touched.** Test copies run with their own `BEZZLE_LIBRARY` and, while
+  his Bezzle runs, a bundle id of their own; never `com.erik.Bezzle`'s sandbox container, which holds
+  his designs. On Windows, a test install is made with `-Name 'Bezzle Test'`.
+- **Never take the screen from Erik.** Launch test copies with `open -g -n`, never activate or raise
+  them, photograph windows with `screencapture -l <id>`, and ask before a long run of windows.
+- **Words people read:** no dashes as punctuation and no exclamation marks, in any language; plain
+  and quiet; the app's own words from `Localizable.xcstrings` (its French says "vous"; the website
+  and the notes say "tu" and "du").
+- **The Windows VM** (`Windows/README.md` › Working in the VM): its password and SSH key are in
+  `~/.ssh/bezzle-windows-vm.password` and `~/.ssh/bezzle-windows-vm`; never print them.
+  `Windows/VM/autounattend.xml` holds only a placeholder, so never restore a password from it. One
+  session at a time uses the VM's desktop, through the lock described there.
+- **Parallel agents** (Erik wants independent work spread over them): each works in a git worktree of
+  its own, commits there and never pushes; the main session checks the commits and brings them onto
+  `main`. In the VM each has its own source folder `C:\src\<name>` (synced into, with a junction to
+  `C:\src\Bezzle\Windows\Packages`), builds with `-j 2` when several build, runs its copies with
+  `BEZZLE_NO_MCP=1`, stops only its own processes, and uses the desktop only under the lock. Only one
+  agent at a time runs `ParityTests`, whose log file is shared. Agents written against an older main
+  add stand-ins of their own: expect duplicate declarations when merging, and keep the fuller one.
+- **Shared code and the Mac:** `Bezzle/Model` is compiled into Windows and the browser too. Share only
+  what tests cover, prove the Mac unchanged (`README.md` › Mac parity), and commit Mac-touching work
+  apart from Windows work.
+

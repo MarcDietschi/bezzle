@@ -75,6 +75,54 @@ architecture): bezzle-share imports the core `@testable`, which a release build 
 
 See `VM/make-vm.sh` for what the VM is and where its key, password and disks live.
 
+## Working in the VM
+
+The VM is `bezzle@192.168.77.10`, reached by SSH with the key `~/.ssh/bezzle-windows-vm`; its
+account's password is in `~/.ssh/bezzle-windows-vm.password` (never print either). `VM/autounattend.xml`
+is a template with a placeholder, not the password.
+
+- **Commands:** `VM/win '<PowerShell>'` runs over SSH (session 0: no windows, no package installs);
+  `VM/desktop [--detach] '<PowerShell>'` runs in the signed-in desktop, where windows appear. A
+  program's output over SSH arrives only when it exits. Send a file with non-ASCII text as base64 and
+  write it with `[IO.File]::WriteAllBytes` (the console's code page mangles it otherwise), then compare
+  `Get-FileHash` with `md5` here. `scp` with `VM/win`'s options fetches results.
+- **Sources:** `VM/sync.sh` puts the working tree's build inputs into `C:\src\Bezzle`. Packages are
+  built once there (`winrt.ps1`, `skia.ps1`, `avif.ps1`, `onnx.ps1`) and kept. A second working copy
+  (a parallel agent's, the release's `C:\src\bezzle-release`) is a folder of its own with a junction
+  to `C:\src\Bezzle\Windows\Packages`.
+- **Building:** `.\build.ps1` lays out `.build\Bezzle`, which the launchers in `C:\bezzle\*.cmd` run;
+  a bare `swift build` does not update it. With several builds at once the VM (8 cores, 12 GB) runs
+  out of breath: build with `-j 2` (`swift build -j 2`, `build.ps1 -Jobs 2`).
+- **The desktop is one, so it is taken in turn:**
+  `until mkdir /private/tmp/claude-501/bezzle-vm-desktop.lock 2>/dev/null; do sleep 30; done; echo <who> > /private/tmp/claude-501/bezzle-vm-desktop.lock/owner`,
+  one round of launching, trying and quitting (under about 20 minutes), then
+  `rm -rf /private/tmp/claude-501/bezzle-vm-desktop.lock`. Others test without the desktop meanwhile:
+  `bezzle-render`, or the AI server over HTTP with the app started minimized.
+- **Trying the app:** `VM/input.ps1` (in the VM at `C:\bezzle\input.ps1`) moves the mouse and presses
+  keys as real input, which WinUI needs. Every `VM/desktop` call briefly brings its own PowerShell to
+  the front, so Bezzle loses focus for a moment and the first input of a call only activates its
+  window: begin a call with a harmless click inside Bezzle (the empty part of the inspector), and send
+  keys in the same call as that click. Paths go into file dialogs through `Set-Clipboard` and Ctrl+V.
+  `VM/desktop --detach '<script>'` with `VM/win 'Start-Sleep <s>'` as a timer catches a gesture midway.
+- **Seeing it:** `VM/screenshot [out.png]` photographs the VM's screen from inside it, so it works while
+  this Mac's screen is locked; `VM/cursor.ps1` draws the pointer, which screenshots leave out. Copies
+  running for an agent use `BEZZLE_NO_MCP=1`, so the AI server's port stays the main session's.
+- **Debugging:** `BEZZLE_TRACE` writes `Trace.say` to `%TEMP%\bezzle-trace.log`. Copies started through
+  `VM/desktop` run elevated, so `Get-Process` over SSH cannot see their path: look through `VM/desktop`.
+  For a crash, set `HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Bezzle.exe`,
+  reproduce it, read the dump with `lldb -b -o "bt 40" --core <dmp> <exe>` in the VM, and remove the
+  key. A folder holding macOS `._.` files is removed with `cmd /c del \\?\C:\<folder>\._.` first.
+- **A first install, as someone new would:** make a local standard user, sign it in automatically
+  (its password as the LSA secret `DefaultPassword`, `DefaultUserName` in Winlogon), restart, run the
+  installer in its session through a scheduled task whose principal is that user, launched with
+  `conhost.exe --headless powershell …` (a new user's consoles otherwise open in Windows Terminal,
+  which covers the screen), and photograph the screen from inside. Afterwards restore the automatic
+  sign-in with the real password from `~/.ssh/bezzle-windows-vm.password` and remove the user and its
+  profile. Done this way before 1.5 (2026-11-08): the installer registered Windows App Runtime 1.7
+  for a new user without administrator rights.
+- **What the VM cannot show:** a graphics card (it has no Direct3D 12, so DirectML and its speed are
+  untested), a real x64 PC, Smart App Control, and Windows in German, French or Italian.
+
 ## The app
 
 It looks like the Mac app: `DESIGN.md` has the Mac's numbers, and `Sources/Bezzle/` builds the same
@@ -150,4 +198,8 @@ run an app from an unknown publisher (More info, then Run anyway).
 - **About Bezzle** (the Bezzle menu) lists what Bezzle is made with; the licences are in
   `Credits/licenses`, which `build.ps1` and the installer put beside Bezzle.exe.
 - **A release** is `Scripts/release-windows.sh` on the Mac (a dry run unless given `--publish`): it
-  builds the commit in the VM, makes the installers for x64 and Arm64, signs them and writes the feed.
+  builds the pushed commit in the VM (`C:\src\bezzle-release`), makes the installers for x64 and Arm64,
+  signs them and writes the feed; with `--publish` it attaches them to the GitHub release
+  `windows-v<version>` of mfrports/bezzle-web, commits the feed there, waits for bezzle.ch to serve
+  both and tags the commit. Its header says what it needs; `CLAUDE.md` › Releases has the order, the
+  Mac's release first, at the same version and with the same notes.

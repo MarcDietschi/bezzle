@@ -1,0 +1,22 @@
+#!/bin/zsh
+# Photographs the Bezzle test VM's screen from inside it, in its signed-in desktop session, and copies
+# the picture to this Mac. Taken in the VM, it works while this Mac's own screen is locked or asleep.
+# The pointer is not in it (cursor.ps1 draws the pointer apart). When other sessions share the VM, take
+# the desktop lock first (Windows/README.md › Working in the VM).
+#
+#   Windows/VM/screenshot [out.png]        (vm-shot.png by default)
+set -euo pipefail
+here=${0:A:h}
+out=${1:-vm-shot.png}
+$here/desktop 'Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+New-Item -ItemType Directory -Force C:\bezzle | Out-Null
+$bmp.Save("C:\bezzle\shot.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$g.Dispose(); $bmp.Dispose()' >/dev/null
+scp -q -i ~/.ssh/bezzle-windows-vm -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+    -o UserKnownHostsFile=~/.ssh/bezzle-windows-vm.known_hosts -o ConnectTimeout=5 \
+    'bezzle@192.168.77.10:C:/bezzle/shot.png' "$out"
+print "$out"
