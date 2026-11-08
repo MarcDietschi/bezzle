@@ -26,8 +26,9 @@ Whenever the version is raised, or Erik asks for a release:
    subject matte, exports with the Developer ID, adds Sparkle, signs, notarizes and staples. It then
    publishes the zip and delta updates as the GitHub release `v<version>` of mfrports/bezzle-web. It
    then commits the new feed and a copy of `RELEASE_NOTES.md` there, which rebuilds and deploys the
-   site. Once the feed is live on bezzle.ch and on GitHub Pages it tags the commit `v<version>`, which
-   marks the version as released.
+   site; the site's Deploy copies the zip and deltas from that GitHub release to bezzle.ch/downloads/,
+   where the feed points. Once the feed is live on bezzle.ch and on GitHub Pages and bezzle.ch serves
+   the zip whole, it tags the commit `v<version>`, which marks the version as released.
 4. **Check** https://bezzle.ch/download.html and `/updates/appcast.xml`.
 
 How to write the notes: for the people who use Bezzle, not for developers. Say what they can do now
@@ -51,10 +52,13 @@ fix with nothing to show gets a title and a lede, no list.
   https://mfrports.github.io/bezzle-web/updates/appcast.xml, which every deploy keeps the same file.
   Neither ever moves. It lists the newest version alone, with its deltas and its notes in every
   language. Only `release.sh` writes it.
-- **Zips and deltas**: the releases of the public repository mfrports/bezzle-web (the app's own
-  repository is private). `release.sh` keeps the last released zips in
-  `~/Library/Caches/bezzle-release/dist`, fetching them from GitHub when missing, to make the deltas
-  from. The subject matte makes a full zip about 225 MB, while a delta is small.
+- **Zips and deltas**: kept as the releases of the public repository mfrports/bezzle-web (the app's
+  own repository is private), and served from https://bezzle.ch/downloads/, where the feed points: the
+  site's Deploy (its scripts/downloads.mjs) copies every enclosure there from the GitHub release, so
+  `release.sh` refuses to release until that step is on the site's main (Erik, 2026-11-08; Windows'
+  installers go the same way, from the releases `windows-v<version>`). `release.sh` keeps the last
+  released zips in `~/Library/Caches/bezzle-release/dist`, fetching them from GitHub when missing, to
+  make the deltas from. The subject matte makes a full zip about 225 MB, while a delta is small.
 - **Site and release**: the site takes the version, the zip and its size from the feed, and What's New
   from its copy of the notes (`src/releases/RELEASE_NOTES.md`), so it shows only what can be
   downloaded. Edit the notes here, never that copy: the next release overwrites it.

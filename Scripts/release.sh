@@ -3,8 +3,9 @@
 # itself (BEZZLE_DIRECT, see Bezzle/App/Updates.swift), puts Sparkle into it, signs it with the
 # Developer ID, has Apple notarize it, and publishes the zip, with delta updates from the last
 # versions, as a GitHub release of mfrports/bezzle-web. Then it commits the new update feed and the release
-# notes to that repository, whose Deploy workflow rebuilds the website with them, waits until the feed is
-# live, and tags the commit v<version>.
+# notes to that repository, whose Deploy workflow rebuilds the website with them and copies the zip and the
+# deltas from the GitHub release to bezzle.ch/downloads/, where the feed points; it waits until the feed
+# and the zip are live, and tags the commit v<version>.
 #
 # Usage: Scripts/release.sh [--dry-run]
 # The version is the one set in Xcode (MARKETING_VERSION): raise it there first, and write its entry
@@ -75,6 +76,10 @@ if [ -z "$DRY_RUN" ]; then
     && fail "github.com/$SITE_REPO has a release v$VERSION, but the app has no tag for it: a run that failed half way? Delete it with gh release delete v$VERSION -R $SITE_REPO --cleanup-tag --yes, then run again"
   curl -fsS "$FEED_URL?check=$(date +%s)" 2>/dev/null | grep -q "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>" \
     && fail "The live feed offers $VERSION already"
+  # The feed points at bezzle.ch/downloads/, which the website's Deploy fills from the GitHub release
+  # (its scripts/downloads.mjs): without it there, every Mac would be offered a file that is not there.
+  gh api "repos/$SITE_REPO/contents/scripts/downloads.mjs" --silent >/dev/null 2>&1 \
+    || fail "The website's Deploy does not copy downloads to bezzle.ch yet (no scripts/downloads.mjs on $SITE_REPO's main): push the website's change first"
 fi
 
 # Sparkle, as released by its makers, checked against the download it was tried with.
@@ -209,7 +214,7 @@ echo "Signing the update and writing the feed…"
 # generate_appcast keeps one cache for everyone; two at once spoil each other's deltas.
 ! pgrep -x generate_appcast >/dev/null || fail "Another generate_appcast is running (a Gerty release?): run again once it is done"
 "$SPARKLE_DIR/bin/generate_appcast" "${KEY_ARGS[@]+"${KEY_ARGS[@]}"}" --maximum-versions "$((DELTAS_FROM + 1))" \
-  --download-url-prefix "https://github.com/$SITE_REPO/releases/download/v$VERSION/" --link "$SITE/" "$DIST"
+  --download-url-prefix "$SITE/downloads/" --link "$SITE/" "$DIST"
 # The public feed: this version alone, with its deltas and its notes in every language.
 python3 "$SRC/Scripts/release/notes.py" feed "$DIST/appcast.xml" "$WORK/appcast.xml" "$VERSION"
 DELTAS="$(grep -oE 'url="[^"]+\.delta"' "$WORK/appcast.xml" | sed -E 's#.*/([^/"]+)"$#\1#' || true)"
@@ -223,6 +228,7 @@ echo "Deltas from $(echo "$DELTAS" | grep -c . || true) earlier versions"
 echo "Publishing the GitHub release…"
 python3 "$SRC/Scripts/release/notes.py" github "$VERSION" > "$WORK/notes.md"
 gh release create "v$VERSION" -R "$SITE_REPO" --title "Bezzle $VERSION" --notes-file "$WORK/notes.md" "${ASSETS[@]}"
+# The website's Deploy copies it from here to bezzle.ch/downloads/: first, that it is whole here.
 DOWNLOAD="https://github.com/$SITE_REPO/releases/download/v$VERSION/Bezzle-$VERSION.zip"
 # One byte of it, through GitHub's redirect; the total length comes with it.
 LENGTH="$(curl -sSL -r 0-0 -D - -o /dev/null "$DOWNLOAD" | tr -d '\r' | sed -nE 's#^[Cc]ontent-[Rr]ange: bytes 0-0/([0-9]+)$#\1#p' | tail -1)"
@@ -250,12 +256,16 @@ git -C "$WORK/site" commit -q -m "Bezzle $VERSION" -m "The update feed and the r
 git -C "$WORK/site" -c credential.helper= -c 'credential.helper=!gh auth git-credential' push -q origin HEAD:main
 echo "Waiting for the website…"
 offers() { curl -fsS "$1?check=$(date +%s)" 2>/dev/null | grep -q "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>"; }
+# The zip the feed points at, served by bezzle.ch itself, at its whole length (asked for as it is:
+# the server compresses text files, whose lengths then differ).
+SERVED="$SITE/downloads/Bezzle-$VERSION.zip"
+served() { [ "$(curl -fsSI -H "Accept-Encoding: identity" "$SERVED?check=$(date +%s)" 2>/dev/null | tr -d '\r' | sed -nE 's#^[Cc]ontent-[Ll]ength: ([0-9]+)$#\1#p' | tail -1)" = "$(stat -f %z "$ZIP")" ]; }
 LIVE=""
 for _ in $(seq 1 60); do
-  if offers "$FEED_URL" && offers "$OLD_FEED_URL"; then LIVE=1; break; fi
+  if offers "$FEED_URL" && offers "$OLD_FEED_URL" && served; then LIVE=1; break; fi
   sleep 10
 done
-[ -n "$LIVE" ] || fail "After 10 minutes $FEED_URL and $OLD_FEED_URL do not both offer $VERSION: see the Deploy workflow at https://github.com/$SITE_REPO/actions. Once they do, tag the commit: git tag v$VERSION $COMMIT && git push origin refs/tags/v$VERSION"
+[ -n "$LIVE" ] || fail "After 10 minutes $FEED_URL and $OLD_FEED_URL do not both offer $VERSION, or $SERVED is not there whole: see the Deploy workflow at https://github.com/$SITE_REPO/actions. Once they are, tag the commit: git tag v$VERSION $COMMIT && git push origin refs/tags/v$VERSION"
 curl -fsS "$SITE/download.html?check=$(date +%s)" | grep -qF "Bezzle-$VERSION.zip" || echo "The download page does not show $VERSION yet: check $SITE/download.html" >&2
 
 # The tag comes last, as the mark that this version is out.
