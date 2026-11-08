@@ -38,6 +38,26 @@ Without `Packages\avif`, Bezzle builds all the same but neither reads nor writes
 Image I/O cannot write it leaves the format out. Run `.\avif.ps1` before the first `swift build`; when
 it comes after one, touch `Package.swift`, since SwiftPM may keep its earlier reading of the manifest.
 
+`.\build.ps1` builds and lays out the app in `.build\Bezzle`. Most PCs have Intel or AMD processors
+(x64), and the Arm VM builds for them too: Swift cross-compiles (`swift build --arch x86_64`, with
+`BEZZLE_ARCH=x64` telling `Package.swift` to link the x64 libraries), into `.build\x64`:
+
+```powershell
+.\skia.ps1 -Arch x64 -Jobs 2  # Skia into Packages\skia\out\x64 (about 40 minutes with two jobs)
+.\avif.ps1 -Arch x64          # libavif and libaom into Packages\avif\out\x64
+.\build.ps1 -Arch x64         # the app in .build\x64\Bezzle
+```
+
+The x64 app carries Swift's and Visual C++'s runtimes beside `Bezzle.exe` (`runtime.ps1`, from the
+merge module Swift's installer leaves and from Visual Studio's redistributable files, only the DLLs
+something asks for), since the Swift on an Arm machine's path is Arm's; `-Runtime` does the same for
+an Arm build. Its Windows App Runtime bootstrapper is the x64 one of the same Windows App SDK
+release. Windows 11 on Arm runs the x64 app by emulation, with the x64 Windows App Runtime that the
+Arm runtime installer winrt.ps1 runs puts there beside the Arm one (and x86's).
+
+A release build is of the app alone, `.\build.ps1 -Configuration release -Product Bezzle` (either
+architecture): bezzle-share imports the core `@testable`, which a release build refuses.
+
 See `VM/make-vm.sh` for what the VM is and where its key, password and disks live.
 
 ## The app
