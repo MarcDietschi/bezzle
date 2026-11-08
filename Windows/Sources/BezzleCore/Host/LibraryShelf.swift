@@ -221,8 +221,11 @@ extension WindowsCore {
 
     private static func key(_ id: UUID, _ print: String?) -> String { "\(id.uuidString)|\(print ?? "")" }
 
+    /// Read from the design as it is, not as a change pointed at shows it: pointing at Update
+    /// shows the design brought up to date, which has no news, and the note offering it, with the
+    /// button under the pointer, would go and come again, so that the click never landed.
     private static func currentNews() -> [LibraryNews] {
-        guard let doc = design, let url = designURL else { return [] }
+        guard let doc = previewBase ?? design, let url = designURL else { return [] }
         let aside = setAside[url.standardizedFileURL.path] ?? []
         let others = shelfOrder.compactMap { shelf[$0] }
         return doc.libraryNews(in: others).compactMap { news in
@@ -235,7 +238,7 @@ extension WindowsCore {
 
     /// What changed in other designs since this one took from them, but what was set aside.
     public static func news() -> [NewsLook] {
-        guard let doc = design else { return [] }
+        guard let doc = previewBase ?? design else { return [] }
         return currentNews().map { news in
             let names = news.masters.compactMap { doc.master($0)?.name } + news.styles.compactMap { doc.style($0)?.name }
             var list = names.prefix(2).joined(separator: ", ")
