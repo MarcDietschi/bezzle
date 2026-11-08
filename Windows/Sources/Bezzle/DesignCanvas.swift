@@ -197,6 +197,11 @@ final class DesignCanvas {
     }
     private var shownOffer: WindowsCore.MaskOffer?
     private var offerLit = false
+    /// How far the word offered has sprung in (0 to 1), and the offer it shows, kept while it
+    /// shrinks away after there is none.
+    private var offerShown = DeckSpring(0)
+    private var offerKept: WindowsCore.MaskOffer?
+    private lazy var offerTicker = Motion.Ticker { [weak self] dt in self?.stepOffer(dt) ?? false }
     /// What is offered for a moment after a change to a copy (the Mac's ComponentTool offer): a
     /// capsule beside the copy, its words and buttons, the first the one to take.
     private let copyChip = Border()
@@ -1518,12 +1523,48 @@ final class DesignCanvas {
             session.previewed(board: nil)
         }
         shownOffer = offer
-        guard let offer else { offerChip.visibility = .collapsed; return }
-        let r = offerRect(offer)
+        // A new word springs in; one going away shrinks back into the shape, as the Mac's MaskTool
+        // has it. Another offer while one shows moves the word there.
+        if offer != offerKept {
+            if offer != nil, offerKept == nil || offerShown.value < 0.05 { offerShown = DeckSpring(0) }
+            offerKept = offer ?? offerKept
+            offerShown.target = offer == nil ? 0 : 1
+            if !offerShown.settled { offerTicker.start() }
+        }
+        layOffer()
+    }
+
+    /// The word where it is, as far as it has sprung: up out of the shape it is about from 85%
+    /// of its size and 6 points lower, faded in as one piece; a point higher while pointed at.
+    private func layOffer() {
+        guard let kept = offerKept, offerShown.value > 0.01 else {
+            offerChip.visibility = .collapsed
+            if shownOffer == nil { offerKept = nil }
+            return
+        }
+        let r = offerRect(kept)
+        let k = offerShown.value
+        let lifted = offerLit && shownOffer != nil
         try? Canvas.setLeft(offerChip, Double(r.minX))
-        try? Canvas.setTop(offerChip, Double(r.minY) - (offerLit ? 1 : 0))
-        offerChip.background = offerLit ? Theme.brush(0x3357C0) : Theme.brush(Theme.selection)
+        try? Canvas.setTop(offerChip, Double(r.minY))
+        let s = 0.85 + 0.15 * k
+        let t = CompositeTransform()
+        t.centerX = Double(r.width) / 2
+        t.centerY = Double(r.height)
+        t.scaleX = s
+        t.scaleY = s
+        t.translateY = s * (6 * (1 - k) - (lifted ? 1 : 0))
+        offerChip.renderTransform = t
+        offerChip.opacity = min(1, max(k, 0))
+        offerChip.background = lifted ? Theme.brush(0x3357C0) : Theme.brush(Theme.selection)
         offerChip.visibility = .visible
+    }
+
+    /// One frame of the word springing (the Mac's stiffness 300, damping 20).
+    private func stepOffer(_ dt: Double) -> Bool {
+        offerShown.step(dt, stiffness: 300, damping: 20)
+        layOffer()
+        return !offerShown.settled
     }
 
     /// As the Mac's ComponentTool: with a copy picked, every other copy of its component faintly

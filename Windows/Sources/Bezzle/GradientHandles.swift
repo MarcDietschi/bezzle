@@ -61,8 +61,18 @@ final class GradientHandles {
     /// How far the corner's two sides run toward the ring, 0.36 at rest and all the way while the
     /// corner is pointed at or dragged, on the Mac's Theme.spring (response 0.34, damping 0.86).
     private var reach = DeckSpring(0.36)
-    private var ticking: EventCleanup?
-    private var lastTick = 0.0
+    /// How far each colour's point has grown into being the chosen one, 0 to 1 (a tenth larger,
+    /// ringed in pencil), on the Mac's Theme.quick (response 0.18, damping 0.9): the ends as -1
+    /// and -2, the colours between by their number, as the Mac's points are known by theirs.
+    private var grown: [Int: DeckSpring] = [:]
+    /// Coming in as the fill menu opens, as the Mac's handles fade in with the menu's spring
+    /// (Theme.menu: response 0.26, damping 0.74); going as it shuts, faded out as it does
+    /// (Theme.close: ease in over 0.12 s), from how far in they were.
+    private var shown = DeckSpring(0)
+    private var leavingFor: (from: Double, elapsed: Double)?
+    /// Whether the menu was open when the handles were last drawn: they come in with it.
+    private var menuWasOpen = false
+    private lazy var ticker = Motion.Ticker { [weak self] dt in self?.tick(dt) ?? false }
 
     /// How near a point a press takes hold of it.
     static let reachDistance = 12.0
@@ -150,19 +160,42 @@ final class GradientHandles {
     /// or not on one layer's gradient.
     func draw() {
         let t = session.fillMenu
-        var shown: WindowsCore.GradientLook?
-        if let t, menuOpen(), session.selection.count == 1, let id = session.selection.first {
-            shown = WindowsCore.gradientLook(id, border: t.border, slot: t.slot)
+        let open = menuOpen()
+        defer { menuWasOpen = open }
+        var found: WindowsCore.GradientLook?
+        if let t, open, session.selection.count == 1, let id = session.selection.first {
+            found = WindowsCore.gradientLook(id, border: t.border, slot: t.slot)
             self.id = id
         }
         target = t
-        look = shown
-        marks.children.clear()
-        guard let l = shown, let place = canvasPlace() else {
-            layer.visibility = .collapsed
+        look = found
+        guard let l = found, let place = canvasPlace() else {
             if grip != nil { lost() }
+            // Shut with the menu, they fade out as they are; gone for any other reason, at once.
+            if !open, layer.visibility == .visible, shown.value > 0.01 {
+                if leavingFor == nil { leavingFor = (min(max(shown.value, 0), 1), 0) }
+                layer.isHitTestVisible = false
+                ticker.start()
+            } else {
+                gone()
+            }
             return
         }
+        // Coming in as the menu opens, faded in; or back while fading out, from where they were.
+        if leavingFor != nil || layer.visibility == .collapsed {
+            let from = leavingFor != nil ? Double(layer.opacity) : 0
+            leavingFor = nil
+            if !menuWasOpen || from > 0 {
+                shown = DeckSpring(from)
+                shown.target = 1
+                ticker.start()
+            } else {
+                shown = DeckSpring(1)
+            }
+            layer.opacity = shown.value
+            layer.isHitTestVisible = true
+        }
+        marks.children.clear()
         try? Canvas.setLeft(layer, Double(place.minX))
         try? Canvas.setTop(layer, Double(place.minY))
         layer.width = Double(place.width)
@@ -178,6 +211,19 @@ final class GradientHandles {
         let dots = dots(l)
         // The chosen colour, when it is at an end, is ringed there.
         let endChosen: Int? = stops[chosen].offset <= Self.atEnd ? 0 : stops[chosen].offset >= 1 - Self.atEnd ? 1 : nil
+        // Each point grows into being the chosen one, or back, on a spring; new ones as they are.
+        let keys = [-1, -2] + dots.map { $0.index }
+        let picked = endChosen.map { -1 - $0 } ?? chosen
+        for key in keys {
+            let want: Double = key == picked ? 1 : 0
+            if grown[key] == nil { grown[key] = DeckSpring(want) }
+            if grown[key]?.target != want {
+                grown[key]?.target = want
+                ticker.start()
+            }
+        }
+        for key in Array(grown.keys) where !keys.contains(key) { grown[key] = nil }
+        func growth(_ key: Int) -> Double { min(max(grown[key]?.value ?? 0, 0), 1.2) }
 
         if l.radial {
             ring(l)
@@ -188,10 +234,10 @@ final class GradientHandles {
         stroke([a, b], brush: Theme.brush(0xFFFFFF), width: 1.5, round: true)
         if let side { shapePoint(side) }
         if let corner { shapePoint(corner) }
-        colourPoint(WindowsCore.gradientColour(stops, at: 0), at: a, chosen: endChosen == 0, size: 16)
-        colourPoint(WindowsCore.gradientColour(stops, at: 1), at: b, chosen: endChosen == 1, size: 16)
+        colourPoint(WindowsCore.gradientColour(stops, at: 0), at: a, grown: growth(-1), size: 16)
+        colourPoint(WindowsCore.gradientColour(stops, at: 1), at: b, grown: growth(-2), size: 16)
         for dot in dots {
-            colourPoint(stops[dot.index].colour, at: dot.at, chosen: dot.index == chosen, size: 13,
+            colourPoint(stops[dot.index].colour, at: dot.at, grown: growth(dot.index), size: 13,
                         faded: dot.index == chosen && leaving)
         }
 
@@ -252,37 +298,41 @@ final class GradientHandles {
     }
 
     /// A colour on the line: a white ring round it, easy to catch, ringed in pencil when chosen.
-    private func colourPoint(_ c: WindowsCore.Colour, at p: CGPoint, chosen: Bool, size: Double, faded: Bool = false) {
-        let s = size * (chosen ? 1.1 : 1)
+    /// `grown` is how far it is into being the chosen one: the whole point a tenth larger, as the
+    /// Mac scales it, and the pencil ring faded in.
+    private func colourPoint(_ c: WindowsCore.Colour, at p: CGPoint, grown: Double, size: Double, faded: Bool = false) {
+        let k = 1 + 0.1 * grown
         let group = Canvas()
         group.opacity = faded ? 0.3 : 1
         func disc(_ d: Double, _ brush: Brush, dy: Double = 0) {
             let e = Ellipse()
-            e.width = d
-            e.height = d
+            e.width = d * k
+            e.height = d * k
             e.fill = brush
-            try? Canvas.setLeft(e, Double(p.x) - d / 2)
-            try? Canvas.setTop(e, Double(p.y) - d / 2 + dy)
+            try? Canvas.setLeft(e, Double(p.x) - d * k / 2)
+            try? Canvas.setTop(e, Double(p.y) - d * k / 2 + dy * k)
             group.children.append(e)
         }
         // A soft shadow under it, then a dark rim, so it shows over any colour.
-        disc(s + 5, Theme.brush(0, 0.07), dy: 1)
-        disc(s + 3, Theme.brush(0, 0.12), dy: 1)
-        disc(s + 2, Theme.brush(0, 0.3))
-        disc(s, Theme.brush(0xFFFFFF))
-        let inner = s - 5
+        disc(size + 5, Theme.brush(0, 0.07), dy: 1)
+        disc(size + 3, Theme.brush(0, 0.12), dy: 1)
+        disc(size + 2, Theme.brush(0, 0.3))
+        disc(size, Theme.brush(0xFFFFFF))
+        let inner = (size - 5) * k
         let swatch = Colours.swatch(c, size: inner, radius: inner / 2)
         try? Canvas.setLeft(swatch, Double(p.x) - inner / 2)
         try? Canvas.setTop(swatch, Double(p.y) - inner / 2)
         group.children.append(swatch)
-        if chosen {
+        if grown > 0.01 {
+            let d = (size + 6) * k
             let ring = Ellipse()
-            ring.width = s + 6
-            ring.height = s + 6
+            ring.width = d
+            ring.height = d
             ring.stroke = Theme.brush(Theme.pencil)
-            ring.strokeThickness = 2
-            try? Canvas.setLeft(ring, Double(p.x) - (s + 6) / 2)
-            try? Canvas.setTop(ring, Double(p.y) - (s + 6) / 2)
+            ring.strokeThickness = 2 * k
+            ring.opacity = min(grown, 1)
+            try? Canvas.setLeft(ring, Double(p.x) - d / 2)
+            try? Canvas.setTop(ring, Double(p.y) - d / 2)
             group.children.append(ring)
         }
         marks.children.append(group)
@@ -364,22 +414,38 @@ final class GradientHandles {
     /// The corner's sides run out to the ring while it is pointed at or dragged, and back after.
     private func aimReach() {
         reach.target = onCorner || grip == .corner ? 1 : 0.36
-        guard ticking == nil, !reach.settled else { return }
-        lastTick = WindowsCore.now
-        ticking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let now = WindowsCore.now
-                let dt = min(max(now - self.lastTick, 1.0 / 240), 1.0 / 20)
-                self.lastTick = now
-                self.reach.step(dt, stiffness: 341, damping: 31.8)
-                self.draw()
-                if self.reach.settled {
-                    self.ticking?.dispose()
-                    self.ticking = nil
-                }
-            }
+        if !reach.settled { ticker.start() }
+    }
+
+    /// One frame of the handles' motion: the corner's sides, the points growing, the handles
+    /// coming in or going. Whether anything still moves.
+    private func tick(_ dt: Double) -> Bool {
+        if var going = leavingFor {
+            // Fading out as the menu shuts, nothing else moving: gone once faded.
+            going.elapsed += dt
+            leavingFor = going
+            let k = min(going.elapsed / 0.12, 1)
+            layer.opacity = going.from * (1 - Motion.easeIn(k))
+            if k >= 1 { gone() }
+            return k < 1
         }
+        reach.step(dt, stiffness: Motion.spring.stiffness, damping: Motion.spring.damping)
+        for key in Array(grown.keys) { grown[key]?.step(dt, stiffness: Motion.quick.stiffness, damping: Motion.quick.damping) }
+        shown.step(dt, stiffness: Motion.menu.stiffness, damping: Motion.menu.damping)
+        layer.opacity = min(max(shown.value, 0), 1)
+        draw()
+        return !reach.settled || !shown.settled || grown.values.contains { !$0.settled }
+    }
+
+    /// Taken away at once: no marks, no motion, nothing to press.
+    private func gone() {
+        leavingFor = nil
+        ticker.stop()
+        marks.children.clear()
+        layer.visibility = .collapsed
+        layer.opacity = 1
+        shown = DeckSpring(0)
+        grown = [:]
     }
 
     // MARK: The pointer

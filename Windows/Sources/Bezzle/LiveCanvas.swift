@@ -56,6 +56,8 @@ final class LiveCanvas {
     init() {
         for layer in [lights, marks] { layer.isHitTestVisible = false }
         people.go = { [weak self] id in self?.go(to: id) }
+        // The last token gone from the bar, its motion over: the bar lets go of the row.
+        people.gone = { [weak self] in self?.peopleChanged?() }
         // Now and then, so the others hear where this computer is, and a room that came is seen.
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.idle() }
@@ -681,92 +683,278 @@ final class RimToken {
 
 /// Who else is in the design this moment, in the bar: their tokens side by side, each opening
 /// into their name below it when pointed at, ringed while they work, dimmed while they are
-/// elsewhere. A click goes to them, and again lets them go (the Mac's LivePeople).
+/// elsewhere. A click goes to them, and again lets them go (the Mac's LivePeople). They move as
+/// the Mac's do: the row springs in and out of the bar as a whole (scaled from 0.6, faded), each
+/// one coming later springs up from a fifth of its size and each one leaving shrinks to half,
+/// fading as it drops 8 points, the others sliding up to close the gap (all on Theme.pop);
+/// pointed at, a token grows by 8% and its name comes down from 4 points higher at nine tenths
+/// of its size (Theme.open in, Theme.close out); the one followed takes its pencil behind it on
+/// Theme.spring.
 @MainActor
 final class LivePeople {
-    let root = StackPanel()
+    let root = Canvas()
     /// Where the names hang, over everything under the bar.
     let tags = Canvas()
     var go: ((UInt32) -> Void)?
+    /// Told once the last token has gone from the bar, its motion over.
+    var gone: (() -> Void)?
     private var shown = ""
-    private var rings: [(ring: Ellipse, working: Bool)] = []
     private(set) var anyoneWorking = false
-    /// Whether anyone is there, so that the bar shows the tokens.
+    /// Whether the bar shows the tokens: from the first person on until the last has gone.
     private(set) var hasPeople = false
 
+    /// One person's token, kept while they are there and while it leaves.
+    @MainActor private final class Token {
+        let id: UInt32
+        let box = Grid()
+        let back = Ellipse()
+        let disc = Ellipse()
+        let ring = Ellipse()
+        let initial = Theme.text("", size: 11, weight: 700)
+        let place = CompositeTransform()
+        let tag = StackPanel()
+        let hang = CompositeTransform()
+        var pencil: UInt32 = 0
+        var away = false
+        var working = false
+        /// Along the row, in points.
+        var x = DeckSpring(0)
+        /// Coming in, 0 to 1; going, 0 to 1.
+        var shown = DeckSpring(1)
+        var leaving: DeckSpring?
+        /// Pointed at, 0 to 1: springing in, eased out from where it was.
+        var hover = DeckSpring(0)
+        var hoverOut: (from: Double, elapsed: Double)?
+        var pointed = false
+        /// Followed, 0 to 1: its pencil behind it.
+        var follow = DeckSpring(0)
+
+        init(id: UInt32) { self.id = id }
+
+        var moving: Bool {
+            if let leaving, !leaving.settled { return true }
+            return !x.settled || !shown.settled || !hover.settled || hoverOut != nil || !follow.settled
+        }
+    }
+
+    private var tokens: [UInt32: Token] = [:]
+    /// The row as a whole, coming into the bar and going: 0 to 1.
+    private var row = DeckSpring(0)
+    private let grow = CompositeTransform()
+    private lazy var ticker = Motion.Ticker { [weak self] dt in self?.step(dt) ?? false }
+
+    private static let spacing = 26.0
+    private static let pop = Motion.spring(response: 0.32, damping: 0.58)
+    private static let open = Motion.spring(response: 0.24, damping: 0.86)
+
     init() {
-        root.orientation = .horizontal
-        root.spacing = -4
+        root.height = 30
         root.verticalAlignment = .center
+        root.renderTransform = grow
         tags.isHitTestVisible = false
     }
 
-    /// Shows the room's people: true when whether there are any changed.
+    /// Shows the room's people: true when whether the bar shows them changed.
     @discardableResult func show(_ live: LiveTogether?) -> Bool {
         let people = live?.people ?? []
         let following = live?.following
         let key = people.map { "\($0.id)|\($0.name)|\($0.pencil)|\($0.doing)|\($0.away)|\(following == $0.id)" }.joined(separator: ",")
         guard key != shown else { return false }
-        let had = hasPeople
         shown = key
-        root.children.clear()
-        tags.children.clear()
-        rings = []
+        let had = hasPeople
+        let ids = Set(people.map(\.id))
         anyoneWorking = false
-        for person in people {
-            root.children.append(token(person, live: live, following: following == person.id))
+        for (i, person) in people.enumerated() {
+            let x = Double(i) * Self.spacing
+            let token: Token
+            if let kept = tokens[person.id], kept.leaving == nil {
+                token = kept
+            } else {
+                if let gone = tokens[person.id] { drop(gone) }
+                token = make(person, live: live)
+                token.x = DeckSpring(x)
+                // One coming to a row already there springs up; the first come with the row.
+                if had {
+                    token.shown = DeckSpring(0)
+                    token.shown.target = 1
+                }
+                tokens[person.id] = token
+            }
+            token.x.target = x
+            look(token, person, following: following == person.id)
+            if token.working { anyoneWorking = true }
         }
-        hasPeople = !people.isEmpty
+        for token in tokens.values where !ids.contains(token.id) && token.leaving == nil {
+            var leave = DeckSpring(0)
+            leave.target = 1
+            token.leaving = leave
+            token.pointed = false
+            token.box.isHitTestVisible = false
+        }
+        root.width = Double(max(people.count, 1)) * Self.spacing + 4
+        if !people.isEmpty, !hasPeople || row.target == 0 {
+            if !hasPeople { row = DeckSpring(0) }
+            row.target = 1
+            hasPeople = true
+        } else if people.isEmpty, hasPeople {
+            row.target = 0
+        }
+        layOut()
+        ticker.start()
         return had != hasPeople
     }
 
     /// The rings of those at work, breathing.
     func pulse(_ now: Double) {
         let on = 0.5 - 0.5 * cos(now / 0.9 * Double.pi)
-        for (ring, working) in rings where working { ring.opacity = 0.25 + 0.75 * on }
+        for token in tokens.values where token.working { token.ring.opacity = 0.25 + 0.75 * on }
     }
 
-    private func token(_ person: WindowsCore.LivePerson, live: LiveTogether?, following: Bool) -> UIElement {
-        let box = Grid()
+    // MARK: Motion
+
+    private func step(_ dt: Double) -> Bool {
+        row.step(dt, stiffness: Self.pop.stiffness, damping: Self.pop.damping)
+        for token in tokens.values {
+            token.x.step(dt, stiffness: Self.pop.stiffness, damping: Self.pop.damping)
+            token.shown.step(dt, stiffness: Self.pop.stiffness, damping: Self.pop.damping)
+            token.leaving?.step(dt, stiffness: Self.pop.stiffness, damping: Self.pop.damping)
+            token.follow.step(dt, stiffness: Motion.spring.stiffness, damping: Motion.spring.damping)
+            if var out = token.hoverOut {
+                // Let go of, it eases back in a hundred and twenty milliseconds (Theme.close).
+                out.elapsed += dt
+                let k = min(out.elapsed / 0.12, 1)
+                token.hover = DeckSpring(out.from * (1 - Motion.easeIn(k)))
+                token.hoverOut = k < 1 ? out : nil
+            } else {
+                token.hover.step(dt, stiffness: Self.open.stiffness, damping: Self.open.damping)
+            }
+            // Gone once shrunk away.
+            if let leave = token.leaving, leave.settled { drop(token) }
+        }
+        // The last one gone and the row out of the bar: the bar lets go of it.
+        if row.target == 0, row.settled, hasPeople {
+            hasPeople = false
+            for token in tokens.values { drop(token) }
+            layOut()
+            gone?()
+            return false
+        }
+        layOut()
+        return !row.settled || tokens.values.contains { $0.moving }
+    }
+
+    /// Everything where its motion has it now.
+    private func layOut() {
+        let s = 0.6 + 0.4 * row.value
+        grow.centerX = root.width / 2
+        grow.centerY = 15
+        grow.scaleX = s
+        grow.scaleY = s
+        root.opacity = min(max(row.value, 0), 1)
+        for token in tokens.values {
+            let come = token.shown.value, leave = token.leaving?.value ?? 0, h = token.hover.value
+            let s = (0.2 + 0.8 * come) * (1 - 0.5 * leave) * (1 + 0.08 * h)
+            try? Canvas.setLeft(token.box, token.x.value)
+            token.place.scaleX = s
+            token.place.scaleY = s
+            token.place.translateY = 8 * leave
+            token.box.opacity = (token.away ? 0.5 : 1) * min(max(come, 0), 1) * min(max(1 - leave, 0), 1)
+            let f = min(max(token.follow.value, 0), 1)
+            token.back.fill = Theme.brush(Theme.mix(Theme.paper, token.pencil, f), 1 - 0.65 * f)
+            // The name below, coming down from a little higher and smaller as it shows.
+            let t = min(max(h, 0), 1.2)
+            if t > 0.01, let at = try? token.box.transformToVisual(tags), let p = try? at.transformPoint(Point(x: 15, y: 32)) {
+                try? token.tag.measure(Size(width: 400, height: 60))
+                let w = Double(token.tag.desiredSize.width)
+                try? Canvas.setLeft(token.tag, Double(p.x) - w / 2)
+                try? Canvas.setTop(token.tag, Double(p.y))
+                token.hang.centerX = w / 2
+                token.hang.centerY = 0
+                token.hang.scaleX = 0.9 + 0.1 * t
+                token.hang.scaleY = 0.9 + 0.1 * t
+                token.hang.translateY = -4 * (1 - t)
+                token.tag.opacity = min(t, 1)
+                token.tag.visibility = .visible
+            } else {
+                token.tag.visibility = .collapsed
+            }
+        }
+    }
+
+    private func pointed(_ token: Token, _ on: Bool) {
+        guard on != token.pointed, token.leaving == nil else { return }
+        token.pointed = on
+        if on {
+            token.hoverOut = nil
+            token.hover.target = 1
+            token.hover.velocity = 0
+        } else {
+            token.hoverOut = (min(max(token.hover.value, 0), 1.2), 0)
+        }
+        layOut()
+        ticker.start()
+    }
+
+    private func drop(_ token: Token) {
+        var at: UInt32 = 0
+        if (try? root.children.indexOf(token.box, &at)) == true { root.children.removeAt(at) }
+        if (try? tags.children.indexOf(token.tag, &at)) == true { tags.children.removeAt(at) }
+        if tokens[token.id] === token { tokens[token.id] = nil }
+    }
+
+    // MARK: Making them
+
+    private func make(_ person: WindowsCore.LivePerson, live: LiveTogether?) -> Token {
+        let token = Token(id: person.id)
+        let box = token.box
         box.width = 30
         box.height = 30
         box.background = Theme.clear
-        let back = Ellipse()
-        back.width = 28
-        back.height = 28
-        back.fill = following ? Theme.brush(person.pencil, 0.35) : Theme.brush(Theme.paper)
-        back.horizontalAlignment = .center
-        back.verticalAlignment = .center
-        box.children.append(back)
-        let disc = Ellipse()
-        disc.width = 24
-        disc.height = 24
-        disc.fill = Theme.brush(person.pencil)
-        disc.horizontalAlignment = .center
-        disc.verticalAlignment = .center
-        box.children.append(disc)
-        let initial = Theme.text(person.initial, size: 11, weight: 700)
-        initial.foreground = Theme.brush(0xFFFFFF)
-        initial.horizontalAlignment = .center
-        box.children.append(initial)
-        let working = person.doing != "looking" && !person.away
-        let ring = Ellipse()
-        ring.width = 30
-        ring.height = 30
-        ring.stroke = Theme.brush(person.pencil, 0.55)
-        ring.strokeThickness = 1.5
-        ring.visibility = working ? .visible : .collapsed
-        box.children.append(ring)
-        rings.append((ring, working))
-        if working { anyoneWorking = true }
-        box.opacity = person.away ? 0.5 : 1
-        let grow = CompositeTransform()
-        grow.centerX = 15
-        grow.centerY = 15
-        box.renderTransform = grow
+        for (e, d) in [(token.back, 28.0), (token.disc, 24.0), (token.ring, 30.0)] {
+            e.width = d
+            e.height = d
+            e.horizontalAlignment = .center
+            e.verticalAlignment = .center
+        }
+        box.children.append(token.back)
+        box.children.append(token.disc)
+        token.initial.foreground = Theme.brush(0xFFFFFF)
+        token.initial.horizontalAlignment = .center
+        token.initial.verticalAlignment = .center
+        box.children.append(token.initial)
+        token.ring.strokeThickness = 1.5
+        box.children.append(token.ring)
+        token.place.centerX = 15
+        token.place.centerY = 15
+        box.renderTransform = token.place
+        root.children.append(box)
         // The name hanging below on a little point, over what lies under the bar.
-        let tag = StackPanel()
-        tag.isHitTestVisible = false
+        token.tag.isHitTestVisible = false
+        token.tag.renderTransform = token.hang
+        token.tag.visibility = .collapsed
+        tags.children.append(token.tag)
+        tag(token, person, live: live)
+        box.pointerEntered.addHandler { [weak self, weak token] _, _ in
+            guard let self, let token else { return }
+            // Its clock as it is now.
+            if let person = WindowsCore.live?.people.first(where: { $0.id == token.id }) { self.tag(token, person, live: WindowsCore.live) }
+            self.pointed(token, true)
+        }
+        box.pointerExited.addHandler { [weak self, weak token] _, _ in
+            guard let self, let token else { return }
+            self.pointed(token, false)
+        }
+        box.pointerPressed.addHandler { _, args in args?.handled = true }
+        let id = person.id
+        box.tapped.addHandler { [weak self] _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.go?(id) } }
+        }
+        return token
+    }
+
+    /// The name and the little point it hangs from.
+    private func tag(_ token: Token, _ person: WindowsCore.LivePerson, live: LiveTogether?) {
+        token.tag.children.clear()
         var point = PathData()
         point.move(4.5, 0); point.line(9, 5); point.line(0, 5); point.close()
         if let tip = LiveCanvas.path(point.d, fill: Theme.brush(person.pencil)) {
@@ -776,30 +964,23 @@ final class LivePeople {
             holder.horizontalAlignment = .center
             holder.margin = Theme.inset(0, 0, 0, -1)
             holder.children.append(tip)
-            tag.children.append(holder)
+            token.tag.children.append(holder)
         }
-        tag.children.append(LiveCanvas.nameTag(person.name, pencil: person.pencil, clock: live?.clock(of: person), height: 21))
-        tag.visibility = .collapsed
-        tags.children.append(tag)
-        box.pointerEntered.addHandler { [weak self] _, _ in
-            grow.scaleX = 1.08
-            grow.scaleY = 1.08
-            guard let self, let t = try? box.transformToVisual(self.tags), let p = try? t.transformPoint(Point(x: 15, y: 32)) else { return }
-            try? tag.measure(Size(width: 400, height: 60))
-            try? Canvas.setLeft(tag, Double(p.x) - Double(tag.desiredSize.width) / 2)
-            try? Canvas.setTop(tag, Double(p.y))
-            tag.visibility = .visible
+        token.tag.children.append(LiveCanvas.nameTag(person.name, pencil: person.pencil, clock: live?.clock(of: person), height: 21))
+    }
+
+    /// How a token looks for who it is: their pencil and initial, ringed at work, dimmed away.
+    private func look(_ token: Token, _ person: WindowsCore.LivePerson, following: Bool) {
+        if token.pencil != person.pencil || token.initial.text != person.initial {
+            token.pencil = person.pencil
+            token.disc.fill = Theme.brush(person.pencil)
+            token.ring.stroke = Theme.brush(person.pencil, 0.55)
+            token.initial.text = person.initial
+            tag(token, person, live: WindowsCore.live)
         }
-        box.pointerExited.addHandler { _, _ in
-            grow.scaleX = 1
-            grow.scaleY = 1
-            tag.visibility = .collapsed
-        }
-        box.pointerPressed.addHandler { _, args in args?.handled = true }
-        let id = person.id
-        box.tapped.addHandler { [weak self] _, _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.go?(id) } }
-        }
-        return box
+        token.away = person.away
+        token.working = person.doing != "looking" && !person.away
+        token.ring.visibility = token.working ? .visible : .collapsed
+        token.follow.target = following ? 1 : 0
     }
 }
