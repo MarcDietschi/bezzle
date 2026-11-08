@@ -163,6 +163,8 @@ final class DesignCanvas {
     /// The text a press with the Text tool began on: a click types into it, a drag draws a new
     /// one over it, as on the Mac.
     private var textUnderPress: UUID?
+    /// The text selected when a new one was begun, whose look it takes.
+    private var drawLike: UUID?
     /// A picture being placed inside its layer (the Mac's PictureTool, ported): the whole of it
     /// past the layer's outline, faded, in a picture of its own (one more for one fading out),
     /// and its edges, the outline and the crop marks over it.
@@ -3321,6 +3323,8 @@ final class DesignCanvas {
             // A click with the Text tool on a text types into it, all its words picked out; a
             // drag, over one or not, draws a new one.
             textUnderPress = kind == "text" ? WindowsCore.hit(c, zoom: zoom).flatMap { WindowsCore.isText($0) ? $0 : nil } : nil
+            // New text looks as the text selected, as on the Mac.
+            drawLike = kind == "text" && session.selection.count == 1 && WindowsCore.isText(session.selection[0]) ? session.selection[0] : nil
             _ = try? stage.capturePointer(args?.pointer)
             drag = (p, on ?? -1, false, .draw(id: UUID(), kind: kind, start: CGPoint(x: Double(c.x).rounded(), y: Double(c.y).rounded()), board: on))
             WindowsCore.beginGesture()
@@ -3687,7 +3691,7 @@ final class DesignCanvas {
                     end = CGPoint(x: Double(start.x) + (w < 0 ? -side : side), y: Double(start.y) + (h < 0 ? -side : side))
                 }
             }
-            WindowsCore.draw(id, kind: kind, from: start, to: CGPoint(x: Double(end.x).rounded(), y: Double(end.y).rounded()), board: board, click: false)
+            WindowsCore.draw(id, kind: kind, from: start, to: CGPoint(x: Double(end.x).rounded(), y: Double(end.y).rounded()), board: board, click: false, like: drawLike)
             session.edited(board: board)
             return
         case .move(let duplicate):
@@ -3780,7 +3784,7 @@ final class DesignCanvas {
                 beginEditing(under, board: at)
                 return
             }
-            if !d.moved { WindowsCore.draw(id, kind: kind, from: start, to: start, board: board, click: true) }
+            if !d.moved { WindowsCore.draw(id, kind: kind, from: start, to: start, board: board, click: true, like: drawLike) }
             WindowsCore.endGesture()
             // What was drawn is picked; the tool is put down, but for Text, which stays in hand.
             if kind == "artboard" {

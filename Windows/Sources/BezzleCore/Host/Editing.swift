@@ -311,7 +311,7 @@ extension WindowsCore {
     /// one step. `from` and `to` are on the canvas; `board` is the artboard it lands on (an artboard
     /// itself lies on the canvas). A click (`click`) makes a sensible size: the standard artboard,
     /// a line 100 long, text set where its first baseline begins, 100 × 100 for the rest.
-    public static func draw(_ id: UUID, kind name: String, from a: CGPoint, to b: CGPoint, board: Int?, click: Bool) {
+    public static func draw(_ id: UUID, kind name: String, from a: CGPoint, to b: CGPoint, board: Int?, click: Bool, like: UUID? = nil) {
         guard let kind = Node.Kind(rawValue: name), let doc = Editing.gestureStart ?? design else { return }
         let boardID = kind == .artboard ? nil : board.flatMap { $0 < doc.nodes.count ? doc.nodes[$0].id : nil }
         let title = doc.nextName(for: kind)
@@ -325,6 +325,12 @@ extension WindowsCore {
                 n.setLineEnds(a, click ? CGPoint(x: a.x + 100, y: a.y) : b)
             case .text:
                 n.text = ""
+                // New text looks as the text that was selected, as XD and the Mac have it.
+                if let like, let l = doc.node(like), l.kind == .text, var style = l.style {
+                    style.vertical = nil
+                    n.style = style
+                    n.fill = l.fill
+                }
                 if click {
                     n.style?.sizing = .autoWidth
                     n.frame = CGRect(origin: a, size: .zero)
