@@ -2,7 +2,7 @@ import Foundation
 
 // From Bezzle/Store/Welcome.swift, as Windows makes the tour: the same sheets, lessons, design and
 // words (the Mac's, from its catalog, by the same keys), said as Windows says them: its keys for
-// the Mac's (Ctrl for ⌘, Alt for ⌥, Enter for ↩, F7 for ⌘;, see `WindowsKeys`), Explorer for the
+// the Mac's (Ctrl for ⌘, Alt for ⌥ and ⌃, Enter for ↩, see `WindowsKeys`), Explorer for the
 // Finder, the Bezzle menu on the home tab for the Mac's menus, a link for iCloud; sentences only
 // Windows says are in Resources/windows-words.json. A lesson on what Windows cannot do yet is left
 // out until it can (`removesBackground`). The photo is the Mac's own, painted by Bezzle/Store/
@@ -860,7 +860,7 @@ public enum Welcome {
             String(localized: "This sheet has a layout grid. Move a block: the columns light up and the block catches on their edges."),
             String(localized: "Click the sheet’s name above its corner, then drag sideways across its Layout Grid card in the inspector to change the number of columns."),
         ],
-        tip: String(localized: "The zoom menu at the top shows or hides the rulers, guides and layout grids."),
+        keys: ["⌃", "R"], tip: String(localized: "Shows or hides the rulers. ⌃, does the same for guides, ⌃G for layout grids."),
         // The mat lies on the grid's columns 6 to 12.
         mat: 386...824,
         // No guide yet: one across the sheet would run through the words. The first step pulls one out.
@@ -1201,11 +1201,11 @@ public enum Welcome {
         name: { String(localized: "\($0). Inspect") },
         title: String(localized: "Measure it, copy the code."),
         steps: [
-            String(localized: "Switch to Inspect at the top. Nothing can be moved by mistake there: it is for looking."),
+            String(localized: "Switch to Inspect at the top, or press ⌃I. Nothing can be moved by mistake there: it is for looking."),
             String(localized: "Click the word Follow, then once more: Bezzle climbs to the whole button and draws its size in blue. Point at the portrait to see how far apart they are."),
             String(localized: "The inspector shows the button’s CSS and SwiftUI, ready to copy. Copy its picture there too, and paste it into any app."),
         ],
-        tip: String(localized: "Esc climbs one level up. Design at the top goes back to designing."),
+        tip: String(localized: "Esc climbs one level up. ⌃I again goes back to designing."),
         scene: profile)
 
     /// A profile card to measure: a portrait, a name, a line about them, a button to follow them.
@@ -1665,35 +1665,56 @@ public enum Welcome {
     }
 }
 
-/// The Mac's keys as Windows names them (Windows/Sources/Bezzle/Bar.swift and Words.swift say them
-/// alike), in the words of any language: ⌘ and ⌃ are Ctrl, ⌥ Alt, ⇧ Shift, ↩ Enter, joined by +
-/// before the key they go with, in Windows' order (Ctrl+Alt+B for ⌥⌘B, Ctrl+Shift+P for ⇧⌘P), and
-/// the shortcuts Windows has another key for (F7 checks the spelling, as ⌘; does).
+/// The Mac's keys as Windows names them, as Erik set them (2026-11-08), in the words of any
+/// language: ⌘ is Ctrl, ⌥ Alt, ⇧ Shift, ↩ Enter, and the Mac's Control keys, ⌃ alone, are Alt
+/// (Alt+R rulers, Alt+, guides, Alt+G layout grids, Alt+I Inspect); joined by + before the key
+/// they go with, in Windows' order (Ctrl+Alt+B for ⌥⌘B, Ctrl+Shift+P for ⇧⌘P). The two the
+/// Windows app has bound otherwise are said as it has them: F7 checks the spelling (⌘;), Ctrl+M
+/// masks (⌃⌘M).
 enum WindowsKeys {
-    private static let modifiers: [Character: String] = ["⌘": "Ctrl", "⌃": "Ctrl", "⌥": "Alt", "⇧": "Shift"]
     private static let order = ["Ctrl", "Alt", "Shift"]
-    private static let others = ["Ctrl+;": "F7"]
+    /// Shortcuts said otherwise than their keys would be, by the Mac's.
+    private static let others = ["⌘;": "F7", "⌃⌘M": "Ctrl+M"]
+
+    /// The Windows names of the Mac's modifiers held together, in Windows' order: ⌃ with ⌘ is
+    /// the one Ctrl, ⌃ alone Alt.
+    private static func names(_ held: [Character]) -> [String] {
+        var named: Set<String> = []
+        for m in held {
+            switch m {
+            case "⌘": named.insert("Ctrl")
+            case "⌥": named.insert("Alt")
+            case "⇧": named.insert("Shift")
+            case "⌃": named.insert(held.contains("⌘") ? "Ctrl" : "Alt")
+            default: break
+            }
+        }
+        return order.filter(named.contains)
+    }
+
+    /// The Mac's way of writing modifiers held together, in its order (⌃⌥⇧⌘).
+    private static func macOrder(_ held: [Character]) -> String {
+        String("⌃⌥⇧⌘".filter(held.contains))
+    }
 
     /// Words with the Mac's keys in them, with Windows' instead.
     static func windows(_ text: String) -> String {
         var out = ""
-        var held: [String] = []
+        var held: [Character] = []
         // Held down, then the key they go with: a letter, a figure or an arrow straight after
-        // them, or a shortcut Windows has another key for. Anything else after them ("Avec ⌥,"),
-        // and they are a key alone.
+        // them, or a shortcut with one of its own (⌃, for the guides). Anything else after them
+        // ("Avec ⌥,"), and they are a key alone.
         func release(before next: Character?) {
             guard !held.isEmpty else { return }
-            let named = order.filter(held.contains)
+            let named = names(held), mac = macOrder(held)
             defer { held = [] }
             if let next {
-                let key = next == "↩" ? "Enter" : String(next)
-                let combo = (named + [key]).joined(separator: "+")
-                if let other = others[combo] {
+                if let other = others[mac + String(next)] {
                     out += other
                     return
                 }
-                if next.isLetter || next.isNumber || "←→↑↓↩".contains(next) {
-                    out += combo
+                if next.isLetter || next.isNumber || "←→↑↓↩".contains(next) || (mac == "⌃" && next == ",") {
+                    out += (named + [next == "↩" ? "Enter" : String(next)]).joined(separator: "+")
                     return
                 }
             }
@@ -1701,8 +1722,8 @@ enum WindowsKeys {
             if let next { out.append(next) }
         }
         for letter in text {
-            if let name = modifiers[letter] {
-                held.append(name)
+            if "⌘⌥⇧⌃".contains(letter) {
+                held.append(letter)
             } else if !held.isEmpty {
                 release(before: letter)
             } else {
@@ -1715,18 +1736,9 @@ enum WindowsKeys {
 
     /// Key caps as Windows' keyboards have them: its modifiers first, in its order, once each.
     static func caps(_ labels: [String]) -> [String] {
-        var named: [String] = [], rest: [String] = []
-        for label in labels {
-            if label.count == 1, let name = modifiers[label.first!] {
-                if !named.contains(name) { named.append(name) }
-            } else if label == "↩" {
-                rest.append("Enter")
-            } else if label == "esc" {
-                rest.append("Esc")
-            } else {
-                rest.append(label)
-            }
-        }
-        return order.filter(named.contains) + rest
+        let modifier = { (label: String) in label.count == 1 && "⌘⌥⇧⌃".contains(label) }
+        let held = labels.filter(modifier).compactMap(\.first)
+        let rest = labels.filter { !modifier($0) }.map { $0 == "↩" ? "Enter" : $0 == "esc" ? "Esc" : $0 }
+        return names(held) + rest
     }
 }
