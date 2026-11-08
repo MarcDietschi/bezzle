@@ -540,7 +540,7 @@ final class DesignCanvas {
             // Fitted as the design opens; its tab coming back to the front shows it as it was left.
             guard !self.fitted else { return }
             self.fitted = true
-            self.fit()
+            self.lookFirst()
         }
         session.openCardChanged = { [weak self] in self?.drawAids() }
         session.listen { [weak self] in
@@ -609,6 +609,15 @@ final class DesignCanvas {
         guard root.isLoaded else { return }
         boards = WindowsCore.boards()
         fit(boards.reduce(CGRect.null) { $0.union($1.frame) }, padding: 64, most: 1)
+    }
+
+    /// How a design shows as it opens, as the Mac's DocumentStore.lookFirst: the welcome tour on
+    /// its first sheet, 48 points round it; any other design whole.
+    private func lookFirst() {
+        guard root.isLoaded else { return }
+        boards = WindowsCore.boards()
+        guard let cover = boards.first(where: { $0.id == Welcome.coverID }) else { fit(); return }
+        fit(cover.frame, padding: 48, most: 1)
     }
 
     /// What is selected in view, as the Mac's Zoom to Selection: 80 points round it, never above 8×.

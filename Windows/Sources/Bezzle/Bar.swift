@@ -122,7 +122,8 @@ final class Bar {
 
     /// The Bezzle menu, as the Mac's app menu and File menu have it, which on Windows hangs from
     /// the home tab: bringing designs in from other apps, whether AI assistants may work in the
-    /// app and how to connect one, the designs folder, and the design in front in Explorer.
+    /// app and how to connect one, the designs folder, the welcome tour (the Mac's Help menu),
+    /// and the design in front in Explorer.
     /// With a design in front, its spelling's entries too (the Mac's Edit › Spelling and Grammar).
     static func appEntries(front url: URL?, spelling: [MenuHost.Entry] = []) -> [MenuHost.Entry] {
         // About Bezzle first, and Check for Updates… in a copy that updates itself, as the Mac's
@@ -149,6 +150,8 @@ final class Bar {
         entries.append(.item(Words.t("Copy Server Address"), enabled: on) { Clipboard.copyText(address) })
         entries.append(.separator)
         entries.append(.item(Words.t("Designs Folder…")) { Bar.chooseDesignsFolder?() })
+        // A fresh copy of the tour, as the Mac's Help menu gives one.
+        entries.append(.item(Words.t("Welcome to Bezzle")) { WelcomeTour.open() })
         // The design in front, picked out in Explorer.
         if let url {
             entries.append(.separator)

@@ -187,6 +187,8 @@ final class BezzleApp: SwiftApplication {
             fitWindow(forDesigns: false, centred: true)
             Tabs.shared.showFront()
             openCommandLine(Array(CommandLine.arguments.dropFirst()), in: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+            // The tour, the first time Bezzle starts with no designs (WelcomeTour.swift).
+            WelcomeTour.start()
             // Import from a Website, over the page in front; what it makes opens in a tab with what
             // came across at the canvas's foot, as a design from another app does.
             let web = WebImporting.shared
