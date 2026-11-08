@@ -34,6 +34,29 @@ do {
     // A file from Adobe XD, Figma, Sketch or Photoshop is brought in first, as a new design in
     // the out folder (or BEZZLE_IMPORT_TO), as Bezzle brings it in; what came across is said.
     var design = URL(fileURLWithPath: arguments[2])
+    // "welcome": the welcome tour is made in the out folder first, as Bezzle makes it, with the
+    // photo BEZZLE_WELCOME_PHOTO names, in the language BEZZLE_LANGUAGE names (de, fr or it) from
+    // the words in BEZZLE_STRINGS (Resources/Generated/strings.json).
+    if arguments[2] == "welcome" {
+        if let language = ProcessInfo.processInfo.environment["BEZZLE_LANGUAGE"], let file = ProcessInfo.processInfo.environment["BEZZLE_STRINGS"],
+           let data = try? Data(contentsOf: URL(fileURLWithPath: file)),
+           let words = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?[language] as? [String: Any] {
+            Localization.lookup = { key, args in
+                guard var s = words[key] as? String else { return nil }
+                for a in args {
+                    guard let at = [s.range(of: "%lld"), s.range(of: "%@")].compactMap({ $0 }).min(by: { $0.lowerBound < $1.lowerBound }) else { break }
+                    s.replaceSubrange(at, with: "\(a)")
+                }
+                return s
+            }
+        }
+        guard let made = Welcome.make(in: URL(fileURLWithPath: arguments[3])) else {
+            print("bezzle-render: the welcome tour could not be made")
+            exit(1)
+        }
+        print("welcome tour made: \(made.path)")
+        design = made
+    }
     // A web page (http:, https: or file:) is brought in first as Bezzle brings a website in, read
     // at BEZZLE_WEB_WIDTHS (1440 otherwise, separated by commas), its cookie banners hidden unless
     // BEZZLE_WEB_BANNERS is set; BEZZLE_WEB_SCALE reads it at that many pixels to a CSS pixel.

@@ -39,6 +39,16 @@ extension WindowsCore {
                 }
             }
         }
+        // The Mac's families Windows lacks, drawn in one of its own very like them, under the
+        // Mac's names, as the open fonts stand in for others.
+        for (mac, theirs, faces) in lookAlikes where found[mac] == nil {
+            guard let own = found[theirs] else { continue }
+            var alike: [String: InstalledFace] = [:]
+            for (face, ownFace) in faces { alike[face] = own[ownFace] }
+            guard !alike.isEmpty else { continue }
+            found[mac] = alike
+            standingIn[mac] = theirs
+        }
         installed = found
         var families = NSFontManager.shared.families
         for (family, faces) in found {
@@ -49,8 +59,22 @@ extension WindowsCore {
         Fonts.need = { family, face in WindowsCore.give(family, face) }
     }
 
-    /// Whether a family is one of Windows' own, which WinUI can show by its name.
+    /// Whether a family is one of Windows' own, which WinUI can show by its name (`shownAs`).
     public static func isInstalled(_ family: String) -> Bool { installed[family] != nil }
+
+    /// The name WinUI knows a family by: its own, or for one of the Mac's that a font of Windows
+    /// stands in for, that font's.
+    public static func shownAs(_ family: String) -> String { standingIn[family] ?? family }
+
+    /// The Mac's families that Windows has a cousin of, face by face, each about as wide as the
+    /// Mac's (measured with Core Text: within a few hundredths, so words break where they do on
+    /// the Mac): Charter in Cambria, Bradley Hand in Ink Free. The welcome tour is set in them.
+    nonisolated private static let lookAlikes: [(mac: String, windows: String, faces: [String: String])] = [
+        ("Charter", "Cambria", ["Roman": "Regular", "Italic": "Italic", "Bold": "Bold", "Bold Italic": "Bold Italic",
+                                "Black": "Bold", "Black Italic": "Bold Italic"]),
+        ("Bradley Hand", "Ink Free", ["Bold": "Regular"]),
+    ]
+    nonisolated(unsafe) private static var standingIn: [String: String] = [:]
 
     /// Gives Skia a face Windows has, the first time it is asked for; any thread.
     nonisolated static func give(_ family: String, _ face: String) {

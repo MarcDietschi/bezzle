@@ -75,6 +75,8 @@ try {
     # (Bundle.main.resourceURL is Bezzle.resources beside it), as Icons.swift reads it from the Mac's bundle.
     New-Item -ItemType Directory -Force "$app\Bezzle.resources" | Out-Null
     Copy-Item 'Sources\BezzleCore\Shared\Model\Kits\Icons.deflate' "$app\Bezzle.resources" -Force
+    # The welcome tour's photo, as the Mac paints it (Resources/make-welcome-photo.sh makes it on the Mac).
+    if (Test-Path 'Resources\Generated\welcome-lake.jpg') { Copy-Item 'Resources\Generated\welcome-lake.jpg' "$app\Bezzle.resources" -Force }
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $app -Force
     Copy-Item 'Packages\skia\third_party\externals\icu\common\icudtl.dat' $products -Force
     if (Test-Path '..\Web\site\openfonts\manifest.json') {

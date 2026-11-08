@@ -20,7 +20,7 @@ extension Inspector {
     /// The family's own letters, for the fonts menu and the card's mark.
     static func font(of family: String) -> FontFamily? {
         // One of Windows' own by its name; an open one from its file beside Bezzle.
-        if WindowsCore.isInstalled(family) { return FontFamily(family) }
+        if WindowsCore.isInstalled(family) { return FontFamily(WindowsCore.shownAs(family)) }
         return WindowsCore.fontLook(of: family).map { FontFamily("ms-appx:///fonts/\($0.file)#\($0.family)") }
     }
 
