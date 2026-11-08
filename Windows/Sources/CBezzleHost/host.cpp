@@ -1089,6 +1089,7 @@ TextStyle style(const Run& run) {
     return s;
 }
 
+/// Runs set as one paragraph `width` wide, aligned 0 left, 1 center, 2 right, 3 justified.
 std::unique_ptr<Paragraph> paragraph(const std::vector<Run>& runs, const Run& first, double width, int align) {
     ParagraphStyle ps;
     const TextAlign aligns[] = {TextAlign::kLeft, TextAlign::kCenter, TextAlign::kRight, TextAlign::kJustify};
@@ -1208,69 +1209,78 @@ bool spreadsAt(char16_t u) {
     return u == 0x20 || u == 0x09 || (u >= 0x2000 && u <= 0x200A && u != 0x2007) || u == 0x205F || u == 0x3000 || u == 0x1680;
 }
 
+/// The faces Text Kit spreads as a justification table of their own says (Courier's 'just'
+/// table): their spaces grow by up to their size on either side, their letters not at all.
+bool ownJustification(const Run& r) { return r.family == "Courier"; }
+
 /// A justified line's runs spread to `width`, as Text Kit spreads a line that is not its
-/// paragraph's last (measured on the Mac, as bezzle.mjs's spreadOut): first its spaces, each by
-/// up to half its letters' size (where several stand together, each but the last as much again
-/// as one alone); then the gaps between letters too, each by up to 0.289 of their size, a space by
-/// half as much as a gap; what is left, its spaces alone. A line without spaces is spread between
-/// its letters, as far as it takes. Each letter takes its share after it as letter spacing
-/// (Skia's), the last letter of a word none, its space that much less. Empty when it needs no
-/// spreading.
+/// paragraph's last (measured on the Mac, as bezzle.mjs's spreadOut). Each letter can grow on its
+/// left and on its right, both by up to 0.1445 of its size, and each space by up to half its
+/// size; between a letter and a space to its right neither grows (where both are of a face
+/// without a table of its own). The spaces grow first, all by the same part of what they can;
+/// then the letters; then the spaces again, without end, or, on a line without spaces, the
+/// letters. Courier's spaces grow by up to their size on either side, and its letters not at
+/// all, so that a line of Courier without spaces is not spread. All of this as the letters lie
+/// from left to right. Each letter takes what it grows to its right as Skia's letter spacing,
+/// which Skia also puts to a letter's right. Empty when it needs no spreading or cannot be spread.
 std::vector<Run> spreadOut(const std::vector<Run>& runs, Paragraph* line, double width) {
     std::vector<LineMetrics> lm;
     line->getLineMetrics(lm);
     const double extra = width - (lm.empty() ? 0 : lm[0].fWidth);
     if (!(extra > 0.001)) return {};
     std::u16string words;
-    for (const auto& r : runs) words += r.text;
-    // Each letter as Skia sets it, by where it begins in the words.
-    std::vector<size_t> glyphs;
+    std::vector<size_t> runAt;
+    for (size_t r = 0; r < runs.size(); r++) {
+        words += runs[r].text;
+        runAt.insert(runAt.end(), runs[r].text.size(), r);
+    }
+    // Where each letter Skia sets lies, left to right, by where it begins in the words: one for each
+    // letter, however many glyphs it is drawn with.
+    struct Spot { size_t at; double x; };
+    std::vector<Spot> spots;
     line->visit([&](int, const Paragraph::VisitorInfo* info) {
         if (!info) return;
-        for (int k = 0; k < info->count; k++) glyphs.push_back(utf16Index(words, info->utf8Starts[k]));
+        for (int k = 0; k < info->count; k++) spots.push_back({utf16Index(words, info->utf8Starts[k]), double(info->origin.fX + info->positions[k].fX)});
     });
-    if (glyphs.size() < 2) return {};
-    auto sizeAt = [&](size_t k) {
-        size_t n = 0;
-        for (const auto& r : runs) { n += r.text.size(); if (k < n) return r.size; }
-        return runs.back().size;
-    };
-    std::vector<bool> space(glyphs.size());
-    for (size_t i = 0; i < glyphs.size(); i++) space[i] = glyphs[i] < words.size() && spreadsAt(words[glyphs[i]]);
-    // How many shares each space takes (each but the last of several together, two), the gaps
-    // between letters, and the sizes the most each takes is measured by.
-    std::vector<int> shares(glyphs.size(), 0);
-    int units = 0, gaps = 0, letters = 0;
-    double spaceSize = 0, letterSize = 0;
-    for (size_t i = 0; i < glyphs.size(); i++) {
-        if (space[i]) {
-            shares[i] = i + 1 < glyphs.size() && space[i + 1] ? 2 : 1;
-            units += shares[i];
-            spaceSize += shares[i] * sizeAt(glyphs[i]);
-        } else {
-            letterSize += sizeAt(glyphs[i]);
-            letters++;
-            if (i + 1 < glyphs.size() && !space[i + 1]) gaps++;
-        }
+    std::stable_sort(spots.begin(), spots.end(), [](const Spot& a, const Spot& b) { return a.x < b.x; });
+    std::vector<Spot> letters;
+    std::vector<bool> seen(words.size() + 1, false);
+    for (const auto& s : spots) {
+        if (s.at >= words.size() || seen[s.at]) continue;
+        seen[s.at] = true;
+        letters.push_back(s);
     }
-    double unit = 0, gap = 0;
-    if (units == 0) {
-        if (gaps == 0) return {};
-        gap = extra / gaps;
-    } else {
-        const double most = 0.5 * spaceSize / units, mostGap = 0.2890625 * (letters ? letterSize / letters : spaceSize / units);
-        if (extra <= units * most) {
-            unit = extra / units;
-        } else {
-            const double rest = extra - units * most;
-            gap = std::min(rest / (gaps + units / 2.0), mostGap);
-            unit = most + gap / 2 + (rest - gap * (gaps + units / 2.0)) / units;
-        }
+    const size_t n = letters.size();
+    if (n < 2) return {};
+    std::vector<double> after(words.size(), 0);
+    std::vector<double> left(n), right(n);
+    std::vector<bool> space(n), own(n);
+    double spaces = 0, others = 0;
+    for (size_t i = 0; i < n; i++) {
+        const Run& run = runs[runAt[letters[i].at]];
+        space[i] = spreadsAt(words[letters[i].at]);
+        own[i] = ownJustification(run);
+        left[i] = right[i] = (space[i] ? (own[i] ? 1.0 : 0.5) : (own[i] ? 0.0 : 0.14453125)) * run.size;
     }
-    // What each letter of the words takes after it, by its place in them.
-    std::vector<double> after(words.size(), gap);
-    for (size_t i = 0; i < glyphs.size(); i++) {
-        if (space[i] && glyphs[i] < words.size()) after[glyphs[i]] = shares[i] * unit - (i > 0 && !space[i - 1] ? gap : 0);
+    left[0] = 0;
+    right[n - 1] = 0;
+    for (size_t i = 0; i + 1 < n; i++) {
+        if (!space[i] && !own[i] && space[i + 1] && !own[i + 1]) right[i] = left[i + 1] = 0;
+    }
+    for (size_t i = 0; i < n; i++) (space[i] ? spaces : others) += left[i] + right[i];
+    if (spaces <= 0 && others <= 0) return {};
+    // How much of what they can the spaces grow, and the letters: up to all of it, then the rest.
+    double rest = extra, bySpaces = 0, byLetters = 0;
+    if (spaces > 0) { bySpaces = std::min(1.0, rest / spaces); rest -= bySpaces * spaces; }
+    if (rest > 1e-9 && others > 0) { byLetters = std::min(1.0, rest / others); rest -= byLetters * others; }
+    if (rest > 1e-9) {
+        if (spaces > 0) bySpaces += rest / spaces;
+        else byLetters += rest / others;
+    }
+    for (size_t i = 0; i < n; i++) {
+        const double by = space[i] ? bySpaces : byLetters;
+        after[letters[i].at] += right[i] * by;
+        if (i + 1 < n) after[letters[i].at] += left[i + 1] * (space[i + 1] ? bySpaces : byLetters);
     }
     std::vector<Run> out;
     size_t start = 0;
@@ -1907,11 +1917,11 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
         at = z;
     }
     if (parts.empty() || at < total) parts.push_back({at, total, 0});
+    std::u16string letters;
+    for (const auto& r : runs) letters += r.text;
     Text text;
     const double leading = leadingOf(runs[0]);
     const bool fromLeft = align == 0 || align == 3;
-    std::u16string letters;
-    for (const auto& r : runs) letters += r.text;
     int32_t written = 0, all = 0;
     double top = 0;
     for (size_t p = 0; p < parts.size(); p++) {
@@ -1919,7 +1929,9 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
         const double w = part.indent > 0 ? std::max(width - part.indent, 1.0) : width;
         // One part alone is the whole text, as it was always set.
         const std::vector<Run> those = parts.size() == 1 ? runs : slice(runs, part.start, part.end);
-        auto set = paragraph(those.empty() ? runs : those, those.empty() ? runs[0] : those[0], w, align);
+        // Justified lines are broken as lines set from the left are, and spread here, never by Skia.
+        const int laid = align == 3 ? 0 : align;
+        auto set = paragraph(those.empty() ? runs : those, those.empty() ? runs[0] : those[0], w, laid);
         std::vector<LineMetrics> metrics;
         set->getLineMetrics(metrics);
         for (size_t j = 0; j < metrics.size(); j++) {
@@ -1930,7 +1942,7 @@ extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double w
             const size_t start = part.start + m.fStartIndex, end = part.start + m.fEndIncludingNewline;
             auto piece = slice(runs, start, part.start + m.fEndExcludingWhitespaces);
             // Each line drawn on its own, so it can sit where the core puts it.
-            std::unique_ptr<Paragraph> line = piece.empty() ? nullptr : paragraph(piece, piece[0], w, align);
+            std::unique_ptr<Paragraph> line = piece.empty() ? nullptr : paragraph(piece, piece[0], w, laid);
             // Justified, every line but a paragraph's last is spread to the width, as Text Kit spreads it.
             bool spread = false;
             if (line && align == 3 && end < letters.size() && end > 0 && !breaksLine(letters[end - 1])) {

@@ -43,11 +43,13 @@ nonisolated extension SVGWriter {
                 let first = within.first.map { $0.look.resolved(over: style, color: base.color) } ?? base
                 x = line.indent - first.tracking / 1000 * first.size / 2
             }
-            // A justified line but a paragraph's last is spread to the width it is set at.
+            // A justified line but a paragraph's last is as wide as it is set: spread to the width
+            // it is set at, or, one that cannot be spread (Courier without spaces, nothing after
+            // its last tab), as wide as its letters, as the Mac writes its used width.
             var stretch = ""
             if style.align == .justify, end < string.length,
                let next = Unicode.Scalar(string.character(at: end)), !CharacterSet.newlines.contains(next) {
-                stretch = " textLength=\"\(n(width - line.indent))\" lengthAdjust=\"spacing\""
+                stretch = " textLength=\"\(n(line.width))\" lengthAdjust=\"spacing\""
             }
             // A text of its own each, rather than spans of one: some programs place only the first span.
             lines.append("<text x=\"\(n(x))\" y=\"\(n(line.drawn + down))\"\(stretch)>\(spans)</text>")

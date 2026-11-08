@@ -161,6 +161,7 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
 
   const aligns = { left: 'Left', center: 'Center', right: 'Right', justify: 'Justify' }
 
+  // Runs set as one paragraph `width` wide, aligned as `spec` says.
   function paragraph(spec, runs, width) {
     // Set at the width given, as Text Kit sets lines: Skia otherwise narrows it to whole points
     // and rounds lines' heights and widths, as Flutter wants.
@@ -189,20 +190,27 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   const breaks = (u) => u === 0x0A || u === 0x0D || u === 0x2028 || u === 0x2029 || u === 0x85
   // The spaces a justified line is spread at, as Text Kit counts them: a no-break space is a letter.
   const spaces = (u) => u === 0x20 || u === 0x09 || (u >= 0x2000 && u <= 0x200A && u !== 0x2007) || u === 0x205F || u === 0x3000 || u === 0x1680
+  // The faces Text Kit spreads as a justification table of their own says (Courier's 'just' table):
+  // their spaces grow by up to their size on either side, their letters not at all.
+  const ownJustification = (run) => run.family === 'Courier'
 
   // A justified line's runs spread to `width`, as Text Kit spreads a line that is not its
-  // paragraph's last (measured on the Mac, as Host/host.cpp's spreadOut): first its spaces, each
-  // by up to half its letters' size (where several stand together, each but the last as much again
-  // as one alone); then the gaps between letters too, each by up to 0.289 of their size, a space
-  // by half as much as a gap; what is left, its spaces alone. A line without spaces is spread
-  // between its letters, as far as it takes. Each letter takes its share after it as letter
-  // spacing (Skia's), the last letter of a word none, its space that much less. Null when it
-  // needs no spreading.
+  // paragraph's last (measured on the Mac, as Host/host.cpp's spreadOut). Each letter can grow on
+  // its left and on its right, both by up to 0.1445 of its size, and each space by up to half its
+  // size; between a letter and a space to its right neither grows (where both are of a face
+  // without a table of its own). The spaces grow first, all by the same part of what they can;
+  // then the letters; then the spaces again, without end, or, on a line without spaces, the
+  // letters. Courier's spaces grow by up to their size on either side, and its letters not at all,
+  // so that a line of Courier without spaces is not spread. All of this as the letters lie from
+  // left to right. Each letter takes what it grows to its right as Skia's letter spacing,
+  // which Skia also puts to a letter's right. Null when it needs no spreading or cannot be spread.
   function spreadOut(runs, line, width) {
     const natural = line.getLineMetrics()[0]?.width ?? 0
     const extra = width - natural
     if (!(extra > 0.001)) return null
     const words = runs.map((r) => r.text).join('')
+    const runAt = []
+    runs.forEach((r, k) => { for (let i = 0; i < r.text.length; i++) runAt.push(k) })
     // Where each letter of the words begins in their UTF-8, which is how Skia tells them.
     const at16 = new Map()
     let u8 = 0
@@ -211,37 +219,43 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       const c = words.charCodeAt(k)
       if (c >= 0xD800 && c < 0xDC00 && k + 1 < words.length) { u8 += 4; k++ } else u8 += c < 0x80 ? 1 : c < 0x800 ? 2 : 3
     }
-    const glyphs = []
-    for (const shaped of line.getShapedLines()) for (const run of shaped.runs) for (const o of run.offsets.subarray(0, run.glyphs.length)) glyphs.push(at16.get(o) ?? 0)
-    if (glyphs.length < 2) return null
-    const isSpace = glyphs.map((k) => spaces(words.charCodeAt(k)))
-    const sizeAt = (k) => { let n = 0; for (const r of runs) { n += r.text.length; if (k < n) return r.size } return runs[runs.length - 1].size }
-    // How many shares each space takes (each but the last of several together, two), the gaps
-    // between letters, and the sizes the most each takes is measured by.
-    const shares = isSpace.map((s, i) => (s ? (isSpace[i + 1] ? 2 : 1) : 0))
-    const units = shares.reduce((a, b) => a + b, 0)
-    let gaps = 0, spaceSize = 0, letterSize = 0, letters = 0
-    for (let i = 0; i < glyphs.length; i++) {
-      if (isSpace[i]) spaceSize += shares[i] * sizeAt(glyphs[i])
-      else { letterSize += sizeAt(glyphs[i]); letters++; if (i + 1 < glyphs.length && !isSpace[i + 1]) gaps++ }
-    }
-    let unit = 0, gap = 0
-    if (units === 0) {
-      if (gaps === 0) return null
-      gap = extra / gaps
-    } else {
-      const most = 0.5 * spaceSize / units, mostGap = 0.2890625 * (letters ? letterSize / letters : spaceSize / units)
-      if (extra <= units * most) {
-        unit = extra / units
-      } else {
-        const rest = extra - units * most
-        gap = Math.min(rest / (gaps + units / 2), mostGap)
-        unit = most + gap / 2 + (rest - gap * (gaps + units / 2)) / units
+    // Where each letter Skia sets lies, left to right: one for each letter, however many glyphs it is drawn with.
+    const spots = []
+    for (const shaped of line.getShapedLines()) {
+      for (const run of shaped.runs) {
+        for (let g = 0; g < run.glyphs.length; g++) spots.push({ at: at16.get(run.offsets[g]) ?? 0, x: run.positions[2 * g] })
       }
     }
+    spots.sort((a, b) => a.x - b.x)
+    const seen = new Set()
+    const letters = spots.filter((s) => {
+      if (s.at >= words.length || seen.has(s.at)) return false
+      seen.add(s.at)
+      return true
+    })
+    const n = letters.length
+    if (n < 2) return null
+    const space = letters.map((s) => spaces(words.charCodeAt(s.at)))
+    const own = letters.map((s) => ownJustification(runs[runAt[s.at]]))
+    const limit = letters.map((s, i) => (space[i] ? (own[i] ? 1 : 0.5) : (own[i] ? 0 : 0.14453125)) * runs[runAt[s.at]].size)
+    const left = limit.slice(), right = limit.slice()
+    left[0] = 0
+    right[n - 1] = 0
+    for (let i = 0; i + 1 < n; i++) if (!space[i] && !own[i] && space[i + 1] && !own[i + 1]) right[i] = left[i + 1] = 0
+    let inSpaces = 0, inLetters = 0
+    for (let i = 0; i < n; i++) { if (space[i]) inSpaces += left[i] + right[i]; else inLetters += left[i] + right[i] }
+    if (!(inSpaces > 0) && !(inLetters > 0)) return null
+    // How much of what they can the spaces grow, and the letters: up to all of it, then the rest.
+    let rest = extra, bySpaces = 0, byLetters = 0
+    if (inSpaces > 0) { bySpaces = Math.min(1, rest / inSpaces); rest -= bySpaces * inSpaces }
+    if (rest > 1e-9 && inLetters > 0) { byLetters = Math.min(1, rest / inLetters); rest -= byLetters * inLetters }
+    if (rest > 1e-9) { if (inSpaces > 0) bySpaces += rest / inSpaces; else byLetters += rest / inLetters }
     // What each letter of the words takes after it, by its place in them.
-    const after = new Float64Array(words.length).fill(gap)
-    glyphs.forEach((k, i) => { if (isSpace[i]) after[k] = shares[i] * unit - (i > 0 && !isSpace[i - 1] ? gap : 0) })
+    const after = new Float64Array(words.length)
+    for (let i = 0; i < n; i++) {
+      after[letters[i].at] += right[i] * (space[i] ? bySpaces : byLetters)
+      if (i + 1 < n) after[letters[i].at] += left[i + 1] * (space[i + 1] ? bySpaces : byLetters)
+    }
     const out = []
     let start = 0
     for (const r of runs) {
@@ -319,15 +333,18 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     // spec.indents as [start, end, indent]) narrower, and drawn that much to the right; the rest
     // as wide as asked. Without any, one part, the whole text.
     const total = spec.runs.reduce((n, r) => n + r.text.length, 0)
-    const parts = []
+    const indented = []
     let at = 0
     for (const [a, z, indent] of spec.indents ?? []) {
       if (z <= a || a < at || z > total) continue
-      if (a > at) parts.push({ start: at, end: a, indent: 0 })
-      parts.push({ start: a, end: z, indent: Math.max(indent, 0) })
+      if (a > at) indented.push({ start: at, end: a, indent: 0 })
+      indented.push({ start: a, end: z, indent: Math.max(indent, 0) })
       at = z
     }
-    if (!parts.length || at < total) parts.push({ start: at, end: total, indent: 0 })
+    if (!indented.length || at < total) indented.push({ start: at, end: total, indent: 0 })
+    const all = spec.runs
+    const words = all.map((r) => r.text).join('')
+    const parts = indented
     const lines = []
     const out = []
     const baselines = []
@@ -335,21 +352,22 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     // Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
     // lines set from the left: drawn that much to the left (centred or from the right, they lie where the Mac's do).
     const fromLeft = spec.align !== 'center' && spec.align !== 'right'
-    const words = spec.runs.map((r) => r.text).join('')
+    // Justified lines are broken as lines set from the left are, and spread here, never by Skia.
+    const laid = spec.align === 'justify' ? { ...spec, align: 'left' } : spec
     let top = 0
     parts.forEach((part, p) => {
       const width = part.indent > 0 ? Math.max(spec.width - part.indent, 1) : spec.width
-      const those = parts.length === 1 ? spec.runs : slice(spec.runs, part.start, part.end)
-      const whole = paragraph(spec, those.length ? those : spec.runs, width)
+      const those = parts.length === 1 ? all : slice(all, part.start, part.end)
+      const whole = paragraph(laid, those.length ? those : all, width)
       const metrics = whole.getLineMetrics()
       metrics.forEach((m, j) => {
         // A part ending in a paragraph's break has an empty line after it, set alone, which in
         // the whole text is the next part's first.
         if (p + 1 < parts.length && j > 0 && j + 1 === metrics.length && part.start + (metrics[j - 1].endIncludingNewline ?? metrics[j - 1].endIndex) >= part.end) return
-        const end = part.start + (m.endIncludingNewline ?? m.endIndex)
-        let runs = slice(spec.runs, part.start + m.startIndex, part.start + m.endExcludingWhitespaces)
+        const start = part.start + m.startIndex, end = part.start + (m.endIncludingNewline ?? m.endIndex)
+        let runs = slice(all, start, part.start + m.endExcludingWhitespaces)
         // Each line drawn on its own, so it can sit where the core puts it.
-        let line = runs.length ? paragraph(spec, runs, width) : null
+        let line = runs.length ? paragraph(laid, runs, width) : null
         // Justified, every line but a paragraph's last is spread to the width, as Text Kit spreads it.
         let spread = false
         if (line && spec.align === 'justify' && end < words.length && !breaks(words.charCodeAt(end - 1))) {
@@ -365,13 +383,13 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         // Where Skia paints the line's letters: its ascent down, rounded to a whole point, which is
         // not where its line metrics put the baseline.
         const back = (runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0) - part.indent
-        lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back, start: part.start + m.startIndex, runs })
+        lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back, start, runs })
         baselines.push(top + m.baseline)
         // Skia shares the leading out above and below the line; Text Kit keeps it apart.
         // Set from the left, its letters begin at its indent, as Text Kit's do; Skia's own left
         // there is off by half the spacing it puts before the first letter.
         const left = fromLeft ? 0 : lm ? lm.left : m.left
-        out.push([part.start + m.startIndex, end, spread ? width : m.width, m.ascent - leading / 2, m.descent - leading / 2, leading, part.indent + left])
+        out.push([start, end, spread ? width : m.width, m.ascent - leading / 2, m.descent - leading / 2, leading, part.indent + left])
       })
       top += whole.getHeight()
       whole.delete()
@@ -845,7 +863,6 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         return out
       })
     },
-
 
     // Shared designs: records are each record's packed data, base64, as CloudKit gives it.
     openShared(records, replica, pictures = new Map()) {
