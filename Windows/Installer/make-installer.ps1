@@ -14,6 +14,8 @@
 # - with -Feed and -PublicKey, the updater: WinSparkle.dll beside it, and the feed and the key it
 #   must find updates signed with in Bezzle.exe's resources, where WinSparkle reads them. A copy
 #   without them never looks for updates (as the Mac's builds from Xcode never do);
+# - Remove Background: the subject matte in Bezzle.resources (471 MB, the model measured, which
+#   onnx.ps1 pins) and ONNX Runtime and DirectML beside Bezzle.exe, all as build.ps1 laid them out;
 # - the licences of what Bezzle is made with (Windows/Credits), which About Bezzle shows.
 # Then Inno Setup makes the installer of it (Bezzle.iss), with the Windows App Runtime's installer.
 # Prints the installer's path, size and SHA-256.
@@ -92,6 +94,16 @@ while ($queue.Count -gt 0) {
         Copy-Item $found $stage
         $queue.Enqueue((Join-Path $stage $dll))
     }
+}
+# Remove Background's subject matte and what runs it (build.ps1 puts them in from Packages: onnx.ps1
+# fetches ONNX Runtime and DirectML, VM/send-matte.sh brings the model made on a Mac): only the model
+# measured, whose SHA-256 onnx.ps1 pins.
+$matte = "$stage\Bezzle.resources\BiRefNet.onnx"
+if (-not (Test-Path $matte)) { throw "No subject matte in ${App}: send it with VM/send-matte.sh and run build.ps1" }
+$pinned = (Select-String -Path "$windows\onnx.ps1" -Pattern "^\`$matte = '([0-9a-f]{64})'").Matches[0].Groups[1].Value
+if ((Get-FileHash $matte -Algorithm SHA256).Hash -ne $pinned.ToUpper()) { throw "The subject matte in $App is not the one measured ($pinned)" }
+foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll')) {
+    if (-not (Test-Path "$stage\$dll")) { throw "No $dll beside Bezzle.exe: run onnx.ps1, then build.ps1" }
 }
 # The Mac's pointers must be in it (build.ps1 compiles them before Swift links them in; a manifest
 # SwiftPM read before Resources\Generated\Bezzle.res was there leaves them out).

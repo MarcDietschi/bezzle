@@ -38,6 +38,21 @@ Without `Packages\avif`, Bezzle builds all the same but neither reads nor writes
 Image I/O cannot write it leaves the format out. Run `.\avif.ps1` before the first `swift build`; when
 it comes after one, touch `Package.swift`, since SwiftPM may keep its earlier reading of the manifest.
 
+Remove Background runs the Mac's subject matte, BiRefNet_HR, exported to ONNX, with ONNX Runtime
+(on the graphics card through DirectML where it can, else on the processor):
+
+```powershell
+.\onnx.ps1                   # ONNX Runtime 1.24.4 with DirectML, and DirectML 1.15.4, into Packages\onnxruntime
+```
+
+The model itself is made on a Mac and is too large for git (471 MB): `Scripts/subject-matte/make.sh`,
+then `make-onnx.sh`, write it to `Scripts/subject-matte/build/onnx/BiRefNet.onnx`, and
+`Windows/VM/send-matte.sh [C:\src\<folder>]` sends it into the VM's `Packages\subject-matte`. `onnx.ps1`
+says whether it is the model measured (its SHA-256 is pinned there), `build.ps1` links it into
+`.build\Bezzle\Bezzle.resources` and puts ONNX Runtime and DirectML beside Bezzle.exe, and the installer
+takes only the model measured. Without the headers, Bezzle builds without Remove Background; without
+the model, it leaves Remove Background out of the inspector, its menu and the welcome tour.
+
 `.\build.ps1` builds and lays out the app in `.build\Bezzle`. Most PCs have Intel or AMD processors
 (x64), and the Arm VM builds for them too: Swift cross-compiles (`swift build --arch x86_64`, with
 `BEZZLE_ARCH=x64` telling `Package.swift` to link the x64 libraries), into `.build\x64`:
@@ -93,6 +108,15 @@ home's From a Website… button, the Bezzle menu's Import from a Website… (Ctr
 link dropped on home and the AI tool `import_website` bring one in (`WebImportSheet.swift`).
 `BEZZLE_LIBRARY` gives a test copy a designs folder of its own.
 
+Remove Background is the Mac's (`Host/CutoutMaker.swift`, `CutoutHand.swift`, `Cutouts.swift`,
+`SubjectMatte.swift`, copies of the Mac's CutoutMaker, CutoutTool, CutoutOperations and SubjectMatte):
+the same model, the same edges and colours, the same outlines, and cutouts named as the Mac names
+them, so a design shared between the two finds the other's. What differs is how the subject is
+found: the Mac asks Apple's Vision, which Windows lacks; here the matte's own regions are the parts a
+click keeps or drops, so subjects that touch are one part. `bezzle-render <fonts> cutout <out>` cuts
+the photos `BEZZLE_PHOTOS` names out as Bezzle does (`BEZZLE_MATTE_MODEL`, `BEZZLE_MATTE_DEVICE=cpu`
+or `gpu`, `BEZZLE_PICKS`, `BEZZLE_MATTE_RAW` for the matte's floats).
+
 Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O
 and Core Text); home's Bring In… button, the Bezzle menu, files dropped on home and a file given
@@ -110,7 +134,9 @@ run an app from an unknown publisher (More info, then Run anyway).
   `build.ps1 release` laid out, puts the Swift runtime and the C++ runtime beside Bezzle.exe (whatever
   it needs that Windows has not), strips Bezzle.exe's debugging information (kept beside the
   installer as `Bezzle-<v>-<arch>.pdb.exe` for reading crashes), writes its icon and version into it,
-  and compiles `Installer/Bezzle.iss`. It installs for the person alone, with no administrator, into
+  and compiles `Installer/Bezzle.iss`, Remove Background with it: the subject matte measured (it
+  refuses any other) and ONNX Runtime and DirectML for its architecture, which take the installer
+  from about 99 MiB to about 490 MiB. It installs for the person alone, with no administrator, into
   `%LOCALAPPDATA%\Programs\Bezzle`: a Start menu entry, an entry in Settings › Apps to remove it, the
   `bezzle:` links, Open in Bezzle on a `.bezzle` folder in Explorer, and the Windows App Runtime 1.7
   when it is missing (Microsoft's own installer, run quietly, per user). `-Name 'Bezzle Test'` makes a
@@ -119,7 +145,8 @@ run an app from an unknown publisher (More info, then Run anyway).
   https://bezzle.ch/updates/windows/appcast.xml, signed with the Mac's EdDSA key. Only an installed copy
   has them: `-Feed` and `-PublicKey` put WinSparkle.dll beside Bezzle.exe and the feed and key into its
   resources (`Sources/Bezzle/Updates.swift` loads it when it is there). An update runs the new installer
-  with `/SILENT /UPDATE=1` from the feed, and Bezzle opens again.
+  with `/SILENT /UPDATE=1` from the feed, and Bezzle opens again. WinSparkle has no deltas: each
+  update downloads the whole installer, subject matte and all.
 - **About Bezzle** (the Bezzle menu) lists what Bezzle is made with; the licences are in
   `Credits/licenses`, which `build.ps1` and the installer put beside Bezzle.exe.
 - **A release** is `Scripts/release-windows.sh` on the Mac (a dry run unless given `--publish`): it

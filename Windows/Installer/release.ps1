@@ -24,6 +24,10 @@ Set-Location $windows
 if (-not (Test-Path "$windows\Packages")) {
     cmd /c mklink /J "$windows\Packages" 'C:\src\Bezzle\Windows\Packages' | Out-Null
 }
+# Remove Background's ONNX Runtime and DirectML, fetched once and checked against their pins each
+# time; the subject matte itself is sent from a Mac (VM/send-matte.sh), and make-installer.ps1
+# takes only the one measured.
+& "$windows\onnx.ps1" | Out-Host
 $native = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 $made = @()
 foreach ($arch in $Archs) {

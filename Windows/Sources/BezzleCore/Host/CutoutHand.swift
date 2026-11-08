@@ -129,9 +129,28 @@ extension WindowsCore {
             box = box.insetBy(dx: -4, dy: -4).intersection(CGRect(origin: .zero, size: stage))
             guard !box.isNull, box.width >= 1, box.height >= 1 else {
                 for (id, run) in runs where run.ended.map({ now - $0.at > Self.melt }) == true { runs[id] = nil }
+                drawn = nil
                 return nil
             }
-            return WindowsCore.overlay(box: box, scale: scale, into: fill) { ctx in
+            // Only picking, and nothing of it changed: the picture drawn last time still holds.
+            if runs.isEmpty, let p = picking {
+                let key = "\(p.id) \(p.cutout.asset) \(p.look.image.offset) \(p.look.image.scale) \(p.look.image.mode) \(p.look.frame) "
+                    + "\(p.look.node.rotation) \(zoom) \(pan) \(scale) \(hovered ?? -1) \(p.subjects?.parts.count ?? -1)"
+                if let drawn, drawn.key == key { return drawn.box }
+                let made = draw(box: box, scale: scale, picking: picking, now: now, into: fill)
+                self.drawn = made.map { (key, $0) }
+                return made
+            }
+            drawn = nil
+            return draw(box: box, scale: scale, picking: picking, now: now, into: fill)
+        }
+
+        /// What was drawn last while only picking, and what it showed.
+        private var drawn: (key: String, box: CGRect)?
+
+        private func draw(box: CGRect, scale: Double, picking: (id: UUID, look: Look, cutout: Cutout, subjects: CutoutMaker.Subjects?)?, now: Double,
+                          into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> CGRect? {
+            WindowsCore.overlay(box: box, scale: scale, into: fill) { ctx in
                 for (id, var run) in runs {
                     let look = look(id) ?? run.look
                     // The masks made into pictures once, here, where Skia is given what is drawn.

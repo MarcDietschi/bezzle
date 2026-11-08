@@ -25,7 +25,9 @@
 #
 # Needs:
 # - the Windows VM running (Windows/VM/make-vm.sh), with the shared packages built in
-#   C:\src\Bezzle\Windows\Packages (winrt.ps1, skia.ps1, avif.ps1) and an x64 build set up there
+#   C:\src\Bezzle\Windows\Packages (winrt.ps1, skia.ps1, avif.ps1) and an x64 build set up there,
+#   and Remove Background's subject matte sent there once (Windows/VM/send-matte.sh, after
+#   Scripts/subject-matte/make-onnx.sh); release.ps1 fetches ONNX Runtime and DirectML (onnx.ps1)
 # - Web/site/openfonts (Web/tools/openfonts.py), git-ignored, as the VM sync takes it
 # - for --publish: the commit pushed to origin/main; Sparkle's EdDSA key in the login Keychain (or
 #   as a file in BEZZLE_SPARKLE_KEY_FILE); gh, signed in with push access to mfrports/bezzle-web
