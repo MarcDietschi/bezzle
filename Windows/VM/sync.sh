@@ -14,7 +14,7 @@ $here/../Resources/make-icons.sh
 # The Mac's version (Xcode's MARKETING_VERSION), which a copy built in the VM says it is.
 sed -nE 's/^[[:space:]]*MARKETING_VERSION = "?([^";]+)"?;$/\1/p' Bezzle.xcodeproj/project.pbxproj | sort -u | head -1 \
   > $here/../Resources/Generated/version.txt
-# The welcome tour's photo, painted as the Mac paints it, for the same.
+# The welcome tour's lake photo, painted as the Mac paints it, for the build to put into Bezzle.resources.
 $here/../Resources/make-welcome-photo.sh
 COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch --exclude .build --exclude Packages --exclude node_modules --exclude 'Web/out' \
     -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts \
