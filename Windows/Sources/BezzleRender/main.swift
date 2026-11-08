@@ -83,6 +83,19 @@ do {
         design = made
     }
     var boards = try WindowsCore.open(design)
+    // With BEZZLE_GLIMPSE (picture files, separated by ;), the glimpse a shared design sends of
+    // each is written to the out folder, and how large it is said (Host/Glimpses.swift).
+    for path in (ProcessInfo.processInfo.environment["BEZZLE_GLIMPSE"] ?? "").split(separator: ";") {
+        let file = URL(fileURLWithPath: String(path))
+        guard let glimpse = WindowsCore.glimpseJPEG(of: file) else {
+            print("glimpse of \(file.lastPathComponent): none")
+            continue
+        }
+        let out = URL(fileURLWithPath: arguments[3]).appendingPathComponent(file.deletingPathExtension().lastPathComponent + "-glimpse.jpg")
+        try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try glimpse.jpeg.write(to: out)
+        print("glimpse of \(file.lastPathComponent): \(glimpse.width)×\(glimpse.height), \(glimpse.jpeg.count) bytes")
+    }
     // With BEZZLE_TEXTS (a file), how the core measures the design's texts and probe texts is
     // written there instead (TextReport.swift), for comparing with Text Kit; BEZZLE_TEXTS_PROBES=0
     // leaves the probes out.

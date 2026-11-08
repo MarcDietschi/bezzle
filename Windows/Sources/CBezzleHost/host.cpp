@@ -25,6 +25,7 @@
 #include "include/core/SkSurface.h"
 #include "include/core/SkTypeface.h"
 #include "include/codec/SkCodec.h"
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/codec/SkEncodedOrigin.h"
 #include "include/codec/SkJpegDecoder.h"
 #include "include/codec/SkPngDecoder.h"
@@ -382,8 +383,9 @@ extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t l
     // straight at a half, a quarter or an eighth, which is quick even for a large photo.
     sk_sp<SkImage> source;
     SkEncodedOrigin origin = kTopLeft_SkEncodedOrigin;
-    // Its size as kept, whatever size it is read at.
+    // Its size as kept, whatever size it is read at; whether it is a JPEG.
     SkISize kept = {0, 0};
+    bool jpeg = false;
     if (avif::sniff(data, size_t(count))) {
         source = avifPicture(data, size_t(count), true);
         if (source) kept = source->dimensions();
@@ -395,6 +397,7 @@ extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t l
         auto codec = SkCodec::MakeFromData(SkData::MakeWithoutCopy(data, size_t(count)));
         if (!codec) return 0;
         origin = codec->getOrigin();
+        jpeg = codec->getEncodedFormat() == SkEncodedImageFormat::kJPEG;
         const auto full = codec->dimensions();
         kept = full;
         const float want = std::min(1.0f, 2.0f * float(longest) / float(std::max(full.width(), full.height())));
@@ -413,13 +416,14 @@ extern "C" int32_t bz_image_thumbnail(const void* data, int64_t count, int32_t l
     const bool across = SkEncodedOriginSwapsWidthHeight(origin);
     // Upright: as read, and as kept.
     const double uw = across ? source->height() : source->width(), uh = across ? source->width() : source->height();
-    // As large as Image I/O makes a thumbnail, measured on macOS 27 (900 by 600 to 32 by 21, 1200
-    // by 800 to 32 by 22, 1000 by 360 to 32 by 11): halved, rounding down, for as long as its
-    // longer side stays `longest` or more, then brought to `longest` along it, rounding; never
-    // larger than it is.
+    // As large as Image I/O makes a thumbnail, measured on macOS 27 for sixteen shapes: a JPEG
+    // brought to `longest` along its longer side, rounding (1200 by 800 to 32 by 21); any other
+    // halved first, rounding down, for as long as its longer side stays `longest` or more (a PNG
+    // of 1200 by 800 to 32 by 22, 900 by 600 to 32 by 21). Never larger than it is. (HEIC comes
+    // out a pixel apart at times: Image I/O makes it some other way, not matched here.)
     double fw = across ? kept.height() : kept.width(), fh = across ? kept.width() : kept.height();
     if (std::max(fw, fh) > longest) {
-        while (std::floor(std::max(fw, fh) / 2) >= longest) {
+        while (!jpeg && std::floor(std::max(fw, fh) / 2) >= longest) {
             fw = std::floor(fw / 2);
             fh = std::floor(fh / 2);
         }

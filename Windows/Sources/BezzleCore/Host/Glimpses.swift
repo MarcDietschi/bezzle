@@ -40,6 +40,15 @@ extension WindowsCore {
         return LiveGlimpse(name: name, jpeg: Data(out.prefix(Int(n))))
     }
 
+    /// The glimpse of the picture at `url`, as a JPEG file's bytes, and how large it is: for
+    /// bezzle-render to show.
+    public nonisolated static func glimpseJPEG(of url: URL) -> (jpeg: Data, width: Int, height: Int)? {
+        guard let g = glimpse(of: url, name: url.lastPathComponent) else { return nil }
+        var w: Int32 = 0, h: Int32 = 0
+        _ = g.jpeg.withUnsafeBytes { bz_image_size($0.baseAddress, Int32($0.count), &w, &h) }
+        return (g.jpeg, Int(w), Int(h))
+    }
+
     /// Shows the picture a glimpse is of by the glimpse, grown and blurred as the Mac shows it,
     /// until the picture itself comes: Skia draws it wherever the picture is drawn, so its place,
     /// crop and development are the picture's. False when the picture is here already, or the
