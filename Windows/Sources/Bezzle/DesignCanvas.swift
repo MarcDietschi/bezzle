@@ -3796,7 +3796,9 @@ final class DesignCanvas {
             // A shape just drawn over a picture offers to mask it.
             WindowsCore.inviteMask(session.selection)
             session.edited(board: kind == "artboard" ? nil : board)
-            if kind == "text", let board { beginEditing(id, board: board) }
+            // Typed into at once, on an artboard or on the canvas beside them (where its own place
+            // among the design's layers stands for an artboard's), as on the Mac.
+            if kind == "text", let at = board ?? WindowsCore.board(of: id) { beginEditing(id, board: at) }
         case .move:
             // Dropped riding an edge, it stays on it, settled where it lies.
             syncCurve()
@@ -4158,7 +4160,6 @@ final class DesignCanvas {
         guard let words = WindowsCore.beginTyping(id) else { return }
         editing = (id, board)
         let field = TextBox()
-        field.text = words
         // Unseen, and out of the pointer's way (clipped to nothing), yet hit-testable: WinUI
         // changes a text box's words, but tells no one (TextChanged), while it is not.
         field.opacity = 0.01
@@ -4176,6 +4177,9 @@ final class DesignCanvas {
         field.minHeight = 0
         field.acceptsReturn = true
         field.textWrapping = .wrap
+        // Its words once it takes more than one line: given before, a text box keeps the first alone,
+        // and typing into a text of several lines then lost every line but the first.
+        field.text = words
         field.textChanged.addHandler { [weak self] _, _ in self?.fieldTyped() }
         field.selectionChanged.addHandler { [weak self] _, _ in self?.fieldPicked() }
         // Before the field: Esc, the editor's own Undo, the Format keys and the keys that go by lines.
