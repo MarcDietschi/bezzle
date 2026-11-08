@@ -93,12 +93,19 @@ nonisolated enum TextHost {
             default: 0
         }
         let capacity = 512
-        var lines = [Double](repeating: 0, count: capacity * 6)
+        var lines = [Double](repeating: 0, count: capacity * 7)
         var count: Int32 = 0
+        // Paragraphs set further in, items of lists: where each begins and ends, and how far in.
+        let indents = (spec["indents"] as? [Any] ?? []).flatMap { ($0 as? [Any] ?? []).prefix(3).compactMap { ($0 as? NSNumber)?.doubleValue } }
         let id = given(runs) { runs in
-            lines.withUnsafeMutableBufferPointer { bz_text_lay(runs.baseAddress, Int32(runs.count), width, align, $0.baseAddress, Int32(capacity), &count) }
+            indents.withUnsafeBufferPointer { indents in
+                lines.withUnsafeMutableBufferPointer {
+                    bz_text_lay(runs.baseAddress, Int32(runs.count), width, align, indents.baseAddress, Int32(indents.count / 3),
+                                $0.baseAddress, Int32(capacity), &count)
+                }
+            }
         }
-        let laid = (0..<min(Int(count), capacity)).map { k in "[" + lines[k * 6..<k * 6 + 6].map { String($0) }.joined(separator: ",") + "]" }
+        let laid = (0..<min(Int(count), capacity)).map { k in "[" + lines[k * 7..<k * 7 + 7].map { String($0) }.joined(separator: ",") + "]" }
         return "{\"id\":\(id),\"lines\":[" + laid.joined(separator: ",") + "]}"
     }
 

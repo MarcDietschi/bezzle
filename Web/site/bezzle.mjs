@@ -243,29 +243,57 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       return ''
     }
     if (spec.glyphs) return glyphCall(spec)
-    const whole = paragraph(spec, spec.runs, spec.width)
-    const metrics = whole.getLineMetrics()
+    // The words in parts set at widths of their own: paragraphs set further in (items of lists,
+    // spec.indents as [start, end, indent]) narrower, and drawn that much to the right; the rest
+    // as wide as asked. Without any, one part, the whole text.
+    const total = spec.runs.reduce((n, r) => n + r.text.length, 0)
+    const parts = []
+    let at = 0
+    for (const [a, z, indent] of spec.indents ?? []) {
+      if (z <= a || a < at || z > total) continue
+      if (a > at) parts.push({ start: at, end: a, indent: 0 })
+      parts.push({ start: a, end: z, indent: Math.max(indent, 0) })
+      at = z
+    }
+    if (!parts.length || at < total) parts.push({ start: at, end: total, indent: 0 })
     const lines = []
     const out = []
-    for (const m of metrics) {
-      const end = m.endIncludingNewline ?? m.endIndex
-      const runs = slice(spec.runs, m.startIndex, m.endExcludingWhitespaces)
-      const leading = leadingOf(spec.runs[0])
-      // Each line drawn on its own, so it can sit where the core puts it.
-      const line = runs.length ? paragraph(spec, runs, spec.width) : null
-      const lm = line?.getLineMetrics()[0]
-      // Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
-      // lines set from the left: drawn that much to the left (centred or from the right, they lie where the Mac's do).
-      const fromLeft = spec.align !== 'center' && spec.align !== 'right'
-      // Where Skia paints the line's letters: its ascent down, rounded to a whole point, which is
-      // not where its line metrics put the baseline.
-      lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back: runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0 })
-      // Skia shares the leading out above and below the line; Text Kit keeps it apart.
-      out.push([m.startIndex, end, m.width, m.ascent - leading / 2, m.descent - leading / 2, leading])
-    }
-    whole.delete()
+    const baselines = []
+    const leading = leadingOf(spec.runs[0])
+    // Skia puts half the letters' spacing before each, Core Text all of it after, which shows in
+    // lines set from the left: drawn that much to the left (centred or from the right, they lie where the Mac's do).
+    const fromLeft = spec.align !== 'center' && spec.align !== 'right'
+    let top = 0
+    parts.forEach((part, p) => {
+      const width = part.indent > 0 ? Math.max(spec.width - part.indent, 1) : spec.width
+      const those = parts.length === 1 ? spec.runs : slice(spec.runs, part.start, part.end)
+      const whole = paragraph(spec, those.length ? those : spec.runs, width)
+      const metrics = whole.getLineMetrics()
+      metrics.forEach((m, j) => {
+        // A part ending in a paragraph's break has an empty line after it, set alone, which in
+        // the whole text is the next part's first.
+        if (p + 1 < parts.length && j > 0 && j + 1 === metrics.length && part.start + (metrics[j - 1].endIncludingNewline ?? metrics[j - 1].endIndex) >= part.end) return
+        const end = part.start + (m.endIncludingNewline ?? m.endIndex)
+        const runs = slice(spec.runs, part.start + m.startIndex, part.start + m.endExcludingWhitespaces)
+        // Each line drawn on its own, so it can sit where the core puts it.
+        const line = runs.length ? paragraph(spec, runs, width) : null
+        const lm = line?.getLineMetrics()[0]
+        // Where Skia paints the line's letters: its ascent down, rounded to a whole point, which is
+        // not where its line metrics put the baseline.
+        const back = (runs.length && fromLeft ? (style(runs[0]).letterSpacing ?? 0) / 2 : 0) - part.indent
+        lines.push({ paragraph: line, baseline: lm ? Math.floor(lm.ascent + 0.5) : m.baseline, back })
+        baselines.push(top + m.baseline)
+        // Skia shares the leading out above and below the line; Text Kit keeps it apart.
+        // Set from the left, its letters begin at its indent, as Text Kit's do; Skia's own left
+        // there is off by half the spacing it puts before the first letter.
+        const left = fromLeft ? 0 : lm ? lm.left : m.left
+        out.push([part.start + m.startIndex, end, m.width, m.ascent - leading / 2, m.descent - leading / 2, leading, part.indent + left])
+      })
+      top += whole.getHeight()
+      whole.delete()
+    })
     const id = nextText++
-    texts.set(id, { lines, baselines: metrics.map((m) => m.baseline) })
+    texts.set(id, { lines, baselines })
     return JSON.stringify({ id, lines: out })
   }
 

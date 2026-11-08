@@ -60,6 +60,23 @@ nonisolated enum TextLayout {
         var baseline: CGFloat
         /// Where the letters are drawn on it: raised or lowered as lines set apart are.
         var drawn: CGFloat
+        /// How far in the lines of its paragraph begin: an item of a list's, for its marker.
+        var indent: CGFloat = 0
+        /// Where its letters begin, from the text's left: its indent, and as far again as its
+        /// alignment moves it. Text Kit's used rect of the line begins there.
+        var left: CGFloat = 0
+    }
+
+    /// A list item's marker as it is placed: its baseline's left end, in the text's own space,
+    /// and the page's text of it, by number, which draws it there.
+    struct Marker: Hashable {
+        let text: String
+        let id: Int
+        let at: CGPoint
+        /// The size of the letters it is set in.
+        let size: CGFloat
+        /// How the first letters of its item look, which it is set as.
+        let look: TextLook
     }
 
     final class Laid: @unchecked Sendable {
@@ -69,18 +86,23 @@ nonisolated enum TextLayout {
         let usedSize: CGSize
         /// The words as laid: in the letter case asked for.
         let string: String
+        /// The markers of its lists' items, as the Mac draws them with the letters.
+        let markers: [Marker]
 
-        init(id: Int, lines: [Line], usedSize: CGSize, string: String) {
+        init(id: Int, lines: [Line], usedSize: CGSize, string: String, markers: [Marker] = []) {
             self.id = id
             self.lines = lines
             self.usedSize = usedSize
             self.string = string
+            self.markers = markers
         }
 
         /// Draws with the text's top left at `origin`, y down, into the context the renderer made current.
         func draw(at origin: CGPoint, painting: ((CGContext) -> Void)? = nil) {
             guard let ctx = NSGraphicsContext.current?.cgContext else { return }
             ctx.drawText(id, at: origin, color: nil)
+            // Each marker's baseline was placed where it is drawn: only its left end moves it.
+            for marker in markers { ctx.drawText(marker.id, at: CGPoint(x: origin.x + marker.at.x, y: origin.y), color: nil) }
         }
     }
 
@@ -151,18 +173,132 @@ nonisolated enum TextLayout {
             if color != nil { r["color"] = [letters.color.r, letters.color.g, letters.color.b, letters.color.a] }
             if !features.isEmpty { r["features"] = features }
             if !axes.isEmpty { r["axes"] = axes }
+            // Which list the paragraph is an item of, for the core alone: the page sets no list.
+            if let list = run.look.list { r["list"] = list.rawValue }
             return r
         }
+    }
+
+    /// A list item's marker as the page sets it, as the Mac draws it: in the font of the first
+    /// letters of its paragraph, `run` as `runs(_:)` made it, and in their colour, with nothing
+    /// else of theirs: no line under or through it, no spacing of its own (but what makes a
+    /// stand-in as wide as the Mac's face), and the font's own kerning, which Core Text keeps
+    /// where no spacing is set.
+    private static func markerRun(_ text: String, from run: [String: Any], style: TextStyle) -> [String: Any] {
+        var r = run
+        let family = run["family"] as? String ?? TextStyle.system, face = run["face"] as? String ?? style.face
+        let size = CGFloat((run["size"] as? Double) ?? Double(style.size))
+        var wanted = style.features ?? [:]
+        if style.letterCase == .smallCaps, wanted["smcp"] == nil { wanted["smcp"] = 1 }
+        if wanted["kern"] == nil { wanted["kern"] = 1 }
+        r["text"] = text
+        r["tracking"] = Double(MacFonts.spacing(family: family, face: face, size: size))
+        r["underline"] = false
+        r["strike"] = false
+        r["features"] = wanted.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+        r["list"] = nil
+        return r
+    }
+
+    /// An item of a list: a paragraph, from `start` to `end` in the words as laid (UTF-16), the
+    /// kind of list, and the run its first letter is in, and which run that is.
+    private struct Item {
+        let start: Int, end: Int
+        let list: TextList
+        let run: [String: Any]
+        let index: Int
+    }
+
+    /// The paragraphs that are items of lists, in order, as Text Kit counts paragraphs: each ends
+    /// after a break of its own (a line break within one, U+2028, does not end it).
+    private static func items(in runs: [[String: Any]]) -> [Item] {
+        guard runs.contains(where: { $0["list"] != nil }) else { return [] }
+        var starts: [Int] = []
+        var at = 0
+        for r in runs {
+            starts.append(at)
+            at += (r["text"] as? String ?? "").utf16.count
+        }
+        let units = Array(runs.map { $0["text"] as? String ?? "" }.joined().utf16)
+        var out: [Item] = []
+        var start = 0
+        while start < units.count {
+            var end = start
+            while end < units.count {
+                let u = units[end]
+                end += 1
+                if u == 0x0D, end < units.count, units[end] == 0x0A { end += 1; break }
+                if u == 0x0A || u == 0x0D || u == 0x2029 || u == 0x85 { break }
+            }
+            // The run the paragraph's first letter is in: the last that begins at it or before.
+            let k = starts.lastIndex { $0 <= start } ?? 0
+            if let raw = runs[k]["list"] as? String, let list = TextList(rawValue: raw) {
+                out.append(Item(start: start, end: end, list: list, run: runs[k], index: k))
+            }
+            start = end
+        }
+        return out
+    }
+
+    /// A marker set on its own by the page, as one line: its number there and its width.
+    private static func setMarker(_ run: [String: Any]) -> (id: Int, width: CGFloat) {
+        let spec: [String: Any] = ["width": 100_000.0, "align": "left", "lineSpacing": 0.0, "paragraphSpacing": 0.0, "runs": [run]]
+        let json = (try? JSONSerialization.data(withJSONObject: spec)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let answer = Host.call(.textLayout, string: json)
+        guard let reply = (try? JSONSerialization.jsonObject(with: Data(answer.utf8))) as? [String: Any] else { return (0, 0) }
+        let width = ((reply["lines"] as? [[Double]])?.first).flatMap { $0.count > 2 ? CGFloat($0[2]) : nil } ?? 0
+        return (reply["id"] as? Int ?? 0, width)
+    }
+
+    /// The markers of a text's lists and how far in each item's lines begin, as the Mac's
+    /// TextLayout.setParagraphs works them out: an item's marker is the next number of its list
+    /// (counted again after a bulleted item) or a bullet, set in its first letters' font; every
+    /// item of a list begins as far in as its widest marker, or six tenths of its largest
+    /// letters, and a gap of half their size.
+    private static func lists(_ items: [Item], style: TextStyle) -> [(item: Item, text: String, id: Int, width: CGFloat, gap: CGFloat, indent: CGFloat)] {
+        var out: [(item: Item, text: String, id: Int, width: CGFloat, gap: CGFloat, indent: CGFloat)] = []
+        var i = 0
+        while i < items.count {
+            // One list: items one after another, with no paragraph between them.
+            var j = i + 1
+            while j < items.count, items[j].start == items[j - 1].end { j += 1 }
+            var number = 0
+            var set: [(text: String, id: Int, width: CGFloat, size: CGFloat)] = []
+            for item in items[i..<j] {
+                let text: String
+                if item.list == .number {
+                    number += 1
+                    text = "\(number)."
+                } else {
+                    number = 0
+                    text = "•"
+                }
+                let laid = setMarker(markerRun(text, from: item.run, style: style))
+                set.append((text, laid.id, laid.width, CGFloat((item.run["size"] as? Double) ?? Double(style.size))))
+            }
+            let size = set.map(\.size).max() ?? style.size
+            let column = max(set.map(\.width).max() ?? 0, size * 0.6)
+            let gap = (size * 0.5).rounded()
+            let indent = ceil(column + gap)
+            for (k, item) in items[i..<j].enumerated() {
+                out.append((item, set[k].text, set[k].id, set[k].width, gap, indent))
+            }
+            i = j
+        }
+        return out
     }
 
     private static func lay(_ node: Node, width: CGFloat) -> Laid {
         let style = node.style ?? TextStyle()
         let runs = runs(node)
-        let spec: [String: Any] = [
+        // Items of lists begin further in, each list as far as its markers need.
+        let items = lists(items(in: runs), style: style)
+        var spec: [String: Any] = [
             "width": Double(width), "align": style.align.rawValue,
             "lineSpacing": Double(style.lineSpacing ?? 0), "paragraphSpacing": Double(style.paragraphSpacing ?? 0),
             "runs": runs,
         ]
+        if !items.isEmpty { spec["indents"] = items.map { [Double($0.item.start), Double($0.item.end), Double($0.indent)] } }
         let json = (try? JSONSerialization.data(withJSONObject: spec)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         let answer = Host.call(.textLayout, string: json)
         guard let data = answer.data(using: .utf8), let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -171,11 +307,33 @@ nonisolated enum TextLayout {
         let id = reply["id"] as? Int ?? 0
         let metrics = (reply["lines"] as? [[Double]]) ?? []
         let string = runs.compactMap { $0["text"] as? String }.joined()
-        let lines = place(metrics, runs: runs, string: string, style: style)
+        var lines = place(metrics, runs: runs, string: string, style: style)
         // Text Kit counts a line's width without the spaces that end it, and the text as tall as its
         // lines; an empty text, which has none, as tall as a line of its font.
-        let used = CGSize(width: lines.map(\.width).max() ?? 0, height: lines.last.map { $0.top + $0.height } ?? emptyHeight(style))
-        let laid = Laid(id: id, lines: lines, usedSize: used, string: string)
+        var used = CGSize(width: lines.map(\.width).max() ?? 0, height: lines.last.map { $0.top + $0.height } ?? emptyHeight(style))
+        var markers: [Marker] = []
+        if !items.isEmpty {
+            for k in lines.indices {
+                if let i = items.first(where: { $0.item.start <= lines[k].start && lines[k].start < max($0.item.end, $0.item.start + 1) }) {
+                    lines[k].indent = i.indent
+                }
+            }
+            // As wide as all its lines' used rects together, as Text Kit counts it: from where
+            // the first begins to where the last ends, an item's indent left out when every line
+            // has one.
+            if let from = lines.map(\.left).min(), let to = lines.map({ $0.left + $0.width }).max() { used.width = to - from }
+            // Each marker before its item's first letter, a gap away, on its baseline. The Mac
+            // takes the letters' lift off it once more where lines are set further apart.
+            let lift = lift(style, natural: Fonts.naturalLineHeight(style))
+            for i in items {
+                guard let line = lines.first(where: { $0.start == i.item.start }) else { continue }
+                let at = CGPoint(x: line.left - i.gap - i.width, y: line.drawn - lift)
+                let look = node.runs.indices.contains(i.item.index) ? node.runs[i.item.index].look : .plain
+                markers.append(Marker(text: i.text, id: i.id, at: at, size: CGFloat((i.item.run["size"] as? Double) ?? Double(style.size)), look: look))
+                _ = Host.call(.textLayout, string: "{\"place\":\(i.id),\"baselines\":\(Recording.json([Double(at.y)]))}")
+            }
+        }
+        let laid = Laid(id: id, lines: lines, usedSize: used, string: string, markers: markers)
         // The page draws each line where it is placed here.
         _ = Host.call(.textLayout, string: "{\"place\":\(id),\"baselines\":\(Recording.json(lines.map { Double($0.drawn) }))}")
         return laid
@@ -194,7 +352,8 @@ nonisolated enum TextLayout {
     ///
     /// The fonts' measures are the Mac's own where they are known (MacFonts), for the faces the
     /// open fonts stand in for, else the host's. `metrics` per line: start, end, width, ascent,
-    /// descent, leading, the host font's own; `runs` as `runs(_:)` makes them, `string` their words.
+    /// descent, leading, the host font's own, and where its letters begin (an item of a list's
+    /// indent and its alignment); `runs` as `runs(_:)` makes them, `string` their words.
     private static func place(_ metrics: [[Double]], runs: [[String: Any]], string: String, style: TextStyle) -> [Line] {
         // Where each run lies in the words (UTF-16), and its face on the Mac.
         var spans: [(start: Int, end: Int, face: MacFonts.Face?, size: CGFloat)] = []
@@ -244,7 +403,8 @@ nonisolated enum TextLayout {
                 height += after
             }
             defer { y += height }
-            return Line(start: start, end: end, top: y, height: height, width: CGFloat(m[2]), baseline: y + baseline, drawn: y + baseline)
+            return Line(start: start, end: end, top: y, height: height, width: CGFloat(m[2]), baseline: y + baseline, drawn: y + baseline,
+                        left: m.count > 6 ? CGFloat(m[6]) : 0)
         }
     }
 

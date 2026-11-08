@@ -1157,46 +1157,80 @@ std::vector<Run> runsOf(const bz_text_run* given, int32_t count) {
 }  // namespace
 
 extern "C" int32_t bz_text_lay(const bz_text_run* given, int32_t count, double width, int32_t align,
+                               const double* indents, int32_t indentCount,
                                double* lines, int32_t capacity, int32_t* lineCount) {
     std::lock_guard<std::mutex> guard(lock);
     const std::vector<Run> runs = runsOf(given, count);
-    auto whole = paragraph(runs, runs[0], width, align);
-    std::vector<LineMetrics> metrics;
-    whole->getLineMetrics(metrics);
+    size_t total = 0;
+    for (const auto& r : runs) total += r.text.size();
+    // The words in parts set at widths of their own: paragraphs set further in (items of lists)
+    // narrower, and drawn that much to the right; the rest as wide as asked. Without any, one part.
+    struct Part { size_t start, end; double indent; };
+    std::vector<Part> parts;
+    size_t at = 0;
+    for (int32_t k = 0; indents && k < indentCount; k++) {
+        const size_t a = std::min(size_t(std::max(indents[k * 3], 0.0)), total), z = std::min(size_t(std::max(indents[k * 3 + 1], 0.0)), total);
+        if (z <= a || a < at) continue;
+        if (a > at) parts.push_back({at, a, 0});
+        parts.push_back({a, z, std::max(indents[k * 3 + 2], 0.0)});
+        at = z;
+    }
+    if (parts.empty() || at < total) parts.push_back({at, total, 0});
     Text text;
     const double leading = leadingOf(runs[0]);
-    int32_t written = 0;
-    for (const auto& m : metrics) {
-        const size_t end = m.fEndIncludingNewline;
-        auto part = slice(runs, m.fStartIndex, m.fEndExcludingWhitespaces);
-        // Each line drawn on its own, so it can sit where the core puts it.
-        std::unique_ptr<Paragraph> line = part.empty() ? nullptr : paragraph(part, part[0], width, align);
-        double baseline = m.fBaseline;
-        if (line) {
-            std::vector<LineMetrics> lm;
-            line->getLineMetrics(lm);
-            // Where Skia paints the line's letters: its ascent down, rounded to a whole point
-            // (TextLine::paint), which is not where its line metrics put the baseline.
-            if (!lm.empty()) baseline = std::floor(lm[0].fAscent + 0.5);
+    const bool fromLeft = align == 0 || align == 3;
+    int32_t written = 0, all = 0;
+    double top = 0;
+    for (size_t p = 0; p < parts.size(); p++) {
+        const Part& part = parts[p];
+        const double w = part.indent > 0 ? std::max(width - part.indent, 1.0) : width;
+        // One part alone is the whole text, as it was always set.
+        const std::vector<Run> those = parts.size() == 1 ? runs : slice(runs, part.start, part.end);
+        auto set = paragraph(those.empty() ? runs : those, those.empty() ? runs[0] : those[0], w, align);
+        std::vector<LineMetrics> metrics;
+        set->getLineMetrics(metrics);
+        for (size_t j = 0; j < metrics.size(); j++) {
+            const auto& m = metrics[j];
+            // A part ending in a paragraph's break has an empty line after it, set alone, which in
+            // the whole text is the next part's first.
+            if (p + 1 < parts.size() && j > 0 && j + 1 == metrics.size() && part.start + metrics[j - 1].fEndIncludingNewline >= part.end) continue;
+            const size_t start = part.start + m.fStartIndex, end = part.start + m.fEndIncludingNewline;
+            auto piece = slice(runs, start, part.start + m.fEndExcludingWhitespaces);
+            // Each line drawn on its own, so it can sit where the core puts it.
+            std::unique_ptr<Paragraph> line = piece.empty() ? nullptr : paragraph(piece, piece[0], w, align);
+            double baseline = m.fBaseline, left = m.fLeft;
+            if (line) {
+                std::vector<LineMetrics> lm;
+                line->getLineMetrics(lm);
+                // Where Skia paints the line's letters: its ascent down, rounded to a whole point
+                // (TextLine::paint), which is not where its line metrics put the baseline.
+                if (!lm.empty()) { baseline = std::floor(lm[0].fAscent + 0.5); left = lm[0].fLeft; }
+            }
+            // Set from the left, its letters begin at its indent, as Text Kit's do; Skia's own
+            // left there is off by half the spacing it puts before the first letter.
+            if (fromLeft) left = 0;
+            std::u16string words;
+            for (const auto& r : piece) words += r.text;
+            const double back = (piece.empty() || !fromLeft ? 0 : piece[0].tracking / 2) - part.indent;
+            text.lines.push_back({std::move(line), baseline, back, start, std::move(words)});
+            text.baselines.push_back(top + m.fBaseline);
+            if (written < capacity) {
+                // Skia shares the leading out above and below the line; Text Kit keeps it apart.
+                double* out = lines + written * 7;
+                out[0] = double(start);
+                out[1] = double(end);
+                out[2] = m.fWidth;
+                out[3] = m.fAscent - leading / 2;
+                out[4] = m.fDescent - leading / 2;
+                out[5] = leading;
+                out[6] = part.indent + left;
+                written++;
+            }
+            all++;
         }
-        const bool fromLeft = align == 0 || align == 3;
-        std::u16string words;
-        for (const auto& r : part) words += r.text;
-        text.lines.push_back({std::move(line), baseline, part.empty() || !fromLeft ? 0 : part[0].tracking / 2, m.fStartIndex, std::move(words)});
-        text.baselines.push_back(m.fBaseline);
-        if (written < capacity) {
-            // Skia shares the leading out above and below the line; Text Kit keeps it apart.
-            double* out = lines + written * 6;
-            out[0] = double(m.fStartIndex);
-            out[1] = double(end);
-            out[2] = m.fWidth;
-            out[3] = m.fAscent - leading / 2;
-            out[4] = m.fDescent - leading / 2;
-            out[5] = leading;
-            written++;
-        }
+        top += set->getHeight();
     }
-    if (lineCount) *lineCount = int32_t(metrics.size());
+    if (lineCount) *lineCount = all;
     const int id = nextText++;
     texts[id] = std::move(text);
     return id;

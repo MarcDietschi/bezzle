@@ -397,11 +397,11 @@ extension WindowsCore {
         let line = laid.lines[k]
         if i > line.start, let b = boxes(laid, line.start, i).first(where: { $0.line == k }) { return b.right }
         if let b = boxes(laid, i, i + 1).first(where: { $0.line == k }) { return b.left }
-        // A line with no letters: where its alignment would put them.
+        // A line with no letters: where its alignment would put them, an item of a list's further in.
         switch node.style?.align ?? .left {
-        case .center: return node.frame.width / 2
+        case .center: return line.indent + (node.frame.width - line.indent) / 2
         case .right: return node.frame.width
-        default: return 0
+        default: return line.indent
         }
     }
 

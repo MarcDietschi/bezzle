@@ -263,7 +263,11 @@ extension WindowsCore {
             "refit": [refit.frame.minX, refit.frame.minY, refit.frame.width, refit.frame.height],
             "heightAtWidth": TextLayout.height(n, width: n.frame.width),
             "naturalLineHeight": Fonts.naturalLineHeight(style),
-            "lines": laid.lines.map { [Double($0.start), Double($0.end), Double($0.top), Double($0.height), Double($0.width), Double($0.baseline)] },
+            // Each line's place, and where its letters begin, twice, as the Mac's side gives where
+            // its used rect and its first letter begin (Web/tools/ListTruthTests.swift).
+            "lines": laid.lines.map { [Double($0.start), Double($0.end), Double($0.top), Double($0.height), Double($0.width), Double($0.baseline),
+                                       Double($0.left), Double($0.left)] },
+            "markers": laid.markers.map { [$0.text, Double($0.at.x), Double($0.at.y), Double($0.size)] as [Any] },
         ]
     }
 }

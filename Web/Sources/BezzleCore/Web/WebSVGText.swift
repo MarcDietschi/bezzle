@@ -8,7 +8,7 @@ import AppKit
 nonisolated extension SVGWriter {
     /// Text that stays text: line by line where the canvas sets it, in its font, size and colour,
     /// and letters that look different from the rest in spans of their own; justified lines as
-    /// wide as they are set.
+    /// wide as they are set, and the markers of a list's items before them.
     mutating func text(_ node: Node) -> String {
         if let curved = CurvedText.laid(node) { return curvedText(node, curved) }
         let style = node.style ?? TextStyle()
@@ -34,23 +34,33 @@ nonisolated extension SVGWriter {
                 spans += own.isEmpty ? words : "<tspan \(own.joined(separator: " "))>\(words)</tspan>"
             }
             // Where the page puts the line: from the left, less half the first letter's spacing,
-            // as Skia sets it; or in the middle, or at the right.
+            // as Skia sets it; or in the middle, or at the right; an item of a list's further in.
             let x: CGFloat
             switch style.align {
-            case .center: x = (width - line.width) / 2
+            case .center: x = line.indent + (width - line.indent - line.width) / 2
             case .right: x = width - line.width
             case .left, .justify:
                 let first = within.first.map { $0.look.resolved(over: style, color: base.color) } ?? base
-                x = -first.tracking / 1000 * first.size / 2
+                x = line.indent - first.tracking / 1000 * first.size / 2
             }
             // A justified line but a paragraph's last is spread to the width it is set at.
             var stretch = ""
             if style.align == .justify, end < string.length,
                let next = Unicode.Scalar(string.character(at: end)), !CharacterSet.newlines.contains(next) {
-                stretch = " textLength=\"\(n(width))\" lengthAdjust=\"spacing\""
+                stretch = " textLength=\"\(n(width - line.indent))\" lengthAdjust=\"spacing\""
             }
             // A text of its own each, rather than spans of one: some programs place only the first span.
             lines.append("<text x=\"\(n(x))\" y=\"\(n(line.drawn + down))\"\(stretch)>\(spans)</text>")
+        }
+        // Each marker in its item's first letters' font and colour, and nothing else of theirs,
+        // as the Mac writes it.
+        for marker in laid.markers {
+            var letters = marker.look.resolved(over: style, color: base.color)
+            letters.tracking = base.tracking
+            letters.underline = false
+            letters.strikethrough = false
+            let own = Self.letterAttributes(letters, against: base, coloured: node.letterColor != nil)
+            lines.append("<text x=\"\(n(marker.at.x))\" y=\"\(n(marker.at.y + down))\" \(own.joined(separator: " "))>\(Self.escape(marker.text))</text>")
         }
         guard !lines.isEmpty else { return "" }
         var attrs = textAttributes(node, style: style, base: base)

@@ -42,10 +42,14 @@ typedef struct bz_text_run {
 } bz_text_run;
 
 /// Sets `count` runs `width` wide, aligned 0 left, 1 center, 2 right, 3 justified. Returns the
-/// text's id and writes, for up to `capacity` lines, six numbers each to `lines`: its start and
-/// end (UTF-16), width, ascent and descent (less half the leading, as Skia shares it out) and the
-/// font's leading; `*lineCount` is how many lines there are.
+/// text's id and writes, for up to `capacity` lines, seven numbers each to `lines`: its start and
+/// end (UTF-16), width, ascent and descent (less half the leading, as Skia shares it out), the
+/// font's leading, and where its letters begin from the text's left (its indent and as far again
+/// as its alignment moves it); `*lineCount` is how many lines there are. `indents` holds
+/// `indentCount` paragraphs set further in, three numbers each: where they begin and end (UTF-16)
+/// and how far in their lines begin (items of lists).
 int32_t bz_text_lay(const bz_text_run *runs, int32_t count, double width, int32_t align,
+                    const double *indents, int32_t indentCount,
                     double *lines, int32_t capacity, int32_t *lineCount);
 /// Where the core puts each line's baseline, from the text's top.
 void bz_text_place(int32_t id, const double *baselines, int32_t count);
