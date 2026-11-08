@@ -101,6 +101,10 @@ extension WindowsCore {
         if duplicate {
             var copies: [UUID] = []
             edit { copies = $0.duplicate(ids, offset: .zero) }
+            // The move's steps are made again from the design with the copies in it, not from
+            // where the gesture began, which has none: else the copies went at the first step,
+            // and nothing moved. Still one step to undo.
+            Editing.gestureBase = design
             ids = copies
         }
         guard let now = design else { return ids }
