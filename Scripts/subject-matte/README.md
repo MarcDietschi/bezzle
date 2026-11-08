@@ -68,6 +68,39 @@ Bezzle for Windows runs the same model with ONNX Runtime. After `make.sh` has ma
 and fetched the model, this exports it to ONNX at 2,048 pixels with the two changes `convert.py`
 makes (deformable convolution with grid_sample, Swin's mask made in the model), so the Windows
 matte is the Mac's: `build/onnx/BiRefNet-fp32.onnx`, checked against PyTorch with ONNX Runtime, and
-`build/onnx/BiRefNet.onnx`, half precision but for sampling, as the Mac's, which Windows uses and
-which is checked there (ONNX Runtime has no half-precision kernels on a CPU). Both are ignored by git.
-It runs BiRefNet's own model code, so run it yourself.
+`build/onnx/BiRefNet.onnx`, half precision but for sampling, as the Mac's, which Windows uses. Both
+are ignored by git. It runs BiRefNet's own model code, so run it yourself. `Windows/VM/send-matte.sh`
+brings the half-precision one to a Windows build machine (`Windows/README.md`).
+
+Windows runs it with ONNX Runtime 1.24.4: on the graphics card through DirectML, else on the
+processor, where ONNX Runtime runs the half-precision nodes it has no half-precision kernels for in
+full precision. Arm processors have many such kernels, and they lose precision (below); x64 ones
+have few, it is thought, which was not measured here.
+
+### Measured on Windows (2026-11-08)
+
+Against the full-precision model on the very input Windows gave the model (10 photos: the sample
+designs' and two made of the pug), the share of alpha that differs on average and on the edge (%),
+the share plainly wrong (off by more than half, %), and the overlap of what is at least half solid:
+
+| | Mean | Edge | Gross | IoU | File | Compressed |
+|---|---|---|---|---|---|---|
+| Half precision, on the VM's Arm processor (shipped) | 1.52 | 13.0 | 1.46 | 96.9 | 471 MB | 395 MB |
+| Half precision, on the Mac's processor (8 photos, Pillow's squeeze) | 0.05 | 0.72 | 0 | 99.9 | | |
+| 8 bits, half-precision layers (`quantize_onnx.py BiRefNet.onnx`) | 0.05 | 1.05 | 0 | 99.85 | 252 MB | 199 MB |
+| 8 bits, full-precision layers (`quantize_onnx.py BiRefNet-fp32.onnx`) | 0.05 | 0.75 | 0 | 99.89 | 275 MB | 200 MB |
+| The Mac's own Core ML model on its GPU, for comparison (8 photos) | 0.88 | 11.1 | 0.65 | 97.8 | 225 MB | |
+
+The rows run on the Mac's processor compute in full precision whatever the file keeps (ONNX Runtime
+has no half-precision kernels there), so they show what the weights alone do: 8 bits changes the
+matte about as little as half precision does. Computing in half precision is what costs: on the VM's
+Arm processor the bowl of raspberries and the bell beside the latte lose whole parts (11% and 3% of
+the picture plainly wrong), as the Mac's GPU loses parts of the same two. There, 8 bits with
+half-precision layers loses the same (10.7% and 3.4%), and 8 bits with full-precision layers none
+(0.25% and 0.09% on average, nothing plainly wrong), in the same time and memory: 63 to 72 s a
+picture and 10 to 10.7 GB at the peak for each of the three (the Mac's processor: 25 s, 14 GB).
+DirectML is not measured, as the VM has no graphics card and Windows' software adapter runs out of
+memory at 2,048 pixels; on a graphics card full precision should take longer than half, and twice
+the memory between layers. `compare_mattes.py` compares mattes that
+`bezzle-render <fonts> cutout <out>` writes with `BEZZLE_MATTE_RAW`, for checking a graphics card
+the same way.
