@@ -64,6 +64,22 @@ namespace {
 
 int threads() { return std::max(1, int(std::thread::hardware_concurrency())); }
 
+/// The peak of the display an HDR picture was mastered on, in nits, from its 'mdcv' box (ISO/IEC
+/// 23008-12, the SEI message's numbers: six chromaticities and a white point of two bytes each,
+/// then the largest luminance in ten-thousandths of a nit), which libavif does not keep; 0 when
+/// it has none. Image I/O takes it for how bright the picture gets when it says no light level.
+double masteringPeak(const void *data, size_t count) {
+    const auto *b = static_cast<const uint8_t *>(data);
+    for (size_t at = 4; at + 28 <= count; at++) {
+        if (std::memcmp(b + at, "mdcv", 4) != 0) continue;
+        const uint32_t size = uint32_t(b[at - 4]) << 24 | uint32_t(b[at - 3]) << 16 | uint32_t(b[at - 2]) << 8 | b[at - 1];
+        if (size != 32) continue;
+        const uint8_t *p = b + at + 4 + 16;
+        return double(uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]) / 10000.0;
+    }
+    return 0;
+}
+
 /// A decoder over the file's bytes, its first picture's properties read; null if it is none.
 avifDecoder *opened(const void *data, size_t count) {
     if (!sniff(data, count)) return nullptr;
@@ -175,6 +191,8 @@ bool read(const void *data, size_t count, bool upright, Picture &picture) {
                 picture.primaries = int(image->colorPrimaries);
                 picture.transfer = int(image->transferCharacteristics);
                 avifColorPrimariesGetValues(image->colorPrimaries, picture.chromaticities);
+                picture.maxCLL = image->clli.maxCLL;
+                picture.mastering = masteringPeak(data, count);
                 done = true;
             }
             avifRGBImageFreePixels(&rgb);

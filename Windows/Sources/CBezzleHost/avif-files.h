@@ -27,6 +27,9 @@ struct Picture {
     int primaries = 2, transfer = 2;
     /// The eight numbers of its primaries and white point (x, y each), as libavif knows them.
     float chromaticities[8] = {};
+    /// How bright an HDR picture says it gets, in nits, 0 where it does not say: its content light
+    /// level ('clli' MaxCLL) and its mastering display's peak ('mdcv').
+    double maxCLL = 0, mastering = 0;
 };
 
 /// How big the picture is: cropped to its clean aperture, and turned by its rotation and mirror

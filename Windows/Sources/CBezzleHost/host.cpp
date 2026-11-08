@@ -4,6 +4,7 @@
 
 #include "BezzleHost.h"
 #include "avif-files.h"
+#include "hdr.h"
 #include "picture-files.h"
 
 #include "include/core/SkBitmap.h"
@@ -171,7 +172,14 @@ std::vector<double> pathOp(const double* v, size_t n) {
 
 // MARK: Pictures
 
-struct Asset { sk_sp<SkImage> image; };
+struct Asset {
+    sk_sp<SkImage> image;
+    /// An AVIF file's bytes, kept for developing it: an HDR picture is developed from its light as
+    /// Core Image takes it in (`developFrom`, made the first time), not from what is drawn of it.
+    std::shared_ptr<std::vector<uint8_t>> avifFile;
+    bool developLooked = false;
+    sk_sp<SkImage> developFrom;
+};
 std::vector<Asset> assets;                      // by number - 1
 std::map<std::string, int> assetsByName;
 /// The pictures shown by a glimpse of them until they come (bz_asset_stand_in).
@@ -236,11 +244,52 @@ OwnColors ownColors(const SkColorSpace* space, const uint8_t* icc, size_t iccSiz
     return own;
 }
 
+/// Whether an AVIF picture's light goes past white (PQ or HLG), by its numbers or by those its
+/// profile carries: its transfer and primaries, or 0 and 0.
+std::pair<int, int> hdrKind(const avif::Picture& p) {
+    if (!p.icc.empty()) {
+        skcms_ICCProfile profile;
+        if (skcms_Parse(p.icc.data(), p.icc.size(), &profile) && profile.has_CICP && hdr::isHDR(profile.CICP.transfer_characteristics)) {
+            return {profile.CICP.transfer_characteristics, profile.CICP.color_primaries};
+        }
+        return {0, 0};
+    }
+    return hdr::isHDR(p.transfer) ? std::pair<int, int>{p.transfer, p.primaries} : std::pair<int, int>{0, 0};
+}
+
+/// An HDR picture as the Mac draws it into Bezzle's 8-bit sRGB pictures (hdr.h): tone mapped
+/// from its own headroom, as Core Graphics maps it.
+sk_sp<SkImage> hdrPicture(const avif::Picture& p, std::pair<int, int> kind) {
+    const double headroom = hdr::headroom(p.maxCLL, p.mastering);
+    auto* pixels = new std::vector<uint8_t>(hdr::toSRGB(p.pixels.data(), p.sixteen, p.width, p.height, kind.first, kind.second, headroom));
+    const SkImageInfo info = SkImageInfo::Make(p.width, p.height, kRGBA_8888_SkColorType, p.opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType,
+                                               SkColorSpace::MakeSRGB());
+    auto bytes = SkData::MakeWithProc(pixels->data(), pixels->size(), [](const void*, void* kept) { delete static_cast<std::vector<uint8_t>*>(kept); }, pixels);
+    return SkImages::RasterFromData(info, std::move(bytes), size_t(p.width) * 4);
+}
+
+/// An HDR picture as the Mac's Core Image takes it in to develop it (hdr.h, the ITU method):
+/// linear light, 1 for reference white, nothing held to 0…1, in BT.2020's primaries or Display
+/// P3's; null for any other picture.
+sk_sp<SkImage> hdrDevelopFrom(const void* data, size_t count) {
+    avif::Picture p;
+    if (!avif::sniff(data, count) || !avif::read(data, count, true, p)) return nullptr;
+    const auto kind = hdrKind(p);
+    if (!kind.first) return nullptr;
+    auto* light = new std::vector<float>(hdr::toDevelop(p.pixels.data(), p.sixteen, p.width, p.height, kind.first, kind.second));
+    const auto space = SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear, kind.second == hdr::p3 ? SkNamedGamut::kDisplayP3 : SkNamedGamut::kRec2020);
+    const SkImageInfo info = SkImageInfo::Make(p.width, p.height, kRGBA_F32_SkColorType, kPremul_SkAlphaType, space);
+    auto bytes = SkData::MakeWithProc(light->data(), light->size() * sizeof(float), [](const void*, void* kept) { delete static_cast<std::vector<float>*>(kept); }, light);
+    return SkImages::RasterFromData(info, std::move(bytes), size_t(p.width) * 16);
+}
+
 /// An AVIF file's picture (Skia's codecs read none here): upright as its rotation and mirror turn
-/// it, or as kept; null if it is none. Its own colours go to `own`, when asked.
+/// it, or as kept; null if it is none. Its own colours go to `own`, when asked. An HDR picture
+/// comes as Bezzle's drawing shows it, brought down into sRGB as the Mac brings it.
 sk_sp<SkImage> avifPicture(const void* data, size_t count, bool upright, OwnColors* own = nullptr) {
     avif::Picture p;
     if (!avif::read(data, count, upright, p)) return nullptr;
+    if (const auto kind = hdrKind(p); kind.first) return hdrPicture(p, kind);
     const auto colors = avifColors(p);
     if (own) *own = ownColors(colors.get(), p.icc.data(), p.icc.size());
     const SkImageInfo info = SkImageInfo::Make(p.width, p.height, p.sixteen ? kR16G16B16A16_unorm_SkColorType : kRGBA_8888_SkColorType,
@@ -901,7 +950,18 @@ sk_sp<SkImage> make(const Picture& d) {
         case Picture::kChanged: {
             auto from = get(d.from);
             if (!from) return nullptr;
-            if (d.develops) return developed(from, d);
+            if (d.develops) {
+                // An HDR picture from its light, as the Mac's Core Image takes it in.
+                auto source = from;
+                if (auto it = pictures.find(d.from); it != pictures.end() && it->second.kind == Picture::kAsset && it->second.asset > 0
+                    && size_t(it->second.asset) <= assets.size()) {
+                    Asset& asset = assets[size_t(it->second.asset) - 1];
+                    if (!asset.developLooked && asset.avifFile) asset.developFrom = hdrDevelopFrom(asset.avifFile->data(), asset.avifFile->size());
+                    asset.developLooked = true;
+                    if (asset.developFrom) source = asset.developFrom;
+                }
+                return developed(source, d);
+            }
             const double crop[4] = {d.crop[2] > 0 ? d.crop[0] : 0, d.crop[2] > 0 ? d.crop[1] : 0, 0, 0};
             return raster(d.width, d.height, [&](SkCanvas* canvas) {
                 canvas->translate(float(-crop[0]), float(-crop[1]));
@@ -2605,7 +2665,12 @@ extern "C" int32_t bz_asset_add(const char* name, const void* data, int32_t coun
     std::lock_guard<std::mutex> guard(lock);
     auto image = decode(data, size_t(count));
     if (!image) return 0;
-    assets.push_back({image});
+    Asset asset{image};
+    if (avif::sniff(data, size_t(count))) {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        asset.avifFile = std::make_shared<std::vector<uint8_t>>(bytes, bytes + count);
+    }
+    assets.push_back(std::move(asset));
     const int number = int(assets.size());
     assetsByName[name] = number;
     // The picture itself, come in place of its glimpse.

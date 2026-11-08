@@ -39,6 +39,21 @@ do {
     // the words in BEZZLE_STRINGS (Resources/Generated/strings.json).
     // "cutout": the photos BEZZLE_PHOTOS names (separated by ;) cut out as Bezzle cuts them out,
     // into the out folder, with the subject matte BEZZLE_MATTE_MODEL names (WindowsCore.tryCutouts).
+    // "pictures": the picture files BEZZLE_PICTURES names (separated by ;) drawn as a picture fill
+    // draws them, at their own size and at 256 and 1024 pixels along their longer side, into the
+    // out folder; with BEZZLE_DEVELOP (setting=amount,…), developed so too (Host/Developing.swift).
+    if arguments[2] == "pictures" {
+        let files = (ProcessInfo.processInfo.environment["BEZZLE_PICTURES"] ?? "").split(separator: ";").map { URL(fileURLWithPath: String($0)) }
+        var develop: [String: Double] = [:]
+        for pair in (ProcessInfo.processInfo.environment["BEZZLE_DEVELOP"] ?? "").split(separator: ",") {
+            let kv = pair.split(separator: "=")
+            if kv.count == 2, let v = Double(kv[1]) { develop[String(kv[0])] = v }
+        }
+        let out = URL(fileURLWithPath: arguments[3])
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        for line in try WindowsCore.drawPictures(files, sides: [256, 1024], develop: develop, into: out) { print(line) }
+        exit(0)
+    }
     if arguments[2] == "cutout" {
         SubjectModel.log = { print($0) }
         let photos = (ProcessInfo.processInfo.environment["BEZZLE_PHOTOS"] ?? "").split(separator: ";").map { URL(fileURLWithPath: String($0)) }
