@@ -3929,7 +3929,10 @@ final class DesignCanvas {
             let end = inDesign(p)
             let box = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
             let picked = WindowsCore.marquee(box, onBoard: inside, zoom: zoom)
-            session.select(base + picked.filter { !base.contains($0) }, on: inside ?? session.board)
+            // Picked again only when the box takes in something else: picking makes the panels
+            // again, and the box moves at every step.
+            let next = base + picked.filter { !base.contains($0) }
+            if next != session.selection || (inside ?? session.board) != session.board { session.select(next, on: inside ?? session.board) }
             showMarquee(box)
             return
         }

@@ -25,9 +25,15 @@ final class Rulers {
         let background = Rectangle()
         let sheet = Rectangle()
         let band = Rectangle()
+        /// The band's two edges.
+        let edges = [Rectangle(), Rectangle()]
         var paths: [UIElement] = []
         var labels: [TextBlock] = []
         var pills: [(box: Border, text: TextBlock)] = []
+        /// The scale as last drawn, and where its numbers lie along the strip: drawn again only
+        /// when the view moves or zooms, not as a selection moves along it.
+        var scale = ""
+        var places: [(at: Double, width: Double)] = []
         init(across: Bool) { self.across = across }
     }
 
@@ -38,6 +44,11 @@ final class Rulers {
             s.sheet.fill = Theme.brush(Self.sheetColour)
             s.band.fill = Theme.brush(Theme.selection, 0.13)
             for r in [s.background, s.sheet, s.band] { s.box.children.append(r) }
+            for e in s.edges {
+                e.fill = Theme.brush(Theme.selection, 0.75)
+                e.visibility = .collapsed
+                s.box.children.append(e)
+            }
             for _ in 0..<2 {
                 let pill = Border()
                 pill.background = Theme.brush(Theme.selection)
@@ -48,7 +59,9 @@ final class Rulers {
                 text.margin = Theme.inset(4, 0, 4, 0)
                 text.horizontalAlignment = .center
                 pill.child = text
+                pill.visibility = .collapsed
                 s.pills.append((pill, text))
+                s.box.children.append(pill)
             }
             root.children.append(s.box)
         }
@@ -94,7 +107,6 @@ final class Rulers {
             let t = Self.thickness
             let origin = s.across ? Double(pan.x) : Double(pan.y)
             func view(_ v: Double) -> Double { origin + v * zoom }
-            func design(_ p: Double) -> Double { (p - origin) / zoom }
             size(s.box, s.across ? (length, t) : (t, length), at: s.across ? (0, 0) : (0, 0))
             size(s.background, s.across ? (length, t) : (t, length), at: (0, 0))
             if let sheet {
@@ -105,12 +117,14 @@ final class Rulers {
                 s.sheet.visibility = .collapsed
             }
             var avoid: [(Double, Double)] = []
-            var bandEdges = PathData()
             if let r = selection {
                 let lo = view(s.across ? Double(r.minX) : Double(r.minY)), hi = view(s.across ? Double(r.maxX) : Double(r.maxY))
                 size(s.band, s.across ? (max(hi - lo, 1), t) : (t, max(hi - lo, 1)), at: s.across ? (lo, 0) : (0, lo))
                 s.band.visibility = .visible
-                for p in [lo, hi] { bar(&bandEdges, s.across, at: p - 0.5, from: 0, length: t, width: 1) }
+                for (edge, p) in zip(s.edges, [lo, hi]) {
+                    size(edge, s.across ? (1, t) : (t, 1), at: s.across ? (p - 0.5, 0) : (0, p - 0.5))
+                    edge.visibility = .visible
+                }
                 let texts = [label(s.across ? Double(r.minX) - zero.x : Double(r.minY) - zero.y),
                              label(s.across ? Double(r.maxX) - zero.x : Double(r.maxY) - zero.y)]
                 for (k, text) in texts.enumerated() {
@@ -124,63 +138,80 @@ final class Rulers {
                 }
             } else {
                 s.band.visibility = .collapsed
+                for e in s.edges { e.visibility = .collapsed }
                 for p in s.pills { p.box.visibility = .collapsed }
             }
 
-            // The scale.
-            let labelStep = Self.steps.first { $0 * zoom >= 56 } ?? Self.steps.last!
-            let lead = labelStep / pow(10, floor(log10(labelStep)))
-            let mid = lead == 5 ? labelStep / 5 : labelStep / 2
-            let small = labelStep / 10
-            let o = s.across ? zero.x : zero.y
-            let start = design(0), end = design(length)
-            let smallAlpha = min(max((small * zoom - 3) / 5, 0), 1) * 0.22
-            let midAlpha = min(max((mid * zoom - 3) / 5, 0), 1) * 0.3
-            var smallTicks = PathData(), midTicks = PathData(), majorTicks = PathData()
-            if smallAlpha > 0.01 {
-                var k = ((start - o) / small).rounded(.down)
-                while o + k * small <= end { bar(&smallTicks, s.across, at: view(o + k * small).rounded() - 0.5, from: t - 3, length: 3, width: 1); k += 1 }
+            // The scale, drawn again only when it moved: a selection moving along the ruler only
+            // hides the numbers its pills cover.
+            let scale = "\(length) \(zoom) \(origin) \(s.across ? zero.x : zero.y) \(Self.rulerInk)"
+            if scale != s.scale {
+                s.scale = scale
+                drawScale(s, length: length, zoom: zoom, origin: origin, o: s.across ? zero.x : zero.y)
             }
-            if midAlpha > 0.01 {
-                var k = ((start - o) / mid).rounded(.down)
-                while o + k * mid <= end { bar(&midTicks, s.across, at: view(o + k * mid).rounded() - 0.5, from: t - 5, length: 5, width: 1); k += 1 }
+            for (k, place) in s.places.enumerated() {
+                let covered = avoid.contains { place.at + 3 < $0.1 && place.at + 3 + place.width > $0.0 }
+                let visibility: Visibility = covered ? .collapsed : .visible
+                if s.labels[k].visibility != visibility { s.labels[k].visibility = visibility }
             }
-            var used = 0
-            var k = ((start - o) / labelStep).rounded(.down) - 1
-            while o + k * labelStep <= end + labelStep {
-                let v = k * labelStep
-                k += 1
-                let p = view(o + v)
-                bar(&majorTicks, s.across, at: p.rounded() - 0.5, from: t - 8, length: 8, width: 1)
-                let text = label(v)
-                let w = Double(text.count) * 5.6
-                if avoid.contains(where: { p + 3 < $0.1 && p + 3 + w > $0.0 }) { continue }
-                if used == s.labels.count {
-                    let tb = Theme.text("", size: 9, weight: 500)
-                    s.labels.append(tb)
-                    s.box.children.append(tb)
-                }
-                let tb = s.labels[used]
-                used += 1
-                tb.text = text
-                tb.foreground = Theme.brush(Self.rulerInk, 0.5)
-                rotate(tb, s.across, at: p + 3, cross: 2, length: w)
-                tb.visibility = .visible
-            }
-            for tb in s.labels[used...] { tb.visibility = .collapsed }
-
-            for old in s.paths { removeChild(old, from: s.box) }
-            s.paths = []
-            for (data, alpha) in [(smallTicks.d, smallAlpha), (midTicks.d, midAlpha), (majorTicks.d, 0.4), (bandEdges.d, -1)] where !data.isEmpty {
-                let path = Glyphs.view([Glyphs.Part(data: data, mode: .fill)], size: 1,
-                                       brush: alpha < 0 ? Theme.brush(Theme.selection, 0.75) : Theme.brush(Self.rulerInk, alpha))
-                s.box.children.append(path)
-                s.paths.append(path)
-            }
-            for p in s.pills where !containsChild(p.box, in: s.box) { s.box.children.append(p.box) }
         }
         try? Canvas.setLeft(corner, 0)
         try? Canvas.setTop(corner, 0)
+    }
+
+    /// A strip's ticks and numbers for the view at `zoom`, its design origin at `origin` along it,
+    /// counted from `o`.
+    private func drawScale(_ s: Strip, length: Double, zoom: Double, origin: Double, o: Double) {
+        let t = Self.thickness
+        func view(_ v: Double) -> Double { origin + v * zoom }
+        func design(_ p: Double) -> Double { (p - origin) / zoom }
+        let labelStep = Self.steps.first { $0 * zoom >= 56 } ?? Self.steps.last!
+        let lead = labelStep / pow(10, floor(log10(labelStep)))
+        let mid = lead == 5 ? labelStep / 5 : labelStep / 2
+        let small = labelStep / 10
+        let start = design(0), end = design(length)
+        let smallAlpha = min(max((small * zoom - 3) / 5, 0), 1) * 0.22
+        let midAlpha = min(max((mid * zoom - 3) / 5, 0), 1) * 0.3
+        var smallTicks = PathData(), midTicks = PathData(), majorTicks = PathData()
+        if smallAlpha > 0.01 {
+            var k = ((start - o) / small).rounded(.down)
+            while o + k * small <= end { bar(&smallTicks, s.across, at: view(o + k * small).rounded() - 0.5, from: t - 3, length: 3, width: 1); k += 1 }
+        }
+        if midAlpha > 0.01 {
+            var k = ((start - o) / mid).rounded(.down)
+            while o + k * mid <= end { bar(&midTicks, s.across, at: view(o + k * mid).rounded() - 0.5, from: t - 5, length: 5, width: 1); k += 1 }
+        }
+        s.places = []
+        var k = ((start - o) / labelStep).rounded(.down) - 1
+        while o + k * labelStep <= end + labelStep {
+            let v = k * labelStep
+            k += 1
+            let p = view(o + v)
+            bar(&majorTicks, s.across, at: p.rounded() - 0.5, from: t - 8, length: 8, width: 1)
+            let text = label(v)
+            let w = Double(text.count) * 5.6
+            if s.places.count == s.labels.count {
+                let tb = Theme.text("", size: 9, weight: 500)
+                s.labels.append(tb)
+                s.box.children.append(tb)
+            }
+            let tb = s.labels[s.places.count]
+            s.places.append((p, w))
+            tb.text = text
+            tb.foreground = Theme.brush(Self.rulerInk, 0.5)
+            rotate(tb, s.across, at: p + 3, cross: 2, length: w)
+            tb.visibility = .visible
+        }
+        for tb in s.labels[s.places.count...] { tb.visibility = .collapsed }
+
+        // Under the band's edges and the pills.
+        for old in s.paths { removeChild(old, from: s.box) }
+        s.paths = []
+        for (data, alpha) in [(smallTicks.d, smallAlpha), (midTicks.d, midAlpha), (majorTicks.d, 0.4)] where !data.isEmpty {
+            let path = Glyphs.view([Glyphs.Part(data: data, mode: .fill)], size: 1, brush: Theme.brush(Self.rulerInk, alpha))
+            try? s.box.children.insertAt(3 + UInt32(s.paths.count), path)
+            s.paths.append(path)
+        }
     }
 
     // MARK: Pieces
@@ -221,10 +252,5 @@ final class Rulers {
     private func removeChild(_ e: UIElement, from c: Canvas) {
         var k: UInt32 = 0
         if (try? c.children.indexOf(e, &k)) == true { c.children.removeAt(k) }
-    }
-
-    private func containsChild(_ e: UIElement, in c: Canvas) -> Bool {
-        var k: UInt32 = 0
-        return (try? c.children.indexOf(e, &k)) == true
     }
 }

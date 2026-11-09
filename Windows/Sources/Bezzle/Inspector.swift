@@ -19,6 +19,8 @@ final class Inspector {
     let cards = StackPanel()
     /// The place a style goes, for each card that has one, by the card's name (`card(style:)`).
     private var styleKeys: [String: String] = [:]
+    /// Each card's summary as shown, by its key, for the Frame card's to follow a drag.
+    private var summaries: [String: TextBlock] = [:]
     /// Whether a card pointed at outlines the other layers with its look's name.
     private var cardLit = false
 
@@ -119,8 +121,45 @@ final class Inspector {
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.returnFocus?() } }
         }
         root.children.append(scroll)
-        session.listen { [weak self] in if self?.dialing == false { self?.show() } }
+        session.listen { [weak self] in self?.changed() }
         show()
+    }
+
+    /// The cards made again for a change. While a drag on the design's canvas goes on, only the
+    /// Frame card's numbers follow it, and the cards are made again once it ends: making them at
+    /// every step held the drag up, and with it what the others in a shared design see of it.
+    private func changed() {
+        guard !dialing else { return }
+        guard session.mode == 0, WindowsCore.inGesture else {
+            afterGesture?.invalidate()
+            afterGesture = nil
+            show()
+            return
+        }
+        let layers = session.selectedLayers
+        if let box = WindowsCore.selectionFrame(layers.map(\.id)), let value = summaries["Frame"] {
+            let turns = Set(layers.map(\.rotation))
+            value.text = frameSummary(box, turn: layers.count == 1 ? turns.first : nil).components(separatedBy: " · ").map(Words.match).joined(separator: " · ")
+        }
+        guard afterGesture == nil else { return }
+        afterGesture = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                // Its tab behind another, the core is the other design's: it waits to come back.
+                guard let self, self.session.isFront, !WindowsCore.inGesture else { return }
+                timer.invalidate()
+                self.afterGesture = nil
+                if !self.dialing { self.show() }
+            }
+        }
+    }
+
+    private var afterGesture: Timer?
+
+    /// The Frame card's numbers: size, place, and the turn when there is one.
+    private func frameSummary(_ box: CGRect, turn: Double?) -> String {
+        var frame = "\(number(box.width)) × \(number(box.height)) · \(number(box.minX)), \(number(box.minY))"
+        if let turn, turn != 0 { frame += " · ↻ \(number(turn))°" }
+        return frame
     }
 
     /// Whether an element pressed lies in a text field.
@@ -144,6 +183,7 @@ final class Inspector {
     func show() {
         cards.children.clear()
         piles = []
+        summaries = [:]
         // The card pointed at goes with them, and the layers it outlined with it.
         if cardLit {
             cardLit = false
@@ -174,8 +214,7 @@ final class Inspector {
         // the exact numbers.
         guard let box = WindowsCore.selectionFrame(ids) else { return }
         let turns = Set(layers.map(\.rotation)), turn = turns.count == 1 ? turns.first : nil
-        var frame = "\(number(box.width)) × \(number(box.height)) · \(number(box.minX)), \(number(box.minY))"
-        if !several, let turn, turn != 0 { frame += " · ↻ \(number(turn))°" }
+        let frame = frameSummary(box, turn: several ? nil : turn)
         let artboard = WindowsCore.boards().first { $0.index == board }?.frame
         var frameDial: Dial?
         if box.width > 0, box.height > 0, layers.allSatisfy({ !$0.locked && $0.kind != "artboard" }) {
@@ -317,6 +356,7 @@ final class Inspector {
         if opened == key, more != nil { reserved += 20 + 4 }
         // Its parts as Bezzle says them: "3.3 pt · Inside" is "3.3 pt · Innen".
         let value = Theme.text(summary.components(separatedBy: " · ").map(Words.match).joined(separator: " · "), size: 12, ink: 2)
+        summaries[key] = value
         value.horizontalAlignment = .right
         value.margin = Theme.inset(0, 0, reserved, 0)
         value.maxWidth = 140

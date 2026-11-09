@@ -107,6 +107,47 @@ final class LayersPanel {
         }
         let boards = WindowsCore.boards()
         let board = session.board.flatMap { b in boards.first { $0.index == b } }
+        // The rows worked out first: they are made again only when what they show changes, not at
+        // every step of a drag, which moves layers without changing the list.
+        var planned: [(layer: WindowsCore.Layer?, board: WindowsCore.Board?, depth: Int, parent: UUID?, index: Int)] = []
+        let count: Int
+        if let board {
+            let layers = WindowsCore.layers(board: board.index)
+            let byID = Dictionary(layers.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            count = layers.filter { $0.depth == 0 }.count
+            // Front first, as the Mac lists them (the shared `Node.listed`).
+            for r in WindowsCore.rows(board: board.index, isShut: { [unowned self] id, group in self.isShut(id, isGroup: group) }) {
+                guard let layer = byID[r.id] else { continue }
+                planned.append((layer, nil, r.depth, r.parent, board.index))
+            }
+        } else {
+            // The canvas: its artboards and the layers lying on it, front first.
+            let loose = WindowsCore.looseLayers().map(\.index)
+            count = boards.count + loose.count
+            for index in (boards.map(\.index) + loose).sorted(by: >) {
+                if let b = boards.first(where: { $0.index == index }) {
+                    planned.append((nil, b, 0, nil, index))
+                    continue
+                }
+                let layers = WindowsCore.layers(board: index)
+                let byID = Dictionary(layers.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                for r in WindowsCore.rows(board: index, isShut: { [unowned self] id, group in self.isShut(id, isGroup: group) }) {
+                    guard let layer = byID[r.id] else { continue }
+                    planned.append((layer, nil, r.depth, r.parent, index))
+                }
+            }
+        }
+        var state = "\(Theme.ink) \(board?.index ?? -1) \(board?.name ?? "") \(count) \(session.board ?? -1) \(renaming?.uuidString ?? "") \(session.selection)"
+        for p in planned {
+            if let l = p.layer {
+                state += "|\(l.id) \(p.index) \(p.depth) \(l.kind) \(l.hidden) \(l.locked) \(l.isCopy) \(l.isContainer) \(l.isContainer && isShut(l.id, isGroup: l.kind == "group")) \(l.name)"
+            } else if let b = p.board {
+                state += "|artboard \(b.index) \(b.name)"
+            }
+        }
+        guard state != shownState else { return }
+        shownState = state
+
         header.children.clear()
         let title = StackPanel()
         title.orientation = .horizontal
@@ -117,43 +158,25 @@ final class LayersPanel {
             title.children.append(Theme.text(board.name, size: 13, weight: 600))
         }
         header.children.append(title)
+        let counted = Theme.text("\(count)", size: 11.5, ink: 3)
+        counted.horizontalAlignment = .right
+        header.children.append(counted)
 
         rows.children.clear()
         listed = []
         shown = [:]
-        if let board {
-            let layers = WindowsCore.layers(board: board.index)
-            let byID = Dictionary(layers.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-            let count = Theme.text("\(layers.filter { $0.depth == 0 }.count)", size: 11.5, ink: 3)
-            count.horizontalAlignment = .right
-            header.children.append(count)
-            // Front first, as the Mac lists them (the shared `Node.listed`).
-            for r in WindowsCore.rows(board: board.index, isShut: { [unowned self] id, group in self.isShut(id, isGroup: group) }) {
-                guard let layer = byID[r.id] else { continue }
-                listed.append((r.id, r.parent))
-                rows.children.append(row(layer, depth: r.depth, board: board.index))
-            }
-        } else {
-            // The canvas: its artboards and the layers lying on it, front first.
-            let loose = WindowsCore.looseLayers().map(\.index)
-            let count = Theme.text("\(boards.count + loose.count)", size: 11.5, ink: 3)
-            count.horizontalAlignment = .right
-            header.children.append(count)
-            for index in (boards.map(\.index) + loose).sorted(by: >) {
-                if let b = boards.first(where: { $0.index == index }) {
-                    rows.children.append(boardRow(b))
-                    continue
-                }
-                let layers = WindowsCore.layers(board: index)
-                let byID = Dictionary(layers.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-                for r in WindowsCore.rows(board: index, isShut: { [unowned self] id, group in self.isShut(id, isGroup: group) }) {
-                    guard let layer = byID[r.id] else { continue }
-                    listed.append((r.id, r.parent))
-                    rows.children.append(row(layer, depth: r.depth, board: index))
-                }
+        for p in planned {
+            if let b = p.board {
+                rows.children.append(boardRow(b))
+            } else if let layer = p.layer {
+                listed.append((layer.id, p.parent))
+                rows.children.append(row(layer, depth: p.depth, board: p.index))
             }
         }
     }
+
+    /// What the list last showed.
+    private var shownState = ""
 
     private func row(_ layer: WindowsCore.Layer, depth: Int, board: Int) -> UIElement {
         let selected = session.selection.contains(layer.id)

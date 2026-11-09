@@ -157,6 +157,8 @@ final class LiveCanvas {
         hands = [:]
         pools = [:]
         loops = [:]
+        heldShown = []
+        heldKey = ""
         tokens = [:]
         others = []
         shownAnything = false
@@ -173,11 +175,18 @@ final class LiveCanvas {
 
     private func draw(_ scene: WindowsCore.LiveScene) {
         drawLights(scene.lights)
-        // What changes every frame is made again; hands and tokens are kept and moved.
+        // What changes every frame is made again; hands and tokens are kept and moved, and what
+        // others hold is kept while it stays where it is, as it does while only their pointer moves.
         for e in others { remove(e, from: marks) }
         others = []
         for glow in scene.glows { add(glowShape(glow)) }
-        for hold in scene.holds { drawHold(hold) }
+        let held = scene.holds.map(Self.key).joined(separator: "|")
+        if held != heldKey {
+            heldKey = held
+            for e in heldShown { remove(e, from: marks) }
+            heldShown = []
+            for hold in scene.holds { drawHold(hold) }
+        }
         drawLoops(scene.loops)
         drawHands(scene.hands)
         if let crop = scene.crop { drawCrop(crop) }
@@ -188,6 +197,23 @@ final class LiveCanvas {
         guard let e else { return }
         marks.children.append(e)
         others.append(e)
+    }
+
+    /// What others hold as drawn, and what it was drawn for.
+    private var heldShown: [UIElement] = []
+    private var heldKey = ""
+
+    private func hold(_ e: UIElement?) {
+        guard let e else { return }
+        marks.children.append(e)
+        heldShown.append(e)
+    }
+
+    /// Everything a hold is drawn from, to the tenth of a point.
+    private static func key(_ hold: WindowsCore.LiveHold) -> String {
+        func r(_ v: Foundation.CGFloat) -> Int { Int((Double(v) * 10).rounded()) }
+        let outlines = hold.outlines.map { $0.map { "\(r($0.x)),\(r($0.y))" }.joined(separator: " ") }.joined(separator: ";")
+        return "\(hold.pencil) \(hold.away) \(hold.initial) \(r(hold.flag.x)),\(r(hold.flag.y)) \(outlines)"
     }
 
     private func remove(_ e: UIElement, from canvas: Canvas) {
@@ -300,7 +326,7 @@ final class LiveCanvas {
     /// What someone holds, outlined in their pencil, with their initial on a flag at its corner.
     private func drawHold(_ hold: WindowsCore.LiveHold) {
         for outline in hold.outlines {
-            add(Self.path(Self.polygon(outline, closed: outline.count > 2), stroke: Theme.brush(hold.pencil, hold.away ? 0.45 : 0.95), width: 1.25))
+            self.hold(Self.path(Self.polygon(outline, closed: outline.count > 2), stroke: Theme.brush(hold.pencil, hold.away ? 0.45 : 0.95), width: 1.25))
         }
         let flag = Border()
         flag.height = 15
@@ -316,7 +342,7 @@ final class LiveCanvas {
         flag.opacity = hold.away ? 0.5 : 1
         try? Canvas.setLeft(flag, Double(hold.flag.x) - 0.6)
         try? Canvas.setTop(flag, Double(hold.flag.y) - 15)
-        add(flag)
+        self.hold(flag)
     }
 
     /// Where someone shook their pointer, circled by hand in their pencil: a pale rim under the

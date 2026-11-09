@@ -212,6 +212,8 @@ public final class LiveTogether {
     private var timer: Timer?
     private var sentPresence: LivePresence?
     private var sentPresenceAt = Date.distantPast
+    /// When the room was last told where this computer is (`tick`).
+    private var ticked = 0.0
     private var relayedUpTo: Int64 = 0
     /// Where this computer is and what it does, as the app last said.
     private var mine = LivePresence(pointer: nil, view: .zero)
@@ -289,6 +291,10 @@ public final class LiveTogether {
     /// in the window (`screen`) at `time`: a shake of it is a wink, circled here and sent.
     public func pointerMoved(to p: CGPoint?, screen: CGPoint, at time: Double) {
         mine.pointer = p
+        // Said at once, while the pointer is where it is, when the room last heard a thirtieth of
+        // a second ago or more: the timer waits while the window is busy, as it is through each
+        // step of a drag, and the others would see the pointer stop and jump.
+        if WindowsCore.now - ticked >= 1.0 / 30 { tick() }
         guard let p else { return }
         if detector.add(screen, at: time) {
             winks.append((Self.selfID, p, WindowsCore.now))
@@ -394,6 +400,7 @@ public final class LiveTogether {
     /// Says where this computer is now, if that changed, and lets go of the silent: thirty times a
     /// second from its own timer, or by hand where no run loop turns (the headless checks).
     func tick() {
+        ticked = WindowsCore.now
         dropSilent()
         let inGesture = Editing.gestureStart != nil
         defer { wasInGesture = inGesture }

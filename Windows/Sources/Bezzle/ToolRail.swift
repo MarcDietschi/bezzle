@@ -62,7 +62,14 @@ final class ToolRail {
         show()
     }
 
+    /// What the rail last showed: it is made again only when that changes, not at every step of a
+    /// drag, where nothing on it does.
+    private var shown = ""
+
     private func show() {
+        let state = "\(session.tool.rawValue) \(session.showsResources) \(session.showsLayers) \(Theme.ink)"
+        guard state != shown else { return }
+        shown = state
         if let r = resourcesButton {
             r.onLook = { Theme.brush(Theme.well) }
             r.isOn = session.showsResources
