@@ -277,6 +277,27 @@ void bz_web_close(int32_t view);
 char *bz_web_error(void);
 void bz_web_free(void *pointer);
 
+// MARK: WebSockets
+
+/// A WebSocket through WinHTTP (websocket.cpp), for the live room's connection to the relay: each
+/// call blocks on the thread that makes it; one may receive while another sends.
+typedef struct bz_ws bz_ws;
+/// Opens `path` (with its query) on `host`:`port`, over TLS with `secure`, with `headers` added
+/// ("Name: value\r\n…"), giving up on connecting or sending after `timeout` ms. Null when it
+/// could not, with Windows' error in `error` (100000 + the HTTP status when the server refused).
+bz_ws *bz_ws_open(const wchar_t *host, int32_t port, int32_t secure, const wchar_t *path, const wchar_t *headers,
+                  int32_t timeout, uint32_t *error);
+/// Waits for the next whole message, into `*buffer` (grown with realloc to `*capacity`; the caller
+/// frees it): its length, with `kind` 0 for binary and 1 for text, or -1 once the socket closed,
+/// failed or was aborted, or the message grew past `limit`.
+int64_t bz_ws_receive(bz_ws *ws, uint8_t **buffer, uint64_t *capacity, int32_t *kind, int64_t limit);
+/// Sends one whole message, binary or text: 0 when sent.
+int32_t bz_ws_send(bz_ws *ws, const void *data, uint64_t length, int32_t text);
+/// Closes the socket, ending a receive or send waiting on it.
+void bz_ws_abort(bz_ws *ws);
+/// Lets it go, once nothing uses it any more.
+void bz_ws_free(bz_ws *ws);
+
 #ifdef __cplusplus
 }
 #endif

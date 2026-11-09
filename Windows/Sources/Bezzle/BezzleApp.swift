@@ -120,6 +120,9 @@ final class BezzleApp: SwiftApplication {
         super.init()
     }
 
+    /// Bezzle's own message loop, which sleeps when there is nothing to do (MessageLoop.swift).
+    override class var runLoop: SwiftApplication.RunLoop { { queue in MainActor.assumeIsolated { MessageLoop.run(queue) } } }
+
     override func onLaunched(_ args: WinUI.LaunchActivatedEventArgs) {
         Trace.time("launched")
         // The core's own words (what a drag measures) in the user's language too.

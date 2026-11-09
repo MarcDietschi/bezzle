@@ -2141,7 +2141,7 @@ final class DesignCanvas {
 
     /// The outline's dots and edge see the canvas as it is now.
     private func syncOutline() {
-        outlineHand.selection = session.selection
+        outlineHand.follow(session.selection)
         outlineHand.free = session.tool == .select && editing == nil && pen.editingPath == nil && !builder.active && session.mode == 0
         outlineHand.zoom = CGFloat(zoom)
         outlineHand.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))

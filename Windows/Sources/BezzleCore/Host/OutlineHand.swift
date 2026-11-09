@@ -8,9 +8,18 @@ extension WindowsCore {
     @MainActor public final class OutlineHand: OutlineHost {
         /// What is picked; a copy pulled out of an outline is picked when let go (`picked`).
         public var selection: [UUID] = [] {
-            didSet { if selection != oldValue { picked?(selection) } }
+            didSet { if selection != oldValue, !following { picked?(selection) } }
         }
         public var picked: (([UUID]) -> Void)?
+        private var following = false
+
+        /// Takes in what the window has picked, without saying it back as this hand's picking:
+        /// that picked it all again, and made every panel again inside the drawing of the outline.
+        public func follow(_ ids: [UUID]) {
+            following = true
+            selection = ids
+            following = false
+        }
         /// Whether the select tool is in hand with nothing being typed or edited.
         public var free = true
         /// Where the canvas is on screen: a canvas point `p` is at `pan + p · zoom`.

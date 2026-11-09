@@ -1,6 +1,7 @@
 import Foundation
 import WinUI
 import UWP
+import WindowsFoundation
 import BezzleCore
 
 /// The rulers along the canvas's top and left, as the Mac's (Canvas/Rulers.swift): 20 thick, in
@@ -128,7 +129,8 @@ final class Rulers {
                 let texts = [label(s.across ? Double(r.minX) - zero.x : Double(r.minY) - zero.y),
                              label(s.across ? Double(r.maxX) - zero.x : Double(r.maxY) - zero.y)]
                 for (k, text) in texts.enumerated() {
-                    let w = Double(text.count) * 5.6 + 8
+                    // As wide as its number, measured, and 4 either side, as the Mac's.
+                    let w = measured(text, in: s.pills[k].text, pills: true)
                     let at = k == 0 ? lo - w - 2 : hi + 2
                     s.pills[k].text.text = text
                     s.pills[k].box.width = w
@@ -189,13 +191,13 @@ final class Rulers {
             let p = view(o + v)
             bar(&majorTicks, s.across, at: p.rounded() - 0.5, from: t - 8, length: 8, width: 1)
             let text = label(v)
-            let w = Double(text.count) * 5.6
             if s.places.count == s.labels.count {
                 let tb = Theme.text("", size: 9, weight: 500)
                 s.labels.append(tb)
                 s.box.children.append(tb)
             }
             let tb = s.labels[s.places.count]
+            let w = measured(text, in: tb, pills: false)
             s.places.append((p, w))
             tb.text = text
             tb.foreground = Theme.brush(Self.rulerInk, 0.5)
@@ -209,12 +211,27 @@ final class Rulers {
         s.paths = []
         for (data, alpha) in [(smallTicks.d, smallAlpha), (midTicks.d, midAlpha), (majorTicks.d, 0.4)] where !data.isEmpty {
             let path = Glyphs.view([Glyphs.Part(data: data, mode: .fill)], size: 1, brush: Theme.brush(Self.rulerInk, alpha))
-            try? s.box.children.insertAt(3 + UInt32(s.paths.count), path)
+            s.box.children.insertAt(3 + UInt32(s.paths.count), path)
             s.paths.append(path)
         }
     }
 
     // MARK: Pieces
+
+    /// The numbers' widths as their text blocks lay them out (a pill's with its 4 either side),
+    /// measured once each, as the Mac measures them.
+    private var widths: [String: Double] = [:]
+
+    private func measured(_ text: String, in block: TextBlock, pills: Bool) -> Double {
+        let key = (pills ? "p" : "l") + text
+        if let w = widths[key] { return w }
+        block.text = text
+        try? block.measure(Size(width: 400, height: 40))
+        let w = ceil(Double(block.desiredSize.width))
+        if widths.count > 4000 { widths = [:] }
+        widths[key] = w
+        return w
+    }
 
     private func bar(_ p: inout PathData, _ across: Bool, at a: Double, from b: Double, length: Double, width: Double) {
         if across { p.rect(a, b, width, length) } else { p.rect(b, a, length, width) }

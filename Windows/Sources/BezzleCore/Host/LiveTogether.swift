@@ -1,7 +1,5 @@
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
+import CBezzleHost
 
 // Working on a shared design at the same moment as others, on Windows: from Bezzle/Store/
 // LiveSocket.swift and the protocol part of LiveRoom.swift. Everything said in the room is sealed
@@ -22,13 +20,19 @@ public enum LiveLinkState: Equatable, Sendable {
 
 /// A room's WebSocket to the relay (the Mac's LiveSocket): it pings, notices when nothing comes
 /// back, and tries again a little later each time.
+///
+/// Through WinHTTP (CBezzleHost/websocket.cpp) rather than Foundation's URLSessionWebSocketTask,
+/// which on Windows kept a core busy for as long as it was open: a thread of its own waits for
+/// what comes, asleep while nothing does, and sends go out one after another on a queue.
 final class LiveWebSocket {
     var onFrame: ((LiveFrame) -> Void)?
     var onLink: ((LiveLinkState) -> Void)?
 
-    private let url: URL
-    private let session: URLSession
-    private var task: URLSessionWebSocketTask?
+    private let host: String
+    private let port: Int32
+    private let secure: Bool
+    private let path: String
+    private var connection: Connection?
     /// Counts connections, so what an old one says late is not taken for the new one's.
     private var generation = 0
     private var attempt = 0
@@ -39,15 +43,24 @@ final class LiveWebSocket {
     private var pinger: Timer?
     private var retry: Timer?
 
+    /// One connection to the relay, read on its thread and written on its queue, let go once
+    /// neither needs it any more.
+    nonisolated private final class Connection: @unchecked Sendable {
+        let socket: OpaquePointer
+        let sends = DispatchQueue(label: "Bezzle live sends")
+        init(_ socket: OpaquePointer) { self.socket = socket }
+        func abort() { bz_ws_abort(socket) }
+        deinit { bz_ws_free(socket) }
+    }
+
     init(room: String, read: String, relay: URL) {
         var parts = URLComponents(url: relay.appendingPathComponent("v2").appendingPathComponent(room).appendingPathComponent("live"),
                                   resolvingAgainstBaseURL: false)!
-        if parts.scheme == "https" { parts.scheme = "wss" } else if parts.scheme == "http" { parts.scheme = "ws" }
         parts.queryItems = [URLQueryItem(name: "read", value: read)]
-        url = parts.url!
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 20
-        session = URLSession(configuration: config)
+        secure = parts.scheme == "https" || parts.scheme == "wss"
+        host = parts.host ?? ""
+        port = Int32(parts.port ?? (secure ? 443 : 80))
+        path = parts.percentEncodedPath + "?" + (parts.percentEncodedQuery ?? "")
     }
 
     func start() {
@@ -62,9 +75,10 @@ final class LiveWebSocket {
         pinger?.invalidate()
         retry?.invalidate()
         generation += 1
-        task?.cancel(with: .goingAway, reason: nil)
-        task = nil
-        session.invalidateAndCancel()
+        let left = connection
+        connection = nil
+        // Closing says goodbye to the relay, which can take a moment: not on the main thread.
+        if let left { DispatchQueue.global().async { left.abort() } }
     }
 
     private func connect() {
@@ -72,68 +86,99 @@ final class LiveWebSocket {
         generation += 1
         let generation = generation
         onLink?(.connecting)
-        var request = URLRequest(url: url)
-        request.setValue("1", forHTTPHeaderField: "X-Bezzle-Live")
-        let task = session.webSocketTask(with: request)
-        task.maximumMessageSize = 1 << 20
-        self.task = task
         inFlight = 0
         lastHeard = Date()
-        task.resume()
-        listen(task, generation)
+        let host = host, port = port, secure = secure, path = path
+        Thread.detachNewThread { [weak self] in
+            var error: UInt32 = 0
+            let opened = host.withCString(encodedAs: UTF16.self) { h in
+                path.withCString(encodedAs: UTF16.self) { p in
+                    "X-Bezzle-Live: 1\r\n".withCString(encodedAs: UTF16.self) { headers in
+                        bz_ws_open(h, port, secure ? 1 : 0, p, headers, 20_000, &error)
+                    }
+                }
+            }
+            guard let opened else {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, self.generation == generation else { return }
+                        self.reconnect(now: false)
+                    }
+                }
+                return
+            }
+            let connection = Connection(opened)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.generation == generation, !self.stopped else {
+                        DispatchQueue.global().async { connection.abort() }
+                        return
+                    }
+                    self.connection = connection
+                }
+            }
+            var buffer: UnsafeMutablePointer<UInt8>?
+            var capacity: UInt64 = 0
+            var kind: Int32 = 0
+            defer { free(buffer) }
+            while true {
+                let length = bz_ws_receive(connection.socket, &buffer, &capacity, &kind, 4 << 20)
+                guard length >= 0, let buffer else {
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            guard let self, self.generation == generation else { return }
+                            self.reconnect(now: false)
+                        }
+                    }
+                    return
+                }
+                let data = Data(bytes: buffer, count: Int(length))
+                let binary = kind == 0
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, self.generation == generation else { return }
+                        self.lastHeard = Date()
+                        // "pong", the relay's answer to a ping, says only that it is there.
+                        guard binary, let frame = LiveFrame.read(data) else { return }
+                        if case .welcome = frame {
+                            self.attempt = 0
+                            self.onLink?(.live)
+                        }
+                        self.onFrame?(frame)
+                    }
+                }
+            }
+        }
         pinger?.invalidate()
         pinger = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.ping(generation) }
         }
     }
 
-    private func listen(_ task: URLSessionWebSocketTask, _ generation: Int) {
-        Task { [weak self] in
-            while true {
-                let message: URLSessionWebSocketTask.Message
-                do {
-                    message = try await task.receive()
-                } catch {
-                    guard let self, self.generation == generation else { return }
-                    self.reconnect(now: false)
-                    return
-                }
-                guard let self, self.generation == generation else { return }
-                self.lastHeard = Date()
-                switch message {
-                case .data(let data):
-                    guard let frame = LiveFrame.read(data) else { continue }
-                    if case .welcome = frame {
-                        self.attempt = 0
-                        self.onLink?(.live)
-                    }
-                    self.onFrame?(frame)
-                default:
-                    break
-                }
-            }
-        }
-    }
-
     private func ping(_ generation: Int) {
-        guard generation == self.generation, let task else { return }
-        // The relay answers every ping: nothing for a while means the connection is gone.
+        guard generation == self.generation else { return }
+        // The relay answers every ping: nothing for a while means the connection is gone, and
+        // one that never opened is given up on in the same time.
         if Date().timeIntervalSince(lastHeard) > 25 {
             reconnect(now: true)
             return
         }
-        task.send(.string("ping")) { _ in }
+        guard let connection else { return }
+        connection.sends.async { _ = Data("ping".utf8).withUnsafeBytes { bz_ws_send(connection.socket, $0.baseAddress, 4, 1) } }
     }
 
     func send(_ frame: Data, droppable: Bool) {
-        guard let task, !stopped else { return }
+        guard let connection, !stopped else { return }
         if droppable && inFlight > 6 { return }
         inFlight += 1
         let generation = generation
-        task.send(.data(frame)) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.generation == generation else { return }
-                self.inFlight = max(0, self.inFlight - 1)
+        connection.sends.async { [weak self] in
+            _ = frame.withUnsafeBytes { bz_ws_send(connection.socket, $0.baseAddress, UInt64($0.count), 0) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.generation == generation else { return }
+                    self.inFlight = max(0, self.inFlight - 1)
+                }
             }
         }
     }
@@ -141,8 +186,9 @@ final class LiveWebSocket {
     private func reconnect(now: Bool) {
         guard !stopped else { return }
         generation += 1
-        task?.cancel(with: .goingAway, reason: nil)
-        task = nil
+        let left = connection
+        connection = nil
+        if let left { DispatchQueue.global().async { left.abort() } }
         pinger?.invalidate()
         onLink?(.away)
         retry?.invalidate()
