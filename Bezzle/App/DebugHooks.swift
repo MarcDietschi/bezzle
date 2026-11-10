@@ -20,6 +20,9 @@ import SwiftUI
 ///   BEZZLE_CARD=seconds:layout     open this card of the inspector (layout, guides)
 ///   BEZZLE_VECTORIZE=seconds[:t=detail,…,t=end]  vectorize the selected picture; then, at these times, drag its
 ///                                  card's dial to these amounts of detail (0…100), and let go
+///   BEZZLE_CUTOUT=seconds[:seconds]  take the selected pictures' background away; give it up again that much
+///                                  later, when a second time is given (the ways to make the matte, and a
+///                                  smaller Mac's: BEZZLE_MATTE_ROUTE, BEZZLE_MATTE_MACHINE in SubjectModel)
 ///   BEZZLE_EDIT=name[:start,length]  start typing into this text layer, those letters picked out
 ///   BEZZLE_FIND=seconds:words      open the find bar looking for these words, or "spelling" to check spelling
 ///   BEZZLE_MENU=seconds:anchor     open one of Bezzle's menus or panels (fill, border, zoom…)
@@ -94,6 +97,11 @@ enum DebugHooks {
             after(0.6) { store.selection = store.doc.allNodes.filter { wanted.contains($0.name) }.map(\.id) }
         }
         if let tool = env["BEZZLE_TOOL"].flatMap(Tool.init(rawValue:)) { after(0.6) { store.tool = tool } }
+        // BEZZLE_CUTOUT=seconds[:seconds] takes the selection's background away, and gives it up again.
+        if let times = env["BEZZLE_CUTOUT"]?.split(separator: ":").compactMap({ Double($0) }), let at = times.first {
+            after(at) { store.removeBackground() }
+            if times.count > 1 { after(at + times[1]) { store.giveUpRemovingBackground() } }
+        }
         // BEZZLE_PROTOTYPE=seconds sees the design as a prototype; BEZZLE_PLAY=seconds[:screen] plays it.
         if let s = env["BEZZLE_PROTOTYPE"].flatMap(Double.init) { after(s) { store.prototyping = true } }
         if let s = env["BEZZLE_INSPECT"].flatMap(Double.init) { after(s) { store.inspecting = true } }

@@ -268,9 +268,11 @@ struct CutoutTests {
         let cut = try CutoutMaker.cut(Self.balls(), picks: [left.point])
         #expect(pixel(cut, 300, 300)[3] == 255)
         #expect(pixel(cut, 900, 300)[3] == 0)
-        var told: [Double] = []
-        _ = try CutoutMaker.cut(Self.balls()) { told.append($0.done) }
-        #expect(told == told.sorted() && told.count >= 4)
+        // Each step is told as it is taken, and what stands out as soon as it is found.
+        var told: [CutoutMaker.Progress] = []
+        _ = try CutoutMaker.cut(Self.balls()) { told.append($0) }
+        #expect(told.map(\.step) == [.look, .matte, .finish])
+        #expect(told.first?.found != nil)
     }
 
     /// As a learned matte might have `balls()`, at half its size: both balls, each with a soft rim
@@ -293,8 +295,8 @@ struct CutoutTests {
     @Test func aLearnedMatteDrawsTheEdgesKeptToWhatWasPicked() throws {
         let matting = Balls()
         let left = try #require(CutoutMaker.subjects(of: Self.balls()).parts.min { $0.point.x < $1.point.x })
-        var told: [Double] = []
-        let cut = try CutoutMaker.cut(Self.balls(), picks: [left.point], matting: matting) { told.append($0.done) }
+        var told: [CutoutPace.Step] = []
+        let cut = try CutoutMaker.cut(Self.balls(), picks: [left.point], matting: matting) { told.append($0.step) }
         #expect(pixel(cut, 300, 300)[3] == 255)
         // The rim is see-through as the matte has it, fading out past the ball's outline.
         let rim = pixel(cut, 300, 300 - 178)[3]
@@ -302,7 +304,7 @@ struct CutoutTests {
         // The other ball and the something else were not picked, nor are they near what was.
         #expect(pixel(cut, 900, 300)[3] == 0)
         #expect(pixel(cut, 600, 60)[3] == 0)
-        #expect(told == told.sorted() && told.count >= 3)
+        #expect(told == [.look, .finish])
         // Unpicked, both balls are left, and still not what is away from them both.
         let both = try CutoutMaker.cut(Self.balls(), matting: matting)
         #expect(pixel(both, 300, 300)[3] == 255 && pixel(both, 900, 300)[3] == 255)
@@ -312,21 +314,67 @@ struct CutoutTests {
     @Test func theAppComesWithTheLearnedMatteAndItFindsTheSubject() async throws {
         // Made by Scripts/subject-matte/make.sh: without it, the app cuts pictures out less finely.
         let url = try #require(Bundle.main.url(forResource: "BiRefNet", withExtension: "mlmodelc"))
-        let model = try await SubjectMatte(contentsOf: url)
+        // At its light size on the processor, the way every Mac can take.
+        let model = try SubjectMatte(contentsOf: url, route: .light)
         let matte = try model.matte(of: Self.ball())
-        #expect(matte.w == SubjectMatte.side && matte.h == SubjectMatte.side)
+        #expect(matte.w == 1024 && matte.h == 1024)
         // The ball is round the middle, a little above it; the corners are backdrop.
-        #expect(matte.p[1000 * matte.w + 1024] > 0.9)
-        #expect(matte.p[40 * matte.w + 40] < 0.1)
+        #expect(matte.p[500 * matte.w + 512] > 0.9)
+        #expect(matte.p[20 * matte.w + 20] < 0.1)
         let cut = try CutoutMaker.cut(Self.ball(), matting: model)
         #expect(pixel(cut, 450, 364)[3] == 255 && pixel(cut, 12, 12)[3] == 0)
+        // It has its fine size too: the two share their weights in the one model.
+        #expect(try SubjectMatte(contentsOf: url, route: .fine).route.side == 2048)
     }
 
-    @Test func cutoutsMadeWithTheLearnedMatteAreNamedForIt() {
+    @Test func cutoutsAreNamedForHowFinelyTheyWereMade() {
         #expect(DocumentStore.cutoutName(of: "photo.png", picks: nil) == "photo-cutout.png")
-        #expect(DocumentStore.cutoutName(of: "photo.png", picks: nil, learned: true) == "photo-cutout-m\(SubjectMatte.version).png")
-        let picked = DocumentStore.cutoutName(of: "photo.png", picks: [CGPoint(x: 0.5, y: 0.5)], learned: true)
-        #expect(picked.hasPrefix("photo-cutout-m\(SubjectMatte.version)-") && picked != DocumentStore.cutoutName(of: "photo.png", picks: [CGPoint(x: 0.5, y: 0.5)]))
+        #expect(DocumentStore.cutoutName(of: "photo.png", picks: nil, grade: .fine) == "photo-cutout-m\(SubjectMatte.version).png")
+        #expect(DocumentStore.cutoutName(of: "photo.png", picks: nil, grade: .light) == "photo-cutout-m\(SubjectMatte.version)-1024.png")
+        let picks = [CGPoint(x: 0.5, y: 0.5)]
+        let names = SubjectMatte.Grade.allCases.map { DocumentStore.cutoutName(of: "photo.png", picks: picks, grade: $0) }
+        #expect(Set(names).count == 3 && names[2].hasPrefix("photo-cutout-m\(SubjectMatte.version)-"))
+    }
+
+    /// A matting that cannot make its matte, as a model too much for the Mac.
+    struct Failing: CutoutMaker.Matting {
+        func matte(of picture: CGImage) throws -> CutoutMaker.Plane { throw CutoutMaker.Failure.unreadable }
+    }
+
+    @Test func aMatteThatCannotBeMadeLeavesThePictureCutOutThePlainWay() throws {
+        var told: [CutoutPace.Step] = []
+        let cut = try CutoutMaker.cut(Self.balls(), matting: Failing()) { told.append($0.step) }
+        #expect(pixel(cut, 300, 300)[3] == 255 && pixel(cut, 900, 300)[3] == 255 && pixel(cut, 600, 60)[3] == 0)
+        #expect(told == [.look, .matte, .finish])
+    }
+
+    @Test func aCutoutMadeMoreFinelyElsewhereIsTakenAsItIs() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Self.png(Self.ball(), to: folder.appendingPathComponent("photo.png"))
+        // Without the model, it is made the plain way and named so.
+        let plain = try DocumentStore.cutout(of: "photo.png", in: folder, picks: nil, model: nil)
+        #expect(plain.asset == "photo-cutout.png")
+        // One made finely on another Mac, sharing the design, is there already: it is the one shown.
+        let fine = DocumentStore.cutoutName(of: "photo.png", picks: nil, grade: .fine)
+        try FileManager.default.copyItem(at: folder.appendingPathComponent(plain.asset), to: folder.appendingPathComponent(fine))
+        #expect(try DocumentStore.cutout(of: "photo.png", in: folder, picks: nil, model: nil).asset == fine)
+    }
+
+    @Test func aCutGivenUpLeavesTheDesignAsItWas() async throws {
+        let (store, undo) = try design(ImageFill(asset: "photo.png", size: CGSize(width: 900, height: 700)), pictures: ["photo.png": Self.ball()])
+        let id = try #require(photo(store)?.id)
+        store.selection = [id]
+        let cutting = Task { try await store.cutOut([id]) }
+        while store.cuttingOut[id] == nil { await Task.yield() }
+        // While it is cut out it says how far it is, and never that it is done.
+        #expect((store.cuttingOut[id]?.pace.done(at: CACurrentMediaTime()) ?? 1) < 1)
+        store.giveUpRemovingBackground()
+        #expect(store.cuttingOut.isEmpty)
+        #expect(try await cutting.value.isEmpty)
+        #expect(photo(store)?.fill.image?.cutout == nil && !undo.canUndo)
+        // Asked for again, it is cut out as ever.
+        #expect(try await store.cutOut([id]) == [id])
     }
 
     @Test func aClickOnAPicturePlacedIsToldAndADragIsNot() {

@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreVideo
 import Foundation
+import QuartzCore
 import Vision
 
 /// Takes the background away from a picture, leaving its subject as if it had been shot on
@@ -20,7 +21,8 @@ import Vision
 ///
 /// Given a learned matte (`SubjectMatte`), steps 2 and 3 are its instead: it finds hair, held
 /// things and see-through edges better than all of them (edge error 5.1% against 8.7%, measured
-/// the same way), and is kept to the subject Vision found, fading out just past it.
+/// the same way), and is kept to the subject Vision found, fading out just past it. Where the
+/// matte cannot be made after all, the picture is cut out by steps 2 and 3 as without one.
 ///
 /// The work is done with the picture at about 2,000 pixels across; the edge is then drawn at the
 /// picture's own size, from the photo's own pixels, so nothing is lost of a large one.
@@ -61,13 +63,16 @@ nonisolated enum CutoutMaker {
         var matteReach = 0.02
     }
 
-    /// What has been done of a cut so far, told as it goes.
+    /// A step of a cut beginning, told as it does. See `CutoutPace`.
     struct Progress: @unchecked Sendable {
-        /// How far along, 0…1.
-        var done: Double
+        var step: CutoutPace.Step
+        /// How many seconds steps from here on are expected to take, where that is known better now.
+        var expecting: [CutoutPace.Step: Double] = [:]
         /// Once what stands out has been found, roughly where it is: grey, white on the subject,
         /// as large as the work is done at.
         var found: CGImage?
+        /// When it was told, on the clock animations run by.
+        var at = CACurrentMediaTime()
     }
 
     /// `picture` with only its subjects left: the parts at `picks`, 0…1 across and down it from
@@ -87,7 +92,6 @@ nonisolated enum CutoutMaker {
         }
         let long = max(ww, wh)
         let photo = work.planes()
-        told(Progress(done: 0.08))
 
         // What stands out, and of it, what was picked.
         let handler = VNImageRequestHandler(cgImage: seen, options: [:])
@@ -104,24 +108,24 @@ nonisolated enum CutoutMaker {
             subject = scene.parts.dropFirst().reduce(scene.parts[0].mask) { zip2($0, $1.mask, max) }
             people = scene.people.values.reduce(Plane?.none) { sum, p in sum.map { zip2($0, p, max) } ?? p }
         }
-        told(Progress(done: 0.3, found: grey(subject)))
+        told(Progress(step: .look, found: grey(subject)))
 
         // How see-through each pixel is, worked out at this size; either straight from the learned
-        // matte or, without one, fitted to the photo within a band either side of the outline.
+        // matte or, without one (or where it could not be made), fitted to the photo within a band
+        // either side of the outline.
         let alpha: Plane, band: Plane?, fit: Fit?
-        if let matting {
+        if let learned = matting.flatMap({ try? $0.matte(of: seen) }) {
             // Only what was picked: the matte fades out past the subject's outline, gone
             // `matteReach` past it, so whatever else stands out stays behind.
-            let learned = try matting.matte(of: seen)
             let matte = learned.w == ww && learned.h == wh ? learned : resample(learned, ww, wh)
             let near = boxMean(map(subject) { $0 >= 0.5 ? 1 : 0 }, max(1, Int(Double(long) * tuning.matteReach)))
             alpha = withoutSpecks(zip2(matte, near) { a, n in min(max(a, 0), 1) * min(1, n * 2) }, smallest: ww * wh / 2000)
             band = nil
             fit = nil
         } else {
+            told(Progress(step: .matte, expecting: [.load: 0, .matte: 0.5 + Double(ww * wh) / 4e6]))
             let edges = tuning.personMatte ? people.flatMap { peopleEdges(subject, $0, handler: handler, long: long, tuning: tuning) } ?? subject : subject
             let base = withoutSpecks(edges, smallest: ww * wh / 2000)
-            told(Progress(done: 0.45))
 
             // The edge fitted to the photo, and the photo's own colours under it.
             let edgeBand = boxMean(map(base) { $0 >= 0.5 ? 1 : 0 }, max(2, Int(Double(long) * tuning.band)))
@@ -143,10 +147,9 @@ nonisolated enum CutoutMaker {
             band = edgeBand
             fit = fitted
         }
-        told(Progress(done: 0.55))
+        told(Progress(step: .finish))
         let colours = foreground(photo, alpha, long: long)
         let shift = (0..<3).map { k in zip2(colours[k], photo[k]) { $0 - $1 } }
-        told(Progress(done: 0.65))
 
         // At the picture's own size: the fit drawn from its own pixels (or the learned matte
         // spread out), the colours shifted as they were worked out, multiplied out as the picture
@@ -182,7 +185,6 @@ nonisolated enum CutoutMaker {
             }
         }
         guard let cut = full.image(opaque: false) else { throw Failure.unreadable }
-        told(Progress(done: 0.85))
         return cut
     }
 

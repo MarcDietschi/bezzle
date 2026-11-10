@@ -2,10 +2,13 @@ import AppKit
 
 /// What the canvas shows of cutting out a picture: the work as it goes, and picking subjects.
 ///
-/// While a picture is cut out, the pencil goes over it. A pencil line sweeps across while Vision
-/// looks; once the subject is found, it is traced in pencil and the rest of the picture sinks into
-/// the table; when the cutout is made, the background melts away from the subject outwards, until
-/// only the subject is left, standing on whatever is behind it.
+/// While a picture is cut out, the line to cut along is drawn round it in pencil, dashed as such
+/// a line is, its dashes running. It begins as the layer's own outline and pulls tight round the
+/// subject as the work goes on (`CutoutLoop`), so how far it has closed in is how far the work is
+/// (`CutoutPace`). The picture itself stays whole meanwhile: nothing looks cut out before it is.
+/// Once the cutout is made, the line pulls tight, runs solid round the subject once, and what it
+/// cut off drops away from under the subject, which is left standing on whatever is behind it.
+/// Given up, or with nothing found, the line slackens back to the frame and goes.
 ///
 /// Placing a cut-out picture (double-click it), its background shows faintly inside the layer too,
 /// so what was dropped can be seen. The subjects kept are traced faintly in pencil, and each lights
@@ -51,28 +54,43 @@ final class CutoutTool {
 
     // MARK: - The work as it goes
 
-    /// One picture being cut out, as the canvas shows it, until it has melted away or faded.
+    /// One picture being cut out, as the canvas shows it, until what was cut off has dropped away.
     private struct Run {
         var look: Look
-        /// The picture the layer showed as it began: the photo, or an earlier cutout of it.
-        let shown: String
+        /// The layer as it was when this began.
+        let before: Node
         let began: CFTimeInterval
-        /// The background, white where the subject was not found; and the subject's edge, white
-        /// in a narrow line round it.
-        var background: CGImage?
-        var edge: CGImage?
+        /// Whether its picture was cut out already: other subjects picked in a picture being
+        /// placed, which `picking` shows.
+        let again: Bool
+        /// The line, and what of the layer it was laid for.
+        var loop: CutoutLoop?
+        var laid = ""
         var foundAt: CFTimeInterval?
-        /// The subject's middle, across and down the picture.
-        var middle = CGPoint(x: 0.5, y: 0.5)
-        /// When it ended, and whether with a cutout to melt into.
-        var ended: (at: CFTimeInterval, made: Bool)?
+        /// How tight the line is drawn, and when it last was.
+        var tight = 0.0
+        var drawn: CFTimeInterval
+        /// The cutout made: when, how tight the line was then, the layer as it still shows, and
+        /// the subject's outline, across and down the picture.
+        var made: (at: CFTimeInterval, tight: Double)?
+        var outline: [[CGPoint]] = []
+        /// The layer as it shows whole, and as it will with its cutout: drawn away from the main
+        /// thread while the line pulls tight, so the cut itself takes no time. `after` is the
+        /// layer they were drawn for.
+        var whole: CGImage?
+        var left: CGImage?
+        var after: Node?
+        /// Which way what is cut off turns as it drops: its heavier side first.
+        var turn = 1.0
+        /// The design showing the cutout: when, and the layer as it shows now.
+        var cut: (at: CFTimeInterval, left: CGImage?)?
+        /// Given up, or nothing found: when, and how tight the line was then.
+        var slack: (at: CFTimeInterval, tight: Double)?
+
+        var over: Bool { cut != nil || slack != nil }
     }
 
     private var runs: [UUID: Run] = [:]
-    private static let sweep: CFTimeInterval = 1.15
-    private static let trace: CFTimeInterval = 0.35
-    private static let melt: CFTimeInterval = 0.62
-    private static let fade: CFTimeInterval = 0.24
 
     /// Whether the canvas has to draw again soon, for something moving here.
     var animating: Bool { !runs.isEmpty || !store.cuttingOut.isEmpty }
@@ -80,120 +98,254 @@ final class CutoutTool {
     func draw(_ ctx: CGContext, scale: CGFloat) {
         let now = CACurrentMediaTime()
         for (id, work) in store.cuttingOut {
-            if runs[id] == nil || runs[id]?.ended != nil, let look = look(id) {
-                runs[id] = Run(look: look, shown: look.image.shown, began: now)
+            if runs[id] == nil || runs[id]?.over == true, let look = look(id) {
+                runs[id] = Run(look: look, before: look.node, began: now, again: look.image.cutout != nil, drawn: now)
             }
             guard var run = runs[id] else { continue }
             if let look = look(id) { run.look = look }
-            if run.foundAt == nil, let found = work.found {
-                run.background = Self.inverted(found)
-                run.edge = Self.edge(of: found)
-                run.middle = Self.middle(of: found)
-                run.foundAt = now
+            if !run.again {
+                lay(&run, found: work.found, made: work.made, now)
+                if run.made == nil, work.pace.ended != nil {
+                    run.made = (now, run.tight)
+                    if let data = work.made?.outline {
+                        let outline = Silhouettes.path(data)
+                        run.outline = Self.lines(of: outline)
+                        run.turn = outline.boundingBoxOfPath.midX < 0.5 ? 1 : -1
+                    }
+                    prepare(id, &run, cutout: work.made, scale: scale)
+                }
             }
             runs[id] = run
         }
-        for (id, run) in runs where run.ended == nil && store.cuttingOut[id] == nil {
+        for (id, run) in runs where !run.over && store.cuttingOut[id] == nil {
             let image = store.node(id)?.fill.image
-            runs[id]?.ended = (now, image?.cutout != nil && image?.shown != run.shown)
-        }
-        for (id, run) in runs {
-            let look = look(id) ?? run.look
-            guard let ended = run.ended else {
-                working(run, look, now, alpha: 1, ctx)
-                continue
-            }
-            let t = (now - ended.at) / (ended.made ? Self.melt : Self.fade)
-            if t >= 1 {
-                runs[id] = nil
-            } else if ended.made {
-                melting(run, look, CGFloat(t), now, ctx)
+            if image?.cutout != nil, image?.shown != run.before.fill.image?.shown {
+                // What was drawn ahead holds only for the layer as it then was.
+                let node = store.node(id), same = node?.fill == run.after?.fill && node?.frame.size == run.after?.frame.size
+                if !same || run.whole == nil || run.left == nil { runs[id]?.whole = nil }
+                runs[id]?.cut = (now, same ? run.left : nil)
             } else {
-                working(run, look, now, alpha: CGFloat(1 - t), ctx)
+                runs[id]?.slack = (now, run.tight)
             }
         }
-        picking(ctx)
+        for id in Array(runs.keys) {
+            guard var run = runs[id] else { continue }
+            if let look = look(id) { run.look = look }
+            runs[id] = draw(&run, working: store.cuttingOut[id], now, ctx) ? run : nil
+        }
+        picking(ctx, now)
     }
 
-    /// While it works: the pencil sweeping across, and once the subject is found, it traced in
-    /// pencil and the rest sunk into the table.
-    private func working(_ run: Run, _ look: Look, _ now: CFTimeInterval, alpha: CGFloat, _ ctx: CGContext) {
-        let shown = Self.ease(min((now - run.began) / 0.2, 1))
-        let traced = run.foundAt.map { Self.ease(min((now - $0) / Self.trace, 1)) } ?? 0
-        inPicture(look, ctx) {
-            ctx.setAlpha(alpha * shown)
-            if traced < 1 { sweeping(look, (now - run.began) / Self.sweep, alpha: 1 - traced, ctx) }
-            if let background = run.background { sinking(background, alpha: traced, ctx) }
-            if let edge = run.edge {
-                // Alive while it works on: the line breathes.
-                let breath = 0.72 + 0.28 * cos((now - (run.foundAt ?? now)) * 2 * .pi / 1.3)
-                tracing(edge, alpha: traced * CGFloat(breath), ctx)
+    /// Lays the line round the layer, once and again when the layer or its picture is placed
+    /// otherwise, and tells it where the subject is once that is known: roughly as the work
+    /// found it, or exactly from a cutout that was found made.
+    private func lay(_ run: inout Run, found: CGImage?, made: Cutout?, _ now: CFTimeInterval) {
+        let look = run.look
+        let placing = look.image.placing(in: look.frame.size)
+        let key = "\(look.frame.size) \(placing)"
+        if run.loop == nil || run.laid != key {
+            let cells = CutoutLoop.cells(for: look.frame.size)
+            let outline = Renderer.outline(of: look.node)
+            // A plain rectangle's outline the line knows itself, corners and all.
+            let inside = outline.isRect(nil) ? nil : Self.cells(cells.w, cells.h, of: look.frame.size) { ctx in
+                ctx.addPath(outline)
+                ctx.fillPath(using: look.node.evenOdd == true ? .evenOdd : .winding)
+            }
+            run.loop = CutoutLoop(w: cells.w, h: cells.h, inside: inside)
+            run.laid = key
+        }
+        guard var loop = run.loop, !loop.found else { return }
+        let subject: [UInt8]?
+        if let found {
+            subject = Self.cells(loop.w, loop.h, of: look.frame.size) { ctx in
+                ctx.concatenate(placing)
+                ctx.interpolationQuality = .medium
+                Self.drawUnit(found, ctx)
+            }
+        } else if let data = made?.outline {
+            subject = Self.cells(loop.w, loop.h, of: look.frame.size) { ctx in
+                ctx.concatenate(placing)
+                ctx.addPath(Silhouettes.path(data))
+                ctx.fillPath(using: .evenOdd)
+            }
+        } else {
+            return
+        }
+        guard let subject else { return }
+        loop.find(subject)
+        run.loop = loop
+        if loop.found, run.foundAt == nil { run.foundAt = now }
+    }
+
+    /// Draws one picture's cutting out as it stands at `now`; false once there is no more to show.
+    private func draw(_ run: inout Run, working: CutoutWork?, _ now: CFTimeInterval, _ ctx: CGContext) -> Bool {
+        guard !run.again else { return !run.over }
+        let look = run.look
+        var line = Self.ease(min((now - run.began) / 0.18, 1)), dashes: CGFloat = 1, solid: CGFloat = 0, along = 0.0
+        if let slack = run.slack {
+            // Let go: back out to the frame, and gone.
+            let t = (now - slack.at) / CutoutMotion.slack
+            guard t < 1 else { return false }
+            run.tight = slack.tight * Double(1 - Self.ease(t))
+            line *= CGFloat(1 - t)
+        } else if let made = run.made {
+            // Pulled tight, a little past and back; then the cut runs round, the dashes giving way to it.
+            let t = now - made.at
+            run.tight = made.tight + (1 - made.tight) * CutoutMotion.sprung(t / CutoutMotion.pull)
+            along = min(max((t - CutoutMotion.pull) / CutoutMotion.cut, 0), 1)
+            dashes = CGFloat(1 - along)
+            solid = 1
+            if let cut = run.cut {
+                let t = (now - cut.at) / CutoutMotion.drop
+                guard t < 1 else { return false }
+                along = 1
+                dashes = 0
+                solid = CGFloat(max(0, 1 - t * 1.6))
+                dropping(run, look, t, ctx)
+            }
+        } else if let working {
+            // Closing in as the work goes on, eased after what is done so no step of it jumps.
+            let wanted = CutoutMotion.tightest * working.pace.done(at: now)
+            run.tight += (wanted - run.tight) * (1 - exp(-max(0, now - run.drawn) / 0.14))
+        }
+        run.drawn = now
+        guard let loop = run.loop else { return true }
+        let toView = CGAffineTransform(scaleX: look.frame.width, y: look.frame.height).concatenating(look.toView)
+
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.setLineJoin(.round)
+        ctx.setStrokeColor(CanvasInk.pencil.cgColor)
+        if dashes > 0.01 {
+            // How far it makes for the subject rather than only coming loose of the frame.
+            let made = run.made != nil
+            let found = run.foundAt.map { Double(Self.ease(min((now - $0) / (made ? CutoutMotion.pull : CutoutMotion.found), 1))) } ?? 0
+            let path = CGMutablePath()
+            for points in loop.lines(tight: run.tight, found: found) { Self.add(points, to: path, using: toView) }
+            Self.stroke(path, in: ctx, alpha: line * dashes, running: now - run.began)
+        }
+        if solid > 0.01, along > 0, !run.outline.isEmpty {
+            // The cut: solid round the subject as far as it has come, only where the layer shows.
+            let pictureToView = look.pictureToView
+            var frameToView = look.toView
+            ctx.saveGState()
+            if let frame = Renderer.outline(of: look.node).copy(using: &frameToView) {
+                ctx.addPath(frame.union(frame.copy(strokingWithWidth: 3, lineCap: .butt, lineJoin: .miter, miterLimit: 4)))
+                ctx.clip()
+            }
+            let e = Self.inOut(along)
+            let path = CGMutablePath()
+            for points in run.outline {
+                let placed = points.map { $0.applying(pictureToView) }
+                var whole: CGFloat = 0
+                for i in placed.indices { whole += Self.distance(placed[i], placed[(i + 1) % placed.count]) }
+                var left = whole * e
+                path.move(to: placed[0])
+                for i in placed.indices where left > 0 {
+                    let a = placed[i], b = placed[(i + 1) % placed.count], d = Self.distance(a, b)
+                    let t = d > 0 ? min(1, left / d) : 1
+                    path.addLine(to: CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+                    left -= d
+                }
+            }
+            Self.stroke(path, in: ctx, alpha: line * solid, running: nil)
+            ctx.restoreGState()
+        }
+        return true
+    }
+
+    /// What was cut off dropping away, `t` of the way: the layer as it showed, less the subject,
+    /// let go downwards, turning a little as a piece of paper does and fading, behind the subject
+    /// standing where it was.
+    private func dropping(_ run: Run, _ look: Look, _ t: Double, _ ctx: CGContext) {
+        guard let whole = run.whole, let left = run.cut?.left, look.node.transform3D == nil else { return }
+        let size = look.frame.size
+        // Falling as things do, ever faster, straight down the screen however the layer is turned.
+        let fallen = CGSize(width: 0, height: CutoutMotion.fall * t * t).applying(look.toView.inverted())
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.concatenate(look.toView)
+        ctx.addPath(Renderer.outline(of: look.node))
+        ctx.clip(using: look.node.evenOdd == true ? .evenOdd : .winding)
+        ctx.interpolationQuality = .high
+        func show(_ image: CGImage) {
+            ctx.saveGState()
+            ctx.translateBy(x: 0, y: size.height)
+            ctx.scaleBy(x: 1, y: -1)
+            ctx.draw(image, in: CGRect(origin: .zero, size: size))
+            ctx.restoreGState()
+        }
+        ctx.saveGState()
+        ctx.setAlpha(CGFloat(1 - t * t) * CGFloat(look.node.opacity))
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        ctx.saveGState()
+        ctx.translateBy(x: fallen.width + size.width / 2, y: fallen.height + size.height / 2)
+        ctx.rotate(by: Geometry.radians(run.turn * CutoutMotion.turn * t * t))
+        ctx.translateBy(x: -size.width / 2, y: -size.height / 2)
+        show(whole)
+        ctx.setBlendMode(.destinationOut)
+        show(left)
+        ctx.restoreGState()
+        // Nothing of it over the subject, which stands in front.
+        ctx.setBlendMode(.destinationOut)
+        show(left)
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
+        // The subject as it stands, for the moment the canvas takes to draw the layer anew:
+        // through the first half of the drop, then given over to the canvas.
+        if look.node.opacity >= 1, look.node.blend == nil, look.node.blur == nil {
+            ctx.setAlpha(1 - Self.inOut((t - 0.5) / 0.5))
+            show(left)
+        }
+    }
+
+    /// Has the layer drawn as it shows whole and as it will with `cutout`, away from the main
+    /// thread, while the line pulls tight and the cut runs round. Drawing them reads the cutout
+    /// at the size the canvas will ask for, so that is ready too.
+    private func prepare(_ id: UUID, _ run: inout Run, cutout: Cutout?, scale: CGFloat) {
+        guard let cutout else { return }
+        let before = run.before, began = run.began, zoom = run.look.viewport.zoom, assets = store.assets
+        var after = before
+        after.fill.image?.cutout = cutout
+        run.after = after
+        Task.detached(priority: .userInitiated) { [weak self, after] in
+            let whole = Sent(Self.picture(of: before, zoom: zoom, scale: scale, assets: assets))
+            let left = Sent(Self.picture(of: after, zoom: zoom, scale: scale, assets: assets))
+            await MainActor.run {
+                guard let self, self.runs[id]?.began == began, self.runs[id]?.cut == nil else { return }
+                self.runs[id]?.whole = whole.value
+                self.runs[id]?.left = left.value
             }
         }
     }
 
-    /// Done: the picture as it was melts away from the subject's middle outwards, leaving the cutout.
-    private func melting(_ run: Run, _ look: Look, _ t: CGFloat, _ now: CFTimeInterval, _ ctx: CGContext) {
-        let e = 1 - pow(1 - t, 3)
-        let pixels = max(look.frame.width, look.frame.height) * look.viewport.zoom * 2
-        inPicture(look, ctx) {
-            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-            if let picture = store.assets.image(run.shown, pixels: pixels) { Self.drawUnit(picture, ctx) }
-            if let background = run.background { sinking(background, alpha: 1, ctx) }
-            // Cleared from the middle out, softly at the edge of what is cleared.
-            let c = run.middle
-            let far = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1), CGPoint(x: 1, y: 1)].map { hypot($0.x - c.x, $0.y - c.y) }.max() ?? 1
-            let radius = max(far * 1.3 * e, 0.0001)
-            if let clear = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [CGColor(gray: 0, alpha: 1), CGColor(gray: 0, alpha: 1), CGColor(gray: 0, alpha: 0)] as CFArray,
-                                      locations: [0, 0.62, 1]) {
-                ctx.setBlendMode(.destinationOut)
-                ctx.drawRadialGradient(clear, startCenter: c, startRadius: 0, endCenter: c, endRadius: radius, options: [])
-            }
-            ctx.endTransparencyLayer()
-            if let edge = run.edge { tracing(edge, alpha: 1 - e, ctx) }
+    /// The layer as it shows, without its border, shadows, opacity and turn: what is cut, and
+    /// what the cut leaves of it.
+    nonisolated private static func picture(of node: Node, zoom: CGFloat, scale: CGFloat, assets: Assets) -> CGImage? {
+        guard node.frame.width > 0, node.frame.height > 0 else { return nil }
+        // As many pixels as it has on screen, and no more than a large screen's worth.
+        var pixels = zoom * scale
+        pixels = min(pixels, (6_000_000 / (node.frame.width * node.frame.height)).squareRoot())
+        let size = CGSize(width: max(1, (node.frame.width * pixels).rounded()), height: max(1, (node.frame.height * pixels).rounded()))
+        guard let ctx = Renderer.bitmap(size) else { return nil }
+        var plain = node
+        plain.frame.origin = .zero
+        plain.rotation = 0
+        plain.border.on = false
+        plain.moreBorders = nil
+        plain.shadows = []
+        plain.opacity = 1
+        plain.blend = nil
+        plain.blur = nil
+        plain.transform3D = nil
+        plain.hidden = false
+        ctx.translateBy(x: 0, y: size.height)
+        ctx.scaleBy(x: size.width / node.frame.width, y: -size.height / node.frame.height)
+        ctx.interpolationQuality = .high
+        Renderer.withFlippedContext(ctx) {
+            Renderer.drawNode(plain, in: ctx, options: Renderer.Options(deviceScale: pixels, assets: assets))
         }
-    }
-
-    /// A pencil line going across the picture, a wash of pencil trailing it, `phase` sweeps along.
-    private func sweeping(_ look: Look, _ phase: Double, alpha: CGFloat, _ ctx: CGContext) {
-        guard alpha > 0 else { return }
-        let along = phase - floor(phase)
-        // Easing in and out of each sweep, from just before the picture to just past it.
-        let x = CGFloat(-0.15 + 1.3 * (0.5 - 0.5 * cos(along * .pi)))
-        let pencil = CanvasInk.pencil
-        ctx.saveGState()
-        ctx.setAlpha(alpha)
-        if let wash = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [pencil.withAlphaComponent(0).cgColor, pencil.withAlphaComponent(0.2).cgColor] as CFArray,
-                                 locations: [0, 1]) {
-            ctx.clip(to: CGRect(x: x - 0.3, y: 0, width: 0.3, height: 1))
-            ctx.drawLinearGradient(wash, start: CGPoint(x: x - 0.3, y: 0), end: CGPoint(x: x, y: 0), options: [])
-            ctx.resetClip()
-        }
-        ctx.setFillColor(pencil.cgColor)
-        ctx.fill(CGRect(x: x - look.pointInPicture.width * 0.75, y: 0, width: look.pointInPicture.width * 1.5, height: 1))
-        ctx.restoreGState()
-    }
-
-    /// Everything but the subject sunk into the table, a little pencil in it.
-    private func sinking(_ background: CGImage, alpha: CGFloat, _ ctx: CGContext) {
-        guard alpha > 0 else { return }
-        ctx.saveGState()
-        Self.clipUnit(background, ctx)
-        ctx.setFillColor(CanvasInk.table.withAlphaComponent(0.62 * alpha).cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
-        ctx.setFillColor(CanvasInk.pencil.withAlphaComponent(0.07 * alpha).cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
-        ctx.restoreGState()
-    }
-
-    /// The subject's edge in pencil.
-    private func tracing(_ edge: CGImage, alpha: CGFloat, _ ctx: CGContext) {
-        guard alpha > 0.01 else { return }
-        ctx.saveGState()
-        Self.clipUnit(edge, ctx)
-        ctx.setFillColor(CanvasInk.pencil.withAlphaComponent(alpha).cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
-        ctx.restoreGState()
+        return ctx.makeImage()
     }
 
     // MARK: - Picking subjects
@@ -203,10 +355,13 @@ final class CutoutTool {
     private var looking: Set<String> = []
     private var hovered: Int?
     private var pending: DispatchWorkItem?
+    /// The part a click is having kept or dropped, while the picture is cut out again for it.
+    private var changing: Int?
 
-    /// The layer whose cut-out picture is being placed, and its parts once found.
-    private func pickable() -> (id: UUID, look: Look, cutout: Cutout, subjects: CutoutMaker.Subjects?)? {
-        guard let id = store.editingPicture, store.cuttingOut[id] == nil, let look = look(id), let cutout = look.image.cutout else { return nil }
+    /// The layer whose cut-out picture is being placed, and its parts once found: shown also
+    /// while it is cut out again for a part kept or dropped (`working`), when no part is picked.
+    private func pickable(working: Bool = false) -> (id: UUID, look: Look, cutout: Cutout, subjects: CutoutMaker.Subjects?)? {
+        guard let id = store.editingPicture, working || store.cuttingOut[id] == nil, let look = look(id), let cutout = look.image.cutout else { return nil }
         return (id, look, cutout, subjects(of: look.image.asset))
     }
 
@@ -262,8 +417,11 @@ final class CutoutTool {
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.store.editingPicture == id else { return }
+                self.changing = part
                 Task {
                     do { try await self.store.cutOut([id], picks: picks) } catch { self.store.trouble(error) }
+                    self.changing = nil
+                    self.redraw()
                 }
             }
         }
@@ -273,8 +431,11 @@ final class CutoutTool {
 
     /// While a cut-out picture is placed: its background faint inside the layer, the parts kept
     /// traced in pencil, the one under the pointer clearly, filled with pencil if it is to be kept.
-    private func picking(_ ctx: CGContext) {
-        guard let (_, look, cutout, subjects) = pickable() else { return }
+    /// A part just clicked is drawn round as a line to cut along, its dashes running, until the
+    /// picture has been cut out again with or without it.
+    private func picking(_ ctx: CGContext, _ now: CFTimeInterval) {
+        guard let (id, look, cutout, subjects) = pickable(working: true) else { return }
+        let working = store.cuttingOut[id] != nil
         let pixels = max(look.frame.width, look.frame.height) * look.viewport.zoom * 2
         if let picture = store.assets.image(look.image.asset, pixels: pixels), let cut = store.assets.image(cutout.asset, pixels: pixels) {
             inPicture(look, ctx) {
@@ -292,12 +453,17 @@ final class CutoutTool {
         ctx.saveGState()
         defer { ctx.restoreGState() }
         ctx.setLineJoin(.round)
-        for (i, part) in subjects.parts.enumerated() where keep.contains(i) || i == hovered {
+        let hovered = working ? nil : hovered
+        for (i, part) in subjects.parts.enumerated() where keep.contains(i) || i == hovered || (working && i == changing) {
             guard let outline = part.outline.copy(using: &toView) else { continue }
             if i == hovered && !keep.contains(i) {
                 ctx.addPath(outline)
                 ctx.setFillColor(CanvasInk.pencil.withAlphaComponent(0.16).cgColor)
                 ctx.fillPath(using: .evenOdd)
+            }
+            if working && i == changing {
+                Self.stroke(outline, in: ctx, alpha: 1, running: now)
+                continue
             }
             ctx.addPath(outline)
             ctx.setStrokeColor(CanvasInk.pencil.withAlphaComponent(i == hovered ? 1 : 0.4).cgColor)
@@ -329,72 +495,86 @@ final class CutoutTool {
         ctx.restoreGState()
     }
 
-    /// Drawing kept to where a grey mask is white, across the unit square.
-    private static func clipUnit(_ mask: CGImage, _ ctx: CGContext) {
-        ctx.translateBy(x: 0, y: 1)
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.clip(to: CGRect(x: 0, y: 0, width: 1, height: 1), mask: mask)
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.translateBy(x: 0, y: -1)
+    /// A line to cut along, drawn over a picture: in pencil, with a little paper showing beside
+    /// it, so it reads on a dark picture as on a light one. `running` for so many seconds, it is
+    /// dashed and its dashes run the way it goes round; without, it is the cut, solid.
+    private static func stroke(_ path: CGPath, in ctx: CGContext, alpha: CGFloat, running: Double?) {
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.setLineJoin(.round)
+        ctx.setLineCap(running == nil ? .round : .butt)
+        let phase = running.map { 11 - CGFloat(($0 * 30).truncatingRemainder(dividingBy: 11)) }
+        // The paper reaches a point past each dash, at its ends as at its sides.
+        ctx.setAlpha(alpha * 0.62)
+        ctx.setStrokeColor(.white)
+        ctx.setLineWidth(3.5)
+        if let phase { ctx.setLineDash(phase: phase + 1, lengths: [8, 3]) }
+        ctx.addPath(path)
+        ctx.strokePath()
+        ctx.setAlpha(alpha)
+        ctx.setStrokeColor(CanvasInk.pencil.cgColor)
+        ctx.setLineWidth(1.5)
+        if let phase { ctx.setLineDash(phase: phase, lengths: [6, 5]) }
+        ctx.addPath(path)
+        ctx.strokePath()
     }
 
-    private static func ease(_ t: Double) -> CGFloat { CGFloat(1 - pow(1 - t, 3)) }
+    private static func ease(_ t: Double) -> CGFloat { CGFloat(1 - pow(1 - min(max(t, 0), 1), 3)) }
 
-    /// A grey mask the other way round.
-    private static func inverted(_ mask: CGImage) -> CGImage? {
-        let w = mask.width, h = mask.height
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(),
-                                  bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
-        ctx.draw(mask, in: CGRect(x: 0, y: 0, width: w, height: h))
-        guard let data = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
-        for i in 0..<(h * ctx.bytesPerRow) { data[i] = 255 - data[i] }
-        return ctx.makeImage()
+    /// Setting off slowly and arriving slowly.
+    private static func inOut(_ t: Double) -> CGFloat { CGFloat(0.5 - 0.5 * cos(min(max(t, 0), 1) * .pi)) }
+
+    private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(b.x - a.x, b.y - a.y) }
+
+    /// What `draw` fills in white, as the cells of a layer `size` big: a value a cell, row by row
+    /// from the top, drawn in the layer's own coordinates.
+    private static func cells(_ w: Int, _ h: Int, of size: CGSize, _ draw: (CGContext) -> Void) -> [UInt8]? {
+        var bytes = [UInt8](repeating: 0, count: w * h)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let ctx = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            ctx.translateBy(x: 0, y: CGFloat(h))
+            ctx.scaleBy(x: CGFloat(w) / max(size.width, 0.0001), y: -CGFloat(h) / max(size.height, 0.0001))
+            ctx.setFillColor(gray: 1, alpha: 1)
+            draw(ctx)
+            return true
+        }
+        return drawn ? bytes : nil
     }
 
-    /// A narrow line just outside the white of a grey mask, made once: drawn through every frame,
-    /// it costs one mask rather than one for each side it is pushed out to.
-    private static func edge(of mask: CGImage) -> CGImage? {
-        let shrink = min(1, 900 / Double(max(mask.width, mask.height)))
-        let w = max(1, Int(Double(mask.width) * shrink)), h = max(1, Int(Double(mask.height) * shrink))
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(),
-                                  bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
-        ctx.interpolationQuality = .high
-        ctx.draw(mask, in: CGRect(x: 0, y: 0, width: w, height: h))
-        guard let data = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
-        let row = ctx.bytesPerRow, reach = 2
-        let inside = (0..<h).flatMap { y in (0..<w).map { x in data[y * row + x] } }
-        // The most solid within reach, across and then down; less what was there.
-        var across = inside
-        for y in 0..<h {
-            for x in 0..<w {
-                var most: UInt8 = 0
-                for d in -reach...reach where x + d >= 0 && x + d < w { most = max(most, inside[y * w + x + d]) }
-                across[y * w + x] = most
-            }
-        }
-        for y in 0..<h {
-            for x in 0..<w {
-                var most: UInt8 = 0
-                for d in -reach...reach where y + d >= 0 && y + d < h { most = max(most, across[(y + d) * w + x]) }
-                data[y * row + x] = most > inside[y * w + x] ? most - inside[y * w + x] : 0
-            }
-        }
-        return ctx.makeImage()
+    /// A closed line through `points` as a thread lies, rounding each of them, added to `path`.
+    private static func add(_ points: [CGPoint], to path: CGMutablePath, using transform: CGAffineTransform) {
+        guard points.count >= 3 else { return }
+        let placed = points.map { $0.applying(transform) }
+        func between(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
+        path.move(to: between(placed[placed.count - 1], placed[0]))
+        for i in placed.indices { path.addQuadCurve(to: between(placed[i], placed[(i + 1) % placed.count]), control: placed[i]) }
+        path.closeSubpath()
     }
 
-    /// Where the white of a grey mask is, on the whole, across and down from its top left.
-    private static func middle(of mask: CGImage) -> CGPoint {
-        let w = mask.width, h = mask.height
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(),
-                                  bitmapInfo: CGImageAlphaInfo.none.rawValue), w > 0, h > 0 else { return CGPoint(x: 0.5, y: 0.5) }
-        ctx.draw(mask, in: CGRect(x: 0, y: 0, width: w, height: h))
-        guard let data = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return CGPoint(x: 0.5, y: 0.5) }
-        var sx = 0.0, sy = 0.0, n = 0.0
-        for y in stride(from: 0, to: h, by: 2) {
-            for x in stride(from: 0, to: w, by: 2) where data[y * ctx.bytesPerRow + x] > 127 {
-                sx += Double(x); sy += Double(y); n += 1
+    /// The closed lines an outline is made of, its curves as short lines.
+    private static func lines(of path: CGPath) -> [[CGPoint]] {
+        var lines: [[CGPoint]] = [], line: [CGPoint] = []
+        path.applyWithBlock { element in
+            let e = element.pointee
+            switch e.type {
+            case .moveToPoint:
+                if line.count >= 3 { lines.append(line) }
+                line = [e.points[0]]
+            case .addLineToPoint:
+                line.append(e.points[0])
+            case .addQuadCurveToPoint:
+                line.append(e.points[1])
+            case .addCurveToPoint:
+                line.append(e.points[2])
+            case .closeSubpath:
+                if line.count >= 3 { lines.append(line) }
+                line = []
+            @unknown default:
+                break
             }
         }
-        return n > 0 ? CGPoint(x: (sx / n + 0.5) / Double(w), y: (sy / n + 0.5) / Double(h)) : CGPoint(x: 0.5, y: 0.5)
+        if line.count >= 3 { lines.append(line) }
+        return lines
     }
 }

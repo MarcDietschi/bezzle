@@ -188,17 +188,25 @@ extension SelectionInspector {
         } exact: {
             if blends && slot == 0 { blendRow }
         }
+        // A picture selected may be cut out next: what that needs done once on this Mac is
+        // done now, behind everything else.
+        .task(id: slot == 0 && first.kind != .text ? first.fill.image?.asset : nil) {
+            if slot == 0, first.kind != .text, first.fill.image != nil { store.readyToRemoveBackground(pointing: false) }
+        }
     }
 
     /// Whether the selected pictures show whole, or their subject alone. The subject is found
-    /// away from the main thread: meanwhile "Subject alone" fills with pencil as the work goes,
-    /// and the canvas shows it being found. A line under it says why, when nothing stands out.
+    /// away from the main thread: meanwhile "Subject alone" fills with pencil as far as the work
+    /// has come, as the line on the canvas closes in, and "Whole picture" gives it up. A line
+    /// under it says why, when nothing stands out.
     @ViewBuilder private var backgroundRow: some View {
         let work = store.selection.compactMap { store.cuttingOut[$0]?.done }
         let alone = !work.isEmpty || common({ $0.fill.image?.cutout != nil }) == true
         SegmentedWell(selection: Binding(get: { alone }, set: { cut in
-            if cut { store.removeBackground() } else if work.isEmpty { store.restoreBackground() }
+            if cut { store.removeBackground() } else if work.isEmpty { store.restoreBackground() } else { store.giveUpRemovingBackground() }
         }), options: [(false, "Whole picture"), (true, "Subject alone")], progress: work.min())
+        // What finds the subject is made ready while the pointer is still on its way to the click.
+        .onHover { if $0, !alone { store.readyToRemoveBackground() } }
         .help("Take the background away, leaving what stands out in the picture. Double-click the picture to keep or drop each subject in it. The picture itself is kept, to have it back.")
         if let trouble = store.cutoutTrouble {
             Text(trouble)
