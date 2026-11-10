@@ -145,4 +145,56 @@ extension MCPTools {
         }
         return described(ids, in: store, full: true)
     }
+
+    func vectorize(_ args: Arguments) async throws -> [Content] {
+        let store = try await store(args)
+        let ids = try Self.layers(args, in: store)
+        guard !store.isReadOnly else { throw MCPError("\(DocumentStore.VectorTrouble.readOnly)") }
+        store.canvas?.endEditing()
+        if try args.bool("restore") == true {
+            let vectors = ids.filter { store.vector(of: $0) != nil }
+            guard !vectors.isEmpty else { throw MCPError("None of these was vectorized from a picture while the design has been open; undo brings a picture back too.") }
+            for id in vectors { store.backToPicture(id) }
+            return described(ids, in: store, full: true)
+        }
+        var settings = VectorSettings()
+        var given = false
+        func amount(_ name: String) throws -> Double? {
+            guard let v = try args.number(name) else { return nil }
+            guard (0...100).contains(v) else { throw MCPError("\(name) is from 0 to 100.") }
+            given = true
+            return v / 100
+        }
+        if let detail = try amount("detail") { settings.detail = detail }
+        if let smoothing = try amount("smoothing") { settings.smoothing = smoothing }
+        if let colors = try args.int("colors") {
+            guard (2...64).contains(colors) else { throw MCPError("colors is from 2 to 64.") }
+            settings.colors = colors
+            given = true
+        }
+        // A group made from a picture is traced again, the way now asked for.
+        let vectors = ids.filter { store.vector(of: $0) != nil }
+        for id in vectors where given {
+            store.setVector(id) { now in
+                if args["detail"] != nil { now.detail = settings.detail }
+                if args["smoothing"] != nil { now.smoothing = settings.smoothing }
+                if args["colors"] != nil { now.colors = settings.colors }
+            }
+            while store.retracing.contains(id) { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let pictures = ids.filter { store.vectorizable($0) }
+        guard !pictures.isEmpty || !vectors.isEmpty else {
+            throw MCPError("None of these is a rectangle, ellipse or path filled with a picture that can be vectorized; place_image puts a picture in. A picture in a component's copy, a repeat grid, a deck or holding a mask stays one.")
+        }
+        if !pictures.isEmpty {
+            do {
+                guard try await !store.vectorize(pictures, settings: settings).isEmpty else {
+                    throw MCPError("The layers changed while their pictures were being traced, so nothing was changed.")
+                }
+            } catch let trouble as DocumentStore.VectorTrouble {
+                throw MCPError("\(trouble)")
+            }
+        }
+        return described(ids, in: store, full: true, depth: 1)
+    }
 }

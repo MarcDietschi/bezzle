@@ -78,10 +78,14 @@ enum CanvasMenus {
                     if placing { store.editingPicture = nil } else { store.editPicture() }
                 }]
             }
-            if store.canRemoveBackground || store.canRestoreBackground {
+            if store.canRemoveBackground || store.canRestoreBackground || store.canVectorize {
                 if !picture { entries.append(.separator) }
                 if store.canRemoveBackground { entries.append(.item("Remove Background") { store.removeBackground() }) }
                 if store.canRestoreBackground { entries.append(.item("Restore Background") { store.restoreBackground() }) }
+                if store.canVectorize { entries.append(.item(DocumentStore.vectorizing) { store.vectorize() }) }
+            }
+            if nodes.count == 1, store.vector(of: nodes[0].id) != nil {
+                entries += [.separator, .item("Back to Picture") { store.backToPicture(nodes[0].id) }]
             }
             if nodes.count == 1, nodes[0].kind == .path, !nodes[0].locked {
                 if store.editingPath == nodes[0].id {

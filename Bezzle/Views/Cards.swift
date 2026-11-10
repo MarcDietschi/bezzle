@@ -17,6 +17,8 @@ enum Aspect: Hashable {
     case layout, guides
     /// A picture's development: its light, colours and detail. See `PhotoCard`.
     case photo
+    /// A picture made shapes, while it remembers its picture. See `VectorCard`.
+    case vector
     /// Seen as a prototype: where the layers go, a screen's own part in it, and the states a copy
     /// of a component shows. See `PrototypeInspector`.
     case flow, screen, states

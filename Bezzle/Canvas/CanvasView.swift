@@ -86,6 +86,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return tool
     }()
 
+    /// A picture being made shapes.
+    private(set) lazy var vectorTool = VectorTool(store: store)
+
     /// The picture as the control while the Photo card is open.
     private(set) lazy var developTool: DevelopTool = {
         let tool = DevelopTool(store: store)
@@ -430,6 +433,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if previewMotion.isMoving || deckTool.isAnimating || adaptTool.isAnimating || timeTable.isAnimating { keepEasing() }
         cutoutTool.draw(ctx, scale: deviceScale)
         if cutoutTool.animating { redrawSoon() }
+        vectorTool.draw(ctx, scale: deviceScale)
+        if vectorTool.animating { redrawSoon() }
         maskTool.draw(ctx, scale: deviceScale, in: bounds)
         if maskTool.animating { keepEasing() }
         curveTool.draw(ctx, scale: deviceScale)

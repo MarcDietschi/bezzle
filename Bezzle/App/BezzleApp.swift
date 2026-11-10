@@ -328,6 +328,8 @@ struct BezzleCommands: Commands {
                 .disabled(store?.canRemoveBackground != true)
             Button("Restore Background") { store?.restoreBackground() }
                 .disabled(store?.canRestoreBackground != true)
+            Button(DocumentStore.vectorizing) { store?.vectorize() }
+                .disabled(store?.canVectorize != true)
             Divider()
             Button("Outline Border") { store?.outlineBorders() }
                 .keyboardShortcut("o", modifiers: [.command, .option])

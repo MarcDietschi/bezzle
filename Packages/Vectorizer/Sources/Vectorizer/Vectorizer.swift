@@ -1,0 +1,321 @@
+import Foundation
+
+/// Turns a picture into shapes.
+///
+/// 1. The picture is made ready: its noise taken out with its edges left, and pixel art told
+///    from drawn and photographed pictures (`Raster`).
+/// 2. Its colours are found from where it is calm, so that the mixed pixels of soft edges make
+///    no colours of their own (`Palette`).
+/// 3. It is read at several samples to the pixel, each given its colour, and the slivers soft
+///    edges would leave are taken away; the samples of one colour that hang together are a
+///    region (`Labels`, `Regions`).
+/// 4. The regions are stacked, broad ones under thin ones, each reaching a little under those
+///    over it (`Stack`).
+/// 5. Each region's outline is walked along its samples' edges, brought down to the fewest
+///    straight sides, and from those to lines, sharp corners and smooth curves; rectangles and
+///    ellipses are known for what they are (`Polygon`, `Fitter`).
+public enum Vectorizer {
+    /// Traces `bitmap`. `progress` is told how far along it is, 0…1, from whatever thread the
+    /// work is on, and stops the work by answering false; nil is returned then.
+    public static func trace(_ bitmap: Bitmap, settings: Settings = Settings(), progress: (@Sendable (Double) -> Bool)? = nil) -> Tracing? {
+        @Sendable func going(_ done: Double) -> Bool { progress?(done) ?? true }
+        // How much of the picture's small things is wanted: with little, few colours, nothing
+        // small or faint, and outlines that run calmer; with much, every colour and small thing
+        // the picture has, its edges as calm as ever.
+        let detail = min(max(settings.detail, 0), 1)
+        var raster = Raster.prepare(bitmap, cap: settings.draft ? 700_000 : 4_000_000)
+        var noise = raster.noise()
+        let hard = noise < 1 && raster.hardEdged()
+        let pixelArt = hard && max(raster.w, raster.h) / raster.blockSize() <= 192
+        // A picture kept as a JPEG is calm where it is flat and restless along its edges, where
+        // its colour is coarse too: read as a noisy one.
+        let coarse = !hard && raster.colorCoarse()
+        // A picture scaled up or blurred holds nothing finer than its edges are soft: it is
+        // traced at the size its edges would be a drawn picture's, where they are found as
+        // exactly, and what wavers along them is evened out.
+        let softness = hard ? 1 : raster.softness(0.25)
+        let shrink = min(softness / 1.15, 4, Double(min(raster.w, raster.h)) / 48)
+        var mixing = Mixing(coarse: coarse)
+        if shrink >= 1.3 {
+            raster = raster.resized(Int((Double(raster.w) / shrink).rounded()), Int((Double(raster.h) / shrink).rounded()))
+            noise = raster.noise()
+            // Made much smaller, its colour is as fine as its light again.
+            if shrink >= 1.8 { mixing = Mixing(coarse: false) }
+        }
+        if coarse { noise = max(noise, 4) }
+        if !hard, noise >= 1.2 { raster = raster.calmed(noise: noise) }
+        guard going(0.08) else { return nil }
+
+        let palette = Palette.find(raster, settings: settings, noise: noise, exact: pixelArt, mixing: mixing)
+        let tints = palette.colors.map { Tint(r: UInt8(clamping: $0.x), g: UInt8(clamping: $0.y), b: UInt8(clamping: $0.z)) }
+        guard !palette.colors.isEmpty else {
+            return Tracing(width: bitmap.width, height: bitmap.height, shapes: [], palette: [], pixelArt: pixelArt)
+        }
+        guard going(0.16) else { return nil }
+
+        let pixels = Double(raster.w * raster.h)
+        let scale: Int
+        if pixelArt {
+            scale = 1
+        } else if settings.draft {
+            scale = pixels <= 300_000 ? 2 : 1
+        } else {
+            scale = max(1, min(4, Int((6_500_000 / pixels).squareRoot())))
+        }
+        let sampler = Sampler(raster, scale: scale)
+        let nearest = Nearest(palette.colors)
+        // Whether the picture can be taken at its word, pixel by pixel: drawn, and kept as drawn.
+        let clean = !coarse && noise < 1 && shrink < 1.3
+        var labels = Labels.read(sampler, nearest, weights: palette.weights, noise: noise, mixes: !pixelArt, mixing: mixing, worn: !clean)
+        if !pixelArt, !clean { labels.withoutSpurs(reach: max(1, Int((0.5 * Double(scale)).rounded())), most: 4 * scale * scale) }
+        guard going(0.42) else { return nil }
+
+        var regions = Regions.find(labels)
+        if !pixelArt, regions.threaded(labels, colors: palette.colors, thin: 2 * scale, worn: !clean) {
+            regions = Regions.find(labels)
+        }
+        if !pixelArt, !clean {
+            if regions.withoutFringes(labels, colors: palette.colors, thin: Int((1.5 * Double(scale)).rounded()), scale: scale,
+                                      faint: 40 + 120 * (1 - detail)) {
+                regions = Regions.find(labels)
+            }
+        }
+        if !pixelArt {
+            // The smallest things kept: by how much detail is wanted, and no more shapes than a
+            // design can hold.
+            let bold = max(0, 0.5 - detail)
+            var least = Int(((1 + 10 * (1 - detail) * (1 - detail) + pixels / 375 * bold * bold) * Double(scale * scale)).rounded())
+            let most = Int(300 + 12000 * detail * detail)
+            let sizes = regions.area.sorted(by: >)
+            if sizes.count > most { least = max(least, Int(sizes[most])) }
+            labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail))
+            regions = Regions.find(labels)
+        }
+        guard going(0.55) else { return nil }
+
+        var stack = Stack.make(regions, clear: labels.clear, lap: scale)
+        guard going(0.65) else { return nil }
+
+        let smoothing = min(max(settings.smoothing, 0), 1)
+        var fitter = Fitter(scale: Double(scale), tolerance: max(Double(scale) * (0.06 + 0.2 * smoothing), 0.6),
+                            sharpness: 0.85 + 0.3 * smoothing, slack: 1 + 0.15 * Double(scale - 1),
+                            pointed: Double(scale) * (1.4 - 0.6 * smoothing), exact: pixelArt,
+                            near: pixelArt ? nil : labels.near, W: labels.W, H: labels.H)
+        let count = stack.order.count
+        let kept = regions
+
+        // Every region's walks, and how unsteady the picture's edges are.
+        let walked = UnsafeMutablePointer<[Walk]>.allocate(capacity: max(count, 1))
+        walked.initialize(repeating: [], count: max(count, 1))
+        defer {
+            walked.deinitialize(count: max(count, 1))
+            walked.deallocate()
+        }
+        let walks = Sent(walked)
+        let wobbles = Tally(bins: 256)
+        let measuring = fitter
+        let first = stack
+        parallel(count, atLeast: 4) { range in
+            var own = [Int](repeating: 0, count: 256)
+            for k in range {
+                walks.value[k] = first.walks(of: Int(first.order[k]), in: kept)
+                guard !pixelArt else { continue }
+                for walk in walks.value[k] {
+                    for w in measuring.wobbles(walk) { own[min(Int(w * 64), 255)] += 1 }
+                }
+            }
+            wobbles.add(own)
+        }
+        guard going(0.7) else { return nil }
+        // How far its edges waver, in pixels: for a picture drawn with clean edges about 0.004,
+        // for one kept coarsely or scaled ten times that. An outline is let stray as much more
+        // from a wavering edge as it takes to run through the wavering, not along it. A clean
+        // picture is taken at its word, however small its letters.
+        let wobble = pixelArt ? 0 : wobbles.quantile(0.7) / 64 / Double(scale)
+        var loose = clean ? 1 : min(max(wobble / 0.008, 1.5), 3)
+        // Made smaller, a picture's wavering went with its size: its outlines stray by so much
+        // less in its own pixels.
+        if shrink >= 1.3 { loose = max(1, loose / shrink) }
+        // With little detail wanted the outlines run calmer still.
+        loose *= 1 + 1.6 * max(0, 0.5 - detail)
+        fitter.tolerance *= loose
+        fitter.slack *= loose
+        fitter.loose = loose
+        if loose > 1.2 {
+            // An outline that runs through the wavering of its edge leaves the samples by more:
+            // the shapes under it reach further under, so nothing opens between them.
+            stack = Stack.make(regions, clear: labels.clear, lap: Int((Double(scale) * (0.6 + 0.4 * loose)).rounded(.up)))
+            let again = stack
+            parallel(count, atLeast: 4) { range in
+                for k in range { walks.value[k] = again.walks(of: Int(again.order[k]), in: kept) }
+            }
+        }
+        let stacked = stack
+        fitter.cover = Fitter.Cover(id: kept.id, rank: stacked.rank, under: stacked.under, lap: stacked.lap)
+        let made = UnsafeMutablePointer<Shape?>.allocate(capacity: max(count, 1))
+        made.initialize(repeating: nil, count: max(count, 1))
+        defer {
+            made.deinitialize(count: max(count, 1))
+            made.deallocate()
+        }
+        let out = Sent(made)
+        let stopped = Flag()
+        let finished = Counter()
+        let scaleBy = 1 / Double(scale), offsetX = Double(bitmap.width) / Double(raster.w), offsetY = Double(bitmap.height) / Double(raster.h)
+        let fitting = fitter
+        let wide = Double(bitmap.width), high = Double(bitmap.height)
+        parallel(count, atLeast: 4) { range in
+            for k in range {
+                if stopped.isSet { return }
+                let r = Int(stacked.order[k])
+                let walks = walks.value[k]
+                var outlines: [Outline] = []
+                var figure: Figure?
+                // The outside first, then its holes.
+                // Something thin, by its area and how far it is round: a line, most likely.
+                var round = 0.0
+                for walk in walks {
+                    let c = walk.corners
+                    for i in 0..<c.count {
+                        let d = c[(i + 1) % c.count] &- c[i]
+                        round += Double(abs(d.x) + abs(d.y))
+                    }
+                }
+                var own = fitting
+                if fitting.loose > 1, round > 0, 2 * Double(kept.area[r]) / round < 2.5 * Double(scale) { own.calmer = 3 * scale }
+                for walk in walks.sorted(by: { $0.area2 > $1.area2 }) {
+                    guard let fitted = own.outline(walk, of: Int32(r)) else { continue }
+                    // Never outside the picture: every point lies in it, and a curve's handles
+                    // too where the curve would bulge over the picture's edge otherwise. A long
+                    // arc's handles lie outside by rights, the arc itself within.
+                    func free(_ p: V2) -> Spot { Spot(p.x * scaleBy * offsetX, p.y * scaleBy * offsetY) }
+                    func spot(_ p: V2) -> Spot {
+                        let s = free(p)
+                        return Spot(min(max(s.x, 0), wide), min(max(s.y, 0), high))
+                    }
+                    var from = spot(fitted.start)
+                    let stretches: [Stretch] = fitted.parts.map {
+                        switch $0 {
+                        case .line(let p):
+                            from = spot(p)
+                            return .line(from)
+                        case .curve(let c):
+                            let a = free(c.c1), b = free(c.c2), to = spot(c.to)
+                            var within = true
+                            for k in 1..<16 {
+                                let t = Double(k) / 16, s = 1 - t
+                                let x = s * s * s * from.x + 3 * s * s * t * a.x + 3 * s * t * t * b.x + t * t * t * to.x
+                                let y = s * s * s * from.y + 3 * s * s * t * a.y + 3 * s * t * t * b.y + t * t * t * to.y
+                                if x < -0.02 || y < -0.02 || x > wide + 0.02 || y > high + 0.02 { within = false; break }
+                            }
+                            from = to
+                            return within ? .curve(a, b, to) : .curve(spot(c.c1), spot(c.c2), to)
+                        }
+                    }
+                    outlines.append(Outline(start: spot(fitted.start), stretches: stretches))
+                    if walks.count == 1 { figure = fitted.figure.flatMap { scaled($0, offsetX, offsetY) } }
+                }
+                guard !outlines.isEmpty else { continue }
+                out.value[k] = Shape(color: tints[Int(kept.label[r])], outlines: outlines, figure: figure, blend: nil,
+                                     area: Double(kept.area[r]) * scaleBy * scaleBy * offsetX * offsetY)
+                if finished.add() % 64 == 0, !going(0.7 + 0.3 * Double(finished.value) / Double(max(count, 1))) { stopped.set() }
+            }
+        }
+        if stopped.isSet { return nil }
+        var shapes: [Shape] = []
+        shapes.reserveCapacity(count)
+        for k in 0..<count {
+            if let shape = made[k] { shapes.append(shape) }
+        }
+        _ = going(1)
+        return Tracing(width: bitmap.width, height: bitmap.height, shapes: shapes, palette: tints, pixelArt: pixelArt)
+    }
+
+    /// A figure found in a picture that was made smaller to be traced, at the picture's own size.
+    private static func scaled(_ figure: Figure, _ sx: Double, _ sy: Double) -> Figure? {
+        guard abs(sx - 1) > 1e-9 || abs(sy - 1) > 1e-9 else { return figure }
+        // Only when it was made smaller alike both ways does a circle stay one.
+        guard abs(sx - sy) < 1e-3 else { return nil }
+        switch figure {
+        case .ellipse(let c, let rx, let ry, let angle):
+            return .ellipse(center: Spot(c.x * sx, c.y * sy), radiusX: rx * sx, radiusY: ry * sx, angle: angle)
+        case .rectangle(let c, let w, let h, let radius, let angle):
+            return .rectangle(center: Spot(c.x * sx, c.y * sy), width: w * sx, height: h * sx, radius: radius * sx, angle: angle)
+        }
+    }
+}
+
+private struct Sent<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var on = false
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return on }
+    func set() { lock.lock(); on = true; lock.unlock() }
+}
+
+/// Counts in bins, added to from many threads.
+private final class Tally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bins: [Int]
+    init(bins: Int) { self.bins = [Int](repeating: 0, count: bins) }
+    func add(_ more: [Int]) {
+        lock.lock(); defer { lock.unlock() }
+        for i in 0..<min(bins.count, more.count) { bins[i] += more[i] }
+    }
+    var total: Int { bins.reduce(0, +) }
+    /// The bin, and how far into it, below which the share `q` of what was counted lies.
+    func quantile(_ q: Double) -> Double {
+        let all = total
+        guard all > 0 else { return 0 }
+        let target = q * Double(all)
+        var seen = 0.0
+        for (i, n) in bins.enumerated() {
+            if seen + Double(n) >= target, n > 0 { return Double(i) + (target - seen) / Double(n) }
+            seen += Double(n)
+        }
+        return Double(bins.count)
+    }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+    func add() -> Int { lock.lock(); defer { lock.unlock() }; n += 1; return n }
+}
+
+// MARK: - As SVG
+
+public extension Tracing {
+    /// The tracing as an SVG file.
+    func svg() -> String {
+        func n(_ v: Double) -> String {
+            let t = (v * 100).rounded() / 100
+            return t == t.rounded() ? String(Int(t)) : String(t)
+        }
+        var out = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"\(width)\" height=\"\(height)\" viewBox=\"0 0 \(width) \(height)\">\n"
+        for shape in shapes {
+            var d = ""
+            for outline in shape.outlines {
+                d += "M\(n(outline.start.x)) \(n(outline.start.y))"
+                for stretch in outline.stretches {
+                    switch stretch {
+                    case .line(let p): d += "L\(n(p.x)) \(n(p.y))"
+                    case .curve(let a, let b, let p): d += "C\(n(a.x)) \(n(a.y)) \(n(b.x)) \(n(b.y)) \(n(p.x)) \(n(p.y))"
+                    }
+                }
+                d += "Z"
+            }
+            let hex = String(format: "#%02x%02x%02x", shape.color.r, shape.color.g, shape.color.b)
+            out += "<path fill=\"\(hex)\" fill-rule=\"evenodd\" d=\"\(d)\"/>\n"
+        }
+        return out + "</svg>\n"
+    }
+
+    /// How many points its outlines have in all.
+    var points: Int { shapes.reduce(0) { $0 + $1.outlines.reduce(0) { $0 + $1.stretches.count } } }
+}

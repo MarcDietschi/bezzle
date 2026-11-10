@@ -937,7 +937,9 @@ private struct TargetButton: View {
 }
 
 /// Shows the pictures as they were taken while it is held down.
-private struct CompareButton: View {
+struct CompareButton: View {
+    var help: LocalizedStringResource = "Hold to see the original"
+    var label: LocalizedStringResource = "Original"
     let show: (Bool) -> Void
     @State private var held = false
     @State private var hovering = false
@@ -965,7 +967,7 @@ private struct CompareButton: View {
                     show(false)
                 })
             .animation(Theme.quick, value: held)
-            .help(Text("Hold to see the original"))
-            .accessibilityLabel(Text("Original"))
+            .help(Text(help))
+            .accessibilityLabel(Text(label))
     }
 }

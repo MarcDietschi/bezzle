@@ -125,7 +125,7 @@ struct CardMarks: View {
                 ctx.stroke(Path(vp.toView(box)), with: .color(pencil.opacity(0.5)), lineWidth: 1)
             case .frame, .arrange, .artboard, .deck, .grid:
                 ctx.stroke(around, with: .color(pencil), lineWidth: 1.5)
-            case .photo:
+            case .photo, .vector:
                 // Nothing over the picture, which has to be seen as it is: only a hairline round it.
                 ctx.stroke(outline, with: .color(pencil.opacity(0.5)), lineWidth: 1)
             case .flow, .screen, .states:

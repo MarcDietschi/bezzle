@@ -181,6 +181,15 @@ extension MCPTools {
                                       "description": "Points on the subjects to keep, each {x, y} from 0 to 1 across and down the picture as it was taken, not as it is placed in its layer. Leave it out to keep everything that stands out."]),
                            ("restore", Self.boolean("Shows the pictures whole again, with their background.")),
                        ]), run: { [unowned self] in try await self.removeBackground($0) }),
+            Definition(name: "vectorize", title: "Vectorize a picture",
+                       description: "Traces the pictures filling layers into shapes: each layer becomes a group, with the same id, of vector layers lying where the picture did, flat in colour, with smooth curves, straight lines and sharp corners placed more finely than the picture's pixels, rectangles and ellipses made as such, and the letters of a logo each a layer of their own. Good for logos, icons, drawings, signatures and scans; a photograph becomes a poster of flat colours, its shapes of one colour sharing layers. The picture is traced as the layer shows it: developed, with its background taken away if it was, cropped by the layer. Done on this Mac in a moment. Call it again on the group, while the design stays open, to trace the same picture another way, or with restore to have the picture back. get_layers lists the group's layers; render shows the result.",
+                       properties: .object([
+                           design, layers,
+                           ("detail", Self.number("How much of the picture's small things is kept, 0 to 100; 50 when left out. Less gives fewer, larger shapes.")),
+                           ("colors", Self.integer("How many colours at most, 2 to 64. Leave it out to keep the colours the picture has.")),
+                           ("smoothing", Self.number("How calm the outlines run, 0 (following every turn) to 100; 50 when left out.")),
+                           ("restore", Self.boolean("Puts the picture back in place of a group vectorized from it while the design has been open.")),
+                       ]), run: { [unowned self] in try await self.vectorize($0) }),
             Definition(name: "repeat_grid", title: "Make or change a repeat grid",
                        description: "Makes layers a repeat grid, or changes one: a layer (several are grouped first) repeated in columns across and rows down, the same gap apart. Every cell is a copy of the first: change any layer in any cell (update_layers, add_layers into a cell's group, delete_layers) and it changes in all of them, but for words and pictures, which each cell holds of its own (fill_repeat_grid). New cells continue a series of numbers, or repeat what the cells before them hold. update_layers' rotation turns a grid as one, and flip_layers mirrors it as one. get_layers on the grid lists its first cell and every cell's words.",
                        properties: .object([

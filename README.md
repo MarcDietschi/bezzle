@@ -16,6 +16,7 @@ Start here to find how anything is done. Each part has its own document; this pa
 | `Web/` | The browser viewer (the model and renderer in WebAssembly, drawn with CanvasKit), published at bezzle.ch/app. `README.md` |
 | `Relay/` | The Cloudflare relay that shared designs and live co-working go through. `README.md`, `SHARING.md` |
 | `Packages/WebP/` | libwebp, vendored, for WebP export |
+| `Packages/Vectorizer/` | Vectorize's engine: a picture traced into shapes, in plain Swift (the Mac app builds it in; Windows does not have Vectorize yet). Its own tests and a command line that measures it. `README.md` |
 | `Scripts/release.sh` | The Mac release. `Scripts/release-windows.sh`: the Windows release. `Scripts/release/`: the notes parser and the Windows feed writer |
 | `Scripts/subject-matte/` | Makes Remove Background's model (git-ignored, too large for git) for the Mac and for Windows. `README.md` |
 | `RELEASE_NOTES.md` | Every version's notes in English, German, French and Italian; the releases read them |
@@ -34,6 +35,7 @@ Start here to find how anything is done. Each part has its own document; this pa
 | Deploy or test the sharing relay | `Relay/README.md` |
 | Publish the browser viewer | `Web/README.md` › Hosting |
 | Make Remove Background's model | `Scripts/subject-matte/README.md` |
+| Work on Vectorize's engine, and measure it | `Packages/Vectorizer/README.md` |
 | Test the Mac updater without a release | `CLAUDE.md` › Testing the updater |
 | Withdraw a released version | `CLAUDE.md` › Withdrawing a version |
 

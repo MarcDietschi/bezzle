@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		B30000000000000000000001 /* WebP in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* WebP */; };
+		B30000000000000000000002 /* Vectorizer in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000002 /* Vectorizer */; };
 		D30000000000000000000001 /* BezzleThumbnails.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* BezzleThumbnails.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -86,6 +87,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B30000000000000000000001 /* WebP in Frameworks */,
+				B30000000000000000000002 /* Vectorizer in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -150,6 +152,7 @@
 			name = Bezzle;
 			packageProductDependencies = (
 				B20000000000000000000001 /* WebP */,
+				B20000000000000000000002 /* Vectorizer */,
 			);
 			productName = Bezzle;
 			productReference = A10000000000000000000001 /* Bezzle.app */;
@@ -232,6 +235,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				B10000000000000000000001 /* XCLocalSwiftPackageReference "Packages/WebP" */,
+				B10000000000000000000002 /* XCLocalSwiftPackageReference "Packages/Vectorizer" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A40000000000000000000002 /* Products */;
@@ -633,12 +637,20 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/WebP;
 		};
+		B10000000000000000000002 /* XCLocalSwiftPackageReference "Packages/Vectorizer" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Vectorizer;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		B20000000000000000000001 /* WebP */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WebP;
+		};
+		B20000000000000000000002 /* Vectorizer */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Vectorizer;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

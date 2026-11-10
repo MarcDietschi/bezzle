@@ -144,6 +144,17 @@ final class DocumentStore {
     var cuttingOut: [UUID: CutoutWork] = [:]
     /// Why a background could not be taken away, shown for a moment.
     var cutoutTrouble: LocalizedStringResource?
+    /// Layers whose picture is being made shapes just now. See `vectorize`.
+    var vectorizing: [UUID: VectorWork] = [:]
+    /// The pictures vectorized while the design is open, by the group each became.
+    var traced: [UUID: VectorSource] = [:]
+    /// How a vector is wanted while its picture is traced again, and what the canvas shows of
+    /// it meanwhile.
+    var vectorWanted: [UUID: VectorSettings] = [:]
+    var vectorPreviewed: [UUID: (shapes: Int, colors: [RGBA])] = [:]
+    /// Pictures just vectorized, for the canvas to show them turning into shapes.
+    @ObservationIgnored var vectorReveals: [UUID: VectorReveal] = [:]
+    @ObservationIgnored var retracing: Set<UUID> = []
     /// A rectangle, ellipse or line whose points are being edited: a path until they are left,
     /// and then the shape again unless its outline was changed. What it was, and what it became.
     @ObservationIgnored private var openedShape: (id: UUID, shape: Node, path: Node)?

@@ -80,6 +80,10 @@ struct SelectionInspector: View {
             } else if nodes.count == 1, let mask = store.doc.parent(of: first.id), mask.isMask, mask.children.first?.id != first.id {
                 MaskedLayerCard(store: store, node: first, group: mask)
             }
+            if nodes.count == 1, store.vector(of: first.id) != nil {
+                VectorCard(store: store, group: first)
+                    .transition(.card)
+            }
             if nodes.count == 1, store.doc.post(of: first.id)?.post != nil, first.own?.isEmpty == false {
                 PostLayerCard(store: store, node: first)
             }
@@ -134,7 +138,7 @@ struct SelectionInspector: View {
                     ExportCard(store: store, nodes: nodes)
                         .transition(.card)
                 }
-                let missing = curveOffer(nodes, kinds: kinds)
+                let missing = curveOffer(nodes, kinds: kinds) + vectorOffer(nodes)
                     + addable(fill: fills && !kinds.contains(.text), border: borders && !kinds.contains(.line), inset: !kinds.contains(.line))
                 if !missing.isEmpty {
                     AddBar(items: missing)

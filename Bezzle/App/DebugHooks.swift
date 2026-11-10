@@ -18,6 +18,8 @@ import SwiftUI
 ///   BEZZLE_RESOURCES=seconds[:page[:words]]  bring out the resources panel, on a kit's or icon set's page
 ///   BEZZLE_RESOURCE_DRAG=seconds:resource:x,y;…  carry a part or icon over the canvas and hold it there
 ///   BEZZLE_CARD=seconds:layout     open this card of the inspector (layout, guides)
+///   BEZZLE_VECTORIZE=seconds[:t=detail,…,t=end]  vectorize the selected picture; then, at these times, drag its
+///                                  card's dial to these amounts of detail (0…100), and let go
 ///   BEZZLE_EDIT=name[:start,length]  start typing into this text layer, those letters picked out
 ///   BEZZLE_FIND=seconds:words      open the find bar looking for these words, or "spelling" to check spelling
 ///   BEZZLE_MENU=seconds:anchor     open one of Bezzle's menus or panels (fill, border, zoom…)
@@ -174,6 +176,7 @@ enum DebugHooks {
             case "text": .text
             case "path": .path
             case "curve": .curve
+            case "vector": .vector
             case "component": .component
             default: nil
             }
@@ -181,6 +184,23 @@ enum DebugHooks {
                 store.openAspect = card
                 if spec.hasSuffix("photo-color") { store.developGroup = .color; store.developBand = .green }
                 if spec.hasSuffix("photo-detail") { store.developGroup = .detail }
+            }
+        }
+        if let spec = env["BEZZLE_VECTORIZE"] {
+            let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
+            if let s = parts.first.flatMap(Double.init) { after(s) { store.vectorize() } }
+            for step in (parts.count > 1 ? parts[1] : "").split(separator: ",") {
+                let pair = step.split(separator: "=").map(String.init)
+                guard pair.count == 2, let t = Double(pair[0]) else { continue }
+                after(t) {
+                    guard let id = store.selection.first else { return }
+                    if let detail = Double(pair[1]) {
+                        store.beginGesture()
+                        store.setVector(id) { $0.detail = detail / 100 }
+                    } else {
+                        store.endGesture("Change Vector")
+                    }
+                }
             }
         }
         if let z = env["BEZZLE_ZOOM"].flatMap(Double.init) { after(0.7) { store.zoom(to: z) } }
