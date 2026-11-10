@@ -228,8 +228,12 @@ enum Controls {
     /// (radius 7) that slides along it; each word given room by how long it is, so they look evenly set.
     /// `progress`, 0…1, is work the chosen segment has started: its card fills with pencil from the
     /// left as it runs, the edge of what is done a pencil line, and its word is written in pencil
-    /// until it is done (as the Mac's SegmentedWell does).
+    /// until it is done (as the Mac's SegmentedWell does). `moving` says how far the work is each
+    /// time it is asked, nil once it is over: the card then fills frame by frame while it shows,
+    /// without the panel being built again for it. Nothing but the wash moves: the well, its
+    /// cards and its words stay where they are.
     static func segmented<Value: Equatable>(_ selection: Value?, _ options: [(Value, String)], width: Double? = nil, progress: Double? = nil,
+                                            moving: (@MainActor () -> Double?)? = nil,
                                             choose: @escaping @MainActor (Value) -> Void) -> FrameworkElement {
         let well = Theme.well(radius: 9)
         if let width { well.width = width }
@@ -256,21 +260,46 @@ enum Controls {
             if working, let progress {
                 // The pencil's wash over what is done, as wide as the work has come.
                 let inside = Grid()
-                let done = min(max(progress, 0.04), 1)
-                for share in [done, 1 - done] {
-                    let column = ColumnDefinition()
-                    column.width = GridLength(value: max(share, 0.0001), gridUnitType: .star)
-                    inside.columnDefinitions.append(column)
-                }
+                let over = ColumnDefinition(), ahead = ColumnDefinition()
+                inside.columnDefinitions.append(over)
+                inside.columnDefinitions.append(ahead)
                 let wash = Border()
                 wash.background = Theme.brush(Theme.pencil, Theme.pencilWash)
                 wash.borderBrush = Theme.brush(Theme.pencil, 0.5)
-                wash.borderThickness = Theme.inset(0, 0, done < 1 ? 1.5 : 0, 0)
-                wash.cornerRadius = done < 1 ? CornerRadius(topLeft: 7, topRight: 0, bottomRight: 0, bottomLeft: 7) : Theme.corners(7)
+                let show: @MainActor (Double) -> Void = { far in
+                    let done = min(max(far, 0.04), 1)
+                    over.width = GridLength(value: max(done, 0.0001), gridUnitType: .star)
+                    ahead.width = GridLength(value: max(1 - done, 0.0001), gridUnitType: .star)
+                    wash.borderThickness = Theme.inset(0, 0, done < 1 ? 1.5 : 0, 0)
+                    wash.cornerRadius = done < 1 ? CornerRadius(topLeft: 7, topRight: 0, bottomRight: 0, bottomLeft: 7) : Theme.corners(7)
+                }
+                show(progress)
                 inside.children.append(wash)
                 try? Grid.setColumnSpan(label, 2)
                 inside.children.append(label)
                 box.child = inside
+                if let moving {
+                    // Asked each frame while the card shows; it never goes back, as the work does not.
+                    let filling = Filling(shown: progress)
+                    let stop = { @MainActor in
+                        filling.cleanup?.dispose()
+                        filling.cleanup = nil
+                    }
+                    box.loaded.addHandler { _, _ in
+                        MainActor.assumeIsolated {
+                            guard filling.cleanup == nil else { return }
+                            filling.cleanup = CompositionTarget.rendering.addHandler { _, _ in
+                                MainActor.assumeIsolated {
+                                    guard let done = moving() else { stop(); return }
+                                    guard done - filling.shown > 0.002 else { return }
+                                    filling.shown = done
+                                    show(done)
+                                }
+                            }
+                        }
+                    }
+                    box.unloaded.addHandler { _, _ in MainActor.assumeIsolated { stop() } }
+                }
             } else {
                 box.child = label
             }
@@ -388,4 +417,14 @@ enum Controls {
         }
         return grid
     }
+}
+
+/// A segmented well's work filling frame by frame (`Controls.segmented`, `moving`): what asks
+/// each frame, until the well is gone or the work is over, and how far was last shown.
+@MainActor
+private final class Filling {
+    var cleanup: EventCleanup?
+    var shown: Double
+
+    init(shown: Double) { self.shown = shown }
 }

@@ -254,6 +254,9 @@ extension Inspector {
         var remove: (@MainActor () -> Void)?
         if !l.isText || slot > 0 { remove = { change(.remove("fill", slot)) } }
         let next = Self.cardID("Fill", l.fills.count)
+        // A picture selected may be cut out next: what finds its subject is made ready now, behind
+        // everything else (once for a selection, however often the card is built).
+        if slot == 0, WindowsCore.cutsOut(ids) { WindowsCore.readyToRemoveBackground(ids, pointing: false) }
         // Text's letters take one fill alone.
         var more: (help: String, preview: @MainActor (Bool) -> Void, add: @MainActor () -> Void)?
         if !l.isText {
@@ -277,16 +280,28 @@ extension Inspector {
 
     /// Whether the selected pictures show whole, or their subject alone (the Mac's backgroundRow).
     /// The subject is found away from the main thread: meanwhile "Subject alone" fills with pencil
-    /// as the work goes, and the canvas shows it being found. A line under it says why, when
-    /// nothing stands out. On a PC without the subject matte, only cutouts made before (on a Mac)
-    /// can be shown again, so it is left out but for those.
+    /// as far as the work has come, frame by frame, as the line on the canvas closes in, and
+    /// "Whole picture" gives it up. A line under it says why, when nothing stands out. On a PC
+    /// without the subject matte, only cutouts made before (on a Mac) can be shown again, so it is
+    /// left out but for those.
     private func backgroundRow(_ ids: [UUID]) -> [UIElement] {
         guard WindowsCore.removesBackground || WindowsCore.canRestoreBackground(ids) else { return [] }
         let working = WindowsCore.cutoutProgress(ids)
         let alone = working != nil || WindowsCore.showsSubjectAlone(ids) == true
-        let well = Controls.segmented(alone, [(false, "Whole picture"), (true, "Subject alone")], progress: working) { [weak self] cut in
+        let well = Controls.segmented(alone, [(false, "Whole picture"), (true, "Subject alone")], progress: working,
+                                      moving: { WindowsCore.cutoutProgress(ids) }) { [weak self] cut in
             guard let self else { return }
-            if cut { self.session.removeBackground() } else if working == nil { self.session.restoreBackground() }
+            if cut {
+                self.session.removeBackground()
+            } else if working == nil {
+                self.session.restoreBackground()
+            } else {
+                self.session.giveUpRemovingBackground()
+            }
+        }
+        // What finds the subject is made ready while the pointer is still on its way to the click.
+        if !alone {
+            well.pointerEntered.addHandler { _, _ in MainActor.assumeIsolated { WindowsCore.readyToRemoveBackground(ids) } }
         }
         try? ToolTipService.setToolTip(well, Words.t("Take the background away, leaving what stands out in the picture. Double-click the picture to keep or drop each subject in it. The picture itself is kept, to have it back."))
         var rows: [UIElement] = [well]

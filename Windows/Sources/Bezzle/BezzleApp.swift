@@ -142,6 +142,9 @@ final class BezzleApp: SwiftApplication {
             if view.session.isFront { view.canvas.drawCutouts() }
         }
         SubjectModel.log = { Trace.say($0) }
+        // A way of making the subject matte that took Bezzle down is passed over by this version,
+        // and tried again by the next.
+        SubjectModel.appVersion = AppVersion.short
         let window = Window()
         window.title = "Bezzle"
         self.window = window
@@ -175,6 +178,7 @@ final class BezzleApp: SwiftApplication {
             MainActor.assumeIsolated {
                 guard let self, !self.quitting else { return }
                 Tabs.shared.closeAll()
+                SubjectModel.shared.quitting()
             }
         }
         // Back to Bezzle: designs renamed or moved in Explorer meanwhile are followed, as the Mac
@@ -425,6 +429,8 @@ final class BezzleApp: SwiftApplication {
         Tabs.shared.closeAll()
         MCPServer.shared.stop()
         Updates.stop()
+        // A subject matte cut short by quitting is no matte that took Bezzle down.
+        SubjectModel.shared.quitting()
         quitting = true
         Trace.say("quitting, everything saved")
         try? window?.appWindow?.hide()

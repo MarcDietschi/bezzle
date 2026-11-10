@@ -76,6 +76,13 @@ final class DesignSession {
         changed()
     }
 
+    /// Gives up taking the background away from the selected pictures (the Mac's
+    /// store.giveUpRemovingBackground): they stay whole, and the canvas lets its line go.
+    func giveUpRemovingBackground() {
+        WindowsCore.giveUpRemovingBackground(selection)
+        changed()
+    }
+
     /// Shows the selected pictures whole again (the Mac's store.restoreBackground).
     func restoreBackground() {
         WindowsCore.restoreBackground(selection)
