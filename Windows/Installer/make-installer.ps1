@@ -14,8 +14,9 @@
 # - with -Feed and -PublicKey, the updater: WinSparkle.dll beside it, and the feed and the key it
 #   must find updates signed with in Bezzle.exe's resources, where WinSparkle reads them. A copy
 #   without them never looks for updates (as the Mac's builds from Xcode never do);
-# - Remove Background: the subject matte in Bezzle.resources (471 MB, the model measured, which
-#   onnx.ps1 pins) and ONNX Runtime and DirectML beside Bezzle.exe, all as build.ps1 laid them out;
+# - Remove Background: the subject matte in Bezzle.resources (its two sizes' graphs and the
+#   weights both read, 280 MB, the model measured, which onnx.ps1 pins) and ONNX Runtime and
+#   DirectML beside Bezzle.exe, all as build.ps1 laid them out;
 # - the licences of what Bezzle is made with (Windows/Credits), which About Bezzle shows.
 # Then Inno Setup makes the installer of it (Bezzle.iss), with the Windows App Runtime's installer.
 # Prints the installer's path, size and SHA-256.
@@ -97,11 +98,16 @@ while ($queue.Count -gt 0) {
 }
 # Remove Background's subject matte and what runs it (build.ps1 puts them in from Packages: onnx.ps1
 # fetches ONNX Runtime and DirectML, VM/send-matte.sh brings the model made on a Mac): only the model
-# measured, whose SHA-256 onnx.ps1 pins.
-$matte = "$stage\Bezzle.resources\BiRefNet.onnx"
-if (-not (Test-Path $matte)) { throw "No subject matte in ${App}: send it with VM/send-matte.sh and run build.ps1" }
-$pinned = (Select-String -Path "$windows\onnx.ps1" -Pattern "^\`$matte = '([0-9a-f]{64})'").Matches[0].Groups[1].Value
-if ((Get-FileHash $matte -Algorithm SHA256).Hash -ne $pinned.ToUpper()) { throw "The subject matte in $App is not the one measured ($pinned)" }
+# measured, each of its three files, whose SHA-256 onnx.ps1 pins.
+$pinned = Select-String -Path "$windows\onnx.ps1" -Pattern "^\s+'(BiRefNet[^']+)'\s*=\s*'([0-9a-f]{64})'"
+if ($pinned.Count -ne 3) { throw "onnx.ps1 does not pin the subject matte's three files" }
+foreach ($line in $pinned) {
+    $name = $line.Matches[0].Groups[1].Value
+    $matte = "$stage\Bezzle.resources\$name"
+    if (-not (Test-Path $matte)) { throw "No $name in ${App}: send the subject matte with VM/send-matte.sh and run build.ps1" }
+    if ((Get-FileHash $matte -Algorithm SHA256).Hash -ne $line.Matches[0].Groups[2].Value.ToUpper()) { throw "$name in $App is not the one measured" }
+}
+if (Test-Path "$stage\Bezzle.resources\BiRefNet.onnx") { throw "$App still holds BiRefNet.onnx, the subject matte of Bezzle 1.6 and before: run build.ps1" }
 foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll')) {
     if (-not (Test-Path "$stage\$dll")) { throw "No $dll beside Bezzle.exe: run onnx.ps1, then build.ps1" }
 }

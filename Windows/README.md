@@ -38,20 +38,26 @@ Without `Packages\avif`, Bezzle builds all the same but neither reads nor writes
 Image I/O cannot write it leaves the format out. Run `.\avif.ps1` before the first `swift build`; when
 it comes after one, touch `Package.swift`, since SwiftPM may keep its earlier reading of the manifest.
 
-Remove Background runs the Mac's subject matte, BiRefNet_HR, exported to ONNX, with ONNX Runtime
-(on the graphics card through DirectML where it can, else on the processor):
+Remove Background runs the Mac's subject matte, BiRefNet_HR, exported to ONNX, with ONNX Runtime:
+at 2,048 or at 1,024 pixels, on the graphics card through DirectML or on the processor, by what
+the PC can afford (`Sources/BezzleCore/Host/MatteWays.swift`; what each way asks is in
+`Scripts/subject-matte/README.md` › For Windows):
 
 ```powershell
 .\onnx.ps1                   # ONNX Runtime 1.24.4 with DirectML, and DirectML 1.15.4, into Packages\onnxruntime
 ```
 
-The model itself is made on a Mac and is too large for git (471 MB): `Scripts/subject-matte/make.sh`,
-then `make-onnx.sh`, write it to `Scripts/subject-matte/build/onnx/BiRefNet.onnx`, and
-`Windows/VM/send-matte.sh [C:\src\<folder>]` sends it into the VM's `Packages\subject-matte`. `onnx.ps1`
-says whether it is the model measured (its SHA-256 is pinned there), `build.ps1` links it into
-`.build\Bezzle\Bezzle.resources` and puts ONNX Runtime and DirectML beside Bezzle.exe, and the installer
-takes only the model measured. Without the headers, Bezzle builds without Remove Background; without
-the model, it leaves Remove Background out of the inspector, its menu and the welcome tour.
+The model itself is made on a Mac and is too large for git: `Scripts/subject-matte/make.sh`, then
+`make-onnx.sh`, write its three files to `Scripts/subject-matte/build/onnx`, the graphs of the two
+sizes (`BiRefNet-2048.onnx`, `BiRefNet-1024.onnx`) and the weights both read (`BiRefNet.weights`,
+269 MB), and `Windows/VM/send-matte.sh [C:\src\<folder>]` sends them into the VM's
+`Packages\subject-matte`. A graph looks for the weights beside itself, so the three go together.
+`onnx.ps1` says whether they are the model measured (their SHA-256 are pinned there), `build.ps1`
+links them into `.build\Bezzle\Bezzle.resources` and puts ONNX Runtime and DirectML beside
+Bezzle.exe, and the installer takes only the model measured. Without the headers, Bezzle builds
+without Remove Background; without the model, it leaves Remove Background out of the inspector,
+its menu and the welcome tour. (`Packages\subject-matte\BiRefNet.onnx`, a single file of 275 MB,
+is the model of Bezzle 1.6 and before; nothing reads it any more.)
 
 `.\build.ps1` builds and lays out the app in `.build\Bezzle`. Most PCs have Intel or AMD processors
 (x64), and the Arm VM builds for them too: Swift cross-compiles (`swift build --arch x86_64`, with
@@ -166,13 +172,18 @@ link dropped on home and the AI tool `import_website` bring one in (`WebImportSh
 `BEZZLE_LIBRARY` gives a test copy a designs folder of its own.
 
 Remove Background is the Mac's (`Host/CutoutMaker.swift`, `CutoutHand.swift`, `Cutouts.swift`,
-`SubjectMatte.swift`, copies of the Mac's CutoutMaker, CutoutTool, CutoutOperations and SubjectMatte):
+`SubjectMatte.swift`, `MatteWays.swift`, copies of the Mac's CutoutMaker, CutoutTool, CutoutOperations,
+SubjectMatte and SubjectModel):
 the same model, the same edges and colours, the same outlines, and cutouts named as the Mac names
 them, so a design shared between the two finds the other's. What differs is how the subject is
 found: the Mac asks Apple's Vision, which Windows lacks; here the matte's own regions are the parts a
 click keeps or drops, so subjects that touch are one part. `bezzle-render <fonts> cutout <out>` cuts
-the photos `BEZZLE_PHOTOS` names out as Bezzle does (`BEZZLE_MATTE_MODEL`, `BEZZLE_MATTE_DEVICE=cpu`
-or `gpu`, `BEZZLE_PICKS`, `BEZZLE_MATTE_RAW` for the matte's floats).
+the photos `BEZZLE_PHOTOS` names out as Bezzle does and says the way each took and how long the
+model and the matte took (`BEZZLE_MATTE_MODEL`, `BEZZLE_MATTE_DEVICE=cpu` or `gpu`,
+`BEZZLE_MATTE_ROUTE` for one way alone, `BEZZLE_MATTE_MACHINE` for another PC's ways, `BEZZLE_PICKS`,
+`BEZZLE_MATTE_RAW` for the matte's floats). Which way a PC takes, what it remembers of the ways
+and what cutouts are called ask Windows nothing (`Host/MatteWays.swift`, `CutoutCells.swift`), so
+their tests run on a Mac too: `swift test --package-path Windows/Tests`.
 
 Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O

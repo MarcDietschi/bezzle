@@ -14,8 +14,9 @@
 #   .\onnx.ps1
 #
 # The subject matte itself, the model ONNX Runtime runs, is made on a Mac (Scripts/subject-matte/
-# make-onnx.sh) and sent here by Windows/VM/send-matte.sh, to Packages\subject-matte\BiRefNet.onnx;
-# this says whether it is there and the one measured (`$matte` below).
+# make-onnx.sh) and sent here by Windows/VM/send-matte.sh, to Packages\subject-matte: the graphs of
+# its two sizes and the weights both read. This says whether they are there and the ones measured
+# (`$matte` below).
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -31,11 +32,16 @@ $downloads = @(
     @{ Id = 'microsoft.ai.directml'; Version = $directML
        Sha = '4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9' }
 )
-# The subject matte measured on Windows (Scripts/subject-matte/README.md): BiRefNet_HR at 2,048
-# pixels, its weights kept to 8 bits and its layers in full precision, as make-onnx.sh makes it
-# (quantize_onnx.py on the full-precision export of 2026-11-08). Half precision lost whole regions
-# on Arm processors; this keeps every photo measured and halves the download.
-$matte = '98b3c58e3338454f07e01081fcbacc13c221b1c7d0e45976c6f407dadf0b89ac'
+# The subject matte (Scripts/subject-matte/README.md): BiRefNet_HR at 2,048 and at 1,024 pixels,
+# its weights kept to 8 bits and its layers in full precision, as make-onnx.sh makes it. Half
+# precision lost whole regions on Arm processors; this keeps every photo measured. The two sizes'
+# graphs read their weights from the one file beside them, so all three must be of one making.
+# One line each: the installer reads them from here.
+$matte = [ordered]@{
+    'BiRefNet-2048.onnx' = 'efaab1064f5dbc1a9c512c21eb0e4f796f4918b0313ddc201f69d8d9eccbd5c7'
+    'BiRefNet-1024.onnx' = '3ae90144d221fbc3ac93c3e1d96d0221d7a7b0875c9cb5841bbad30a77eb10f8'
+    'BiRefNet.weights'   = '42ce383fe7cb60614059143cc552a123db66309d01c3fc8bdf296013996f2f1e'
+}
 
 $unpacked = @{}
 foreach ($d in $downloads) {
@@ -91,12 +97,14 @@ Copy-Item "$dml\LICENSE.txt" "$out\licenses\directml.txt" -Force
 Copy-Item "$dml\ThirdPartyNotices.txt" "$out\licenses\directml-notices.txt" -Force
 Set-Content "$out\version.txt" "onnxruntime $runtime, directml $directML"
 
-$model = Join-Path $packages 'subject-matte\BiRefNet.onnx'
-if (-not (Test-Path $model)) {
-    Write-Host "No subject matte at ${model}: make it on a Mac (Scripts/subject-matte/make-onnx.sh) and send it (Windows/VM/send-matte.sh)."
-} elseif ((Get-FileHash $model -Algorithm SHA256).Hash -ne $matte.ToUpper()) {
-    Write-Host "The subject matte at $model is not the one measured ($matte): measure it before shipping it."
+$folder = Join-Path $packages 'subject-matte'
+$missing = @($matte.Keys | Where-Object { -not (Test-Path (Join-Path $folder $_)) })
+$other = @($matte.Keys | Where-Object { (Test-Path (Join-Path $folder $_)) -and (Get-FileHash (Join-Path $folder $_) -Algorithm SHA256).Hash -ne $matte[$_].ToUpper() })
+if ($missing) {
+    Write-Host "No subject matte in ${folder} ($($missing -join ', ') missing): make it on a Mac (Scripts/subject-matte/make-onnx.sh) and send it (Windows/VM/send-matte.sh)."
+} elseif ($other) {
+    Write-Host "The subject matte in $folder is not the one measured ($($other -join ', ') differ): measure it before shipping it."
 } else {
-    Write-Host "Subject matte ready at $model"
+    Write-Host "Subject matte ready in $folder"
 }
 Write-Host "ONNX Runtime $runtime and DirectML $directML ready in $out"

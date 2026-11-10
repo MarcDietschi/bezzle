@@ -2,9 +2,10 @@
 # Exports BiRefNet (its model code in <code dir>/brn, its weights from safetensors) to ONNX for Bezzle
 # for Windows, which runs it with ONNX Runtime: 0…1 RGB in, side × side, the matte of what stands out,
 # 0…1, out. As convert.py does for Core ML: deformable convolution done with grid_sample, and Swin's
-# attention mask made in the model from small labels. Writes BiRefNet-fp32.onnx, checks it against
-# PyTorch, then BiRefNet-fp16.onnx: half precision throughout but for sampling. make-onnx.sh then makes the
-# model Windows ships, BiRefNet.onnx, from the full-precision one (quantize_onnx.py). See README.md.
+# attention mask made in the model from small labels; and rearranged to ask for far less memory
+# (lighter.py). Writes BiRefNet-fp32.onnx and checks it against PyTorch. make-onnx.sh then makes
+# what Windows ships from the full-precision exports at both sizes (quantize_onnx.py, share_onnx.py).
+# See README.md.
 import sys, os, importlib, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 code, weights, side, out = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
@@ -17,7 +18,7 @@ import onnxruntime as ort
 from PIL import Image
 from safetensors.torch import load_file
 import deform
-from half_onnx import half
+from lighter import lighter
 
 mod = importlib.import_module('brn.birefnet')
 cfg = importlib.import_module('brn.BiRefNet_config')
@@ -44,8 +45,9 @@ x = torch.from_numpy(np.asarray(photo, dtype=np.float32) / 255).permute(2, 0, 1)
 with torch.no_grad():
     reference = wrapped(x).numpy()
 
-# The same two changes convert.py makes, so the Windows matte is the Mac's.
+# The same changes convert.py makes, so the Windows matte is the Mac's.
 mod.deform_conv2d = deform.deform_conv2d
+lighter(model)
 
 
 def labels(window, shift, H, W):
@@ -84,7 +86,6 @@ print('patched against original: max', np.abs(patched - reference).max(), 'mean'
 
 os.makedirs(out, exist_ok=True)
 fp32 = os.path.join(out, 'BiRefNet-fp32.onnx')
-fp16 = os.path.join(out, 'BiRefNet-fp16.onnx')
 
 t0 = time.time()
 with torch.no_grad():
@@ -98,8 +99,4 @@ got = ort.InferenceSession(fp32, providers=['CPUExecutionProvider']).run(['matte
 print('onnx runtime (fp32) against pytorch: max', np.abs(got - reference).max(), 'mean', np.abs(got - reference).mean(),
       'in', round(time.time() - t0), 's')
 
-# Half precision, as the Mac's model, but for sampling (half_onnx.py).
-half(fp32, fp16)
-for path in (fp32, fp16):
-    print(os.path.basename(path), round(os.path.getsize(path) / 1e6), 'MB')
-print('The half-precision model is for comparison: computing in half precision loses whole regions on some processors.')
+print(os.path.basename(fp32), round(os.path.getsize(fp32) / 1e6), 'MB')

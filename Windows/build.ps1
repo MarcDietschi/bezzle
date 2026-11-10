@@ -79,15 +79,19 @@ try {
     if (Test-Path 'Resources\Generated\welcome-lake.jpg') { Copy-Item 'Resources\Generated\welcome-lake.jpg' "$app\Bezzle.resources" -Force }
     # Remove Background's: ONNX Runtime and DirectML beside Bezzle.exe and the tools (onnx.ps1 fetches
     # them), and the subject matte they run where Bezzle looks for it (Host/SubjectMatte.swift), made
-    # on a Mac and sent by VM/send-matte.sh. The model is linked rather than copied when it can be:
-    # it is 471 MB, and the same file each build.
+    # on a Mac and sent by VM/send-matte.sh: the graphs of its two sizes and the weights both read,
+    # which ONNX Runtime looks for beside the graph. They are linked rather than copied when they
+    # can be: the weights are 269 MB, and the same file each build. The single file Bezzle ran up
+    # to 1.6 goes, so no installer takes it along.
     if (Test-Path "Packages\onnxruntime\$Arch\onnxruntime.dll") {
         Copy-Item "Packages\onnxruntime\$Arch\*.dll" $app -Force
         Copy-Item "Packages\onnxruntime\$Arch\*.dll" $products -Force
     }
-    if (Test-Path 'Packages\subject-matte\BiRefNet.onnx') {
-        $model = Get-Item 'Packages\subject-matte\BiRefNet.onnx'
-        $placed = "$app\Bezzle.resources\BiRefNet.onnx"
+    if (Test-Path "$app\Bezzle.resources\BiRefNet.onnx") { Remove-Item -Force "$app\Bezzle.resources\BiRefNet.onnx" }
+    foreach ($name in @('BiRefNet-2048.onnx', 'BiRefNet-1024.onnx', 'BiRefNet.weights')) {
+        if (-not (Test-Path "Packages\subject-matte\$name")) { continue }
+        $model = Get-Item "Packages\subject-matte\$name"
+        $placed = "$app\Bezzle.resources\$name"
         $same = (Test-Path $placed) -and (Get-Item $placed).Length -eq $model.Length -and (Get-Item $placed).LastWriteTimeUtc -eq $model.LastWriteTimeUtc
         if (-not $same) {
             if (Test-Path $placed) { Remove-Item -Force $placed }

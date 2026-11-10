@@ -132,20 +132,98 @@ Scripts/subject-matte/make-onnx.sh [a photo to check it on]
 ```
 
 Bezzle for Windows runs the same model with ONNX Runtime. After `make.sh` has made the environment
-and fetched the model, this exports it to ONNX at 2,048 pixels with the two changes `convert.py`
-makes (deformable convolution with grid_sample, Swin's mask made in the model), so the Windows
-matte is the Mac's: `build/onnx/BiRefNet-fp32.onnx`, checked against PyTorch with ONNX Runtime; from
-it `build/onnx/BiRefNet.onnx`, which Windows ships, its weights kept to 8 bits as the Mac's are and its
-layers in full precision (`quantize_onnx.py`; why, below); and `BiRefNet-fp16.onnx`, half precision,
-for comparison. All are ignored by git. It runs BiRefNet's own model code, so run it yourself.
-`Windows/VM/send-matte.sh` brings the shipped one to a Windows build machine (`Windows/README.md`),
-and `Windows/onnx.ps1` pins its checksum.
+and fetched the model, this exports it to ONNX at the Mac's two sizes, 2,048 and 1,024 pixels, with
+the changes `convert.py` makes (deformable convolution with grid_sample, Swin's mask made in the
+model, the rearrangement of `lighter.py`), so the Windows matte is the Mac's. Each export is
+checked against PyTorch with ONNX Runtime (`build/onnx/<size>/BiRefNet-fp32.onnx`) and its weights
+are kept to 8 bits as the Mac's are, its layers in full precision (`quantize_onnx.py`; why, below).
+The two sizes have every weight in common, so the weights are stored once and each graph reads
+them from the file beside it (`share_onnx.py`; ONNX calls it external data). What Windows ships,
+in `build/onnx`:
 
-Windows runs it with ONNX Runtime 1.24.4: on the graphics card through DirectML, else on the
+| | | |
+|---|---|---|
+| `BiRefNet-2048.onnx` | the fine size's graph | 8 MB |
+| `BiRefNet-1024.onnx` | the light size's graph | 6 MB |
+| `BiRefNet.weights` | the weights both read | 269 MB |
+
+The three are of one making and go together. A half-precision export of the fine size
+(`build/onnx/2048/BiRefNet-fp16.onnx`) is made for comparison. All are ignored by git. It runs
+BiRefNet's own model code, so run it yourself. `Windows/VM/send-matte.sh` brings the three to a
+Windows build machine (`Windows/README.md`), and `Windows/onnx.ps1` pins their checksums.
+
+Windows runs it with ONNX Runtime 1.24.4: on the graphics card through DirectML, or on the
 processor. Half precision was shipped first and lost whole regions where it was computed in half
-precision (Arm processors, below); the 8-bit model computes in full precision everywhere, keeps every
-photo measured, and is 275 MB rather than 471. Its speed on graphics cards, where full precision is
-slower than half, is not measured yet (the VM has no Direct3D 12 adapter).
+precision (Arm processors, below); the 8-bit model computes in full precision everywhere and keeps
+every photo measured. Its speed on graphics cards, where full precision is slower than half, is not
+measured yet (the VM has no Direct3D 12 adapter).
+
+### What it asks of a PC
+
+Up to Bezzle 1.6, Windows ran the fine size alone, as BiRefNet is written: through DirectML on any
+graphics adapter, integrated ones too, and else on the processor. That took small PCs down, and
+the reason is in the graph (`lighter.py`): ONNX Runtime makes all 49 samplings of a 7 × 7
+deformable convolution before it sums any. `alive_onnx.py <model.onnx>` runs a model with ONNX
+Runtime's own record of every layer and adds up what is alive after each, which is the memory the
+model needs whatever the allocator. On this Mac's processor (18 cores, ONNX Runtime 1.22):
+
+| | Alive at its peak | A matte |
+|---|---|---|
+| 2,048, as shipped up to 1.6 (`BiRefNet.onnx`) | 14.6 GB | 21 s |
+| 2,048, rearranged (`BiRefNet-2048.onnx`) | 4.0 GB | 20 s |
+| 1,024, not rearranged | 3.6 GB | 5.6 s |
+| 1,024, rearranged (`BiRefNet-1024.onnx`) | 1.0 GB | 4.9 s |
+
+So the 10 GB the VM showed at 2,048 pixels (below) was the limit of its 12 GB, not what the model
+needed, and its 63 to 72 s were partly paging. What is left at the peak is Swin's first stage (its
+attention over every window at once), which is the model's own.
+
+The rearranged graphs give the matte the shipped one gave: on three photos, at 2,048 pixels
+against the graph shipped up to 1.6 and at 1,024 against the same export not rearranged, no value
+of the matte differs by more than 0.0000013, which is rounding in the last step. So what was
+measured on Windows (below) holds for them.
+
+Which PC takes which way is the Mac's question with a PC's answers (`MatteWays.routes`, in
+`Windows/Sources/BezzleCore/Host/MatteWays.swift`; a large picture is one of 1,536 pixels and more,
+as on the Mac). What decides is the memory a graphics card has of its own, since integrated
+graphics share the PC's memory and were what took small PCs down:
+
+- **A card with 12 GB of its own:** the fine size on the card for a large picture, then the light
+  size on the card.
+- **A card with 6 GB of its own:** the light size on the card.
+- **Integrated graphics, smaller cards, Windows' own adapter on the processor, and any PC with
+  less than 8 GB of memory:** the card is left alone. The processor makes the matte, at the fine
+  size only for a large picture on a PC with 32 GB and 12 fast cores, at the light size on all
+  the others.
+- **Last on every PC:** the light size on the processor (`cpu1024`), 1 GB while it runs. It is
+  never passed over, as Windows has no way without the model.
+
+Each measure sits a little under the round number (11.5, 5.5, 7.5 and 30.5 GB), as Windows counts
+less memory than a PC is sold with. All of them are estimates until measured on real PCs.
+
+The safeguards are the Mac's (`MatteLedger` beside the ways, `SubjectModel` in
+`Host/SubjectMatte.swift`): a
+way that fails is followed by the next lighter one; a way that was running when Bezzle went down
+is passed over by that version of Bezzle from then on (`subjectMatte.running`,
+`subjectMatte.avoided` in the settings); a way that took more than 25 s is passed over; the card
+is left alone while memory is short (nine tenths in use, or less than 1.5 GB left to hand out),
+which Bezzle asks every 5 s while a model is loaded, as Windows tells no one. The model is let go
+45 s after its last picture on the card. On the processor it is let go after each matte, as ONNX
+Runtime kept hold there of what a matte took, so each matte there loads the model first. The last
+three pictures' mattes are kept, so picking other subjects asks the model nothing.
+
+**Trying a way:** `BEZZLE_MATTE_ROUTE=cpu1024` (or `gpu1024`, `cpu2048`, `gpu2048`) takes that way
+alone; `BEZZLE_MATTE_MACHINE=16:8` takes the ways of a PC with 16 GB and 8 fast cores, and
+`32:12:8` those of one with a card of 8 GB besides; `BEZZLE_MATTE_DEVICE=cpu` keeps to the
+processor, `gpu` goes through DirectML on any adapter, Windows' software one too;
+`BEZZLE_MATTE_MODEL` takes other graphs, a folder of them with their weights or one graph that
+every way then runs. The ways, what is remembered of them and the cutouts' names are tested on a
+Mac too: `swift test --package-path Windows/Tests`.
+
+**Not measured:** none of this has run on Windows yet. The figures above are ONNX Runtime's on a
+Mac's processor; DirectML has never run this model on a real graphics card, at either size; and how
+long the light size takes on a PC's processor is a guess from the cores it has. The first build in
+the VM should measure the light size there (time and peak memory, `bezzle-render … cutout`).
 
 ### Measured on Windows (2026-11-08)
 
