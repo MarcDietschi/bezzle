@@ -218,18 +218,32 @@ int32_t bz_pixels_scale(const void *pixels, int32_t width, int32_t height, void 
 
 // MARK: The subject matte (matte.cpp)
 //
-// BiRefNet with ONNX Runtime, for Remove Background: on the graphics card through DirectML where
-// it can be, else on the processor. Error and device texts are UTF-8, into buffers of `capacity`.
+// BiRefNet with ONNX Runtime, for Remove Background: on the graphics card through DirectML or on
+// the processor, as it is opened. Error and device texts are UTF-8, into buffers of `capacity`.
 
 /// 2 when ONNX Runtime with DirectML is beside Bezzle, 1 with ONNX Runtime alone, 0 without.
 int32_t bz_matte_available(void);
-/// Opens the model at `path`: `device` 0 on the graphics card if it can be, else the processor;
-/// 1 the processor; 2 DirectML on any adapter, Windows' software one too. Says where it runs in
-/// `device_out`. Returns a handle, or null and why in `error`.
+/// What of this PC decides how it makes a matte: its memory in `bytes`, its processor's `cores`
+/// but for the efficiency cores, and of the graphics adapter a matte would run on (the fastest
+/// Direct3D 12 runs on) the memory it has of its own in `dedicated`, whether it is Windows' own
+/// on the processor in `software`, and its name. Returns 1 with such an adapter, 0 without one
+/// (`dedicated` is 0 then). Asks Direct3D, so not for the main thread.
+int32_t bz_matte_machine(int64_t *bytes, int32_t *cores, int64_t *dedicated, int32_t *software, char *name, int32_t capacity);
+/// How short memory is just now: the share of it in use, in percent, in `load`, and the bytes
+/// Windows can still hand out in `available`. Returns 1 when Windows said, else 0. On any thread.
+int32_t bz_matte_memory(int32_t *load, int64_t *available);
+/// Opens the model at `path`: `device` 1 on the processor; 3 on the graphics card; 2 through
+/// DirectML on any adapter, Windows' software one too (for trying it where there is no card).
+/// With 2 and 3 a card that cannot is an error, here and in any run after. 0 is the graphics card
+/// if it can be, else the processor, a card that gives up in a run followed by the processor.
+/// Says where it runs in `device_out`. Returns a handle, or null and why in `error`.
 void *bz_matte_open(const char *path, int32_t device, char *error, int32_t capacity, char *device_out, int32_t deviceCapacity);
+/// The side of the square the opened model takes its picture at, as its graph says; 0 where it
+/// takes any size.
+int32_t bz_matte_side(void *matte);
 /// Runs the model on `input`, red, green and blue planes of `side` × `side` floats 0…1, into
 /// `output`, `side` × `side` floats 0…1. Returns 0 when done, else why in `error`. On any thread;
-/// one at a time. Should the graphics card give up on it, it runs on the processor from then on.
+/// one at a time.
 int32_t bz_matte_run(void *matte, const float *input, int32_t side, float *output, char *error, int32_t capacity);
 /// Where the model runs now, in words, into `out`: 1 on the graphics card, 0 on the processor.
 int32_t bz_matte_device(void *matte, char *out, int32_t capacity);

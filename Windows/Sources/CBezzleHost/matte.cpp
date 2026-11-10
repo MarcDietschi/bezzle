@@ -1,9 +1,11 @@
 // The subject matte Remove Background cuts pictures out with (the Swift side is Host/SubjectMatte.swift):
-// BiRefNet run with ONNX Runtime, on the graphics card through DirectML where this PC has one that
-// can, else on the processor, as the Mac runs the same model with Core ML on its GPU. ONNX Runtime
-// and DirectML are DLLs beside Bezzle.exe (Windows/onnx.ps1 fetches them), loaded the first time a
-// matte is wanted, so Bezzle starts no slower for them. Kept apart from host.cpp, whose Skia headers
-// and windows.h do not mix. Built without them (no Packages\onnxruntime), every call says so.
+// BiRefNet run with ONNX Runtime, on the graphics card through DirectML or on the processor, as the
+// Mac runs the same model with Core ML on its GPU or its processor. Which of the two, and at which
+// of the model's sizes, the Swift side decides for each picture from what this PC is like, which it
+// asks here too (`bz_matte_machine`, `bz_matte_memory`). ONNX Runtime and DirectML are DLLs beside
+// Bezzle.exe (Windows/onnx.ps1 fetches them), loaded the first time a matte is wanted, so Bezzle
+// starts no slower for them. Kept apart from host.cpp, whose Skia headers and windows.h do not mix.
+// Built without them (no Packages\onnxruntime), every call says so.
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -45,11 +47,63 @@ std::wstring wide(const char* s) {
     return w;
 }
 
+/// The processor's cores but for its efficiency cores: those of the highest efficiency class
+/// Windows tells of (a processor with one kind of core has them all in one class). Where Windows
+/// does not say, every logical processor.
+int32_t fastCores() {
+    DWORD length = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &length);
+    std::vector<char> buffer(length);
+    if (length > 0 && GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data()), &length)) {
+        int32_t counts[256] = {};
+        int highest = 0;
+        for (DWORD at = 0; at + sizeof(DWORD) * 2 <= length;) {
+            const auto* info = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data() + at);
+            if (info->Size == 0) break;
+            if (info->Relationship == RelationProcessorCore) {
+                const int kind = info->Processor.EfficiencyClass;
+                counts[kind]++;
+                highest = std::max(highest, kind);
+            }
+            at += info->Size;
+        }
+        if (counts[highest] > 0) return counts[highest];
+    }
+    SYSTEM_INFO system;
+    GetSystemInfo(&system);
+    return std::max<int32_t>(1, int32_t(system.dwNumberOfProcessors));
+}
+
+/// This PC's memory, in bytes, as much of it as Windows has the use of.
+int64_t physicalMemory() {
+    MEMORYSTATUSEX status = {};
+    status.dwLength = sizeof(status);
+    return GlobalMemoryStatusEx(&status) ? int64_t(status.ullTotalPhys) : 0;
+}
+
 }  // namespace
+
+extern "C" int32_t bz_matte_memory(int32_t* load, int64_t* available) {
+    MEMORYSTATUSEX status = {};
+    status.dwLength = sizeof(status);
+    const bool asked = GlobalMemoryStatusEx(&status) != 0;
+    if (load) *load = asked ? int32_t(status.dwMemoryLoad) : 0;
+    if (available) *available = asked ? int64_t(status.ullAvailPhys) : 0;
+    return asked ? 1 : 0;
+}
 
 #if !BEZZLE_ONNX
 
 extern "C" int32_t bz_matte_available(void) { return 0; }
+extern "C" int32_t bz_matte_machine(int64_t* bytes, int32_t* cores, int64_t* dedicated, int32_t* software, char* name, int32_t capacity) {
+    if (bytes) *bytes = physicalMemory();
+    if (cores) *cores = fastCores();
+    if (dedicated) *dedicated = 0;
+    if (software) *software = 0;
+    say(name, capacity, "");
+    return 0;
+}
+extern "C" int32_t bz_matte_side(void*) { return 0; }
 extern "C" void* bz_matte_open(const char*, int32_t, char* error, int32_t capacity, char* device, int32_t deviceCapacity) {
     say(error, capacity, "Bezzle was built without ONNX Runtime.");
     say(device, deviceCapacity, "");
@@ -132,6 +186,8 @@ struct Adapter {
     int index = -1;
     std::string name;
     bool software = false;
+    /// The memory it has of its own, in bytes: little or none where graphics share the PC's memory.
+    uint64_t dedicated = 0;
 };
 
 /// The graphics adapter DirectML should run on: the one Windows calls the fastest, if Direct3D 12
@@ -167,7 +223,7 @@ Adapter adapter(bool software) {
         if (!runs) continue;
         // Software: so marked, or Windows' Basic Render Driver (Microsoft's 0x8C), as ONNX Runtime tells them.
         const bool software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0 || (d.VendorId == 0x1414 && d.DeviceId == 0x8C);
-        Adapter here{int(i), utf8(d.Description), software};
+        Adapter here{int(i), utf8(d.Description), software, uint64_t(d.DedicatedVideoMemory)};
         if (here.software) {
             if (warp.index < 0) warp = here;
         } else if (hardware.index < 0 || (knowsFastest && d.AdapterLuid.LowPart == fastest.LowPart && d.AdapterLuid.HighPart == fastest.HighPart)) {
@@ -187,6 +243,11 @@ struct Matte {
     /// Where it runs, in words; and whether on the graphics card, which may give up on a picture.
     std::string where;
     bool onCard = false;
+    /// Opened for the graphics card alone: should the card give up, that is an error, and the
+    /// processor does not take over here (who asked takes a lighter way).
+    bool alone = false;
+    /// The side of the square the graph takes its picture at; 0 where it takes any.
+    int32_t side = 0;
 };
 
 /// DirectML on Windows' software adapter (WARP), on a Direct3D 12 device and queue made here, given
@@ -256,7 +317,34 @@ OrtSession* session(const std::wstring& path, const Adapter* on, std::string& wh
     return why.empty() ? made : nullptr;
 }
 
+/// The side of the square the model of `session` takes its picture at, as its graph says; 0 where
+/// it takes any size, or does not say.
+int32_t squareSide(OrtSession* session) {
+    OrtTypeInfo* type = nullptr;
+    if (!failed(api->SessionGetInputTypeInfo(session, 0, &type)).empty() || !type) return 0;
+    // The shape belongs to `type`, and goes with it.
+    const OrtTensorTypeAndShapeInfo* shape = nullptr;
+    int64_t dimensions[4] = {0, 0, 0, 0};
+    size_t count = 0;
+    std::string why = failed(api->CastTypeInfoToTensorInfo(type, &shape));
+    if (why.empty() && shape) why = failed(api->GetDimensionsCount(shape, &count));
+    if (why.empty() && shape && count == 4) why = failed(api->GetDimensions(shape, dimensions, 4));
+    api->ReleaseTypeInfo(type);
+    return why.empty() && dimensions[2] > 0 && dimensions[2] == dimensions[3] && dimensions[2] <= 16384 ? int32_t(dimensions[2]) : 0;
+}
+
 }  // namespace
+
+extern "C" int32_t bz_matte_machine(int64_t* bytes, int32_t* cores, int64_t* dedicated, int32_t* software, char* name, int32_t capacity) {
+    if (bytes) *bytes = physicalMemory();
+    if (cores) *cores = fastCores();
+    // The adapter a matte would run on: the fastest Direct3D 12 runs on, or none.
+    const Adapter on = adapter(false);
+    if (dedicated) *dedicated = on.index >= 0 ? int64_t(on.dedicated) : 0;
+    if (software) *software = on.software ? 1 : 0;
+    say(name, capacity, on.name);
+    return on.index >= 0 ? 1 : 0;
+}
 
 extern "C" int32_t bz_matte_available(void) {
     std::lock_guard<std::mutex> guard(lock);
@@ -276,7 +364,14 @@ extern "C" void* bz_matte_open(const char* path, int32_t device, char* error, in
     OrtSession* made = nullptr;
     std::string where;
     // 0: the graphics card if it can, else the processor; 1: the processor; 2: DirectML on any
-    // adapter, Windows' software one too (for trying it where there is no other).
+    // adapter, Windows' software one too (for trying it where there is no other); 3: the graphics
+    // card. With 2 and 3 it is the card alone: one that cannot is an error, now and in any run
+    // after, and who asked decides what to take instead (a lighter way, Host/SubjectMatte.swift).
+    const bool alone = device == 2 || device == 3;
+    if (alone && !dml) {
+        say(error, capacity, "The ONNX Runtime beside Bezzle has no DirectML.");
+        return nullptr;
+    }
     if (device != 1 && dml) {
         const Adapter on = adapter(device == 2);
         if (on.index >= 0) {
@@ -284,13 +379,13 @@ extern "C" void* bz_matte_open(const char* path, int32_t device, char* error, in
             made = session(file, &on, refused);
             if (made) {
                 where = "DirectML on " + on.name;
-            } else if (device == 2) {
+            } else if (alone) {
                 say(error, capacity, refused);
                 return nullptr;
             } else {
                 where = "processor (DirectML on " + on.name + " could not: " + refused + ")";
             }
-        } else if (device == 2) {
+        } else if (alone) {
             say(error, capacity, "No graphics adapter here runs Direct3D 12.");
             return nullptr;
         }
@@ -308,6 +403,8 @@ extern "C" void* bz_matte_open(const char* path, int32_t device, char* error, in
     matte->file = file;
     matte->where = where;
     matte->onCard = where.rfind("DirectML", 0) == 0;
+    matte->alone = alone;
+    matte->side = squareSide(made);
     if (why = failed(api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &matte->memory)); !why.empty()) {
         api->ReleaseSession(made);
         delete matte;
@@ -347,9 +444,10 @@ extern "C" int32_t bz_matte_run(void* handle, const float* input, int32_t side, 
         return 5;
     }
     why = failed(api->Run(matte->session, nullptr, inputs, &in, 1, outputs, 1, &out));
-    if (!why.empty() && matte->onCard) {
+    if (!why.empty() && matte->onCard && !matte->alone) {
         // The graphics card gave up on it (its memory too small for the model at 2,048 pixels, as
-        // Windows' software adapter's is, or the card lost): from now on on the processor.
+        // Windows' software adapter's is, or the card lost): from now on on the processor. Not
+        // where it was opened for the card alone: the error below is the answer then.
         std::string again;
         if (OrtSession* cpu = session(matte->file, nullptr, again)) {
             api->ReleaseSession(matte->session);
@@ -385,6 +483,11 @@ extern "C" int32_t bz_matte_run(void* handle, const float* input, int32_t side, 
         return 4;
     }
     return 0;
+}
+
+extern "C" int32_t bz_matte_side(void* handle) {
+    const auto* matte = static_cast<const Matte*>(handle);
+    return matte ? matte->side : 0;
 }
 
 extern "C" int32_t bz_matte_device(void* handle, char* out, int32_t capacity) {
