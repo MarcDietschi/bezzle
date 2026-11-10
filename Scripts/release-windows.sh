@@ -218,6 +218,8 @@ for ARCH in $ARCHS; do
     LINE="$(grep "Setup-$ARCH.exe" "$WORK/vm.log" | grep '^{"Installer"' | tail -1)"
     [ -n "$LINE" ] || fail "No installer for $ARCH"
     REMOTE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["Installer"])' "$LINE")"
+    # By its own name only: a test copy's installer (Bezzle-Test-…) would install beside Bezzle, under another name.
+    [ "${REMOTE##*\\}" = "$(basename "$FILE")" ] || fail "The VM's installer for $ARCH is ${REMOTE##*\\}, not $(basename "$FILE"): it is not Bezzle's own"
     SHA="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["SHA256"])' "$LINE")"
     PDB="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["Symbols"])' "$LINE")"
     scp -q "${VM_SSH[@]}" "bezzle@192.168.77.10:${REMOTE//\\//}" "$FILE"

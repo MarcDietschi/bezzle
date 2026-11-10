@@ -101,11 +101,12 @@ while ($queue.Count -gt 0) {
 # measured, each of its three files, whose SHA-256 onnx.ps1 pins.
 $pinned = Select-String -Path "$windows\onnx.ps1" -Pattern "^\s+'(BiRefNet[^']+)'\s*=\s*'([0-9a-f]{64})'"
 if ($pinned.Count -ne 3) { throw "onnx.ps1 does not pin the subject matte's three files" }
+# ($part, never $name: PowerShell tells no capitals apart, and $name is -Name, the installer's own.)
 foreach ($line in $pinned) {
-    $name = $line.Matches[0].Groups[1].Value
-    $matte = "$stage\Bezzle.resources\$name"
-    if (-not (Test-Path $matte)) { throw "No $name in ${App}: send the subject matte with VM/send-matte.sh and run build.ps1" }
-    if ((Get-FileHash $matte -Algorithm SHA256).Hash -ne $line.Matches[0].Groups[2].Value.ToUpper()) { throw "$name in $App is not the one measured" }
+    $part = $line.Matches[0].Groups[1].Value
+    $matte = "$stage\Bezzle.resources\$part"
+    if (-not (Test-Path $matte)) { throw "No $part in ${App}: send the subject matte with VM/send-matte.sh and run build.ps1" }
+    if ((Get-FileHash $matte -Algorithm SHA256).Hash -ne $line.Matches[0].Groups[2].Value.ToUpper()) { throw "$part in $App is not the one measured" }
 }
 if (Test-Path "$stage\Bezzle.resources\BiRefNet.onnx") { throw "$App still holds BiRefNet.onnx, the subject matte of Bezzle 1.6 and before: run build.ps1" }
 foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll')) {
@@ -258,7 +259,11 @@ $iscc = @(
 )
 & $tools.ISCC @iscc
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup could not make the installer' }
-$installer = Get-ChildItem $output -Filter "*-$Version-Setup-$Arch.exe" | Sort-Object LastWriteTime | Select-Object -Last 1
+# The one this run made, by the name Bezzle.iss gives it: Bezzle's own, or a test copy's when asked for.
+if ($Name -ne 'Bezzle' -and $Name -ne 'Bezzle Test') { throw "An installer is named Bezzle, or Bezzle Test for a copy beside it, not $Name" }
+$installer = Get-Item (Join-Path $output "$(if ($Name -eq 'Bezzle') { 'Bezzle' } else { 'Bezzle-Test' })-$Version-Setup-$Arch.exe")
+$calls = "$($installer.VersionInfo.ProductName)".Trim()
+if ($calls -cne $Name) { throw "$($installer.Name) calls itself '$calls', not $Name" }
 [pscustomobject]@{
     Installer = $installer.FullName
     Length    = $installer.Length
