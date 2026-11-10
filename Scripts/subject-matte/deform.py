@@ -3,6 +3,10 @@
 import torch
 import torch.nn.functional as F
 
+# Each tap waits for the sum of those before it, so no runtime makes all of them before summing any
+# (lighter.py says what that costs). It adds nothing: a number of the sum so far, times zero.
+in_turn = False
+
 
 def deform_conv2d(input, offset, weight, bias=None, padding=0, mask=None, stride=1):
     s = stride if isinstance(stride, tuple) else (stride, stride)
@@ -21,6 +25,8 @@ def deform_conv2d(input, offset, weight, bias=None, padding=0, mask=None, stride
             k = i * kw + j
             # align_corners: -1 and 1 are the middles of the first and last pixels.
             gy = ys + (float(i) + offset[:, 2 * k]) * sy
+            if in_turn and out is not None:
+                gy = gy + out[:, 0, :1, :1] * 0
             gx = xs + (float(j) + offset[:, 2 * k + 1]) * sx
             grid = torch.stack((gx, gy), dim=-1)
             sampled = F.grid_sample(input, grid, mode='bilinear', padding_mode='zeros', align_corners=True)

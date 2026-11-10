@@ -9,8 +9,9 @@ import Foundation
 ///
 /// The model comes at two sizes that share their weights, and runs on the GPU or on the processor:
 /// a `Route` is one of the four. They differ a great deal in what they ask of a Mac (measured,
-/// Scripts/subject-matte/README.md): the fine size on the GPU holds 20 GB, the light size on the
-/// processor 1.1 GB. `SubjectModel` picks the one this Mac and this picture are best served by.
+/// Scripts/subject-matte/README.md): the fine size on the GPU holds 9 GB, the light size on the
+/// processor half a gigabyte. `SubjectModel` picks the one this Mac and this picture are best
+/// served by.
 /// The Neural Engine gets this model wrong, and slowly.
 nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
     /// Which model this is. Cutouts made with it are named for it (`cutoutName`), so a new one
@@ -48,13 +49,13 @@ nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
 
         /// The memory it holds while it runs, in bytes: on the GPU for as long as the model is
         /// kept, on the processor only during a run. Measured on an M5 Pro; four times the
-        /// pixels take four times the memory, and the GPU over four times the processor's.
+        /// pixels take over three times the memory, and the GPU five times the processor's.
         var holds: UInt64 {
             let megabytes: UInt64 = switch (side >= 2048, onGPU) {
-            case (true, true): 20_000
-            case (true, false): 4_300
-            case (false, true): 5_000
-            case (false, false): 1_100
+            case (true, true): 9_300
+            case (true, false): 1_900
+            case (false, true): 2_800
+            case (false, false): 600
             }
             return megabytes * 1_000_000
         }
@@ -73,13 +74,14 @@ nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
 
         /// How many seconds the first matte ever takes on a Mac, loading the model and making
         /// the matte, as an M5 Pro took: Core ML fits the model to the processor or the GPU
-        /// then, and keeps that. Every matte after it takes a fraction (`seconds`).
+        /// then, and for the GPU its programs are built too (11 s of the matte's time, once for
+        /// both sizes), and keeps that. Every matte after it takes a fraction (`seconds`).
         var first: (load: Double, matte: Double) {
             switch (side >= 2048, onGPU) {
-            case (true, true): (12.9, 23.1)
-            case (true, false): (3.8, 6.9)
-            case (false, true): (7.6, 5.2)
-            case (false, false): (6.8, 1.8)
+            case (true, true): (5.9, 13.1)
+            case (true, false): (6.7, 5.7)
+            case (false, true): (5.9, 13.8)
+            case (false, false): (7.0, 1.5)
             }
         }
     }

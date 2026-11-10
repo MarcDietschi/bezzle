@@ -182,27 +182,30 @@ struct CutoutWorkTests {
         let large = 2048, small = 1200
         // A small Mac never takes more than the light size on its processor, whatever the picture.
         #expect(SubjectModel.routes(longest: large, on: mac(8, cores: 4)) == [Route.light])
-        #expect(SubjectModel.routes(longest: large, on: mac(16, cores: 4)) == [Route.light])
-        #expect(SubjectModel.routes(longest: large, on: mac(16, cores: 8)) == [Route.fine, .light])
-        #expect(SubjectModel.routes(longest: small, on: mac(16, cores: 8)) == [Route.light])
-        #expect(SubjectModel.routes(longest: large, on: mac(24, cores: 8)) == [Route.fine, .lightOnGPU, .light])
-        #expect(SubjectModel.routes(longest: small, on: mac(24, cores: 8)) == [Route.lightOnGPU, .light])
+        #expect(SubjectModel.routes(longest: small, on: mac(12, cores: 8)) == [Route.light])
+        // A Mac of 16 GB holds the light size on its GPU, whatever the picture.
+        #expect(SubjectModel.routes(longest: large, on: mac(16, cores: 4)) == [Route.lightOnGPU, .light])
+        #expect(SubjectModel.routes(longest: large, on: mac(16, cores: 8)) == [Route.lightOnGPU, .light])
+        #expect(SubjectModel.routes(longest: small, on: mac(18, cores: 8)) == [Route.lightOnGPU, .light])
         // Only a Mac with memory to spare holds the fine size on its GPU, and only for a large picture.
-        #expect(SubjectModel.routes(longest: large, on: mac(36, cores: 10)) == [Route.fineOnGPU, .fine, .light])
+        #expect(SubjectModel.routes(longest: large, on: mac(24, cores: 4)) == [Route.fineOnGPU, .lightOnGPU, .light])
+        #expect(SubjectModel.routes(longest: large, on: mac(24, cores: 8)) == [Route.fineOnGPU, .fine, .lightOnGPU, .light])
+        #expect(SubjectModel.routes(longest: small, on: mac(24, cores: 8)) == [Route.lightOnGPU, .light])
+        #expect(SubjectModel.routes(longest: large, on: mac(36, cores: 10)) == [Route.fineOnGPU, .fine, .lightOnGPU, .light])
         #expect(SubjectModel.routes(longest: small, on: mac(48, cores: 12)) == [Route.lightOnGPU, .light])
         #expect(SubjectModel.routes(longest: SubjectModel.fineFrom - 1, on: mac(64, cores: 12)).first == .lightOnGPU)
         #expect(SubjectModel.routes(longest: SubjectModel.fineFrom, on: mac(64, cores: 12)).first == .fineOnGPU)
         // An Intel Mac's GPU is left alone; one too small makes its cutouts without the model.
         #expect(SubjectModel.routes(longest: large, on: mac(32, cores: 8, arm: false)) == [Route.light])
         #expect(SubjectModel.routes(longest: large, on: mac(8, cores: 4, arm: false)).isEmpty)
-        // No way of any Mac holds much more than half its memory, and the last is the lightest.
+        // No way of any Mac holds more than two fifths of its memory, and the last is the lightest.
         for gigabytes in [8.0, 16, 18, 24, 32, 36, 48, 64, 96, 128] {
             for cores in [2, 4, 8, 12, 16] {
                 for longest in [small, large] {
                     let machine = mac(gigabytes, cores: cores)
                     let routes = SubjectModel.routes(longest: longest, on: machine)
                     #expect(!routes.isEmpty && routes.last == .light)
-                    #expect(routes.allSatisfy { Double($0.holds) <= Double(machine.memory) * 0.56 }, "\(gigabytes) GB, \(routes)")
+                    #expect(routes.allSatisfy { Double($0.holds) <= Double(machine.memory) * 0.4 }, "\(gigabytes) GB, \(routes)")
                 }
             }
         }
@@ -220,18 +223,19 @@ struct CutoutWorkTests {
         let (defaults, name) = scratch()
         defer { defaults.removePersistentDomain(forName: name) }
         let model = SubjectModel(machine: mac(48, cores: 12), defaults: defaults, version: "9.9", find: { nil }, short: { false })
-        #expect(model.ways(longest: 2048) == [.fineOnGPU, .fine, .light])
-        // Nothing made ready yet: the quickest to make ready goes first.
-        #expect(model.order(longest: 2048) == [.light, .fine, .fineOnGPU])
+        #expect(model.ways(longest: 2048) == [.fineOnGPU, .fine, .lightOnGPU, .light])
+        // Nothing made ready yet: the quickest to make ready goes first, the GPU's ways last.
+        #expect(model.order(longest: 2048) == [.light, .fine, .fineOnGPU, .lightOnGPU])
+        #expect(model.order(longest: 1200) == [.light, .lightOnGPU])
         #expect(!model.isReady(.light))
         // What has made a matte with this version goes first, as the Mac's ways have it.
         defaults.set(["cpu1024": "9.9"], forKey: "subjectMatte.ready")
-        #expect(model.isReady(.light) && model.order(longest: 2048) == [.light, .fine, .fineOnGPU])
+        #expect(model.isReady(.light) && model.order(longest: 2048) == [.light, .fine, .fineOnGPU, .lightOnGPU])
         defaults.set(["cpu1024": "9.9", "gpu2048": "9.9"], forKey: "subjectMatte.ready")
-        #expect(model.order(longest: 2048) == [.fineOnGPU, .light, .fine])
+        #expect(model.order(longest: 2048) == [.fineOnGPU, .light, .fine, .lightOnGPU])
         // Made ready by another version of Bezzle, it is to be made ready again.
         defaults.set(["cpu1024": "9.9", "gpu2048": "9.8"], forKey: "subjectMatte.ready")
-        #expect(model.order(longest: 2048) == [.light, .fine, .fineOnGPU])
+        #expect(model.order(longest: 2048) == [.light, .fine, .fineOnGPU, .lightOnGPU])
         // Without the model there is nothing to take: cutouts are made the plain way.
         #expect(model.grade(longest: 2048) == .plain && model.cut(of: "photo") == nil)
     }
@@ -243,15 +247,15 @@ struct CutoutWorkTests {
         defaults.set(["cpu1024", "gpu2048"], forKey: "subjectMatte.running")
         let model = SubjectModel(machine: mac(48, cores: 12), defaults: defaults, version: "9.9", find: { nil }, short: { false })
         #expect(defaults.object(forKey: "subjectMatte.running") == nil)
-        #expect(model.ways(longest: 2048) == [.fine, .light])
+        #expect(model.ways(longest: 2048) == [.fine, .lightOnGPU, .light])
         #expect(model.ways(longest: 1200) == [.lightOnGPU, .light])
         // The next version of Bezzle tries it again.
         #expect(SubjectModel(machine: mac(48, cores: 12), defaults: defaults, version: "10.0", find: { nil }, short: { false }).ways(longest: 2048).first == .fineOnGPU)
         // A way that took longer than anyone waits is passed over for a lighter one.
         defaults.set(SubjectModel.patience + 15, forKey: "subjectMatte.seconds.cpu2048.warm")
-        #expect(model.ways(longest: 2048) == [.light])
+        #expect(model.ways(longest: 2048) == [.lightOnGPU, .light])
         defaults.set(SubjectModel.patience - 5, forKey: "subjectMatte.seconds.cpu2048.warm")
-        #expect(model.ways(longest: 2048) == [.fine, .light])
+        #expect(model.ways(longest: 2048) == [.fine, .lightOnGPU, .light])
         // While memory is short, the GPU is left alone.
         let pressed = SubjectModel(machine: mac(48, cores: 12), defaults: defaults, version: "10.0", find: { nil }, short: { true })
         #expect(pressed.ways(longest: 2048) == [.fine, .light] && pressed.ways(longest: 1200) == [.light])

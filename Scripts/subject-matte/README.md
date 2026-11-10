@@ -4,10 +4,10 @@ Remove Background's edges come from a learned matte: BiRefNet_HR (Peng Zheng et 
 the high-resolution model trained at 2,048 pixels, converted to Core ML with its weights kept to 8 bits.
 `CutoutMaker` keeps it to the subject Vision found. It comes with the app:
 `Bezzle/Canvas/BiRefNet.mlpackage`, which Xcode compiles into `BiRefNet.mlmodelc`. That adds about
-228 MB to the app. Without it, pictures are cut out the older way, less fine round hair.
+229 MB to the app. Without it, pictures are cut out the older way, less fine round hair.
 
 The package holds the model at two sizes of picture, 2,048 and 1,024 pixels, as the functions
-`side2048` and `side1024`. They share their weights, so the second size costs 3 MB. Which one a Mac
+`side2048` and `side1024`. They share their weights, so the second size costs 4 MB. Which one a Mac
 takes, and where it runs, is below (What it asks of a Mac).
 
 The model is too large for git (GitHub refuses files over 100 MB), so it is ignored. Make it on
@@ -54,36 +54,51 @@ What the conversion has to get right (`convert.py`):
   cannot work them out ahead; kept as constants they were 50 MB more.
 - On the Neural Engine this model is wrong and slow (two minutes to load, ten seconds a picture).
   Bezzle runs it on the GPU or on the processor, by what the Mac has (below).
+- As BiRefNet is written, it asks for far more memory than it needs (`lighter.py`). A deformable
+  convolution of 7 × 7 is 49 samplings summed up, and a runtime is free to make all 49 before it
+  sums any: each tap now waits for the sum so far. And the decoder's last layer weighs 240
+  channels at the picture's full size into the one channel of the matte, 192 of them enlarged
+  just before: they are now weighed first and the one channel enlarged, which gives the same. No
+  weight changes, and the matte is the same but for rounding (on 5 photos, at both sizes, the
+  alpha differs by less than 0.1% on the edge). On the GPU the fine size holds 9 GB where it held
+  20, and its first matte ever takes 19 s where it took 36.
 
 ## What it asks of a Mac
 
-At 2,048 pixels on the GPU, as Bezzle ran it on every Mac up to 1.6, the model holds 20 GB for as
-long as it is loaded: more than most Macs have, which took Bezzle down or the Mac to a crawl. So the
-model comes at two sizes, runs on the GPU or on the processor, and `SubjectModel` takes the way a
+At 2,048 pixels on the GPU, as Bezzle ran it on every Mac up to 1.6, the model held 20 GB for as
+long as it was loaded: more than most Macs have, which took Bezzle down or the Mac to a crawl. Two
+things changed. The network is rearranged to keep far less alive at once (`lighter.py`, above),
+and it comes at two sizes, runs on the GPU or on the processor, and `SubjectModel` takes the way a
 Mac can afford for the picture at hand. Measured on an M5 Pro (18 cores, 48 GB), a picture of
 2,400 pixels:
 
 | Way (`SubjectMatte.Route`) | A matte, warm | First in a session | First ever | Memory at its peak | Held after |
 |---|---|---|---|---|---|
-| 2,048 on the GPU (`gpu2048`) | 0.8 s | 5 s | 36 s | 20.0 GB | 20 GB, until let go |
-| 2,048 on the processor (`cpu2048`) | 5.9 s | 7 s | 11 s | 4.3 GB | 0.14 GB |
-| 1,024 on the GPU (`gpu1024`) | 0.2 s | 1.1 s | 13 s | 5.0 GB | 5 GB, until let go |
-| 1,024 on the processor (`cpu1024`) | 1.5 s | 1.8 s | 8.5 s | 1.1 GB | 0.07 GB |
+| 2,048 on the GPU (`gpu2048`) | 0.8 s | 3.5 s | 19 s | 9.3 GB | 9 GB, until let go |
+| 2,048 on the processor (`cpu2048`) | 5.7 s | 5.8 s | 12 s | 1.9 GB | 0.1 GB |
+| 1,024 on the GPU (`gpu1024`) | 0.2 s | 2.6 s | 20 s | 2.8 GB | 2.5 GB, until let go |
+| 1,024 on the processor (`cpu1024`) | 1.5 s | 1.5 s | 8.5 s | 0.6 GB | 0.1 GB |
+
+Before the rearrangement the four peaked at 20.0, 4.3, 5.0 and 1.1 GB, and the fine size's first
+matte ever on the GPU took 36 s.
 
 - **First ever** is the first matte a way makes after Bezzle is installed or updated: Core ML fits
-  the model to the Mac's processor or GPU then, and keeps what it made
-  (`~/Library/Caches/<bundle id>/com.apple.e5rt.e5bundlecache`). It takes many times as long as any
-  matte after it, so a way never taken is not taken first: the picture is cut out by a way that is
-  ready, or by the quickest to make ready (the light size on the processor, which is made ready
-  behind everything else as soon as a picture is selected), and the best way is made ready behind
-  it for the next picture (`SubjectModel.isReady`, `order`).
+  the model to the Mac's processor or GPU then (6 to 7 s), for the GPU its programs are built too
+  (11 s, once for both sizes), and both are kept (`~/Library/Caches/<bundle id>/
+  com.apple.e5rt.e5bundlecache`, and Metal's own cache). To measure it, run from a bundle id never
+  used before: clearing the first cache alone leaves the GPU's programs. It takes many times as
+  long as any matte after it, so a way never taken is not taken first: the picture is cut out by a
+  way that is ready, or by the quickest to make ready (the light size on the processor, which is
+  made ready behind everything else as soon as a picture is selected), and the best way is made
+  ready behind it for the next picture (`SubjectModel.isReady`, `order`).
 - **Which Mac takes which** (`SubjectModel.routes`; a large picture is one of 1,536 pixels and more,
-  as worked on): 36 GB and more take the GPU, at the fine size for a large picture; 24 GB the fine
-  size on the processor for a large picture, where there are 8 fast cores, and else the light size
-  on the GPU; 16 GB the fine size on the processor for a large picture with 8 fast cores, else the
-  light size on the processor; less than 16 GB the light size on the processor, always. An Intel
-  Mac takes the light size on the processor from 16 GB and 8 cores (42 to 47 s under Rosetta here),
-  and below that cuts out without the model.
+  as worked on): 24 GB and more take the fine size on the GPU for a large picture, and after it the
+  fine size on the processor where there are 8 fast cores; 16 GB and more take the light size on
+  the GPU, as the larger Macs do for a smaller picture; less than 16 GB the light size on the
+  processor, always. So no way holds more than two fifths of a Mac's memory. An Intel Mac takes
+  the light size on the processor from 16 GB and 8 cores (42 to 47 s under Rosetta here), and
+  below that cuts out without the model. None of this is measured on a Mac of 8 or 16 GB: what
+  such a Mac does can be tried here (`BEZZLE_MATTE_MACHINE`, below), how long it takes there cannot.
 - **How the two sizes compare:** on the portraits their edges measure nearly alike (the table
   above: 5.08 against 6.00 in alpha); on pictures smaller than the fine size the light one is the
   better, as it does not blow them up (the bowl of raspberries, 1,080 pixels, keeps its whole bowl

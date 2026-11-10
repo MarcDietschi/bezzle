@@ -6,7 +6,7 @@ import Foundation
 /// beside `SubjectMatte`, compiled when the app is built (Scripts/subject-matte makes it);
 /// BEZZLE_MATTE_MODEL takes another, and tests run without one unless given it.
 ///
-/// The model asks more than many Macs have: at its fine size on the GPU it holds 20 GB. So each
+/// The model asks more than many Macs have: at its fine size on the GPU it holds 9 GB. So each
 /// matte is made by the best way this Mac can afford for the picture (`routes`), and no way is
 /// trusted blindly:
 /// - a way that fails is followed by the next lighter one, and the last of them by `CutoutMaker`'s
@@ -80,18 +80,18 @@ nonisolated final class SubjectModel: @unchecked Sendable {
     /// one to take first, and after each the one to take should it fail. None where the model
     /// is too much for the machine at any size.
     ///
-    /// The GPU is far the fastest and holds far the most (20 GB at the fine size, 5 GB at the
-    /// light one), so it is for Macs with memory to spare. The processor takes a quarter of that,
-    /// and only while it runs: the fine size there for Macs with cores enough to make it in
-    /// seconds, the light size for all the others.
+    /// The GPU is far the fastest (a matte in a fraction of a second) and holds far the most, for
+    /// as long as the model is kept: 9 GB at the fine size, 3 GB at the light one. So the fine
+    /// size there is for Macs of 24 GB and more, the light size for Macs of 16 GB. The processor
+    /// takes a fifth of that, and only while it runs, but seconds a matte: the light size there
+    /// is what every Mac can do, and the fine size what a Mac with cores enough falls back on.
     static func routes(longest: Int, on machine: Machine) -> [SubjectMatte.Route] {
         let gigabytes = Double(machine.memory) / 1_073_741_824
         let large = longest >= fineFrom, quick = machine.fastCores >= 8
         // An Intel Mac's GPU has not the memory, and its processor needs its cores for the light size.
         guard machine.appleSilicon else { return gigabytes >= 15.5 && quick ? [.light] : [] }
-        if gigabytes >= 35.5 { return large ? [.fineOnGPU, .fine, .light] : [.lightOnGPU, .light] }
-        if gigabytes >= 23.5 { return large && quick ? [.fine, .lightOnGPU, .light] : [.lightOnGPU, .light] }
-        if gigabytes >= 15.5 { return large && quick ? [.fine, .light] : [.light] }
+        if gigabytes >= 23.5 && large { return quick ? [.fineOnGPU, .fine, .lightOnGPU, .light] : [.fineOnGPU, .lightOnGPU, .light] }
+        if gigabytes >= 15.5 { return [.lightOnGPU, .light] }
         return [.light]
     }
 
