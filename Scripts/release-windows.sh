@@ -6,7 +6,7 @@
 # update feed with the notes from RELEASE_NOTES.md. Unsigned by Microsoft's measure: Windows asks
 # once whether to run an app from an unknown publisher (Erik, 2026-11-07: no paid certificate).
 #
-# Usage: Scripts/release-windows.sh [--publish] [--arch "x64 arm64"] [--out <folder>]
+# Usage: Scripts/release-windows.sh [--publish] [--rebuild] [--arch "x64 arm64"] [--out <folder>]
 #
 # Without --publish it is a dry run, and publishes nothing: the installers and the feed go to the
 # Desktop (or --out), the feed signed with a throwaway key (so it could never update anyone), the
@@ -19,6 +19,13 @@
 #      https://bezzle.ch/downloads/ from that GitHub release, checks its length and puts it up,
 #   3. waits until https://bezzle.ch/updates/windows/appcast.xml offers the version and its
 #      installers answer, and tags the commit windows-v<version>, which marks it as released.
+#
+# Building takes the VM 30 to 50 minutes an architecture. A dry run keeps the installers it made in
+# the release cache (windows-made, the last commit's only, as they are over half a gigabyte), and
+# --publish of the same commit sends those out rather than building them again: they are made as
+# the release makes them, and only the feed is signed again, with the real key. It takes them only
+# when they are whole and were made for this version, feed, key and open fonts, for both
+# architectures; otherwise, or with --rebuild, it builds anew.
 #
 # The version is the Mac's, as set in Xcode (MARKETING_VERSION), and its notes the Mac's entry in
 # RELEASE_NOTES.md (CLAUDE.md › Releases). A version both have shipped can go out on Windows later.
@@ -34,15 +41,17 @@
 set -euo pipefail
 
 PUBLISH=""
+REBUILD=""
 ARCHS="x64 arm64"
 OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --publish) PUBLISH=1; shift ;;
+    --rebuild) REBUILD=1; shift ;;
     --dry-run) PUBLISH=""; shift ;;
     --arch) ARCHS="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
-    *) echo "usage: Scripts/release-windows.sh [--publish] [--arch \"x64 arm64\"] [--out <folder>]" >&2; exit 1 ;;
+    *) echo "usage: Scripts/release-windows.sh [--publish] [--rebuild] [--arch \"x64 arm64\"] [--out <folder>]" >&2; exit 1 ;;
   esac
 done
 fail() { echo "$*" >&2; exit 1; }
@@ -77,7 +86,45 @@ CHANGED="$(git -C "$ROOT" status --porcelain -- Windows Bezzle Web/Sources Web/p
 [ -z "$CHANGED" ] || printf 'Not in this release, since not committed:\n%s\n' "$CHANGED"
 for ARCH in $ARCHS; do [[ "$ARCH" == x64 || "$ARCH" == arm64 ]] || fail "No architecture $ARCH: x64 or arm64"; done
 [ -f "$ROOT/Web/site/openfonts/manifest.json" ] || fail "Web/site/openfonts is missing: make it with Web/tools/openfonts.py"
-"$VM" 'exit 0' || fail "The Windows VM does not answer (Windows/VM/win)"
+
+# What a dry run of this commit made, kept for its --publish (see above).
+MADE_ROOT="$CACHE/windows-made"
+MADE="$MADE_ROOT/$COMMIT"
+FONTS="$(shasum -a 256 "$ROOT/Web/site/openfonts/manifest.json" | cut -d' ' -f1)"
+REUSE=""
+if [ -n "$PUBLISH" ] && [ -z "$REBUILD" ] && [ -f "$MADE/made.json" ]; then
+  if MADE_BUILD="$(python3 - "$MADE" "$VERSION" "$ARCHS" "$FEED_URL" "$SPARKLE_PUBLIC_KEY" "$FONTS" <<'PY'
+import hashlib, json, os, sys
+made, version, archs, feed, key, fonts = sys.argv[1:]
+try:
+    m = json.load(open(os.path.join(made, "made.json")))
+except Exception:
+    sys.exit(1)
+if (m.get("version"), m.get("feed"), m.get("key"), m.get("fonts")) != (version, feed, key, fonts):
+    sys.exit(1)
+if sorted(m.get("installers", {})) != sorted(archs.split()):
+    sys.exit(1)
+for arch, sha in m["installers"].items():
+    path = os.path.join(made, f"Bezzle-{version}-Setup-{arch}.exe")
+    if not os.path.isfile(path):
+        sys.exit(1)
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if h.hexdigest() != sha:
+        sys.exit(1)
+print(m["build"])
+PY
+)"; then
+    REUSE=1
+    BUILD="$MADE_BUILD"
+    echo "The installers the dry run made of this commit go out as they are (build $BUILD): nothing is built."
+  else
+    echo "A dry run of this commit was kept, but not as this release would make it: building anew."
+  fi
+fi
+[ -n "$REUSE" ] || "$VM" 'exit 0' || fail "The Windows VM does not answer (Windows/VM/win)"
 
 if [ -n "$PUBLISH" ]; then
   [[ " $ARCHS " == *" x64 "* && " $ARCHS " == *" arm64 "* ]] || fail "A release offers both x64 and arm64 (the site's default is x64)"
@@ -137,39 +184,46 @@ if [ -n "$PUBLISH" ]; then
 else
   python3 "$SRC/Scripts/release/notes.py" check "$VERSION" || echo "(A dry run goes on without them.)"
 fi
-zsh "$SRC/Web/prepare.sh"
-"$SRC/Windows/Resources/make-cursors.sh" >/dev/null
-python3 "$SRC/Windows/Resources/make-strings.py" >/dev/null
-"$SRC/Windows/Resources/make-icons.sh" >/dev/null
-echo "$VERSION" > "$SRC/Windows/Resources/Generated/version.txt"
-mkdir -p "$SRC/Web/site"
-cp -R "$ROOT/Web/site/openfonts" "$SRC/Web/site/openfonts"
+if [ -z "$REUSE" ]; then
+  zsh "$SRC/Web/prepare.sh"
+  "$SRC/Windows/Resources/make-cursors.sh" >/dev/null
+  python3 "$SRC/Windows/Resources/make-strings.py" >/dev/null
+  "$SRC/Windows/Resources/make-icons.sh" >/dev/null
+  echo "$VERSION" > "$SRC/Windows/Resources/Generated/version.txt"
+  mkdir -p "$SRC/Web/site"
+  cp -R "$ROOT/Web/site/openfonts" "$SRC/Web/site/openfonts"
 
-echo "Copying it into the VM ($VM_DIR)…"
-# The sources anew (a file the commit no longer has must not stay), the build kept.
-"$VM" "New-Item -ItemType Directory -Force '$VM_DIR' | Out-Null; foreach (\$d in 'Windows\\Sources','Windows\\Installer','Windows\\Credits','Windows\\Resources','Bezzle','Web') { if (Test-Path \"$VM_DIR\\\$d\") { Remove-Item -Recurse -Force \"$VM_DIR\\\$d\" } }"
-COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch -C "$SRC" --exclude 'Web/out' -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts \
-  | "$VM" "tar -x -f - -C '$VM_DIR'"
+  echo "Copying it into the VM ($VM_DIR)…"
+  # The sources anew (a file the commit no longer has must not stay), the build kept.
+  "$VM" "New-Item -ItemType Directory -Force '$VM_DIR' | Out-Null; foreach (\$d in 'Windows\\Sources','Windows\\Installer','Windows\\Credits','Windows\\Resources','Bezzle','Web') { if (Test-Path \"$VM_DIR\\\$d\") { Remove-Item -Recurse -Force \"$VM_DIR\\\$d\" } }"
+  COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch -C "$SRC" --exclude 'Web/out' -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts \
+    | "$VM" "tar -x -f - -C '$VM_DIR'"
 
-echo "Building and making the installers in the VM (some minutes per architecture)…"
-ARCH_LIST="$(echo $ARCHS | tr ' ' ',')"
-"$VM" "& '$VM_DIR\\Windows\\Installer\\release.ps1' -Version $VERSION -Build $BUILD -Archs $ARCH_LIST -Feed '$FEED_URL' -PublicKey '$SPARKLE_PUBLIC_KEY' -Cache '$VM_CACHE'" | tee "$WORK/vm.log"
-grep -q '^{"Installer"' "$WORK/vm.log" || fail "The VM made no installer (above)"
+  echo "Building and making the installers in the VM (some minutes per architecture)…"
+  ARCH_LIST="$(echo $ARCHS | tr ' ' ',')"
+  "$VM" "& '$VM_DIR\\Windows\\Installer\\release.ps1' -Version $VERSION -Build $BUILD -Archs $ARCH_LIST -Feed '$FEED_URL' -PublicKey '$SPARKLE_PUBLIC_KEY' -Cache '$VM_CACHE'" | tee "$WORK/vm.log"
+  grep -q '^{"Installer"' "$WORK/vm.log" || fail "The VM made no installer (above)"
+fi
 
 # The installers back on the Mac, with the symbols of each Bezzle.exe kept for reading crashes.
 SYMBOLS="$CACHE/windows-symbols"
 mkdir -p "$WORK/out" "$SYMBOLS"
 ENCLOSURES=()
 for ARCH in $ARCHS; do
-  LINE="$(grep "Setup-$ARCH.exe" "$WORK/vm.log" | grep '^{"Installer"' | tail -1)"
-  [ -n "$LINE" ] || fail "No installer for $ARCH"
-  REMOTE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["Installer"])' "$LINE")"
-  SHA="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["SHA256"])' "$LINE")"
-  PDB="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["Symbols"])' "$LINE")"
   FILE="$WORK/out/Bezzle-$VERSION-Setup-$ARCH.exe"
-  scp -q "${VM_SSH[@]}" "bezzle@192.168.77.10:${REMOTE//\\//}" "$FILE"
-  scp -q "${VM_SSH[@]}" "bezzle@192.168.77.10:${PDB//\\//}" "$SYMBOLS/"
-  [ "$(shasum -a 256 "$FILE" | cut -d' ' -f1)" = "$SHA" ] || fail "$FILE did not arrive whole"
+  if [ -n "$REUSE" ]; then
+    # Checked whole above; its symbols came with the dry run.
+    cp "$MADE/$(basename "$FILE")" "$FILE"
+  else
+    LINE="$(grep "Setup-$ARCH.exe" "$WORK/vm.log" | grep '^{"Installer"' | tail -1)"
+    [ -n "$LINE" ] || fail "No installer for $ARCH"
+    REMOTE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["Installer"])' "$LINE")"
+    SHA="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["SHA256"])' "$LINE")"
+    PDB="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["Symbols"])' "$LINE")"
+    scp -q "${VM_SSH[@]}" "bezzle@192.168.77.10:${REMOTE//\\//}" "$FILE"
+    scp -q "${VM_SSH[@]}" "bezzle@192.168.77.10:${PDB//\\//}" "$SYMBOLS/"
+    [ "$(shasum -a 256 "$FILE" | cut -d' ' -f1)" = "$SHA" ] || fail "$FILE did not arrive whole"
+  fi
   SIGNED="$("${SIGN[@]}" "$FILE")"
   SIGNATURE="$(sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p' <<<"$SIGNED")"
   [ -n "$SIGNATURE" ] || fail "sign_update gave no signature for $FILE"
@@ -179,11 +233,29 @@ done
 python3 "$SRC/Scripts/release/windows-feed.py" "$WORK/out/appcast.xml" "$VERSION" "$BUILD" "$DOWNLOADS" "${ENCLOSURES[@]}"
 
 if [ -z "$PUBLISH" ]; then
+  # Kept for --publish of this commit, the last commit's only.
+  rm -rf "$MADE_ROOT"
+  mkdir -p "$MADE"
+  cp "$WORK/out/"*.exe "$MADE/"
+  python3 - "$MADE" "$VERSION" "$BUILD" "$COMMIT" "$FEED_URL" "$SPARKLE_PUBLIC_KEY" "$FONTS" $ARCHS <<'PY'
+import hashlib, json, os, sys
+made, version, build, commit, feed, key, fonts, *archs = sys.argv[1:]
+installers = {}
+for arch in archs:
+    h = hashlib.sha256()
+    with open(os.path.join(made, f"Bezzle-{version}-Setup-{arch}.exe"), "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    installers[arch] = h.hexdigest()
+json.dump({"version": version, "build": build, "commit": commit, "feed": feed, "key": key, "fonts": fonts,
+           "installers": installers}, open(os.path.join(made, "made.json"), "w"), indent=2)
+PY
   OUT="${OUT:-$HOME/Desktop/Bezzle $VERSION for Windows ($BUILD)}"
   mkdir -p "$OUT"
   cp "$WORK/out/"* "$OUT/"
   python3 "$SRC/Scripts/release/notes.py" github "$VERSION" > "$OUT/release-notes.md" 2>/dev/null || true
   echo "Dry run: the installers and the feed (signed with a throwaway key) are in $OUT. Nothing was published."
+  echo "--publish of this commit sends out these installers, without building them again."
   exit 0
 fi
 

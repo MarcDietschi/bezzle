@@ -201,5 +201,9 @@ run an app from an unknown publisher (More info, then Run anyway).
   builds the pushed commit in the VM (`C:\src\bezzle-release`), makes the installers for x64 and Arm64,
   signs them and writes the feed; with `--publish` it attaches them to the GitHub release
   `windows-v<version>` of mfrports/bezzle-web, commits the feed there, waits for bezzle.ch to serve
-  both and tags the commit. Its header says what it needs; `CLAUDE.md` › Releases has the order, the
-  Mac's release first, at the same version and with the same notes.
+  both and tags the commit. Building takes 30 to 50 minutes an architecture, so a dry run keeps its
+  installers (`~/Library/Caches/bezzle-release/windows-made`, the last commit's only), and `--publish`
+  of the same commit sends those out without building again, once it has checked they are whole and
+  were made for that version, feed, key and open fonts (`--rebuild` builds anew). Its header says
+  what it needs; `CLAUDE.md` › Releases has the order, the Mac's release first, at the same version
+  and with the same notes.

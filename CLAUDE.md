@@ -38,10 +38,12 @@ Whenever the version is raised, or Erik asks for a release:
    where the feed points. Once the feed is live on bezzle.ch and on GitHub Pages and bezzle.ch serves
    the zip whole, it tags the commit `v<version>`, which marks the version as released.
 4. **Release Windows** with `Scripts/release-windows.sh` (a dry run, putting the installers and a
-   feed on the Desktop), then `Scripts/release-windows.sh --publish`. It needs the Windows VM running
-   with its packages built and the subject matte sent (`Windows/README.md`), builds the pushed commit
-   there for x64 and Arm64 (about 30 minutes), signs the installers with the same EdDSA key, publishes
-   them as the GitHub release `windows-v<version>` of mfrports/bezzle-web with the feed
+   feed on the Desktop), then `Scripts/release-windows.sh --publish`, which sends out the installers
+   that dry run made of the same commit instead of building them again (`--rebuild` builds anew). It
+   needs the Windows VM running with its packages built and the subject matte sent
+   (`Windows/README.md`), builds the pushed commit there for x64 and Arm64 (30 to 50 minutes each,
+   so more than an hour; the Mac's release can run meanwhile), signs the installers with the same
+   EdDSA key, publishes them as the GitHub release `windows-v<version>` of mfrports/bezzle-web with the feed
    `public/updates/windows/appcast.xml`, waits until bezzle.ch serves them and tags the commit
    `windows-v<version>`. The site turns to "Mac and Windows" by itself once a Windows version is in
    the feed. Pull `~/Sites/bezzle-web` afterwards, since both releases commit there.
