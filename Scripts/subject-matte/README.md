@@ -4,7 +4,11 @@ Remove Background's edges come from a learned matte: BiRefNet_HR (Peng Zheng et 
 the high-resolution model trained at 2,048 pixels, converted to Core ML with its weights kept to 8 bits.
 `CutoutMaker` keeps it to the subject Vision found. It comes with the app:
 `Bezzle/Canvas/BiRefNet.mlpackage`, which Xcode compiles into `BiRefNet.mlmodelc`. That adds about
-225 MB to the app. Without it, pictures are cut out the older way, less fine round hair.
+228 MB to the app. Without it, pictures are cut out the older way, less fine round hair.
+
+The package holds the model at two sizes of picture, 2,048 and 1,024 pixels, as the functions
+`side2048` and `side1024`. They share their weights, so the second size costs 3 MB. Which one a Mac
+takes, and where it runs, is below (What it asks of a Mac).
 
 The model is too large for git (GitHub refuses files over 100 MB), so it is ignored. Make it on
 each Mac that builds Bezzle, once, with `make.sh`. `CutoutTests.theAppComesWithTheLearnedMatte…`
@@ -33,9 +37,10 @@ Scripts/subject-matte/make.sh [a photo to check it on]
 ```
 
 The script makes a Python 3.13 environment in `build/` and downloads the model at the revision in
-the script, checking it against the code and weights that were reviewed. It converts the model,
-keeps its weights to 8 bits (half the size, measuring the same), and puts it at
-`Bezzle/Canvas/BiRefNet.mlpackage`. It runs BiRefNet's own model code, so run it yourself.
+the script, checking it against the code and weights that were reviewed. It converts the model at
+both sizes (`convert.py`), keeps their weights to 8 bits (half the size, measuring the same) and
+puts the two into one package (`sizes.py`), at `Bezzle/Canvas/BiRefNet.mlpackage`. It runs BiRefNet's
+own model code, so run it yourself.
 
 Raise `SubjectMatte.version` when the model changes. Cutouts are named for the version
 (`cutoutName`), so pictures are cut out afresh rather than reusing the old model's cutouts.
@@ -48,7 +53,54 @@ What the conversion has to get right (`convert.py`):
 - Swin's attention masks are made in the model from small labels, tied to the input so the converter
   cannot work them out ahead; kept as constants they were 50 MB more.
 - On the Neural Engine this model is wrong and slow (two minutes to load, ten seconds a picture).
-  Bezzle runs it on CPU and GPU: about 0.8 s a picture once warm.
+  Bezzle runs it on the GPU or on the processor, by what the Mac has (below).
+
+## What it asks of a Mac
+
+At 2,048 pixels on the GPU, as Bezzle ran it on every Mac up to 1.6, the model holds 20 GB for as
+long as it is loaded: more than most Macs have, which took Bezzle down or the Mac to a crawl. So the
+model comes at two sizes, runs on the GPU or on the processor, and `SubjectModel` takes the way a
+Mac can afford for the picture at hand. Measured on an M5 Pro (18 cores, 48 GB), a picture of
+2,400 pixels:
+
+| Way (`SubjectMatte.Route`) | A matte, warm | First in a session | First ever | Memory at its peak | Held after |
+|---|---|---|---|---|---|
+| 2,048 on the GPU (`gpu2048`) | 0.8 s | 5 s | 36 s | 20.0 GB | 20 GB, until let go |
+| 2,048 on the processor (`cpu2048`) | 5.9 s | 7 s | 11 s | 4.3 GB | 0.14 GB |
+| 1,024 on the GPU (`gpu1024`) | 0.2 s | 1.1 s | 13 s | 5.0 GB | 5 GB, until let go |
+| 1,024 on the processor (`cpu1024`) | 1.5 s | 1.8 s | 8.5 s | 1.1 GB | 0.07 GB |
+
+- **First ever** is the first matte a way makes after Bezzle is installed or updated: Core ML fits
+  the model to the Mac's processor or GPU then, and keeps what it made
+  (`~/Library/Caches/<bundle id>/com.apple.e5rt.e5bundlecache`). It takes many times as long as any
+  matte after it, so a way never taken is not taken first: the picture is cut out by a way that is
+  ready, or by the quickest to make ready (the light size on the processor, which is made ready
+  behind everything else as soon as a picture is selected), and the best way is made ready behind
+  it for the next picture (`SubjectModel.isReady`, `order`).
+- **Which Mac takes which** (`SubjectModel.routes`; a large picture is one of 1,536 pixels and more,
+  as worked on): 36 GB and more take the GPU, at the fine size for a large picture; 24 GB the fine
+  size on the processor for a large picture, where there are 8 fast cores, and else the light size
+  on the GPU; 16 GB the fine size on the processor for a large picture with 8 fast cores, else the
+  light size on the processor; less than 16 GB the light size on the processor, always. An Intel
+  Mac takes the light size on the processor from 16 GB and 8 cores (42 to 47 s under Rosetta here),
+  and below that cuts out without the model.
+- **How the two sizes compare:** on the portraits their edges measure nearly alike (the table
+  above: 5.08 against 6.00 in alpha); on pictures smaller than the fine size the light one is the
+  better, as it does not blow them up (the bowl of raspberries, 1,080 pixels, keeps its whole bowl
+  at 1,024 and loses a part of it at 2,048 in half precision). Cutouts are named for the size they
+  were made at (`cutoutName`: `-cutout-m1` fine, `-cutout-m1-1024` light), and a finer one made on
+  another Mac is taken as it is.
+- **Nothing is trusted blindly:** a way that fails is followed by the next lighter one, and the
+  last by the older way without the model; a way that was running when Bezzle went down is passed
+  over by that version of Bezzle from then on (`subjectMatte.running`, `subjectMatte.avoided` in
+  the app's settings); a way that took more than 25 s is passed over for a lighter one; the GPU is
+  left alone while macOS says memory is short. The model is let go 45 s after its last picture on
+  the GPU (5 minutes on the processor) and at once when memory runs short, which frees the GPU's
+  memory within a second.
+- **Trying a way:** `BEZZLE_MATTE_ROUTE=cpu1024` (or `gpu1024`, `cpu2048`, `gpu2048`) takes that
+  way alone; `BEZZLE_MATTE_MACHINE=8:4:arm` takes the ways of a Mac with 8 GB and 4 fast cores
+  (`intel` for an Intel Mac) on this one, which shows what such a Mac does but not how long it
+  takes there.
 
 ## Trying another
 

@@ -1,6 +1,7 @@
 #!/bin/zsh
-# Makes the subject matte that comes with the app (see README.md): BiRefNet_HR → Core ML →
-# 8-bit weights → Bezzle/Canvas/BiRefNet.mlpackage, which Xcode compiles into the app.
+# Makes the subject matte that comes with the app (see README.md): BiRefNet_HR → Core ML at two
+# sizes of picture, 2,048 and 1,024 pixels → 8-bit weights → one package of both, sharing their
+# weights → Bezzle/Canvas/BiRefNet.mlpackage, which Xcode compiles into the app.
 # It runs BiRefNet's own model code, downloaded at the revision below, so run it yourself.
 set -euo pipefail
 here=${0:A:h}
@@ -37,14 +38,14 @@ mkdir -p $build/code/brn
 cp $build/model/birefnet.py $build/model/BiRefNet_config.py $build/code/brn/
 touch $build/code/brn/__init__.py
 
-rm -rf $build/full.mlpackage $build/int8.mlpackage
-$py -I $here/convert.py $build/code $build/model 2048 $build/full.mlpackage ${1:-}
-$py -I -c "
-import coremltools as ct, coremltools.optimize.coreml as o
-m = ct.models.MLModel('$build/full.mlpackage', skip_model_load=True)
-o.linear_quantize_weights(m, o.OptimizationConfig(global_config=o.OpLinearQuantizerConfig(mode='linear_symmetric', granularity='per_channel'))).save('$build/int8.mlpackage')
-"
+# The fine size, for large pictures on Macs with memory to spare, and the light one, which every
+# Mac can run: `SubjectModel` says which Mac takes which.
+for side in 2048 1024; do
+  rm -rf $build/full-$side.mlpackage
+  $py -I $here/convert.py $build/code $build/model $side $build/full-$side.mlpackage ${1:-}
+done
 target=$here/../../Bezzle/Canvas/BiRefNet.mlpackage
+$py -I $here/sizes.py $build/BiRefNet.mlpackage 1024=$build/full-1024.mlpackage 2048=$build/full-2048.mlpackage
 rm -rf $target
-mv $build/int8.mlpackage $target
+mv $build/BiRefNet.mlpackage $target
 du -sh $target
