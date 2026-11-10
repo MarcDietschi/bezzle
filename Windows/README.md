@@ -81,6 +81,15 @@ The VM is `bezzle@192.168.77.10`, reached by SSH with the key `~/.ssh/bezzle-win
 account's password is in `~/.ssh/bezzle-windows-vm.password` (never print either). `VM/autounattend.xml`
 is a template with a placeholder, not the password.
 
+- **Starting it:** UTM has to be running and showing, never hidden: hidden (⌘H, `open -j`, System
+  Events' `visible`), it takes the order to start, fails without a word on the VM's window, and the
+  VM stays stopped while the order times out (2026-11-10). UTM comes to the front as it is
+  launched, even with `open -g`, so note the app in front and give the front back at once:
+  `front=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')`,
+  then, if `pgrep -x UTM` finds none, `open -g -a UTM; sleep 6; osascript -e "tell application \"$front\" to activate"`,
+  then `osascript -e 'tell application "UTM" to start virtual machine "Bezzle Windows"'`. SSH answers
+  within half a minute. `utmctl start` prints error -10004 whether the VM starts or not, so ask
+  `utmctl list` for its state. If a start timed out, quit UTM and begin again.
 - **Commands:** `VM/win '<PowerShell>'` runs over SSH (session 0: no windows, no package installs);
   `VM/desktop [--detach] '<PowerShell>'` runs in the signed-in desktop, where windows appear. A
   program's output over SSH arrives only when it exits. Send a file with non-ASCII text as base64 and
