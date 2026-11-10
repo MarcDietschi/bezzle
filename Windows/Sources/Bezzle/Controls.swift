@@ -1,5 +1,6 @@
 import Foundation
 import WinUI
+import WindowsFoundation
 import UWP
 import BezzleCore
 

@@ -23,11 +23,14 @@ struct MatteWaysTests {
         // A card with 6 GB of its own takes the light size, and the processor after it.
         #expect(MatteWays.routes(longest: large, on: pc(16, cores: 8, card: 6)) == [Route.lightOnCard, .light])
         #expect(MatteWays.routes(longest: small, on: pc(16, cores: 8, card: 6)) == [Route.lightOnCard, .light])
-        // Memory and cores enough: the fine size on the processor, for a large picture only.
-        #expect(MatteWays.routes(longest: large, on: pc(32, cores: 12)) == [Route.fine, .light])
-        #expect(MatteWays.routes(longest: small, on: pc(32, cores: 12)) == [Route.light])
-        #expect(MatteWays.routes(longest: large, on: pc(32, cores: 8)) == [Route.light])
-        #expect(MatteWays.routes(longest: large, on: pc(16, cores: 16)) == [Route.light])
+        // Cores enough to make it in the time anyone waits: the fine size on the processor, for a
+        // large picture only. Memory is not what it asks (2 GB, as the light size).
+        #expect(MatteWays.routes(longest: large, on: pc(32, cores: 16)) == [Route.fine, .light])
+        #expect(MatteWays.routes(longest: small, on: pc(32, cores: 16)) == [Route.light])
+        #expect(MatteWays.routes(longest: large, on: pc(16, cores: 16)) == [Route.fine, .light])
+        #expect(MatteWays.routes(longest: large, on: pc(32, cores: 12)) == [Route.light])
+        #expect(MatteWays.routes(longest: large, on: pc(64, cores: 8)) == [Route.light])
+        #expect(MatteWays.routes(longest: large, on: pc(8, cores: 16)) == [Route.light])
         // A card with 12 GB and more: the fine size on it for a large picture, then lighter and lighter.
         #expect(MatteWays.routes(longest: large, on: pc(64, cores: 16, card: 16)) == [Route.fineOnCard, .lightOnCard, .light])
         #expect(MatteWays.routes(longest: small, on: pc(64, cores: 16, card: 16)) == [Route.lightOnCard, .light])
@@ -37,7 +40,7 @@ struct MatteWaysTests {
         #expect(MatteWays.routes(longest: large, on: pc(16, cores: 8, card: 4)) == [Route.light])
         #expect(MatteWays.routes(longest: large, on: pc(6, cores: 4, card: 8)) == [Route.light])
         // As Windows counts a PC's memory and a card's: a little under what they are sold with.
-        #expect(MatteWays.routes(longest: large, on: pc(31.2, cores: 12)) == [Route.fine, .light])
+        #expect(MatteWays.routes(longest: large, on: pc(15.8, cores: 16)) == [Route.fine, .light])
         #expect(MatteWays.routes(longest: large, on: pc(15.8, cores: 8, card: 5.9)) == [Route.lightOnCard, .light])
         #expect(MatteWays.routes(longest: large, on: pc(31.9, cores: 16, card: 11.9)).first == .fineOnCard)
     }
@@ -50,8 +53,9 @@ struct MatteWaysTests {
                         let machine = pc(gigabytes, cores: cores, card: card)
                         let routes = MatteWays.routes(longest: longest, on: machine)
                         #expect(routes.last == .light && Set(routes).count == routes.count, "\(machine): \(routes)")
-                        // On the card no more than the card has, on the processor a quarter of the memory at most.
-                        for route in routes {
+                        // On the card no more than the card has, on the processor a quarter of the memory
+                        // at most. But for the lightest way: it is all a small PC has, and 2 GB of 4 there.
+                        for route in routes where route != .light {
                             let has = route.onCard ? Double(machine.dedicated) : Double(machine.memory) * 0.26
                             #expect(Double(route.holds) <= has, "\(machine): \(route)")
                         }
@@ -116,11 +120,13 @@ struct MatteWaysTests {
     @Test func ofSeveralWaysRunningTheHeaviestIsHeldToBeIt() {
         let (defaults, name) = scratch()
         defer { defaults.removePersistentDomain(forName: name) }
+        // The card holds more at the light size than the processor at the fine one, here as on a Mac.
         defaults.set(["cpu1024", "gpu1024", "cpu2048"], forKey: "subjectMatte.running")
         let ledger = MatteLedger(machine: pc(64, cores: 16, card: 8), defaults: defaults, version: "9.9")
-        #expect(ledger.wentDownWith == .fine)
-        #expect(defaults.dictionary(forKey: "subjectMatte.avoided") as? [String: String] == ["cpu2048": "9.9"])
-        #expect(ledger.ways(longest: large) == [.lightOnCard, .light])
+        #expect(ledger.wentDownWith == .lightOnCard)
+        #expect(defaults.dictionary(forKey: "subjectMatte.avoided") as? [String: String] == ["gpu1024": "9.9"])
+        #expect(ledger.ways(longest: large) == [.light])
+        #expect(ledger.ways(longest: small) == [.light])
     }
 
     @Test func quittingWhileAWayRunsIsNotGoingDownWithIt() {
@@ -137,7 +143,7 @@ struct MatteWaysTests {
     @Test func aWayThatTookTooLongIsPassedOver() {
         let (defaults, name) = scratch()
         defer { defaults.removePersistentDomain(forName: name) }
-        let ledger = MatteLedger(machine: pc(32, cores: 12), defaults: defaults, version: "9.9")
+        let ledger = MatteLedger(machine: pc(32, cores: 16), defaults: defaults, version: "9.9")
         #expect(ledger.ways(longest: large) == [.fine, .light])
         ledger.remember(matte: MatteWays.patience + 15, by: .fine, cold: true)
         #expect(ledger.took(.fine) == MatteWays.patience + 15)
@@ -149,7 +155,7 @@ struct MatteWaysTests {
         let carded = MatteLedger(machine: pc(64, cores: 16, card: 16), defaults: defaults, version: "9.9")
         #expect(carded.ways(longest: large, short: true) == [.light])
         #expect(carded.ways(longest: large, fine: false) == [.lightOnCard, .light])
-        #expect(MatteLedger(machine: pc(32, cores: 12), defaults: defaults, version: "9.9").ways(longest: large, fine: false) == [.light])
+        #expect(MatteLedger(machine: pc(32, cores: 16), defaults: defaults, version: "9.9").ways(longest: large, fine: false) == [.light])
     }
 
     @Test func theLightestWayIsNeverPassedOver() {

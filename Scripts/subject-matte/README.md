@@ -176,7 +176,25 @@ model needs whatever the allocator. On this Mac's processor (18 cores, ONNX Runt
 
 So the 10 GB the VM showed at 2,048 pixels (below) was the limit of its 12 GB, not what the model
 needed, and its 63 to 72 s were partly paging. What is left at the peak is Swin's first stage (its
-attention over every window at once), which is the model's own.
+attention over every window at once), which is the model's own. A process holds less than is
+alive by this count, as ONNX Runtime writes one layer's result over the one before where it can.
+
+On Windows itself, in the test VM (Windows 11 for Arm, 8 cores, 12 GB, no graphics card;
+2026-11-10), `bezzle-render <fonts> cutout <out>` cutting out photos of 1,600 and 2,400 pixels:
+
+| Way | Model and matte | The process at its peak |
+|---|---|---|
+| 2,048 on the processor, as shipped up to 1.6 | 63 to 72 s | 10 to 10.7 GB, the VM's limit |
+| 2,048 on the processor (`cpu2048`) | 43 to 54 s, 1.3 s of it loading | 1.9 GB |
+| 1,024 on the processor (`cpu1024`), what the VM takes | 10 to 11 s, 1.3 s of it loading | 1.9 to 2.0 GB |
+
+So memory is no longer what the fine size asks of a processor, but time is: four times the light
+size's. In Bezzle itself, cutting out a photo of 2,400 pixels there took 16 s from the click to
+the cutout, and Bezzle's working set peaked at 3.0 GB (0.4 GB before and after). Tried there
+too: a card that cannot (`BEZZLE_MATTE_MACHINE=16:8:8` on the VM, which has none) is followed by
+the processor in the same cut; the fine size on the processor, having taken 47 s, is passed over
+the next time; and the tool stopped by force in the middle of a fine matte says so when it next
+runs and takes the light size.
 
 The rearranged graphs give the matte the shipped one gave: on three photos, at 2,048 pixels
 against the graph shipped up to 1.6 and at 1,024 against the same export not rearranged, no value
@@ -193,13 +211,13 @@ graphics share the PC's memory and were what took small PCs down:
 - **A card with 6 GB of its own:** the light size on the card.
 - **Integrated graphics, smaller cards, Windows' own adapter on the processor, and any PC with
   less than 8 GB of memory:** the card is left alone. The processor makes the matte, at the fine
-  size only for a large picture on a PC with 32 GB and 12 fast cores, at the light size on all
-  the others.
-- **Last on every PC:** the light size on the processor (`cpu1024`), 1 GB while it runs. It is
+  size only for a large picture on a PC with 16 fast cores (and 16 GB), where it should take
+  about 25 s, at the light size on all the others.
+- **Last on every PC:** the light size on the processor (`cpu1024`), 2 GB while it runs. It is
   never passed over, as Windows has no way without the model.
 
-Each measure sits a little under the round number (11.5, 5.5, 7.5 and 30.5 GB), as Windows counts
-less memory than a PC is sold with. All of them are estimates until measured on real PCs.
+Each measure sits a little under the round number (11.5, 5.5, 7.5 and 15.5 GB), as Windows counts
+less memory than a PC is sold with. The card's are estimates until measured on real PCs.
 
 The safeguards are the Mac's (`MatteLedger` beside the ways, `SubjectModel` in
 `Host/SubjectMatte.swift`): a
@@ -220,10 +238,10 @@ processor, `gpu` goes through DirectML on any adapter, Windows' software one too
 every way then runs. The ways, what is remembered of them and the cutouts' names are tested on a
 Mac too: `swift test --package-path Windows/Tests`.
 
-**Not measured:** none of this has run on Windows yet. The figures above are ONNX Runtime's on a
-Mac's processor; DirectML has never run this model on a real graphics card, at either size; and how
-long the light size takes on a PC's processor is a guess from the cores it has. The first build in
-the VM should measure the light size there (time and peak memory, `bezzle-render … cutout`).
+**Not measured:** DirectML has never run this model on a real graphics card, at either size, so
+what a card needs and how long it takes are guesses; and no PC of 4 or 8 GB has run it, where the
+light size's 2 GB are a large share. On the processor, the times of PCs other than the VM are
+worked out from their cores.
 
 ### Measured on Windows (2026-11-08)
 

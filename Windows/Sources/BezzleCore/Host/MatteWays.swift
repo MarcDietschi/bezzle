@@ -41,24 +41,26 @@ nonisolated struct MatteRoute: Hashable, Sendable, CustomStringConvertible {
     /// The model's graph for this size, in Bezzle.resources: both read BiRefNet.weights beside them.
     var graph: String { "BiRefNet-\(side).onnx" }
 
-    /// The memory it holds while it runs, in bytes. Estimates until measured on real PCs: on the
-    /// processor what ONNX Runtime kept alive of the model's graphs where they were made (a Mac),
-    /// on the card guessed from that and from what the Mac's GPU holds. Only their order is used,
-    /// to tell which of two ways asked the most of the PC.
+    /// The memory it holds while it runs, in bytes. On the processor as measured in the test VM
+    /// (Windows 11 for Arm, 8 cores, 12 GB; 2026-11-10): Bezzle's whole working set at its peak,
+    /// about 2 GB at either size, as ONNX Runtime uses what one layer leaves for the next. On the
+    /// card guesses from what the Mac's GPU holds, until measured on a real one. Only their order
+    /// is used, to tell which of two ways asked the most of the PC.
     var holds: UInt64 {
         let megabytes: UInt64 = switch (side >= 2048, onCard) {
         case (true, true): 9_000
-        case (true, false): 4_000
+        case (true, false): 2_000
         case (false, true): 3_000
-        case (false, false): 1_000
+        case (false, false): 1_900
         }
         return megabytes * 1_000_000
     }
 
     /// How many seconds loading the model and making a matte take on a PC nothing is known of
-    /// yet, with so many fast `cores`. Estimates until measured on real PCs: the processor's from
-    /// ONNX Runtime on a Mac of 18 cores (5 s at 1,024 pixels, 23 s at 2,048), longer the fewer
-    /// cores there are; the card's are guesses, DirectML fitting the model to the card as it loads.
+    /// yet, with so many fast `cores`. The processor's from ONNX Runtime on a Mac of 18 cores (5 s
+    /// at 1,024 pixels, 21 to 23 s at 2,048), longer the fewer cores there are, which the test VM
+    /// of 8 cores bears out (10 to 11 s and 43 to 54 s; loading 1.3 s). The card's are guesses
+    /// until measured on a real one, DirectML fitting the model to the card as it loads.
     func first(cores: Int) -> (load: Double, matte: Double) {
         let slower = 18 / Double(max(cores, 1))
         return switch (side >= 2048, onCard) {
@@ -112,7 +114,7 @@ nonisolated enum MatteWays {
     /// A way that took longer than this many seconds is passed over the next time.
     static let patience = 25.0
 
-    // What a PC needs for each way. All of these are estimates until measured on real PCs: so far
+    // What a PC needs for each way. The card's are estimates until measured on real PCs: so far
     // the model has run through DirectML on none. Each is a little under the round number a PC is
     // sold with, as Windows counts less than that (what the firmware and the graphics keep).
 
@@ -123,11 +125,12 @@ nonisolated enum MatteWays {
     /// Gigabytes of memory below which the card is left alone: DirectML keeps as much of the
     /// model in the PC's memory as on the card (a PC sold with 8).
     static let memoryForCard = 7.5
-    /// Gigabytes of memory, and fast cores, the fine size on the processor needs: it holds about
-    /// 4 GB while it runs, and with fewer cores takes longer than anyone waits (a PC sold with 32,
-    /// whose graphics may keep a little of it).
-    static let memoryForFine = 30.5
-    static let coresForFine = 12
+    /// Gigabytes of memory, and fast cores, the fine size on the processor needs. Time is what it
+    /// asks: 2 GB while it runs, as the light size, but four times as long, 45 s and more with 8
+    /// cores (the test VM) and about 25 s with 16, which is as long as anyone waits (`patience`).
+    /// So only a processor of 16 fast cores takes it, in a PC sold with 16 GB at least.
+    static let memoryForFine = 15.5
+    static let coresForFine = 16
     /// Memory is short while this share of it is in use, in percent, or fewer than this many
     /// bytes are left to hand out: the card is left alone then, and a model kept is let go.
     static let shortLoad = 90
@@ -146,7 +149,7 @@ nonisolated enum MatteWays {
     /// A graphics card with memory of its own is far the fastest: with 12 GB the fine size for a
     /// large picture, with 6 GB the light size. Integrated graphics and smaller cards are left
     /// alone, and the processor makes the matte: at the fine size only for a large picture on a
-    /// PC with memory and cores enough, at the light size on all the others.
+    /// PC with 16 fast cores, at the light size on all the others.
     static func routes(longest: Int, on machine: MatteMachine) -> [MatteRoute] {
         let memory = Double(machine.memory) / MatteMachine.gigabyte, card = Double(machine.dedicated) / MatteMachine.gigabyte
         let large = longest >= fineFrom
