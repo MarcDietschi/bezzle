@@ -5,19 +5,10 @@ import CBezzleHost
 // the Mac names it, so a cutout made on either is found by the other in a shared design.
 
 extension WindowsCore {
-    /// What the cutout of a picture is called: the same each time it is cut out with the same
-    /// picks, so taking the background away again finds it made, however often it was given back.
-    /// Cut out with the learned matte, it is named for the model's version, so one cut without it
-    /// (on a Mac, by Vision alone) is never taken for one cut with it.
-    nonisolated static func cutoutName(of asset: String, picks: [CGPoint]?, learned: Bool = true) -> String {
-        let stem = (asset as NSString).deletingPathExtension + (learned ? "-cutout-m\(SubjectMatte.version)" : "-cutout")
-        guard let picks, !picks.isEmpty else { return "\(stem).png" }
-        // FNV-1a over the picks to a ten-thousandth, the same on every computer and every run.
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        for byte in picks.map({ String(format: "%.4f,%.4f", Double($0.x), Double($0.y)) }).joined(separator: ";").utf8 {
-            hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3
-        }
-        return "\(stem)-\(String(hash, radix: 16)).png"
+    /// What the cutout of a picture is called (`CutoutNames`, the Mac's names letter for letter):
+    /// for how finely it was cut out, so a plainer cutout is never taken for a finer one.
+    nonisolated static func cutoutName(of asset: String, picks: [CGPoint]?, grade: SubjectMatte.Grade) -> String {
+        CutoutNames.name(of: asset, picks: picks, grade: grade)
     }
 
     /// The outline of a cutout, from how solid it is as it was kept: the same however it came to be
@@ -29,13 +20,64 @@ extension WindowsCore {
         return CutoutMaker.outline(of: image)
     }
 
-    /// The picture at `source` cut out, and kept as a PNG at `target`: written beside it first, so a
-    /// cutout cut short is never taken for one made. Returns the outline of what it leaves.
-    nonisolated static func makeCutout(of source: URL, picks: [CGPoint]?, to target: URL, matting: any CutoutMaker.Matting,
-                                       told: (CutoutMaker.Progress) -> Void = { _ in }) throws -> String {
+    /// The cutout of the picture `asset` in `folder`: one made before, as finely as this PC would
+    /// make it or finer (on a computer with more to it, say, sharing the design), or made now by
+    /// `model` and kept as a PNG beside the picture. `told` hears each step. Without the model,
+    /// only a cutout made before can be shown again: Windows has no plainer way to find a subject.
+    nonisolated static func cutout(of asset: String, in folder: URL, picks: [CGPoint]?, model: SubjectModel = .shared,
+                                   told: @escaping @Sendable (CutoutMaker.Progress) -> Void = { _ in }) throws -> Cutout {
+        let source = folder.appendingPathComponent(asset)
+        var w: Int32 = 0, h: Int32 = 0
+        guard let data = try? Data(contentsOf: source),
+              data.withUnsafeBytes({ bz_image_size($0.baseAddress, Int32(clamping: $0.count), &w, &h) }) != 0, w > 0, h > 0
+        else { throw CutoutMaker.Failure.unreadable }
+        let longest = min(Int(max(w, h)), CutoutMaker.Tuning().workSide), megapixels = Double(w) * Double(h) / 1e6
+        let wanted = model.grade(longest: longest)
+        for made in CutoutNames.names(of: asset, picks: picks, atLeast: wanted) {
+            let url = folder.appendingPathComponent(made.name)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return Cutout(asset: made.name, picks: picks, outline: try cutoutOutline(of: url))
+            }
+        }
+
+        let steps = Steps()
+        let hear: @Sendable (CutoutMaker.Progress) -> Void = { progress in
+            steps.note(progress)
+            told(progress)
+        }
+        guard let matting = model.cut(of: source.path, told: hear) else { throw CutoutTrouble.noMatte }
+        // How long reading and finishing took a megapixel here before says how long they take
+        // now, and the way the picture takes first how long its model and its matte.
+        let times = CutoutTimes()
+        hear(CutoutMaker.Progress(step: .look, expecting: times.expecting(megapixels: megapixels)
+                .merging(model.expecting(longest: longest, key: source.path)) { _, known in known }))
         // At its own size, turned upright as it is drawn.
-        guard let data = try? Data(contentsOf: source), let picture = CutoutMaker.Pixels(file: data) else { throw CutoutMaker.Failure.unreadable }
-        let cut = try CutoutMaker.cut(picture, picks: picks, matting: matting, told: told)
+        guard let picture = CutoutMaker.Pixels(file: data) else { throw CutoutMaker.Failure.unreadable }
+        let cut = try CutoutMaker.cut(picture, picks: picks, matting: matting, told: hear)
+        let target = folder.appendingPathComponent(cutoutName(of: asset, picks: picks, grade: matting.grade ?? wanted))
+        try keep(cut, at: target)
+        let outline = try cutoutOutline(of: target)
+        let ended = WindowsCore.now
+        // Reading lasts until the model is asked, or until finishing where the matte was kept.
+        if let began = steps.began(.look) {
+            let read = [CutoutPace.Step.load, .matte, .finish].compactMap { steps.began($0) }.min()
+            times.remember(reading: read.map { $0 - began }, finishing: steps.began(.finish).map { ended - $0 }, megapixels: megapixels)
+        }
+        return Cutout(asset: target.lastPathComponent, picks: picks, outline: outline)
+    }
+
+    /// When each step of a cut was told.
+    private nonisolated final class Steps: @unchecked Sendable {
+        private let lock = NSLock()
+        private var times: [CutoutPace.Step: Double] = [:]
+
+        func note(_ progress: CutoutMaker.Progress) { lock.withLock { times[progress.step] = times[progress.step] ?? progress.at } }
+        func began(_ step: CutoutPace.Step) -> Double? { lock.withLock { times[step] } }
+    }
+
+    /// `cut` kept as a PNG at `target`: written beside it first, so a cutout cut short is never
+    /// taken for one made.
+    nonisolated static func keep(_ cut: CutoutMaker.Pixels, at target: URL) throws {
         let writing = target.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: writing) }
         guard let png = encodePNG(cut) else { throw CutoutMaker.Failure.unreadable }
@@ -44,9 +86,6 @@ extension WindowsCore {
         if !FileManager.default.fileExists(atPath: target.path) {
             do { try FileManager.default.moveItem(at: writing, to: target) } catch { throw CutoutMaker.Failure.unreadable }
         }
-        let outline = try cutoutOutline(of: target)
-        told(CutoutMaker.Progress(done: 1))
-        return outline
     }
 
     /// Pixels as a PNG file's bytes, carrying the profile of their colours, as Image I/O writes the
@@ -77,25 +116,25 @@ extension WindowsCore {
     /// A picture being cut out, as the canvas and the inspector show it while it is (the Mac's
     /// CutoutWork).
     public struct CutoutWork {
-        /// How far along, 0…1.
-        public var done: Double = 0
+        /// Which asking it is of: one given up is taken away, and what its work comes to is left be.
+        let run: UUID
+        /// How far along it is by the clock, which the canvas and the inspector read each time
+        /// they draw.
+        var pace: CutoutPace
         /// Roughly where the subject is, once it has been found.
         public var found: CutoutFound?
+        /// The cutout, once it is made: the canvas makes the cut, and the design then shows it.
+        var made: Cutout?
         /// When it began, on the clock animations run by (`now`).
         public let began = WindowsCore.now
     }
 
-    /// Where the subject was found, as the canvas draws the work going on (the Mac's CutoutTool
-    /// makes the same of the grey picture it is given): each mask 0…255 a pixel, at most 900
-    /// across, rows top first.
+    /// Where the subject was found, for the canvas to draw its line in to (the Mac's CutoutTool is
+    /// given a grey picture): a value a pixel across the whole picture, rows top first, 255 on the
+    /// subject, at most 400 across.
     public struct CutoutFound: Sendable {
         public let width: Int, height: Int
-        /// White where the subject is not: the rest sinks into the table.
-        public let background: [UInt8]
-        /// A narrow line just outside the subject, for tracing it in pencil.
-        public let edge: [UInt8]
-        /// Where the subject is on the whole, across and down from the top left, 0…1.
-        public let middle: CGPoint
+        public let inside: [UInt8]
     }
 
     /// The layers whose pictures are being cut out in the open design (the Mac's store.cuttingOut).
@@ -108,7 +147,7 @@ extension WindowsCore {
     nonisolated(unsafe) public static var cutoutsChanged: (@MainActor (_ slot: Slot?, _ edited: Bool) -> Void)?
 
     /// Why a background could not be taken away, in the Mac's words (and Windows' own).
-    enum CutoutTrouble: Swift.Error, CustomStringConvertible {
+    nonisolated enum CutoutTrouble: Swift.Error, CustomStringConvertible {
         case noPictures, readOnly, noMatte, failed(CutoutMaker.Failure)
 
         /// As the inspector says it, in English (the app translates).
@@ -165,11 +204,38 @@ extension WindowsCore {
         return cut.allSatisfy { !$0 } ? false : nil
     }
 
-    /// How far the cutting out of the pictures filling `ids` has come, the least of them; nil when
-    /// none is being cut out.
+    /// How far the cutting out of the pictures filling `ids` has come by now, the least of them,
+    /// 0…1; nil when none is being cut out. Said from the clock (`CutoutPace`), so it moves each
+    /// time it is asked, also while the model says nothing of itself for many seconds.
     public static func cutoutProgress(_ ids: [UUID]) -> Double? {
-        ids.compactMap { cuttingOut[$0]?.done }.min()
+        let now = now
+        return ids.compactMap { cuttingOut[$0]?.pace.done(at: now) }.min()
     }
+
+    /// Gives up taking the background away from the pictures filling `ids`: they stay whole, and
+    /// the canvas lets its line go. A cutout nearly made is still finished and kept beside its
+    /// picture, to be found made the next time it is asked for.
+    public static func giveUpRemovingBackground(_ ids: [UUID]) {
+        let given = ids.filter { cuttingOut[$0] != nil }
+        guard !given.isEmpty else { return }
+        for id in given { cuttingOut[id] = nil }
+        cutoutsChanged?(active, false)
+    }
+
+    /// Makes ready what finds subjects, for the pictures filling `ids`: the model loaded, which is
+    /// most of a first wait, and kept a while. Behind everything else with a picture only
+    /// selected, and once for a selection however often it is said; sooner when `pointing` at what
+    /// takes the background away, as a click may follow.
+    public static func readyToRemoveBackground(_ ids: [UUID], pointing: Bool = true) {
+        guard canRemoveBackground(ids), let size = pictures(ids).first(where: { $0.fill.image?.cutout == nil })?.fill.image?.size else { return }
+        if !pointing {
+            guard madeReadyFor != ids else { return }
+            madeReadyFor = ids
+        }
+        SubjectModel.shared.warm(longest: Int(min(max(size.width, size.height), CGFloat(CutoutMaker.Tuning().workSide))), pointing: pointing)
+    }
+    /// The selection the model was last made ready for.
+    nonisolated(unsafe) private static var madeReadyFor: [UUID] = []
 
     /// Takes the background away from the pictures filling `ids`, saying in the inspector why
     /// when it could not.
@@ -222,8 +288,9 @@ extension WindowsCore {
 
     /// Cuts out the pictures filling `ids`: the subjects at `picks`, 0…1 across and down each
     /// picture, or all that stand out. A picture filling several layers is cut out once. Returns
-    /// the layers that show a cutout now: those still showing the picture they had once it is made.
-    /// The design is the one in front as it is asked; it may go behind meanwhile.
+    /// the layers that show a cutout now: those still showing the picture they had once it is
+    /// made, and not given up meanwhile. The design is the one in front as it is asked; it may go
+    /// behind meanwhile.
     @discardableResult
     public static func cutOut(_ ids: [UUID], picks: [CGPoint]? = nil) async throws -> [UUID] {
         guard !isReadOnly else { throw CutoutTrouble.readOnly }
@@ -234,35 +301,27 @@ extension WindowsCore {
             layers[image.asset, default: []].append(id)
         }
         guard let folder = assets.folder, !layers.isEmpty else { throw CutoutTrouble.noPictures }
-        for id in ids { cuttingOut[id] = CutoutWork() }
+        let run = UUID()
+        // Until the work says what it expects (`cutout(of:)`, as it begins to look).
+        let pace = CutoutPace(expected: [.look: 0.5, .matte: 5, .finish: 1], at: now)
+        for id in ids { cuttingOut[id] = CutoutWork(run: run, pace: pace) }
         cutoutsChanged?(slot, false)
         defer {
-            within(slot) { for id in ids { cuttingOut[id] = nil } }
+            within(slot) { for id in ids where cuttingOut[id]?.run == run { cuttingOut[id] = nil } }
             cutoutsChanged?(slot, false)
         }
 
-        // The learned matte, unless every picture was cut out with it before.
-        let fine = { (asset: String) in folder.appendingPathComponent(cutoutName(of: asset, picks: picks, learned: true)) }
-        let matte = layers.keys.allSatisfy({ FileManager.default.fileExists(atPath: fine($0).path) }) ? nil : await SubjectModel.shared.matte()
-
         var made: [String: Cutout] = [:], problem: CutoutTrouble?
         for asset in layers.keys.sorted() {
-            let learned = matte != nil || FileManager.default.fileExists(atPath: fine(asset).path)
-            let name = cutoutName(of: asset, picks: picks, learned: learned)
-            let source = folder.appendingPathComponent(asset), target = folder.appendingPathComponent(name)
-            // Without the matte, only a cutout made before (here, or on a Mac) can be shown again.
-            guard matte != nil || FileManager.default.fileExists(atPath: target.path) else {
-                problem = problem ?? .noMatte
-                continue
-            }
-            // Each step told to the layers it fills, as it is taken.
+            // Each step told to the layers it fills, as it is taken: the canvas and the inspector
+            // then read the pace themselves, frame by frame.
             let showing = layers[asset] ?? []
             let told: @Sendable (CutoutMaker.Progress) -> Void = { progress in
                 let found = progress.found.map { Self.found($0) }
                 Task { @MainActor in
                     within(slot) {
-                        for id in showing {
-                            cuttingOut[id]?.done = progress.done
+                        for id in showing where cuttingOut[id]?.run == run {
+                            cuttingOut[id]?.pace.begin(progress.step, expecting: progress.expecting, at: progress.at)
                             if let found { cuttingOut[id]?.found = found }
                         }
                     }
@@ -271,30 +330,49 @@ extension WindowsCore {
             }
             do {
                 // Cut out before, and given back since, it is shown again as it was.
-                let outline = try await Task.detached(priority: .userInitiated) {
-                    if FileManager.default.fileExists(atPath: target.path) { return try cutoutOutline(of: target) }
-                    guard let matte else { throw CutoutMaker.Failure.unreadable }
-                    return try makeCutout(of: source, picks: picks, to: target, matting: RememberedMatte(matting: matte, key: source.path), told: told)
+                let cutout = try await Task.detached(priority: .userInitiated) {
+                    try Self.cutout(of: asset, in: folder, picks: picks, told: told)
                 }.value
                 // Skia is given it by its name, as the design's other pictures.
-                if let data = try? Data(contentsOf: target) { giveSkia(name, data) }
-                made[asset] = Cutout(asset: name, picks: picks, outline: outline)
+                if let data = try? Data(contentsOf: folder.appendingPathComponent(cutout.asset)) { giveSkia(cutout.asset, data) }
+                made[asset] = cutout
             } catch {
-                problem = problem ?? .failed(error as? CutoutMaker.Failure ?? .unreadable)
+                // No way of this PC's made a matte: what finds subjects did not load, or did not run.
+                problem = problem ?? (error as? CutoutTrouble ?? (error is SubjectMatte.Trouble ? .noMatte : .failed(error as? CutoutMaker.Failure ?? .unreadable)))
             }
         }
         if made.isEmpty, let problem { throw problem }
 
-        // Made after the click that asked for it is over, and after any drag going on meanwhile:
-        // a step of the undo history of its own.
+        // Made: where a window shows it, its canvas makes the cut first (`CutoutHand`), and the
+        // design shows the cutout as the cut comes round.
+        let ended = now
+        var shows = false
+        within(slot) {
+            for (asset, ids) in layers {
+                for id in ids where cuttingOut[id]?.run == run {
+                    cuttingOut[id]?.pace.end(at: ended)
+                    cuttingOut[id]?.made = made[asset]
+                    shows = true
+                }
+            }
+        }
+        cutoutsChanged?(slot, false)
+        if cutoutsChanged != nil, shows { try? await Task.sleep(for: .seconds(CutoutMotion.untilCut)) }
+
+        // After the click that asked for it is over, and after any drag going on meanwhile: a step
+        // of the undo history of its own.
         while slot?.isOpen ?? true, inGesture(slot) { try? await Task.sleep(for: .milliseconds(200)) }
-        var shown: [UUID] = []
+        var shown: [UUID] = [], edited = false
         within(slot) {
             guard design != nil else { return }
+            // Not the layers given up meanwhile.
+            let mine = Set(ids.filter { cuttingOut[$0]?.run == run })
+            guard layers.contains(where: { made[$0.key] != nil && $0.value.contains(where: mine.contains) }) else { return }
+            edited = true
             edit { d in
                 for (asset, ids) in layers {
                     guard let cutout = made[asset] else { continue }
-                    for id in ids {
+                    for id in ids where mine.contains(id) {
                         d.update(id) { n in
                             guard n.fill.image?.asset == asset else { return }
                             n.fill.image?.cutout = cutout
@@ -304,7 +382,7 @@ extension WindowsCore {
                 }
             }
         }
-        cutoutsChanged?(slot, true)
+        if edited { cutoutsChanged?(slot, true) }
         return shown
     }
 
@@ -315,40 +393,13 @@ extension WindowsCore {
         return dragging
     }
 
-    /// What the canvas draws of where the subject was found (the Mac's CutoutTool.inverted, edge
-    /// and middle), from the subject at the size it was worked on.
+    /// Where the subject was found, as the canvas is told it: from the subject at the size it was
+    /// worked on, made small.
     nonisolated static func found(_ subject: CutoutMaker.Plane) -> CutoutFound {
-        let shrink = min(1, 900 / Double(max(subject.w, subject.h)))
+        let shrink = min(1, 400 / Double(max(subject.w, subject.h, 1)))
         let w = max(1, Int(Double(subject.w) * shrink)), h = max(1, Int(Double(subject.h) * shrink))
-        let small = CutoutMaker.resample(subject, w, h)
-        let inside = (0..<(w * h)).map { UInt8(min(max(small.p[$0], 0), 1) * 255 + 0.5) }
-        // The most solid within reach, across and then down; less what was there.
-        let reach = 2
-        var across = inside, edge = inside
-        for y in 0..<h {
-            for x in 0..<w {
-                var most: UInt8 = 0
-                for d in -reach...reach where x + d >= 0 && x + d < w { most = max(most, inside[y * w + x + d]) }
-                across[y * w + x] = most
-            }
-        }
-        for y in 0..<h {
-            for x in 0..<w {
-                var most: UInt8 = 0
-                for d in -reach...reach where y + d >= 0 && y + d < h { most = max(most, across[(y + d) * w + x]) }
-                edge[y * w + x] = most > inside[y * w + x] ? most - inside[y * w + x] : 0
-            }
-        }
-        var sx = 0.0, sy = 0.0, n = 0.0
-        for y in stride(from: 0, to: h, by: 2) {
-            for x in stride(from: 0, to: w, by: 2) where inside[y * w + x] > 127 {
-                sx += Double(x)
-                sy += Double(y)
-                n += 1
-            }
-        }
-        let middle = n > 0 ? CGPoint(x: (sx / n + 0.5) / Double(w), y: (sy / n + 0.5) / Double(h)) : CGPoint(x: 0.5, y: 0.5)
-        return CutoutFound(width: w, height: h, background: inside.map { 255 - $0 }, edge: edge, middle: middle)
+        let small = shrink < 1 ? CutoutMaker.resample(subject, w, h) : subject
+        return CutoutFound(width: w, height: h, inside: (0..<(w * h)).map { small.p[$0] >= 0.5 ? 255 : 0 })
     }
 }
 
@@ -358,17 +409,15 @@ extension WindowsCore {
     /// What `bezzle-render <fonts> cutout <out>` does with the photos BEZZLE_PHOTOS names (separated
     /// by ;): each cut out as Bezzle cuts it out, into `out` as <name>-cutout.png with its outline
     /// (<name>-outline.txt), the matte as the model made it (<name>-matte.png, and with
-    /// BEZZLE_MATTE_RAW its 2,048 × 2,048 floats, <name>-matte.f32, and what the model was given,
-    /// <name>-input.f32), and the parts a click keeps or drops (<name>-parts.txt); BEZZLE_PICKS
-    /// ("x,y;x,y") keeps only some. Says how long each step took and where the model ran;
-    /// BEZZLE_MATTE_TWICE runs the model twice, the second time as it runs once warm.
+    /// BEZZLE_MATTE_RAW its floats, as many as the model's square, <name>-matte.f32, and what the
+    /// model was given, <name>-input.f32), and the parts a click keeps or drops (<name>-parts.txt);
+    /// BEZZLE_PICKS ("x,y;x,y") keeps only some. Says how long each step took, which way the
+    /// matte was made and where (BEZZLE_MATTE_ROUTE and BEZZLE_MATTE_MACHINE choose, see
+    /// `SubjectModel`); BEZZLE_MATTE_TWICE makes the matte twice, the second time as it is made
+    /// with the model loaded (on the graphics card: the processor's is loaded anew for each).
     public static func tryCutouts(_ photos: [URL], into out: URL) async -> [String] {
         var said: [String] = []
-        let started = Date()
-        guard let matte = await SubjectModel.shared.matte() else {
-            return ["no subject matte: \(SubjectModel.shared.trouble ?? "none at BEZZLE_MATTE_MODEL or beside Bezzle")"]
-        }
-        said.append("model loaded on \(matte.device) in \(String(format: "%.2f", Date().timeIntervalSince(started))) s")
+        guard SubjectModel.find().isThere else { return ["no subject matte: none at BEZZLE_MATTE_MODEL or beside Bezzle"] }
         let environment = ProcessInfo.processInfo.environment
         let picks: [CGPoint]? = environment["BEZZLE_PICKS"].map { text in
             text.split(separator: ";").compactMap { pair in
@@ -391,20 +440,25 @@ extension WindowsCore {
                 guard let data = try? Data(contentsOf: photo), let picture = time("read", { CutoutMaker.Pixels(file: data) }) else {
                     return ["\(name): could not be read"]
                 }
-                // The matte alone, of the picture as it is worked on, timed (twice, asked: the first run
-                // after loading is slower on a graphics card).
+                // The matte alone, of the picture as it is worked on, timed: the first with loading
+                // the model (twice, asked: the first matte after loading is slower on a graphics card).
                 let shrink = min(1, 2048 / Double(max(picture.w, picture.h)))
                 let ww = max(1, Int((Double(picture.w) * shrink).rounded())), wh = max(1, Int((Double(picture.h) * shrink).rounded()))
                 guard let work = (shrink < 1 ? picture.scaled(ww, wh) : picture)?.overWhite() else { return ["\(name): could not be scaled"] }
+                lines.append("\(name): \(picture.w)x\(picture.h), ways \(SubjectModel.shared.ways(longest: max(ww, wh)).map(\.description).joined(separator: ", "))")
+                guard let matting = SubjectModel.shared.cut(of: name) else { return lines + ["\(name): no subject matte"] }
                 do {
-                    let learned = try time("matte", { try matte.matte(of: work, remembered: name) })
-                    lines.append("\(name): matte made on \(matte.device)")
-                    if twice { _ = try time("matte again", { try matte.matte(of: work) }) }
+                    let learned = try time("model and matte", { try matting.matte(of: work) })
+                    lines.append("\(name): matte made by \(matting.device ?? "nothing"), \(learned.w) pixels square")
+                    if twice, let again = SubjectModel.shared.cut(of: "\(name) again") {
+                        _ = try time("matte again", { try again.matte(of: work) })
+                        lines.append("\(name): matte made again by \(again.device ?? "nothing")")
+                    }
                     if raw {
                         let floats = Data(bytes: learned.p, count: learned.count * 4)
                         try? floats.write(to: out.appendingPathComponent("\(name)-matte.f32"))
-                        // And what the model was given: red, green and blue planes, 2,048 square.
-                        if let input = try? SubjectMatte.square(work) {
+                        // And what the model was given: red, green and blue planes, as large as its square.
+                        if let input = try? SubjectMatte.square(work, side: learned.w) {
                             try? input.withUnsafeBytes { Data($0) }.write(to: out.appendingPathComponent("\(name)-input.f32"))
                         }
                     }
@@ -422,13 +476,15 @@ extension WindowsCore {
                     }
                     try? parts.joined(separator: "\n").write(to: out.appendingPathComponent("\(name)-parts.txt"), atomically: true, encoding: .utf8)
                     lines.append("\(name): \(subjects.parts.count) part(s): \(parts.joined(separator: " | "))")
+                    // The cutout, with the matte just made (it is kept).
                     let target = out.appendingPathComponent("\(name)-cutout.png")
                     try? FileManager.default.removeItem(at: target)
-                    let outline = try time("cutout", {
-                        try makeCutout(of: photo, picks: picks, to: target, matting: RememberedMatte(matting: matte, key: name))
+                    let outline = try time("cutout", { () -> String in
+                        try keep(try CutoutMaker.cut(picture, picks: picks, matting: matting), at: target)
+                        return try cutoutOutline(of: target)
                     })
                     try? outline.write(to: out.appendingPathComponent("\(name)-outline.txt"), atomically: true, encoding: .utf8)
-                    lines.append("\(name): \(picture.w)x\(picture.h), outline \(outline.count) characters")
+                    lines.append("\(name): outline \(outline.count) characters")
                 } catch {
                     lines.append("\(name): \(error)")
                 }

@@ -2,46 +2,57 @@ import Foundation
 import CBezzleHost
 
 // From Bezzle/Canvas/SubjectMatte.swift and Store/SubjectModel.swift: the same model the Mac runs,
-// BiRefNet_HR at 2,048 pixels, exported to ONNX (Scripts/subject-matte/make-onnx.sh) and run with
-// ONNX Runtime (CBezzleHost/matte.cpp): on the graphics card through DirectML where this PC has one
-// Direct3D 12 runs on, else on the processor, as the Mac runs it with Core ML on its GPU. The Mac's
-// weights are kept to 8 bits; these are half precision, but for sampling (as the Mac's).
+// BiRefNet_HR, as ONNX graphs of its two sizes, 2,048 and 1,024 pixels, that read the same weights
+// (BiRefNet-2048.onnx, BiRefNet-1024.onnx and BiRefNet.weights, Scripts/subject-matte), run with
+// ONNX Runtime (CBezzleHost/matte.cpp) on the graphics card through DirectML or on the processor.
+// Which of the four ways a picture takes is the Mac's question with a PC's answers, and what is
+// remembered of the ways is the Mac's (Host/MatteWays.swift, which asks Windows nothing and is
+// tested apart). The Mac's weights are kept to 8 bits; these are half precision, but for
+// sampling (as the Mac's).
 
 /// A learned matte of what stands out in a picture, hair by hair: BiRefNet (Peng Zheng et al.,
-/// MIT licence), its high-resolution model trained at 2,048 pixels. `CutoutMaker` keeps it to the
-/// subject picked.
+/// MIT licence), its high-resolution model, opened for one way of running it (`Route`).
+/// `CutoutMaker` keeps it to the subject picked.
 nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
-    /// The size the model sees a picture at, squeezed square.
-    static let side = 2048
     /// Which model this is: the Mac's (`SubjectMatte.version` there), as it is the same model.
     /// Cutouts made with it are named for it (`cutoutName`), so a new one cuts pictures out afresh
     /// rather than finding the old one's, here and on a Mac sharing the design alike.
-    static let version = 1
+    static let version = MatteWays.version
+
+    typealias Grade = MatteGrade
+    typealias Route = MatteRoute
+
+    /// The way it was opened for.
+    let route: Route
+    /// The side of the square the model sees a picture at, squeezed: the graph's own, where it
+    /// says (a model BEZZLE_MATTE_MODEL names may be of another size than the way asks for).
+    let side: Int
+    /// How finely it cuts out, by that size.
+    var grade: Grade { side >= 2048 ? .fine : .light }
 
     private let handle: UnsafeMutableRawPointer
-    /// Where it runs now, in words: "DirectML on …" or "processor" (where a graphics card gave up
-    /// on it, the processor from then on, and why).
+    /// Where it runs, in words: "DirectML on …" or "processor".
     var device: String {
         var on = [CChar](repeating: 0, count: 512)
         _ = bz_matte_device(handle, &on, Int32(on.count))
         return String(cString: on)
     }
-    /// The last pictures' mattes, by what they are called (`remembered`), as placing a cutout asks
-    /// for the parts of one just cut out.
-    private var kept: [(key: String, matte: CutoutMaker.Plane)] = []
-    private let keeping = NSLock()
 
-    /// Where the model runs: `auto` on the graphics card if it can, else the processor; `processor`;
-    /// `directML` on any adapter, Windows' software one too (for trying it where there is no other).
-    enum Device: Int32 { case auto = 0, processor = 1, directML = 2 }
-
-    /// The model at `url`, ready to run (DirectML compiles it for the card first: a few seconds).
-    init(contentsOf url: URL, on device: Device = .auto) throws {
+    /// The graph at `url`, made ready for `route`: on the processor, or on the graphics card and
+    /// there alone (DirectML fits it to the card first, which takes seconds). A card that cannot
+    /// hold it throws, here or at a matte: `SubjectModel` then takes a lighter way. With
+    /// `anyAdapter`, on whatever adapter DirectML runs on, Windows' own on the processor too, for
+    /// trying it where there is no card.
+    init(contentsOf url: URL, route: Route, anyAdapter: Bool = false) throws {
         var error = [CChar](repeating: 0, count: 1024), on = [CChar](repeating: 0, count: 512)
-        guard let made = bz_matte_open(url.path, device.rawValue, &error, Int32(error.count), &on, Int32(on.count)) else {
+        let device: Int32 = route.onCard ? (anyAdapter ? 2 : 3) : 1
+        guard let made = bz_matte_open(url.path, device, &error, Int32(error.count), &on, Int32(on.count)) else {
             throw Trouble(description: String(cString: error))
         }
         handle = made
+        self.route = route
+        let says = Int(bz_matte_side(made))
+        side = says > 0 ? says : route.side
     }
 
     deinit { bz_matte_close(handle) }
@@ -50,32 +61,17 @@ nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
 
     /// How solid each pixel of `picture` is, `side` × `side`, for `CutoutMaker`.
     func matte(of picture: CutoutMaker.Pixels) throws -> CutoutMaker.Plane {
-        let input = try Self.square(picture)
-        let matte = CutoutMaker.Plane(Self.side, Self.side)
+        let input = try Self.square(picture, side: side)
+        let matte = CutoutMaker.Plane(side, side)
         var error = [CChar](repeating: 0, count: 1024)
-        let done = input.withUnsafeBufferPointer { bz_matte_run(handle, $0.baseAddress, Int32(Self.side), matte.p, &error, Int32(error.count)) }
+        let done = input.withUnsafeBufferPointer { bz_matte_run(handle, $0.baseAddress, Int32(side), matte.p, &error, Int32(error.count)) }
         guard done == 0 else { throw Trouble(description: String(cString: error)) }
         return matte
     }
 
-    /// The matte of the picture called `key`, made once and kept for a while.
-    func matte(of picture: CutoutMaker.Pixels, remembered key: String) throws -> CutoutMaker.Plane {
-        if let found = keeping.withLock({ kept.first { $0.key == key }?.matte }) { return found }
-        let made = try matte(of: picture)
-        keeping.withLock {
-            kept.removeAll { $0.key == key }
-            kept.append((key, made))
-            if kept.count > 3 { kept.removeFirst() }
-        }
-        return made
-    }
-
-    /// Whether the picture called `key` has its matte kept.
-    func remembers(_ key: String) -> Bool { keeping.withLock { kept.contains { $0.key == key } } }
-
-    /// `picture` squeezed into the square the model sees, as the Mac's draws it: red, green and
-    /// blue planes, 0…1, in sRGB whatever colours the picture is in.
-    static func square(_ picture: CutoutMaker.Pixels) throws -> [Float] {
+    /// `picture` squeezed into the square of `side` pixels the model sees, as the Mac's draws it:
+    /// red, green and blue planes, 0…1, in sRGB whatever colours the picture is in.
+    static func square(_ picture: CutoutMaker.Pixels, side: Int) throws -> [Float] {
         guard let square = (picture.w == side && picture.h == side ? picture : picture.scaled(side, side))?.inSRGB() else {
             throw CutoutMaker.Failure.unreadable
         }
@@ -99,72 +95,399 @@ nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
     }
 }
 
-/// A picture's matte kept by name, as `CutoutMaker` asks for it: the same picture cut out again
-/// (with other picks) or placed asks the model once.
-nonisolated struct RememberedMatte: CutoutMaker.Matting {
-    let matting: SubjectMatte
-    let key: String
-    func matte(of picture: CutoutMaker.Pixels) throws -> CutoutMaker.Plane { try matting.matte(of: picture, remembered: key) }
+nonisolated extension MatteMachine {
+    /// This PC, or the one BEZZLE_MATTE_MACHINE describes for trying another's ways here
+    /// (`init(describing:)`). Asks Direct3D for the graphics card, so first asked away from the
+    /// main thread (`SubjectModel` does).
+    static var this: MatteMachine { asked.machine }
+    /// This PC's graphics card by name, for the trace; empty without one Direct3D 12 runs on.
+    static var card: String { asked.card }
+
+    private static let asked: (machine: MatteMachine, card: String) = {
+        if let said = ProcessInfo.processInfo.environment["BEZZLE_MATTE_MACHINE"], let machine = MatteMachine(describing: said) {
+            return (machine, "as BEZZLE_MATTE_MACHINE says")
+        }
+        var memory: Int64 = 0, dedicated: Int64 = 0, cores: Int32 = 0, software: Int32 = 0
+        var name = [CChar](repeating: 0, count: 256)
+        let has = bz_matte_machine(&memory, &cores, &dedicated, &software, &name, Int32(name.count))
+        // Windows' own adapter on the processor is no card, whatever memory it says it has.
+        let card = has != 0 && software == 0 ? UInt64(max(dedicated, 0)) : 0
+        return (MatteMachine(memory: memory > 0 ? UInt64(memory) : ProcessInfo.processInfo.physicalMemory,
+                             cores: cores > 0 ? Int(cores) : ProcessInfo.processInfo.activeProcessorCount, dedicated: card),
+                has != 0 ? String(cString: name) : "")
+    }()
 }
 
-/// The learned subject matte, loaded the first time a background is taken away and kept while
-/// Bezzle runs. It comes with Bezzle: BiRefNet.onnx in Bezzle.resources beside Bezzle.exe (the
-/// installer puts it there, build.ps1 for a copy built here). BEZZLE_MATTE_MODEL takes another,
-/// BEZZLE_MATTE_DEVICE=cpu runs it on the processor (gpu: DirectML on any adapter, a software one too).
+/// The learned subject matte as this PC makes it. The model comes with Bezzle: its graphs and
+/// their weights in Bezzle.resources beside Bezzle.exe (the installer puts them there, build.ps1
+/// for a copy built here).
 ///
-/// Without it, nothing is cut out on Windows: the Mac's older way needs Apple's Vision.
-public final class SubjectModel {
+/// The model asks more than many PCs have. So each matte is made by the best way this PC can
+/// afford for the picture (`ways`, from `MatteWays.routes`), and no way is trusted blindly:
+/// - a way that fails is followed by the next lighter one, down to the light size on the
+///   processor, which every PC can afford. After that there is none: Windows has no way without
+///   the model, as the Mac has with Apple's Vision;
+/// - a way that took Bezzle down with it is remembered, and passed over from then on;
+/// - a way that took far too long here is passed over for a lighter one;
+/// - the model is let go a while after its last picture, and at once when memory runs short. On
+///   the processor it is let go after each matte: ONNX Runtime kept hold there of the gigabytes
+///   a matte took, and of more with each (CBezzleHost/matte.cpp), so only a model loaded ahead
+///   and not yet asked waits its while.
+///
+/// The last pictures' mattes are kept, so picking other subjects in a picture just cut out asks
+/// the model nothing.
+///
+/// For trying things: BEZZLE_MATTE_ROUTE takes one way alone (gpu2048, cpu2048, gpu1024,
+/// cpu1024), BEZZLE_MATTE_MACHINE another PC's ways ("16:8", "32:12:8": gigabytes, fast cores,
+/// the card's gigabytes), BEZZLE_MATTE_DEVICE=cpu the processor's ways only (gpu: the card's ways
+/// through DirectML on any adapter, a software one too, the light size at least), and
+/// BEZZLE_MATTE_MODEL other graphs: a folder of them, or one graph that every way then runs.
+public nonisolated final class SubjectModel: @unchecked Sendable {
     public static let shared = SubjectModel()
 
-    private var loading: Task<SubjectMatte?, Never>?
-    /// Why the model could not be loaded, if it could not.
-    public private(set) var trouble: String?
+    typealias Machine = MatteMachine
+
+    /// Bezzle's version, which the app says as it starts: a way that took Bezzle down is passed
+    /// over by that version, and tried again by the next.
+    nonisolated(unsafe) public static var appVersion = ""
+    /// Hears where the model runs, or why it could not (the app's trace, a tool's output).
+    nonisolated(unsafe) public static var log: ((String) -> Void)?
+
+    // MARK: What is kept
+
+    /// One picture at a time: the model is large, and running it twice at once only slows both.
+    private let busy = NSLock()
+    private let state = NSLock()
+    private let opening = NSLock()
+    private var looked = false
+    private var graphs = Graphs()
+    private var book: MatteLedger?
+    private var loaded: SubjectMatte?
+    /// Whether the loaded model has made a matte yet: its first takes the graphics card longer.
+    private var ran = false
+    private var uses = 0
+    private var kept = KeptMattes<CutoutMaker.Plane>()
+    private var watching = false
+    private var lastTrouble: String?
 
     private init() {}
 
-    /// Where the model is, if Bezzle has one.
-    nonisolated static var file: URL? {
-        let environment = ProcessInfo.processInfo.environment
-        if let path = environment["BEZZLE_MATTE_MODEL"], !path.isEmpty { return URL(fileURLWithPath: path) }
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("BiRefNet.onnx"), FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return url
+    /// Why the model could last not be loaded or run, if it could not.
+    public var trouble: String? { state.withLock { lastTrouble } }
+
+    // MARK: The model's files
+
+    /// The model's graphs, by the side of their square; or `only` one, which every way runs.
+    struct Graphs: Sendable {
+        var bySide: [Int: URL] = [:]
+        var only: URL?
+        /// The side of the `only` graph, once it has been opened and said.
+        var onlySide: Int?
+
+        /// Whether a matte can be made at all: with the light size's graph, which the lightest
+        /// way runs.
+        var isThere: Bool { only != nil || bySide[MatteRoute.light.side] != nil }
+        /// Whether the fine size's graph is there too.
+        var hasFine: Bool { only != nil || bySide[MatteRoute.fine.side] != nil }
+        func url(for route: MatteRoute) -> URL? { only ?? bySide[route.side] }
     }
 
-    /// Whether Bezzle can take backgrounds away here: the model, and ONNX Runtime beside Bezzle
-    /// (looked for, not loaded: that waits until a background is taken away).
+    /// The graphs that come with Bezzle, those there with the weights they read; or what
+    /// BEZZLE_MATTE_MODEL names, a folder with such graphs or one graph alone.
+    static func find() -> Graphs {
+        var folder = Bundle.main.resourceURL
+        if let path = ProcessInfo.processInfo.environment["BEZZLE_MATTE_MODEL"], !path.isEmpty {
+            let url = URL(fileURLWithPath: path)
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) else { return Graphs() }
+            guard isFolder.boolValue else { return Graphs(only: url) }
+            folder = url
+        }
+        guard let folder, FileManager.default.fileExists(atPath: folder.appendingPathComponent("BiRefNet.weights").path) else { return Graphs() }
+        var found = Graphs()
+        for route in [MatteRoute.light, .fine] {
+            let url = folder.appendingPathComponent(route.graph)
+            if FileManager.default.fileExists(atPath: url.path) { found.bySide[route.side] = url }
+        }
+        return found
+    }
+
+    /// Whether Bezzle can take backgrounds away here: the model's light size at least, and ONNX
+    /// Runtime beside Bezzle (looked for, not loaded: that waits until a background is taken away).
     public static var isAvailable: Bool {
         let runtime = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("onnxruntime.dll")
-        return file != nil && FileManager.default.fileExists(atPath: runtime.path)
+        return find().isThere && FileManager.default.fileExists(atPath: runtime.path)
     }
 
-    /// The matte, loaded first if need be (off the main thread); nil when there is none.
-    func matte() async -> SubjectMatte? {
-        let task = loading ?? Task.detached(priority: .userInitiated) { Self.load() }
-        loading = task
-        let matte = await task.value
-        if matte == nil { trouble = Self.lastTrouble }
-        return matte
-    }
-
-    nonisolated(unsafe) private static var lastTrouble: String?
-    /// Hears where the model runs, or why it could not be loaded (the app's trace, a tool's output).
-    nonisolated(unsafe) public static var log: ((String) -> Void)?
-
-    private nonisolated static func load() -> SubjectMatte? {
-        guard let url = file else { return nil }
-        let device: SubjectMatte.Device = switch ProcessInfo.processInfo.environment["BEZZLE_MATTE_DEVICE"]?.lowercased() {
-        case "cpu", "processor": .processor
-        case "gpu", "directml": .directML
-        default: .auto
+    private var files: Graphs {
+        state.withLock {
+            if !looked {
+                looked = true
+                graphs = Self.find()
+            }
+            return graphs
         }
-        do {
-            let matte = try SubjectMatte(contentsOf: url, on: device)
-            log?("subject matte: \(url.lastPathComponent) on \(matte.device)")
+    }
+
+    /// What is remembered of the ways, read the first time it is asked for: this PC is asked
+    /// what it is like then, away from the main thread.
+    private var ledger: MatteLedger {
+        if let book = state.withLock({ book }) { return book }
+        return opening.withLock {
+            if let book = state.withLock({ book }) { return book }
+            let machine = MatteMachine.this
+            let made = MatteLedger(machine: machine, version: Self.appVersion, forced: ProcessInfo.processInfo.environment["BEZZLE_MATTE_ROUTE"])
+            let gigabytes = { (bytes: UInt64) in String(format: "%.1f GB", Double(bytes) / MatteMachine.gigabyte) }
+            let card = machine.dedicated > 0 ? "\(MatteMachine.card) with \(gigabytes(machine.dedicated)) of its own" : "no graphics card with memory of its own"
+            Self.log?("subject matte: this PC has \(gigabytes(machine.memory)), \(machine.cores) fast cores, \(card)")
+            if let route = made.wentDownWith {
+                Self.log?("Bezzle went down while making a subject matte (\(route)): it makes them a lighter way from now on.")
+            }
+            state.withLock { book = made }
+            return made
+        }
+    }
+
+    /// What BEZZLE_MATTE_DEVICE asks for.
+    private enum Asked { case processor, anyAdapter }
+    private static let asked: Asked? = switch ProcessInfo.processInfo.environment["BEZZLE_MATTE_DEVICE"]?.lowercased() {
+    case "cpu", "processor": .processor
+    case "gpu", "directml": .anyAdapter
+    default: nil
+    }
+
+    // MARK: Asking
+
+    /// The ways to make a matte of a picture `longest` pixels long here and now, the first to
+    /// take first: this PC's, without those that took Bezzle down or took too long, without the
+    /// card while memory is short, and without the fine size where its graph is missing. None
+    /// where the model is not there.
+    func ways(longest: Int) -> [MatteRoute] {
+        let files = self.files
+        guard files.isThere else { return [] }
+        var ways = ledger.ways(longest: longest, short: Self.memoryIsShort(), fine: files.hasFine)
+        guard ProcessInfo.processInfo.environment["BEZZLE_MATTE_ROUTE"] == nil else { return ways }
+        switch Self.asked {
+        case .processor: ways.removeAll(where: \.onCard)
+        case .anyAdapter: if !ways.contains(where: \.onCard) { ways.insert(.lightOnCard, at: 0) }
+        case nil: break
+        }
+        return ways
+    }
+
+    /// How finely a picture `longest` pixels long is cut out here and now: plainly where the
+    /// model is not there (which on Windows is not at all).
+    func grade(longest: Int) -> MatteGrade { grade(by: ways(longest: longest)) }
+
+    /// How finely the first of `ways` cuts out.
+    private func grade(by ways: [MatteRoute]) -> MatteGrade {
+        guard let first = ways.first else { return .plain }
+        // One graph for every way cuts as finely as it is large, whatever the way.
+        if let side = files.onlySide { return side >= MatteRoute.fine.side ? .fine : .light }
+        return first.grade
+    }
+
+    /// How long loading the model and making the matte are expected to take for the picture
+    /// called `key`, `longest` pixels long, by the way it takes first: nothing where its matte is
+    /// kept. For saying from its start how far along a cut is.
+    func expecting(longest: Int, key: String) -> [CutoutPace.Step: Double] {
+        let routes = ways(longest: longest)
+        guard let route = routes.first else { return [:] }
+        let wanted = grade(by: routes)
+        let (has, ready) = state.withLock { (kept.matte(of: key, atLeast: wanted) != nil, loaded?.route == route ? ran : nil) }
+        guard !has else { return [.load: 0, .matte: 0] }
+        return ledger.expecting(route, loading: ready == nil, cold: ready != true)
+    }
+
+    /// The matting for one cut of the picture called `key`, which `told` hears the steps of; nil
+    /// where no model is to be had. `anyKept` takes a matte kept of the picture however fine: for
+    /// finding the picture's parts, which the light size shows as well.
+    func cut(of key: String, anyKept: Bool = false, told: @escaping @Sendable (CutoutMaker.Progress) -> Void = { _ in }) -> Cut? {
+        files.isThere ? Cut(model: self, key: key, anyKept: anyKept, told: told) : nil
+    }
+
+    /// One picture's matte, made the best way that works, which `grade` then says.
+    final class Cut: CutoutMaker.Matting, @unchecked Sendable {
+        private let model: SubjectModel
+        private let key: String
+        private let anyKept: Bool
+        private let told: @Sendable (CutoutMaker.Progress) -> Void
+        private let lock = NSLock()
+        private var made: MatteGrade?
+        private var ran: String?
+
+        fileprivate init(model: SubjectModel, key: String, anyKept: Bool, told: @escaping @Sendable (CutoutMaker.Progress) -> Void) {
+            self.model = model
+            self.key = key
+            self.anyKept = anyKept
+            self.told = told
+        }
+
+        /// How finely the matte was made, once it has been.
+        var grade: MatteGrade? { lock.withLock { made } }
+        /// Where it was made, in words, once it has been: the way and the device, or that it was kept.
+        var device: String? { lock.withLock { ran } }
+
+        func matte(of picture: CutoutMaker.Pixels) throws -> CutoutMaker.Plane {
+            let (matte, grade, device) = try model.matte(of: picture, key: key, anyKept: anyKept, told: told)
+            lock.withLock {
+                made = grade
+                ran = device
+            }
             return matte
-        } catch {
-            lastTrouble = "\(error)"
-            log?("Bezzle could not load the subject matte: \(error)")
-            return nil
         }
+    }
+
+    /// Makes ready what a picture `longest` pixels long is cut out by, ahead of being asked for
+    /// its matte: the model loaded, to be kept a while. Behind everything else with a picture
+    /// only selected; sooner when `pointing` at what takes the background away, as a click may
+    /// follow. Loading is most of a first wait on a graphics card.
+    func warm(longest: Int, pointing: Bool = true) {
+        DispatchQueue.global(qos: pointing ? .userInitiated : .utility).async { [self] in
+            // A picture only selected may never be cut out: not worth memory that is short.
+            if !pointing, Self.memoryIsShort() { return }
+            let files = self.files
+            guard let route = ways(longest: longest).first, let url = files.url(for: route), busy.try() else { return }
+            defer { busy.unlock() }
+            guard state.withLock({ loaded?.route }) != route else { return }
+            _ = try? load(url, route)
+            letGo(after: route)
+        }
+    }
+
+    // MARK: Making
+
+    private func matte(of picture: CutoutMaker.Pixels, key: String, anyKept: Bool,
+                       told: (CutoutMaker.Progress) -> Void) throws -> (CutoutMaker.Plane, MatteGrade, String) {
+        busy.lock()
+        defer { busy.unlock() }
+        let files = self.files
+        let longest = max(picture.w, picture.h), routes = ways(longest: longest)
+        // The matte kept of this picture, unless a finer one is to be had by now.
+        let wanted = anyKept ? MatteGrade.plain : grade(by: routes)
+        if let found = state.withLock({ kept.matte(of: key, atLeast: wanted) }) { return (found.matte, found.grade, "kept") }
+        var trouble: Swift.Error = CutoutMaker.Failure.unreadable
+        for route in routes {
+            guard let url = files.url(for: route) else { continue }
+            let ready = state.withLock { loaded?.route == route ? loaded : nil }
+            let cold = ready == nil || !state.withLock { ran }
+            told(CutoutMaker.Progress(step: ready == nil ? .load : .matte, expecting: ledger.expecting(route, loading: ready == nil, cold: cold)))
+            do {
+                let model = try ready ?? load(url, route)
+                if ready == nil { told(CutoutMaker.Progress(step: .matte)) }
+                let began = WindowsCore.now
+                ledger.mark(route, running: true)
+                defer { ledger.mark(route, running: false) }
+                let matte = try model.matte(of: picture)
+                ledger.remember(matte: WindowsCore.now - began, by: route, cold: cold)
+                let grade = model.grade, device = "\(route) on \(model.device)"
+                state.withLock {
+                    ran = true
+                    kept.keep(matte, of: key, grade: grade)
+                    // On the processor the model is let go with its matte made (see above).
+                    if !route.onCard {
+                        loaded = nil
+                        ran = false
+                    }
+                }
+                if route.onCard { letGo(after: route) }
+                return (matte, grade, device)
+            } catch {
+                Self.log?("Bezzle could not make a subject matte (\(route)): \(error)")
+                state.withLock {
+                    loaded = nil
+                    ran = false
+                    lastTrouble = "\(error)"
+                }
+                trouble = error
+            }
+        }
+        throw trouble
+    }
+
+    /// The model made ready for `route`, any other let go first: two at once would hold both
+    /// their memory.
+    private func load(_ url: URL, _ route: MatteRoute) throws -> SubjectMatte {
+        state.withLock {
+            loaded = nil
+            ran = false
+        }
+        let began = WindowsCore.now
+        ledger.mark(route, running: true)
+        defer { ledger.mark(route, running: false) }
+        let model: SubjectMatte
+        do {
+            model = try SubjectMatte(contentsOf: url, route: route, anyAdapter: route.onCard && Self.asked == .anyAdapter)
+        } catch {
+            state.withLock { lastTrouble = "\(error)" }
+            throw error
+        }
+        ledger.remember(loading: WindowsCore.now - began, for: route)
+        Self.log?("subject matte: \(url.lastPathComponent) at \(model.side) pixels on \(model.device) (\(route)), loaded in \(String(format: "%.2f", WindowsCore.now - began)) s")
+        state.withLock {
+            loaded = model
+            if graphs.only != nil { graphs.onlySide = model.side }
+        }
+        watch()
+        return model
+    }
+
+    /// Lets the model go once it has not been asked for a while: soon on the graphics card,
+    /// where it holds gigabytes for as long as it is kept.
+    private func letGo(after route: MatteRoute) {
+        let mine = state.withLock { () -> Int in
+            uses += 1
+            return uses
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + (route.onCard ? 45 : 300)) { [weak self] in
+            guard let self, self.state.withLock({ self.uses }) == mine else { return }
+            self.letGo(forgetting: false)
+        }
+    }
+
+    /// Lets the model go, unless it is at work; `forgetting` the mattes kept too.
+    private func letGo(forgetting: Bool) {
+        guard busy.try() else { return }
+        defer { busy.unlock() }
+        state.withLock {
+            loaded = nil
+            ran = false
+            if forgetting { kept.forget() }
+        }
+    }
+
+    /// While the model is kept, memory is asked after every few seconds, as Windows tells no
+    /// one when it runs short: the model is then let go at once, and the mattes kept with it.
+    private func watch() {
+        let begins = state.withLock { () -> Bool in
+            guard !watching else { return false }
+            watching = true
+            return true
+        }
+        if begins { look() }
+    }
+
+    private func look() {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self else { return }
+            if Self.memoryIsShort() { self.letGo(forgetting: true) }
+            let goesOn = self.state.withLock { () -> Bool in
+                if self.loaded == nil { self.watching = false }
+                return self.watching
+            }
+            if goesOn { self.look() }
+        }
+    }
+
+    /// Whether Windows says memory is short just now.
+    static func memoryIsShort() -> Bool {
+        var load: Int32 = 0, available: Int64 = 0
+        guard bz_matte_memory(&load, &available) != 0 else { return false }
+        return MatteWays.memoryIsShort(load: Int(load), available: UInt64(max(available, 0)))
+    }
+
+    /// Bezzle is quitting: a matte cut short by that is no matte that took Bezzle down.
+    public func quitting() {
+        state.withLock { book }?.quitting()
     }
 }

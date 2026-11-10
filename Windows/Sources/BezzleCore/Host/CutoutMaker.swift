@@ -10,6 +10,8 @@ import CBezzleHost
 // touch are one part to keep or drop where the Mac's Vision tells them apart, and whatever the
 // matte keeps beside the subject stays unless it is dropped. Without the matte there is no older
 // way to fall back on (the Mac's guided filter round Vision's subject): Remove Background needs it.
+// So the steps come in another order too: the Mac knows roughly where the subject is before the
+// matte is made (`look`), Windows once it is (`finish` begins with it found).
 //
 // Keep this in step with the Mac's file: a change to the steps there is made here.
 
@@ -48,13 +50,16 @@ nonisolated enum CutoutMaker {
         var matteReach = 0.02
     }
 
-    /// What has been done of a cut so far, told as it goes.
+    /// A step of a cut beginning, told as it does. See `CutoutPace`.
     struct Progress: @unchecked Sendable {
-        /// How far along, 0…1.
-        var done: Double
-        /// Once what stands out has been found, roughly where it is: 0…1 a pixel, 1 on the subject,
-        /// as large as the work is done at.
+        var step: CutoutPace.Step
+        /// How many seconds steps from here on are expected to take, where that is known better now.
+        var expecting: [CutoutPace.Step: Double] = [:]
+        /// Once what stands out has been found, where it is: 0…1 a pixel, 1 on the subject, as
+        /// large as the work is done at.
         var found: Plane?
+        /// When it was told, on the clock animations run by.
+        var at = WindowsCore.now
     }
 
     /// `picture` with only its subjects left: the parts at `picks`, 0…1 across and down it from
@@ -70,10 +75,12 @@ nonisolated enum CutoutMaker {
         let seen = work.overWhite()
         let long = max(ww, wh)
         let photo = seen.planes()
-        told(Progress(done: 0.08))
 
-        // How solid each pixel is, as the learned matte has it, and what stands out in it.
+        // How solid each pixel is, as the learned matte has it (which tells of loading the model
+        // and of making the matte itself, `SubjectModel`), and what stands out in it.
         let learned = try matting.matte(of: seen)
+        let finishing = Progress(step: .finish)
+        told(finishing)
         let matte = learned.w == ww && learned.h == wh ? learned : resample(learned, ww, wh)
         let smallest = ww * wh / 2000
         let scene = Scene(matte, smallest: smallest)
@@ -86,16 +93,15 @@ nonisolated enum CutoutMaker {
         } else {
             subject = scene.mask(of: Set(scene.sizes.indices))
         }
-        told(Progress(done: 0.3, found: subject))
+        // Told as of the step it belongs to, which began a moment ago.
+        told(Progress(step: .finish, found: subject, at: finishing.at))
 
         // Only what was picked: the matte fades out past the subject's outline, gone `matteReach`
         // past it, so whatever else stands out stays behind.
         let near = boxMean(subject, max(1, Int(Double(long) * tuning.matteReach)))
         let alpha = withoutSpecks(zip2(matte, near) { a, n in min(max(a, 0), 1) * min(1, n * 2) }, smallest: smallest)
-        told(Progress(done: 0.55))
         let colours = foreground(photo, alpha, long: long)
         let shift = (0..<3).map { k in zip2(colours[k], photo[k]) { $0 - $1 } }
-        told(Progress(done: 0.65))
 
         // At the picture's own size: the learned matte spread out, the colours shifted as they were
         // worked out, multiplied out as the picture is kept.
@@ -127,7 +133,6 @@ nonisolated enum CutoutMaker {
                 }
             }
         }
-        told(Progress(done: 0.85))
         return out
     }
 

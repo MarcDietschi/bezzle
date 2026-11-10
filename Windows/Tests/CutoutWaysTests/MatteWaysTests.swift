@@ -271,4 +271,24 @@ struct MatteWaysTests {
         #expect(CutoutNames.names(of: "photo.png", picks: nil, atLeast: .fine).map(\.grade) == [.fine])
         #expect(CutoutNames.names(of: "photo.png", picks: nil, atLeast: .plain).map(\.grade) == [.fine, .light, .plain])
     }
+
+    @Test func theCardIsLeftAloneWhileWindowsSaysMemoryIsShort() {
+        let gigabyte: UInt64 = 1_073_741_824
+        // Room enough: a load Windows calls ordinary, and gigabytes free.
+        #expect(!MatteWays.memoryIsShort(load: 55, available: 8 * gigabyte))
+        #expect(!MatteWays.memoryIsShort(load: 89, available: 2 * gigabyte))
+        // Nine tenths in use, or less than a gigabyte and a half free: short.
+        #expect(MatteWays.memoryIsShort(load: 90, available: 8 * gigabyte))
+        #expect(MatteWays.memoryIsShort(load: 97, available: 2 * gigabyte))
+        #expect(MatteWays.memoryIsShort(load: 40, available: gigabyte))
+        #expect(MatteWays.memoryIsShort(load: 40, available: MatteWays.shortAvailable - 1))
+        #expect(!MatteWays.memoryIsShort(load: 40, available: MatteWays.shortAvailable))
+        // Short of memory, a PC with a card takes the processor's ways alone.
+        let (defaults, name) = scratch()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let ledger = MatteLedger(machine: pc(64, cores: 16, card: 16), defaults: defaults, version: "9.9")
+        #expect(ledger.ways(longest: 3000, short: false).first == .fineOnCard)
+        #expect(!ledger.ways(longest: 3000, short: true).contains { $0.onCard })
+        #expect(ledger.ways(longest: 3000, short: true).last == .light)
+    }
 }

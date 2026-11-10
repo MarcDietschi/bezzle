@@ -11,12 +11,13 @@ import CBezzleHost
 
 extension WindowsCore {
     /// A clock for the moves, in seconds, finer than a frame: Windows' uptime only moves on with
-    /// the system's tick, every 15.6 milliseconds, which would make a move step unevenly.
-    public static var now: Double {
+    /// the system's tick, every 15.6 milliseconds, which would make a move step unevenly. Read on
+    /// any thread: work away from the main thread says when its steps began (`CutoutMaker.Progress`).
+    nonisolated public static var now: Double {
         let d = ContinuousClock.now - clockStart
         return Double(d.components.seconds) + Double(d.components.attoseconds) * 1e-18
     }
-    private static let clockStart = ContinuousClock.now
+    nonisolated private static let clockStart = ContinuousClock.now
 
     @MainActor public final class Player {
         /// A screen shown, and how it came to be.

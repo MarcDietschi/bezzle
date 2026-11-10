@@ -1447,7 +1447,6 @@ final class DesignCanvas {
         cutouts.zoom = CGFloat(zoom)
         cutouts.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
         cutouts.placing = pictures.editing
-        cutouts.table = Theme.table
     }
 
     /// Pictures being cut out and a cut-out picture's subjects, as the Mac's CutoutTool draws
@@ -1486,7 +1485,7 @@ final class DesignCanvas {
         tickCutouts()
     }
 
-    /// Frame by frame while a picture is being cut out, or melting into its cutout.
+    /// Frame by frame while a picture is being cut out, or what was cut off drops away.
     private func tickCutouts() {
         guard cutoutTicking == nil, cutouts.animating else { return }
         cutoutTicking = CompositionTarget.rendering.addHandler { [weak self] _, _ in

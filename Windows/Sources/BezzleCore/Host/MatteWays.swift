@@ -128,6 +128,16 @@ nonisolated enum MatteWays {
     /// whose graphics may keep a little of it).
     static let memoryForFine = 30.5
     static let coresForFine = 12
+    /// Memory is short while this share of it is in use, in percent, or fewer than this many
+    /// bytes are left to hand out: the card is left alone then, and a model kept is let go.
+    static let shortLoad = 90
+    static let shortAvailable: UInt64 = 1_610_612_736
+
+    /// Whether memory is short, by what Windows says of it: the share in use, in percent, and
+    /// the bytes it can still hand out.
+    static func memoryIsShort(load: Int, available: UInt64) -> Bool {
+        load >= shortLoad || available < shortAvailable
+    }
 
     /// The ways `machine` makes a matte of a picture `longest` pixels along its longer side, the
     /// one to take first, and after each the one to take should it fail. The last is always the
