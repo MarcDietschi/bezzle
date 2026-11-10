@@ -7,8 +7,8 @@ import CBezzleHost
 // ONNX Runtime (CBezzleHost/matte.cpp) on the graphics card through DirectML or on the processor.
 // Which of the four ways a picture takes is the Mac's question with a PC's answers, and what is
 // remembered of the ways is the Mac's (Host/MatteWays.swift, which asks Windows nothing and is
-// tested apart). The Mac's weights are kept to 8 bits; these are half precision, but for
-// sampling (as the Mac's).
+// tested apart). The weights are kept to 8 bits as the Mac's are, and every layer computes in full
+// precision: in half precision whole parts of a picture were lost on Arm processors.
 
 /// A learned matte of what stands out in a picture, hair by hair: BiRefNet (Peng Zheng et al.,
 /// MIT licence), its high-resolution model, opened for one way of running it (`Route`).
