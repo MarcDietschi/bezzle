@@ -55,6 +55,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
   When every test says "Crash: Bezzle", one test trapped: the newest
   `~/Library/Logs/DiagnosticReports/Bezzle-*.ips` has the real frame. A parameterized test is run by
   its suite (`-only-testing:Suite`); naming the test alone silently runs nothing.
+- **On a busy Mac** (the Windows VM building, a release running) add `-parallel-testing-enabled NO`,
+  which runs one test at a time: about 9 minutes instead of 2. Run together, the tests on the main
+  thread wait for one another, a test's time limit counts its waiting, and when one runs out the
+  whole run ends there: "Test exceeded execution time allowance", a hundred tests counted of 1,300
+  and the rest never run (`readsAPageIntoBoxesAndWords`, three times on 2026-11-10 beside a VM
+  build, and nothing wrong with it). When a time limit is the only failure, run them one at a time
+  before looking for a fault.
 - **Debug and Release:** Debug is not sandboxed and keeps designs in `~/Documents/Bezzle`; Release is
   sandboxed and keeps them in `~/Library/Containers/com.erik.Bezzle/Data/Documents/Bezzle`, which is
   where Erik's own designs are. When designs seem missing, look in both. Test anything that reaches

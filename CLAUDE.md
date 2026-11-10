@@ -25,12 +25,15 @@ Whenever the version is raised, or Erik asks for a release:
    parses it, and the release refuses a version without its entry. The notes appear in Sparkle's
    update window in each Mac's language, on the GitHub release and on the site's What's New page.
 2. **Run the tests**, then push. A release is made from the pushed commit, never the working tree.
-3. **Run `Scripts/release.sh`** (about 15 minutes; `--dry-run` first puts a notarized zip on the
-   Desktop and publishes nothing). This Mac has no notary keychain profile (the script's default,
-   `harness-notary`), so give it the App Store Connect API key:
-   `ASC_KEY_PATH=$HOME/Desktop/AuthKey_P85NK4PS34.p8 ASC_KEY_ID=P85NK4PS34
-   ASC_ISSUER=a4b709c7-f491-4dbe-aad0-b1643daf9bc2 Scripts/release.sh`. If the key is gone from the
-   Desktop, ask Erik for it rather than looking elsewhere. It builds from `git archive` of the commit plus the git-ignored
+   Run them before the Windows dry run starts, or one at a time while the VM builds (`README.md` ›
+   The Mac app, On a busy Mac): run together on a busy Mac, they run one another out of time.
+3. **Run `Scripts/release.sh`** (about 15 minutes, 35 beside the Windows build; `--dry-run` first
+   puts a notarized zip on the Desktop and publishes nothing). It notarizes with the keychain profile
+   `harness-notary`, which this Mac has (1.6.1, 2026-11-11), so it needs nothing more. Should the
+   profile be gone, it takes an App Store Connect API key instead:
+   `ASC_KEY_PATH=<AuthKey_P85NK4PS34.p8> ASC_KEY_ID=P85NK4PS34
+   ASC_ISSUER=a4b709c7-f491-4dbe-aad0-b1643daf9bc2 Scripts/release.sh`. The key is no longer on the
+   Desktop: ask Erik for it rather than looking for it. It builds from `git archive` of the commit plus the git-ignored
    subject matte, exports with the Developer ID, adds Sparkle, signs, notarizes and staples. It then
    publishes the zip and delta updates as the GitHub release `v<version>` of mfrports/bezzle-web. It
    then commits the new feed and a copy of `RELEASE_NOTES.md` there, which rebuilds and deploys the
