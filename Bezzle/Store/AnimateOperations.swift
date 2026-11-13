@@ -3,27 +3,6 @@ import Observation
 import QuartzCore
 import UniformTypeIdentifiers
 
-/// A key picked in the timeline.
-struct FilmKeyRef: Hashable {
-    /// The layer whose key it is; the artboard for the camera's.
-    var layer: UUID
-    /// One property's key, or every key the layer has at that moment.
-    var property: MotionProperty?
-    /// One shader input's key, in place of a property's.
-    var input: String?
-    /// The moment, in thousandths of a second.
-    var ms: Int
-
-    init(_ layer: UUID, _ property: MotionProperty? = nil, input: String? = nil, at time: Double) {
-        self.layer = layer
-        self.property = property
-        self.input = input
-        ms = Int((time * 1000).rounded())
-    }
-
-    var time: Double { Double(ms) / 1000 }
-}
-
 /// Animate's desk: the film being worked on and what of it is in hand. Here alone, as the zoom
 /// is; the film itself is in the design (`Node.motion`, `Node.film`).
 @Observable
@@ -64,16 +43,6 @@ final class FilmDesk {
 
     /// How long a film that goes round rests at its end before it begins again.
     static let breath = 0.7
-}
-
-/// How a property stands at the playhead, for the bead beside it.
-enum FilmKeyState {
-    /// No keys at all: as designed throughout.
-    case none
-    /// Keys, but none at this moment.
-    case between
-    /// A key at this moment.
-    case here
 }
 
 extension MotionProperty {
@@ -657,23 +626,7 @@ extension DocumentStore {
     /// the whole artboard nor closer than eight times. Where each is then: its place in the
     /// design, grown as it is posed, and moved as it and everything that holds it are.
     static func cameraAim(at ids: [UUID], on board: Node, in doc: BezzleDocument, time t: Double) -> (move: [Double], zoom: Double)? {
-        var whole = CGRect.null
-        for id in ids {
-            guard let way = board.way(to: id), let node = way.last, let frame = doc.absoluteFrame(of: id) else { continue }
-            let pose = node.pose(at: t)
-            var r = frame.offsetBy(dx: -board.frame.minX, dy: -board.frame.minY)
-            for holder in way {
-                let move = holder.pose(at: t).move
-                r = r.offsetBy(dx: move.x, dy: move.y)
-            }
-            r = r.insetBy(dx: r.width * (1 - pose.scale.x) / 2, dy: r.height * (1 - pose.scale.y) / 2)
-            whole = whole.union(r)
-        }
-        guard !whole.isNull else { return nil }
-        let size = board.frame.size
-        // A line has no height to fill the picture with, and is looked at by its length alone.
-        let zoom = min(max(min(size.width / (max(whole.width, 1) * 1.35), size.height / (max(whole.height, 1) * 1.35)), 1), 8)
-        return ([Double(whole.midX - size.width / 2), Double(whole.midY - size.height / 2)], Double(zoom))
+        board.cameraAim(at: ids, in: doc, time: t)
     }
 
     /// Turns the scene under the camera as its pad is dragged: from how the camera stood when
