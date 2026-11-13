@@ -101,11 +101,13 @@ is a template with a placeholder, not the password.
   program's output over SSH arrives only when it exits. Send a file with non-ASCII text as base64 and
   write it with `[IO.File]::WriteAllBytes` (the console's code page mangles it otherwise), then compare
   `Get-FileHash` with `md5` here. `scp` with `VM/win`'s options fetches results.
-- **Sources:** `VM/sync.sh` puts the working tree's build inputs into `C:\src\Bezzle`, making the files
-  the web core changes a line of first (`Web/prepare.sh`), since the VM keeps what was sent before. Packages are
-  built once there (`winrt.ps1`, `skia.ps1`, `avif.ps1`, `onnx.ps1`) and kept. A second working copy
-  (a parallel agent's, the release's `C:\src\bezzle-release`) is a folder of its own with a junction
-  to `C:\src\Bezzle\Windows\Packages`, which `VM/sync.sh 'C:\src\<folder>'` syncs into.
+- **Sources:** `VM/sync.sh` puts the working tree's build inputs into `C:\src\Bezzle`, the Vectorize
+  and shader engines (`Packages\Vectorizer`, `Packages\Shaders`) among them, making the files the web
+  core changes a line of first (`Web/prepare.sh`), since the VM keeps what was sent before. Packages
+  are built once there (`winrt.ps1`, `skia.ps1`, `avif.ps1`, `onnx.ps1`) and kept. A second working
+  copy (a parallel agent's, the release's `C:\src\bezzle-release`) is a folder of its own with a
+  junction to `C:\src\Bezzle\Windows\Packages`: `VM/sync.sh 'C:\src\<folder>'` syncs into one and
+  makes the junction.
 - **Building:** `.\build.ps1` lays out `.build\Bezzle`, which the launchers in `C:\bezzle\*.cmd` run;
   a bare `swift build` does not update it. With several builds at once the VM (8 cores, 12 GB) runs
   out of breath: build with `-j 2` (`swift build -j 2`, `build.ps1 -Jobs 2`).
@@ -137,7 +139,8 @@ is a template with a placeholder, not the password.
   profile. Done this way before 1.5 (2026-11-08): the installer registered Windows App Runtime 1.7
   for a new user without administrator rights.
 - **What the VM cannot show:** a graphics card (it has no Direct3D 12, so DirectML and its speed are
-  untested), a real x64 PC, Smart App Control, and Windows in German, French or Italian.
+  untested, and shader fills are drawn by WARP there), a real x64 PC, Smart App Control, and
+  Windows in German, French or Italian.
 
 ## The app
 
@@ -171,6 +174,19 @@ is the Mac's WebCapture with WebKit's calls asked of the DevTools protocol inste
 home's From a Website… button, the Bezzle menu's Import from a Website… (Ctrl+Alt+Shift+I), a
 link dropped on home and the AI tool `import_website` bring one in (`WebImportSheet.swift`).
 `BEZZLE_LIBRARY` gives a test copy a designs folder of its own.
+
+Shader fills, a website's WebGL kept live, draw as on the Mac: at any size, in tiles, at the
+film's moment (`Renderer.Options.time`). The engine is the Mac's (`Packages/Shaders`, a package
+the manifest depends on, which `sync.sh` and the release send into the VM): the same GLSL upgrade,
+glslang and SPIRV-Cross, the same working out of every draw, with HLSL and Direct3D 11 in place of
+MSL and Metal, on the graphics card or with WARP on the processor where there is none (as in the
+VM). The fill is drawn by the Mac's own `ShaderPainting` (`Host/ShaderPainting.swift` links to it),
+which `Host/ShaderPictures.swift` lets speak to the engine in the core's types; the browser viewer
+keeps its stand-in (`Web/WebShaderPainting.swift`), which Windows leaves out. Nothing is fetched for
+it: Direct3D and its compiler, d3dcompiler_47, come with Windows. The two platforms draw the same
+frames to within a level or two (`Packages/Shaders/README.md` › Agreement;
+`VM/shader-agreement.sh` compares them), and `swift test -j 2` in `Packages\Shaders` runs the Mac's
+engine tests here. The VM has no graphics card, so it has only ever drawn them with WARP.
 
 Remove Background is the Mac's (`Host/CutoutMaker.swift`, `CutoutHand.swift`, `Cutouts.swift`,
 `SubjectMatte.swift`, `MatteWays.swift`, copies of the Mac's CutoutMaker, CutoutTool, CutoutOperations,

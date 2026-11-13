@@ -9,6 +9,8 @@ import PackageDescription
 //   the browser: CBezzleHost does with Skia (skia.ps1 builds it into Packages/skia) what the page
 //   does with CanvasKit. The modules named after Apple's frameworks are the web core's empty ones.
 //   Vectorize traces pictures with the Mac's own engine, the package ../Packages/Vectorizer.
+//   Shader fills are drawn by the Mac's engine, Packages/Shaders, with Direct3D 11 (its README),
+//   through the Mac's ShaderPainting (Host/ShaderPainting.swift links to it).
 // - Bezzle: the app, with WinUI 3 bindings that winrt.ps1 fetches into Packages/.
 // - bezzle-render: draws a design's artboards to PNG files, to compare with the Mac.
 // - bezzle-share: works on shared designs headless, for the Mac's tests to check.
@@ -83,6 +85,7 @@ let webView2Linking: [LinkerSetting] = hasWebView2
 let package = Package(
     name: "BezzleWindows",
     dependencies: [
+        .package(path: "../Packages/Shaders"),
         .package(path: "Packages/swift-winui"),
         .package(path: "Packages/swift-windowsappsdk"),
         .package(path: "Packages/swift-windowsfoundation"),
@@ -108,12 +111,15 @@ let package = Package(
         .target(
             name: "BezzleCore",
             dependencies: frameworks.map { .target(name: $0) } + ["LZFSE", "CBezzleHost", "Compression", "Accelerate",
-                                                                  .product(name: "Vectorizer", package: "Vectorizer")],
+                                                                  .product(name: "Vectorizer", package: "Vectorizer"),
+                                                                  .product(name: "Shaders", package: "Shaders")],
             // The browser's host and Main.swift are replaced by Host/; DesignTokens.swift comes
             // from Web/prepare.sh, as for the web core. Live.swift seals with CryptoKit, which
             // Host/Sealing.swift stands in for with Windows' own cryptography. Which picture files
             // can be written is Host/PictureFormats.swift's to say (AVIF with avif.ps1's libraries).
-            exclude: ["Platform/WebHost.swift", "Platform/ImageIO.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift"],
+            // Shader fills are drawn as on the Mac, not left to their pictures as in the browser.
+            exclude: ["Platform/WebHost.swift", "Platform/ImageIO.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift",
+                      "Web/WebShaderPainting.swift"],
             // The Mac's web page reader and what runs before a page's scripts (Bezzle/Import), in
             // the core itself, for the app and the command-line tools alike.
             resources: [.embedInCode("Import/WebPageReader.js"), .embedInCode("Import/WebPageAwake.js")],

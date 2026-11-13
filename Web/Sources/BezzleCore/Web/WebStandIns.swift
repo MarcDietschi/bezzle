@@ -5,14 +5,6 @@ import AppKit
 // it can be: pictures from the page, photos drawn as taken, text on curves not drawn yet, and
 // the two things the model takes from the app's Store.
 
-/// Shader fills (`ShaderFill`), which the Mac draws with its Metal engine (Bezzle/Canvas/
-/// ShaderPainting.swift). Here and on Windows they do not draw yet: the fill's picture, as it came
-/// in, stands in for them.
-nonisolated enum ShaderPainting {
-    static func paint(_ shader: ShaderFill, picture: ImageFill?, in path: CGPath, size: CGSize, rule: CGPathFillRule,
-                      in ctx: CGContext, film: Double?, assets: Assets?, box: CGRect? = nil) -> Bool { false }
-}
-
 /// The design's pictures, which the page has read and decoded before the design is drawn.
 nonisolated final class Assets: @unchecked Sendable {
     let folder: URL?

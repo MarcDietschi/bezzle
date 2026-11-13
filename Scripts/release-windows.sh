@@ -82,7 +82,7 @@ TAG="windows-v$VERSION"
 # Compared by WinSparkle part by part, each a 32-bit number: the date, then the time.
 BUILD="$(date +%Y%m%d.%H%M)"
 echo "Bezzle $VERSION for Windows ($BUILD, $ARCHS) from $(git -C "$ROOT" log -1 --format='%h %s' "$COMMIT")"
-CHANGED="$(git -C "$ROOT" status --porcelain -- Windows Bezzle Web/Sources Web/prepare.sh RELEASE_NOTES.md Scripts/release Scripts/release-windows.sh)"
+CHANGED="$(git -C "$ROOT" status --porcelain -- Windows Bezzle Packages/Vectorizer Packages/Shaders Web/Sources Web/prepare.sh RELEASE_NOTES.md Scripts/release Scripts/release-windows.sh)"
 [ -z "$CHANGED" ] || printf 'Not in this release, since not committed:\n%s\n' "$CHANGED"
 for ARCH in $ARCHS; do [[ "$ARCH" == x64 || "$ARCH" == arm64 ]] || fail "No architecture $ARCH: x64 or arm64"; done
 [ -f "$ROOT/Web/site/openfonts/manifest.json" ] || fail "Web/site/openfonts is missing: make it with Web/tools/openfonts.py"
@@ -178,7 +178,7 @@ fi
 # Mac's pointers, words and icons, the web core's generated files) and the open fonts.
 SRC="$WORK/src"
 mkdir -p "$SRC"
-git -C "$ROOT" archive "$COMMIT" -- Windows Bezzle Web/Sources Web/prepare.sh RELEASE_NOTES.md Scripts/release Packages/Vectorizer | tar -x -C "$SRC"
+git -C "$ROOT" archive "$COMMIT" -- Windows Bezzle Web/Sources Web/prepare.sh RELEASE_NOTES.md Scripts/release Packages/Vectorizer Packages/Shaders | tar -x -C "$SRC"
 if [ -n "$PUBLISH" ]; then
   python3 "$SRC/Scripts/release/notes.py" check "$VERSION"
 else
@@ -195,8 +195,8 @@ if [ -z "$REUSE" ]; then
 
   echo "Copying it into the VM ($VM_DIR)…"
   # The sources anew (a file the commit no longer has must not stay), the build kept.
-  "$VM" "New-Item -ItemType Directory -Force '$VM_DIR' | Out-Null; foreach (\$d in 'Windows\\Sources','Windows\\Installer','Windows\\Credits','Windows\\Resources','Bezzle','Web','Packages\\Vectorizer') { if (Test-Path \"$VM_DIR\\\$d\") { Remove-Item -Recurse -Force \"$VM_DIR\\\$d\" } }"
-  COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch -C "$SRC" --exclude 'Web/out' -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts Packages/Vectorizer \
+  "$VM" "New-Item -ItemType Directory -Force '$VM_DIR' | Out-Null; foreach (\$d in 'Windows\\Sources','Windows\\Installer','Windows\\Credits','Windows\\Resources','Bezzle','Web','Packages\\Vectorizer','Packages\\Shaders') { if (Test-Path \"$VM_DIR\\\$d\") { Remove-Item -Recurse -Force \"$VM_DIR\\\$d\" } }"
+  COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch -C "$SRC" --exclude 'Web/out' -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts Packages/Vectorizer Packages/Shaders \
     | "$VM" "tar -x -f - -C '$VM_DIR'"
 
   echo "Building and making the installers in the VM (some minutes per architecture)…"
