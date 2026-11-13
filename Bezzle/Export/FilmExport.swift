@@ -27,11 +27,36 @@ nonisolated enum FilmExport {
         return CGSize(width: even(w), height: even(h))
     }
 
+    /// The longest film saved as a movie, in seconds: an hour. A design from elsewhere may say its
+    /// film runs for any time at all, and a movie of that would never be done, or never fit.
+    static let longest: Double = 3600
+
+    /// The most frames a second a movie is made with.
+    static let fastest = 240
+
+    /// Why a film is not saved as a movie: it runs longer than a movie may (`longest`).
+    struct TooLong: LocalizedError, Equatable {
+        var errorDescription: String? { String(localized: "This film is too long to save as a movie.") }
+        var recoverySuggestion: String? {
+            String(localized: "A movie runs for an hour at most. Give the film a shorter length, or take away the keys that come later.")
+        }
+    }
+
+    /// Throws `TooLong` for a film that runs longer than a movie may. It is refused whole and said
+    /// so: a movie cut short would pass for the film.
+    static func check(_ board: Node) throws {
+        let length = board.filmLength
+        guard length.isFinite, length <= longest else { throw TooLong() }
+    }
+
     /// The moments the movie's frames show, in seconds from the film's start: one for every
     /// `fps`th of a second the film runs. A film that goes round stops a frame short of its end,
     /// as its start follows; one that plays once ends on its last moment, where the movie rests.
+    /// Never more than the longest movie has, whatever the film says of its length: `write`
+    /// refuses a longer film (`check`), so these are not what a movie of it would be.
     static func moments(of board: Node, fps: Int) -> [Double] {
-        let fps = max(fps, 1), length = board.filmLength
+        let fps = min(max(fps, 1), fastest), told = board.filmLength
+        let length = told.isFinite ? min(max(told, 0), longest) : longest
         let count = max(1, Int((length * Double(fps)).rounded()))
         var all = (0..<count).map { Double($0) / Double(fps) }
         if board.film?.once == true, count > 1 { all[count - 1] = length }
@@ -56,18 +81,26 @@ nonisolated enum FilmExport {
 
     /// Writes the film of `board` (an artboard as it is seen; its frame's origin may be anywhere)
     /// to `url` as an .mp4: H.264, sRGB, square pixels, `fps` frames a second and as long as the
-    /// film runs. A file already there is replaced. `progress` is told how far it is, from 0 to
-    /// 1 when the file is whole. Throws when the movie cannot be written. When the task it runs
-    /// in is cancelled it stops, removes what it wrote and throws `CancellationError`.
+    /// film runs. It is written out of the way first (`workFile`) and put in its place when it is
+    /// whole, so a file already there is replaced only then, and stays as it was when the movie
+    /// is stopped or cannot be made. `progress` is told how far it is, from 0 to 1 when the file
+    /// is whole. Throws when the movie cannot be written, at once when nothing can be put at
+    /// `url` or the film runs longer than a movie may (`TooLong`), with nothing touched. When the
+    /// task it runs in is cancelled it stops, removes what it wrote and throws `CancellationError`.
     @MainActor
     static func write(_ board: Node, assets: Assets?, to url: URL, settings: Settings = Settings(),
                       progress: @escaping @MainActor (Double) -> Void) async throws {
-        let size = size(of: board, settings: settings), fps = max(settings.fps, 1)
+        try check(board)
+        let size = size(of: board, settings: settings), fps = min(max(settings.fps, 1), fastest)
         let moments = moments(of: board, fps: fps)
         var reel = Reel(board, size: size)
-        // The writer does not write over a file.
-        try? FileManager.default.removeItem(at: url)
-        let recorder = try Recorder(url: url, size: size, board: board, pieces: reel.pieces.count, fps: fps, assets: assets)
+        // Found out now, not once the whole film has been made into frames.
+        try tryPlace(url)
+        let work = workFile(for: url)
+        try FileManager.default.createDirectory(at: work.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // The writer does not write over a file, such as one left by a save that was cut short.
+        try? FileManager.default.removeItem(at: work)
+        let recorder = try Recorder(url: work, size: size, board: board, pieces: reel.pieces.count, fps: fps, assets: assets)
         do {
             try await recorder.start()
             for (k, t) in moments.enumerated() {
@@ -80,12 +113,47 @@ nonisolated enum FilmExport {
             }
             try Task.checkCancellation()
             try await recorder.finish(frames: moments.count)
+            try put(work, at: url)
             progress(1)
         } catch {
             await recorder.cancel()
-            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: work)
             throw Task.isCancelled ? CancellationError() : error
         }
+    }
+
+    /// Where a movie bound for `url` is written until it is whole: a file of its own in the
+    /// temporary folder, which Bezzle may always write to, whatever it was let into. The same
+    /// place for the same `url`, so what a save that was cut short left there is written over.
+    static func workFile(for url: URL) -> URL {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in url.standardizedFileURL.path.utf8 { hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
+        return FileManager.default.temporaryDirectory.appendingPathComponent("Bezzle Film", isDirectory: true)
+            .appendingPathComponent(String(hash, radix: 16) + ".mp4")
+    }
+
+    /// Throws when nothing can be put at `url`: its folder is not there, or may not be written to.
+    private static func tryPlace(_ url: URL) throws {
+        let files = FileManager.default
+        if files.fileExists(atPath: url.path) {
+            // What is there gives way when it, or its folder, may be written to.
+            guard files.isWritableFile(atPath: url.path) || files.isWritableFile(atPath: url.deletingLastPathComponent().path) else {
+                throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: url.path])
+            }
+        } else {
+            try Data().write(to: url, options: .withoutOverwriting)
+            try files.removeItem(at: url)
+        }
+    }
+
+    /// Puts a whole movie in its place. One already there gives way in the same step, so there
+    /// is never a moment with neither; only onto another disk is it taken away first, and the
+    /// new one copied there.
+    private static func put(_ work: URL, at url: URL) throws {
+        if rename(work.path, url.path) == 0 { return }
+        let files = FileManager.default
+        if files.fileExists(atPath: url.path) { try files.removeItem(at: url) }
+        try files.moveItem(at: work, to: url)
     }
 
     // MARK: - What a frame is made from
@@ -111,12 +179,15 @@ nonisolated enum FilmExport {
         let pieces: [FilmPiece]
         /// The frame's pixels to the artboard's point.
         private let density: CGFloat
+        /// The artboard every piece is drawn on, made once for the whole film.
+        private let ground: FilmPictures.Ground
         private var drawn: [FilmPictures.Subject?]
         private var scales: [CGFloat?]
 
         init(_ board: Node, size: CGSize) {
             self.board = board
             pieces = board.filmPieces()
+            ground = FilmPictures.Ground.of(board)
             density = max(size.width / max(board.frame.width, 1), size.height / max(board.frame.height, 1))
             drawn = Array(repeating: nil, count: pieces.count)
             scales = Array(repeating: nil, count: pieces.count)
@@ -127,7 +198,7 @@ nonisolated enum FilmExport {
         mutating func shot(at t: Double) -> Shot {
             var fresh: [Shot.Fresh] = []
             for (i, piece) in pieces.enumerated() where drawn[i] == nil || piece.changes {
-                let subject = FilmPictures.subject(of: piece, on: board, at: t)
+                let subject = FilmPictures.subject(of: piece, on: board, ground: ground, at: t)
                 guard subject != drawn[i] else { continue }
                 // Sharp at its largest in the whole film.
                 let scale = scales[i] ?? density * board.filmStretch(of: piece, around: FilmPictures.rect(of: subject))
@@ -176,18 +247,20 @@ nonisolated enum FilmExport {
         let ground = CIColor(red: backdrop.r * backdrop.a, green: backdrop.g * backdrop.a, blue: backdrop.b * backdrop.a)
         var out = CIImage(color: ground).cropped(to: frame)
         for i in shot.order {
-            guard let still = stills[i], let piece = placed(still, by: shot.placements[i], toPixels: toPixels) else { continue }
+            guard let still = stills[i], let piece = placed(still, by: shot.placements[i], toPixels: toPixels, board: board) else { continue }
             out = piece.composited(over: out)
         }
         return out.cropped(to: frame)
     }
 
     /// A piece's picture where the film has it, in the frame's pixels; nil when it does not show.
-    private static func placed(_ still: Still, by placement: FilmPlacement, toPixels: CGAffineTransform) -> CIImage? {
+    /// `board` is the frame's size in the artboard's points.
+    private static func placed(_ still: Still, by placement: FilmPlacement, toPixels: CGAffineTransform, board: CGSize) -> CIImage? {
         let r = still.rect, map = placement.map
         let corners = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
-        // Faded away, or reaching behind the eye.
-        guard placement.opacity >= 0.001, corners.allSatisfy({ map.depth(at: $0) > 1e-3 }) else { return nil }
+        // Faded away, or wholly behind the eye.
+        let behind = corners.filter { map.depth(at: $0) <= 1e-3 }.count
+        guard placement.opacity >= 0.001, behind < corners.count else { return nil }
         var image = still.image
         let whole = image.extent
         guard whole.width > 0, whole.height > 0 else { return nil }
@@ -202,26 +275,21 @@ nonisolated enum FilmExport {
             let flat = CGAffineTransform(a: map.a / map.i, b: map.d / map.i, c: map.b / map.i, d: map.e / map.i, tx: map.c / map.i, ty: map.f / map.i)
             // Shown smaller than it was drawn, every pixel of it still counts.
             image = image.transformed(by: toBoard.concatenating(flat).concatenating(toPixels), highQualityDownsample: true)
+        } else if behind > 0 {
+            // Reaching behind the eye, as an artboard's own sheet does under a camera that is
+            // close and tipped: what of it lies in front and shows in the frame. Its blur ends
+            // at its own edge.
+            guard let front = front(of: image.cropped(to: whole), toBoard: toBoard, map: map, toPixels: toPixels, board: board) else { return nil }
+            image = front
         } else {
-            func behind(_ q: CGPoint) -> Bool { map.depth(at: q.applying(toBoard)) <= 1e-3 }
-            func shown(_ q: CGPoint) -> CGPoint { map(q.applying(toBoard)).applying(toPixels) }
+            func isBehind(_ q: CGPoint) -> Bool { map.depth(at: q.applying(toBoard)) <= 1e-3 }
             // Where the blur has spread behind the eye, the piece ends at its own edge.
-            var e = image.extent
-            if e != whole, [CGPoint(x: e.minX, y: e.minY), CGPoint(x: e.maxX, y: e.minY), CGPoint(x: e.maxX, y: e.maxY), CGPoint(x: e.minX, y: e.maxY)].contains(where: behind) {
+            let e = image.extent
+            if e != whole, [CGPoint(x: e.minX, y: e.minY), CGPoint(x: e.maxX, y: e.minY), CGPoint(x: e.maxX, y: e.maxY), CGPoint(x: e.minX, y: e.maxY)].contains(where: isBehind) {
                 image = image.cropped(to: whole)
-                e = whole
             }
-            // In perspective: its four corners where they show, and the rest bent between them.
-            let topLeft = shown(CGPoint(x: e.minX, y: e.maxY)), topRight = shown(CGPoint(x: e.maxX, y: e.maxY))
-            let bottomRight = shown(CGPoint(x: e.maxX, y: e.minY)), bottomLeft = shown(CGPoint(x: e.minX, y: e.minY))
-            // Seen edge on, nothing of it shows.
-            let quad = [topLeft, topRight, bottomRight, bottomLeft]
-            let area = (0..<4).reduce(0.0) { $0 + Double(quad[$1].x * quad[($1 + 1) % 4].y - quad[($1 + 1) % 4].x * quad[$1].y) } / 2
-            guard area.isFinite, abs(area) >= 0.5 else { return nil }
-            image = image.applyingFilter("CIPerspectiveTransform", parameters: [
-                "inputTopLeft": CIVector(cgPoint: topLeft), "inputTopRight": CIVector(cgPoint: topRight),
-                "inputBottomRight": CIVector(cgPoint: bottomRight), "inputBottomLeft": CIVector(cgPoint: bottomLeft),
-            ])
+            guard let bent = bent(image, { map($0.applying(toBoard)).applying(toPixels) }) else { return nil }
+            image = bent
         }
         let extent = image.extent
         guard !extent.isNull, !extent.isEmpty else { return nil }
@@ -229,6 +297,75 @@ nonisolated enum FilmExport {
             image = image.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: placement.opacity)])
         }
         return image
+    }
+
+    /// A picture in perspective: its four corners where `shown` has them, in the frame's pixels,
+    /// and the rest bent between them. Nil when it is seen edge on, and nothing of it shows.
+    private static func bent(_ image: CIImage, _ shown: (CGPoint) -> CGPoint) -> CIImage? {
+        let e = image.extent
+        guard !e.isNull, !e.isInfinite, e.width > 0, e.height > 0 else { return nil }
+        let topLeft = shown(CGPoint(x: e.minX, y: e.maxY)), topRight = shown(CGPoint(x: e.maxX, y: e.maxY))
+        let bottomRight = shown(CGPoint(x: e.maxX, y: e.minY)), bottomLeft = shown(CGPoint(x: e.minX, y: e.minY))
+        let quad = [topLeft, topRight, bottomRight, bottomLeft]
+        let area = (0..<4).reduce(0.0) { $0 + Double(quad[$1].x * quad[($1 + 1) % 4].y - quad[($1 + 1) % 4].x * quad[$1].y) } / 2
+        guard area.isFinite, abs(area) >= 0.5 else { return nil }
+        return image.applyingFilter("CIPerspectiveTransform", parameters: [
+            "inputTopLeft": CIVector(cgPoint: topLeft), "inputTopRight": CIVector(cgPoint: topRight),
+            "inputBottomRight": CIVector(cgPoint: bottomRight), "inputBottomLeft": CIVector(cgPoint: bottomLeft),
+        ])
+    }
+
+    /// The part of a picture that lies in front of the eye and shows in the frame, placed there;
+    /// nil when none of it does. A picture can only be bent between four corners that are all in
+    /// front. So its outline is cut down to what shows, the picture is turned until all that is
+    /// as near the eye as each other lies in one row, and it is cut off along the nearest row
+    /// that still shows: what is left has its corners in front, and is bent into place.
+    private static func front(of image: CIImage, toBoard: CGAffineTransform, map: FilmMap, toPixels: CGAffineTransform, board: CGSize) -> CIImage? {
+        let e = image.extent
+        guard !e.isNull, !e.isInfinite, e.width > 0, e.height > 0 else { return nil }
+        var outline = [CGPoint(x: e.minX, y: e.minY), CGPoint(x: e.maxX, y: e.minY), CGPoint(x: e.maxX, y: e.maxY), CGPoint(x: e.minX, y: e.maxY)]
+            .map { $0.applying(toBoard) }
+        // In front of the eye, and within the frame's four sides, a little past them: each a line
+        // on the artboard, with what shows on the side where it is not below nothing.
+        let past = 4.0, w = Double(board.width) + past, h = Double(board.height) + past
+        let sides: [(a: Double, b: Double, c: Double)] = [
+            (map.g, map.h, map.i - 1e-3),
+            (map.a + past * map.g, map.b + past * map.h, map.c + past * map.i),
+            (w * map.g - map.a, w * map.h - map.b, w * map.i - map.c),
+            (map.d + past * map.g, map.e + past * map.h, map.f + past * map.i),
+            (h * map.g - map.d, h * map.h - map.e, h * map.i - map.f),
+        ]
+        for side in sides {
+            outline = cut(outline, along: side)
+            guard outline.count >= 3 else { return nil }
+        }
+        // Turned so that the rows run level with the eye, the nearest row lowest.
+        let steep = hypot(map.g, map.h)
+        guard steep > 1e-12 else { return nil }
+        let nx = map.g / steep, ny = map.h / steep
+        let turn = CGAffineTransform(a: ny, b: nx, c: -nx, d: ny, tx: 0, ty: 0)
+        let turned = outline.map { $0.applying(turn) }
+        var box = CGRect.null
+        for p in turned { box = box.union(CGRect(origin: p, size: .zero)) }
+        guard box.width > 1e-6, box.height > 1e-6 else { return nil }
+        let back = turn.inverted()
+        return bent(image.transformed(by: toBoard.concatenating(turn)).cropped(to: box)) { map($0.applying(back)).applying(toPixels) }
+    }
+
+    /// What of a polygon lies on the side of a line where `a x + b y + c` is not below nothing.
+    private static func cut(_ polygon: [CGPoint], along side: (a: Double, b: Double, c: Double)) -> [CGPoint] {
+        func over(_ p: CGPoint) -> Double { side.a * Double(p.x) + side.b * Double(p.y) + side.c }
+        var out: [CGPoint] = []
+        for (k, p) in polygon.enumerated() {
+            let q = polygon[(k + 1) % polygon.count]
+            let dp = over(p), dq = over(q)
+            if dp >= 0 { out.append(p) }
+            if (dp >= 0) != (dq >= 0) {
+                let t = dp / (dp - dq)
+                out.append(CGPoint(x: Double(p.x) + Double(q.x - p.x) * t, y: Double(p.y) + Double(q.y - p.y) * t))
+            }
+        }
+        return out
     }
 
     // MARK: - The file

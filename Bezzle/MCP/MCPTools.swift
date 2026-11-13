@@ -97,7 +97,9 @@ final class MCPTools {
         such an entrance ready made, one after another by apart seconds. Leave pace at auto unless \
         there is a reason: it settles what comes home and flows through keys that keep going. The \
         camera at rest (zoom 1, no tilt) shows the whole artboard, and a fly over is a few camera \
-        keys with tilt and zoom, ending at rest. Every \
+        keys with tilt and zoom, ending at rest. animate's playhead and play show the film to the \
+        person in Animate, posed at a moment or playing, and get_animation says whether it is \
+        shown and where its playhead is. Every \
         change is one step the person can undo with Command-Z, and designs save themselves: there \
         is no save.
         """

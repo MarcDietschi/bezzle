@@ -49,8 +49,11 @@ extension MCPTools {
                        rotation, fade is times its opacity, lift is points nearer the eye, tilt and swing are degrees tipped back and \
                        swung round, blur is points of blur added. Before its first key a property has that key's value and after its \
                        last that one's; a layer with no keys is as designed. A key marked given is the design itself, put there by \
-                       Bezzle to go with the first pose made by hand, and anyone's to change. Read this before animate, to go on \
-                       with an animation rather than write over it.
+                       Bezzle to go with the first pose made by hand, and anyone's to change. In a deck each layer says its post, \
+                       counted from 1, as every post's layers have keys of their own. animating says whether the person's \
+                       window shows the design in Animate; when it shows this artboard's film, playhead is the moment in seconds \
+                       it is posed at, and playing is true while it plays. Read this before animate, to go on with an animation \
+                       rather than write over it.
                        """,
                        properties: .object([design, ("artboard", artboard)]),
                        readOnly: true, run: { [unowned self] in try await self.getAnimation($0) }),
@@ -75,7 +78,12 @@ extension MCPTools {
                        the others 0) it shows the whole artboard straight on, and a fly over is a few camera keys with tilt and zoom, \
                        ending at rest. moves give layers a whole entrance or exit as keys, one layer after another apart seconds in \
                        the order they are read on the artboard, from the top down and across; the keys can be changed afterwards like \
-                       any. The answer is the film as it is now, for what changed; get_animation reads all of it.
+                       any. In a deck each post's layers have keys of their own and the film shows the post in front: a name is the \
+                       layer in the first post, and a layer of another post is given by its id (deck with post lists them). \
+                       playhead and play show the film to the person, after everything else in the call is done: they turn \
+                       the window to Animate with this artboard's film, posed at a moment or playing, change nothing in the design \
+                       and are no step of the undo history. The answer is the film as it is now, for what changed, with animating, \
+                       playhead and playing as get_animation says them; get_animation reads all of it.
                        """,
                        properties: .object([
                            design,
@@ -86,6 +94,8 @@ extension MCPTools {
                            ("length", ["description": "How many seconds the film runs, more than 0. null (or \"auto\") lets it run as long as its last key, to the next half second, and at least 2 seconds."]),
                            ("loop", boolean("true plays the film round and round, the usual; false plays it once.")),
                            ("backdrop", ["description": "What shows past the artboard's edges when the camera sees them: a colour, \"#RRGGBB\". null (or \"auto\") lets Bezzle choose it to go with the artboard."]),
+                           ("playhead", number("Shows the design in Animate with this artboard's film, the playhead at this many seconds from its start, so the person sees the artboard as it is posed there. Past the film's end it rests at the end.")),
+                           ("play", boolean("true shows the design in Animate and plays this artboard's film for the person, from its start, or from playhead when that is given too. false stops a film that plays.")),
                        ]), run: { [unowned self] in try await self.animate($0) }),
         ]
     }
@@ -97,6 +107,7 @@ extension MCPTools {
         let board = try Self.filmBoard(args, in: store)
         let doc = store.doc
         var pairs = Self.filmListing(board)
+        pairs += Self.deskListing(board.id, in: store)
         if !board.hasFilm { pairs.append(("note", .string("Nothing on \(board.name) moves yet. animate sets keys."))) }
         let others = doc.artboards.filter { $0.id != board.id && $0.hasFilm }
         pairs.append(("otherFilms", .array(others.map { ["id": .string($0.id.uuidString), "name": .string($0.name)] })))
@@ -129,20 +140,26 @@ extension MCPTools {
     static func filmListing(_ board: Node, only: [UUID]? = nil, camera: Bool = true) -> [(String, JSONValue?)] {
         var moving: [JSONValue] = []
         var still: [JSONValue] = []
-        func visit(_ holder: Node) {
+        // In a deck every post has its layers, and they their keys: each is said with its post.
+        let posts = board.posts
+        func visit(_ holder: Node, post held: Int?) {
             for child in holder.children {
+                let post = holder.id == board.id ? child.post.flatMap { posts.firstIndex(of: $0) }.map { $0 + 1 } : held
                 if only?.contains(child.id) != false {
-                    let who: [(String, JSONValue?)] = [("id", .string(child.id.uuidString)), ("name", .string(child.name))]
+                    let who: [(String, JSONValue?)] = [
+                        ("id", .string(child.id.uuidString)), ("name", .string(child.name)),
+                        ("post", post.map { .number(Double($0)) }),
+                    ]
                     if child.isAnimated {
                         moving.append(.compact(who + [("tracks", tracks(of: child, MotionProperty.layer))]))
                     } else if only != nil {
                         still.append(.compact(who))
                     }
                 }
-                visit(child)
+                visit(child, post: post)
             }
         }
-        visit(board)
+        visit(board, post: nil)
         let set = board.film
         return [
             ("artboard", ["id": .string(board.id.uuidString), "name": .string(board.name)]),
@@ -181,6 +198,30 @@ extension MCPTools {
     private static func written(_ value: [Double], of property: MotionProperty) -> JSONValue {
         let kept = property.clamped(value)
         return kept.count == 1 ? .number(kept[0]) : .array(kept.map { JSONValue.number($0) })
+    }
+
+    // MARK: Showing
+
+    /// How an artboard's film stands on the person's desk: whether the window shows the design in
+    /// Animate, and when it shows this artboard's film, where its playhead is and that it plays.
+    private static func deskListing(_ board: UUID, in store: DocumentStore) -> [(String, JSONValue?)] {
+        let here = store.animating && store.film.board == board
+        // While it plays, where the playhead shows; else where it rests.
+        let playhead = store.film.playing ? MotionTiming.time(store.film.live) : store.filmTime
+        return [
+            ("animating", .bool(store.animating)),
+            ("playhead", here ? .number(playhead) : nil),
+            ("playing", here && store.film.playing ? true : nil),
+        ]
+    }
+
+    /// Turns the window to Animate with an artboard's film on the desk. The desk follows what is
+    /// picked, so what is picked on another artboard is let go of for the artboard itself.
+    private static func showFilm(of board: UUID, in store: DocumentStore) {
+        guard !store.animating || store.film.board != board else { return }
+        let picked = store.selection.first.flatMap { $0 == board ? board : store.doc.artboard(of: $0)?.id }
+        if picked != board { store.selection = [board] }
+        if store.animating { store.focusFilm() } else { store.show(.animate) }
     }
 
     // MARK: Changing
@@ -257,8 +298,11 @@ extension MCPTools {
             if let raw { backdrop = try Self.color(raw, "backdrop") }
         }
         let setsFilm = setsLength || loop != nil || setsBackdrop
-        guard everything || !removeSpecs.isEmpty || !moveSpecs.isEmpty || !keySpecs.isEmpty || setsFilm else {
-            throw MCPError("Give keys, moves or remove, or the film's length, loop or backdrop. get_animation reads the film.")
+        let playhead = try Self.motionTime(args["playhead"], "playhead")
+        let play = try args.bool("play")
+        let edits = everything || !removeSpecs.isEmpty || !moveSpecs.isEmpty || !keySpecs.isEmpty || setsFilm
+        guard edits || playhead != nil || play != nil else {
+            throw MCPError("Give keys, moves or remove, the film's length, loop or backdrop, or playhead or play to show it. get_animation reads the film.")
         }
 
         /// The layers a key, a move or a removal names; nil when it names none.
@@ -270,6 +314,11 @@ extension MCPTools {
         var first: String?
         for spec in removeSpecs + moveSpecs + keySpecs where first == nil { first = try refs(spec)?.first }
         let board = try Self.filmBoard(args, in: store, first: first)
+        // Only an artboard that shows has a film to show.
+        let shows = playhead != nil || play == true
+        if shows, board.hidden {
+            throw MCPError("\(board.name) is hidden, and the film of a hidden artboard cannot be shown: leave playhead and play out, or show the artboard first with update_layers.")
+        }
 
         // A name that is on several artboards is the one on this artboard.
         var onBoard = doc
@@ -445,7 +494,7 @@ extension MCPTools {
             let set = keys.reduce(0) { $0 + max($1.ids.count, 1) }
             if set > 0 { done.append("\(Self.counted(set, "key")) set.") }
             if setsFilm { done.append("The film's settings changed.") }
-        } else {
+        } else if edits {
             warnings.append("Nothing changed: the film was like that already.")
         }
         // A key on its own moves nothing: said, as it is the likeliest slip with values that are changes.
@@ -462,14 +511,57 @@ extension MCPTools {
             warnings.append("The film ends at \(Self.plain(end)) s, and keys after that never show: give a longer length, or null to let it run as long as its last key.")
         }
 
-        var named: [UUID] = removals.flatMap { $0.ids ?? [] }
+        // Taken away whole, a layer's motion goes with that of what it holds: those are told of too.
+        var named: [UUID] = removals.flatMap { removal -> [UUID] in
+            guard let ids = removal.ids else { return [] }
+            guard removal.properties == nil, removal.time == nil else { return ids }
+            return ids.flatMap { id in [id] + Self.moving(in: doc.node(id)) }
+        }
         named += moves.flatMap(\.ids)
         named += keys.flatMap(\.ids)
         var touched: [UUID] = []
         for id in named where !touched.contains(id) { touched.append(id) }
+        // A deck's film shows the post in front, and a name is the layer in the first post: keys
+        // given to a post behind are said, as nothing of them shows until it comes to the front.
+        if after.isDeck, let front = store.front(of: after) {
+            let posts = after.posts
+            var behind: [Int] = []
+            for id in moves.flatMap(\.ids) + keys.flatMap(\.ids) {
+                guard let post = store.doc.post(of: id)?.post, post != front, let n = posts.firstIndex(of: post), !behind.contains(n + 1) else { continue }
+                behind.append(n + 1)
+            }
+            if !behind.isEmpty, let shown = posts.firstIndex(of: front) {
+                let which = behind.count == 1 ? "post \(behind[0])" : "posts " + behind.sorted().map(String.init).joined(separator: ", ")
+                warnings.append("These keys are on layers of \(which), and post \(shown + 1) is in front, the one the film shows: each post's layers have keys of their own. deck with show brings a post to the front, and with post lists its layers' ids.")
+            }
+        }
         let camera = everything || removals.contains { $0.ids == nil } || keys.contains { $0.ids.isEmpty }
+        // Shown to the person last, as the film is now.
+        if shows {
+            Self.showFilm(of: board.id, in: store)
+            guard store.animating, store.filmBoard?.id == board.id else { throw MCPError("\(board.name) could not be shown in Animate.") }
+            if let playhead {
+                store.seek(playhead)
+                if playhead > after.filmLength + 0.0005 {
+                    warnings.append("playhead \(Self.plain(playhead)) s is past the film's end: it rests at the end, \(Self.plain(after.filmLength)) s.")
+                }
+            }
+            if play == true {
+                // From the playhead when one was given, which at the film's end is its start again.
+                store.playFilm(fromStart: playhead == nil)
+                done.append(playhead == nil ? "Shown in Animate, playing from the start." : "Shown in Animate, playing from \(Self.plain(store.film.live)) s.")
+            } else {
+                done.append("Shown in Animate, the playhead at \(Self.plain(store.filmTime)) s.")
+            }
+        }
+        if play == false {
+            let played = store.film.playing
+            store.pauseFilm()
+            if playhead == nil { done.append(played ? "The film is stopped." : "No film was playing.") }
+        }
         var pairs: [(String, JSONValue?)] = [("done", done.isEmpty ? nil : .string(done.joined(separator: " ")))]
         pairs += Self.filmListing(after, only: everything ? nil : touched, camera: camera)
+        pairs += Self.deskListing(board.id, in: store)
         pairs.append(("warnings", .array(warnings.map { .string($0) })))
         return [.text(JSONValue.compact(pairs).text)]
     }
@@ -496,6 +588,11 @@ extension MCPTools {
     private static func plain(_ v: [Double]) -> String { v.count == 1 ? plain(v[0]) : "[" + v.map { plain($0) }.joined(separator: ", ") + "]" }
 
     private static func counted(_ count: Int, _ thing: String) -> String { count == 1 ? "1 \(thing)" : "\(count) \(thing)s" }
+
+    /// The layers a layer holds, however deep, that have keys of their own.
+    private static func moving(in holder: Node?) -> [UUID] {
+        (holder?.children ?? []).flatMap { ($0.isAnimated ? [$0.id] : []) + moving(in: $0) }
+    }
 
     /// How many keys an artboard holds: its camera's, and those of every layer on it.
     private static func keyCount(_ node: Node) -> Int {

@@ -184,8 +184,10 @@ extension DocumentStore {
     func seek(_ t: Double) {
         film.playing = false
         film.pass = nil
-        // Never past the end, even by the fraction that rounding to a thousandth can add.
-        let to = min(MotionTiming.time(max(t, 0)), filmBoard?.filmLength ?? 0)
+        // A moment that is no number at all is the start. Never past the end, even by the
+        // fraction that rounding to a thousandth can add.
+        let length = filmBoard?.filmLength ?? 0
+        let to = min(MotionTiming.time(min(max(t.isNaN ? 0 : t, 0), length)), length)
         if film.time != to { film.time = to }
         if film.live != to { film.live = to }
         film.head = to
@@ -231,12 +233,16 @@ extension DocumentStore {
     /// Moves the playing film on to now. False once it has stopped.
     func filmStep(_ now: CFTimeInterval) -> Bool {
         guard film.playing, let pass = film.pass, let board = filmBoard else {
+            // Its artboard is gone: stopped, and the playhead shows where it rests again.
             film.playing = false
             film.pass = nil
+            if film.live != film.time { film.live = film.time }
+            film.head = film.time
             return false
         }
         let length = board.filmLength
-        let t = pass.from + (now - pass.began)
+        // Never before where it began, whatever the clock says.
+        let t = pass.from + max(now - pass.began, 0)
         if let to = pass.to {
             // A look at something just made: there, a moment's rest, and back.
             if t >= to + 0.4 {
@@ -277,7 +283,9 @@ extension DocumentStore {
             for id in picked { add(board.descendant(id)?.keyTimes() ?? []) }
         } else {
             add(board.keyTimes(MotionProperty.camera))
+            // As the timeline has them: nothing of a hidden layer, nor of what it holds.
             func walk(_ n: Node) {
+                guard !n.hidden else { return }
                 add(n.keyTimes())
                 n.children.forEach(walk)
             }
@@ -286,8 +294,10 @@ extension DocumentStore {
         return times.sorted()
     }
 
-    /// Steps the playhead to the key before or after it.
+    /// Steps the playhead to the key before or after it. A film that plays stops first, and the
+    /// step is taken from where it stopped.
     func stepToKey(forward: Bool) {
+        pauseFilm()
         let now = filmTime
         let stops = filmStops
         let next = forward ? stops.first { $0 > now + 0.0042 } : stops.last { $0 < now - 0.0042 }
@@ -658,27 +668,48 @@ extension DocumentStore {
     func saveFilm(scale: CGFloat, fps: Int) {
         guard film.saving == nil, let board = filmBoard else { return }
         pauseFilm()
+        // A film too long for a movie is said before asking where, not after.
+        do { try FilmExport.check(board) } catch { NSAlert(error: error).runModal(); return }
         let panel = NSSavePanel()
         panel.title = String(localized: "Save the Film as a Movie")
         panel.nameFieldStringValue = board.name + ".mp4"
         panel.allowedContentTypes = [.mpeg4Movie]
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        writeFilm(to: url, scale: scale, fps: fps)
+    }
+
+    /// Saves the film at a place as a movie, while the desk tells how far it is. A film that
+    /// plays is stopped first. False, with nothing done, while another movie is being saved or
+    /// with no film on the desk. `after` is told how it ended once the desk is clear again: with
+    /// nothing when the movie is whole, with `CancellationError` when it was stopped, or with
+    /// what went wrong. Left out, the movie is shown in the Finder, and what went wrong is said.
+    @discardableResult
+    func writeFilm(to url: URL, scale: CGFloat, fps: Int, after: (@MainActor (Error?) -> Void)? = nil) -> Bool {
+        guard film.saving == nil, let board = filmBoard else { return false }
+        pauseFilm()
         film.exporting = 0
         let assets = assets
         film.saving = Task { [weak self] in
+            var failure: Error?
             do {
                 try await FilmExport.write(board, assets: assets, to: url, settings: FilmExport.Settings(scale: scale, fps: fps)) { done in
                     self?.film.exporting = done
                 }
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-            } catch is CancellationError {
-                // Stopped by hand: nothing to say.
             } catch {
-                NSAlert(error: error).runModal()
+                failure = error
             }
             self?.film.exporting = nil
             self?.film.saving = nil
+            if let after {
+                after(failure)
+            } else if let failure {
+                // Stopped by hand, there is nothing to say.
+                if !(failure is CancellationError) { NSAlert(error: failure).runModal() }
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
         }
+        return true
     }
 
     func stopSavingFilm() {

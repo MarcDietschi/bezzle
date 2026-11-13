@@ -62,6 +62,8 @@ final class FilmStageView: NSView {
     private var shownBoard: UUID?
     private var order: [Int] = []
     private var kept: [String: Kept] = [:]
+    /// The artboard the pictures are drawn on, the same one for as long as nothing of it changes.
+    private var ground: FilmPictures.Ground?
     private var signature: Signature?
     /// The moment the pieces whose insides move were last drawn for.
     private var drawnAt = -1.0
@@ -111,6 +113,13 @@ final class FilmStageView: NSView {
         }
     }
 
+    /// How sharp to draw for something shown this many times its size: the next of the steps
+    /// that double it every second one. What is a hair over a step, as a layer that is only turned
+    /// comes out of the arithmetic, keeps to that step, and is not drawn half as sharp again.
+    private static func sharpness(for times: CGFloat) -> CGFloat {
+        pow(2, (log2(times) * 2 - 0.02).rounded(.up) / 2)
+    }
+
     private static func still(_ body: () -> Void) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -134,14 +143,16 @@ final class FilmStageView: NSView {
         let rect = CGRect(x: (raw.minX * scale).rounded() / scale, y: (raw.minY * scale).rounded() / scale,
                           width: max(1, (raw.width * scale).rounded()) / scale, height: max(1, (raw.height * scale).rounded()) / scale)
         // Sharp for the zoom, in steps, so that zooming draws them again only now and then.
-        let step = pow(2, (log2(max(zoom * scale, 0.05)) * 2).rounded(.up) / 2)
+        let step = Self.sharpness(for: max(zoom * scale, 0.05))
         // While it plays, the moment is read where the canvas does not watch it, or the whole canvas
         // would be drawn again each frame.
         let t = store.film.playing ? store.film.head : store.filmTime
         let wanted = Signature(version: store.version, board: board.id, loose: Set(store.posedLayers), fronts: store.fronts, step: step)
-        if wanted != signature || (changing && t != drawnAt && !making) {
+        if wanted != signature {
             signature = wanted
             prepare(board, at: t, pixels: step)
+        } else if changing, t != drawnAt, !making {
+            prepare(board, at: t, pixels: step, again: true)
         }
         guard shownBoard == board.id, !shown.isEmpty else {
             Self.still { gate.isHidden = true }
@@ -150,12 +161,16 @@ final class FilmStageView: NSView {
         Self.still {
             gate.isHidden = false
             gate.frame = rect
-            gate.backgroundColor = board.filmBackdrop.cgColor
+            // As the movie has it: a backdrop that is not solid lies on black.
+            let backdrop = board.filmBackdrop
+            gate.backgroundColor = RGBA(r: backdrop.r * backdrop.a, g: backdrop.g * backdrop.a, b: backdrop.b * backdrop.a).cgColor
             scene.bounds = CGRect(origin: .zero, size: board.frame.size)
             scene.position = .zero
             scene.transform = CATransform3DMakeScale(rect.width / board.frame.width, rect.height / board.frame.height, 1)
             place(board, at: t, pixels: zoom * scale)
         }
+        // A film that plays while its stage was put away goes on now that it shows.
+        if store.film.playing { run() }
         return rect
     }
 
@@ -166,9 +181,12 @@ final class FilmStageView: NSView {
         shown = []
         order = []
         kept = [:]
+        ground = nil
         generation += 1
         making = false
         stop()
+        // A film whose artboard is gone has stopped, which the next frame would have told the desk.
+        if store.film.playing, store.filmBoard == nil { _ = store.filmStep(CACurrentMediaTime()) }
         Self.still {
             gate.isHidden = true
             scene.sublayers = nil
@@ -177,30 +195,41 @@ final class FilmStageView: NSView {
 
     /// Works out the film's pieces, and has the pictures drawn that are not kept from before.
     /// The pieces shown stay until every picture of the new ones has come, so nothing flickers.
-    private func prepare(_ board: Node, at t: Double, pixels: CGFloat) {
+    ///
+    /// `again` when only time has passed since they were last worked out, for the pieces whose
+    /// insides move: the others are left as they are, and nothing is measured anew, so a film
+    /// with such a piece among hundreds still plays at the screen's pace.
+    private func prepare(_ board: Node, at t: Double, pixels: CGFloat, again: Bool = false) {
         let pieces = board.filmPieces(loose: Set(store.posedLayers))
         changing = pieces.contains(where: \.changes)
         drawnAt = t
+        // One ground for all the pieces, and the one from before while the artboard is as it was.
+        let ground: FilmPictures.Ground
+        if again, let had = self.ground { ground = had } else { ground = FilmPictures.Ground.of(board, before: self.ground) }
+        self.ground = ground
         var set: [(piece: FilmPiece, subject: FilmPictures.Subject, scale: CGFloat)] = []
         var missing: [Job] = []
         // While a layer is being dragged, how large it will ever show is not asked again each step.
-        let measured = !store.inGesture
+        let measured = !store.inGesture && !again
         for piece in pieces {
-            let subject = FilmPictures.subject(of: piece, on: board, at: t)
+            let had = kept[piece.key]
+            if again, !piece.changes, let had {
+                set.append((piece, had.subject, had.scale))
+                continue
+            }
+            let subject = FilmPictures.subject(of: piece, on: board, ground: ground, at: t)
             let rect = FilmPictures.rect(of: subject)
             guard rect.width > 0, rect.height > 0 else { continue }
-            let had = kept[piece.key]
             var scale = pixels
             if measured || had == nil {
                 // Sharp at its largest in the whole film, within reason.
-                let stretch = min(board.filmStretch(of: piece, around: rect), 4)
-                scale = pixels * pow(2, (log2(stretch) * 2).rounded(.up) / 2)
+                scale = pixels * Self.sharpness(for: min(board.filmStretch(of: piece, around: rect), 4))
             } else if let had {
                 scale = had.scale
             }
             scale = min(scale, FilmPictures.most / max(rect.width, rect.height))
             set.append((piece, subject, scale))
-            if let had, had.subject == subject, had.scale >= scale * 0.99 { continue }
+            if let had, had.scale >= scale * 0.99, had.subject.isDrawn(as: subject) { continue }
             missing.append(Job(key: piece.key, subject: subject, scale: scale))
         }
         generation += 1
@@ -226,6 +255,9 @@ final class FilmStageView: NSView {
                         guard let picture = made.all[job.key] else { continue }
                         self.kept[job.key] = Kept(subject: job.subject, scale: job.scale, picture: picture, used: self.installs)
                     }
+                    #if DEBUG
+                    self.picturesMade += jobs.count
+                    #endif
                     self.making = false
                     guard mine == self.generation else {
                         // Asked again with what there is now.
@@ -244,7 +276,12 @@ final class FilmStageView: NSView {
     private func install(_ set: [Wanted], board: UUID) {
         installs += 1
         var layers: [String: CALayer] = [:]
-        for s in shown { layers[s.piece.key] = s.layer }
+        // A layer that is kept keeps its blur, to be taken off again when its piece is sharp.
+        var blurred: Set<String> = []
+        for s in shown {
+            layers[s.piece.key] = s.layer
+            if s.blurred { blurred.insert(s.piece.key) }
+        }
         var next: [Shown] = []
         Self.still {
             for item in set {
@@ -254,7 +291,8 @@ final class FilmStageView: NSView {
                 let layer = layers.removeValue(forKey: item.piece.key) ?? Self.pictureLayer()
                 if layer.contents as AnyObject? !== had.picture.image { layer.contents = had.picture.image }
                 layer.bounds = had.picture.rect
-                next.append(Shown(piece: item.piece, subject: item.subject, rect: had.picture.rect, layer: layer))
+                next.append(Shown(piece: item.piece, subject: item.subject, rect: had.picture.rect, layer: layer,
+                                  blurred: blurred.contains(item.piece.key)))
             }
             for (_, old) in layers { old.removeFromSuperlayer() }
             scene.sublayers = next.map(\.layer)
@@ -299,6 +337,11 @@ final class FilmStageView: NSView {
             m.m14 = map.g; m.m24 = map.h; m.m44 = map.i
             layer.transform = m
             layer.opacity = Float(p.opacity)
+            // Wholly behind the eye, nothing of it shows, in the movie neither.
+            let r = shown[i].rect
+            let behind = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+                .allSatisfy { p.map.depth(at: $0) <= 1e-3 }
+            if layer.isHidden != behind { layer.isHidden = behind }
             if p.blur > 0.05 {
                 if !shown[i].blurred {
                     shown[i].blurred = true
@@ -331,7 +374,13 @@ final class FilmStageView: NSView {
     }
 
     @objc private func step(_ l: CADisplayLink) {
-        guard store.filmStep(l.targetTimestamp), let board = store.filmBoard, shownBoard == board.id else {
+        advance(to: l.targetTimestamp)
+    }
+
+    /// One frame of the screen: moves the film on to `now`, and places its pictures there. The
+    /// film's run ends with the frame that finds it stopped.
+    func advance(to now: CFTimeInterval) {
+        guard store.filmStep(now), let board = store.filmBoard, shownBoard == board.id else {
             if !store.film.playing { stop() }
             return
         }
@@ -339,7 +388,7 @@ final class FilmStageView: NSView {
         Self.still { place(board, at: t, pixels: store.viewport.zoom * (window?.backingScaleFactor ?? 2)) }
         // Pieces whose insides move are drawn again as it goes, as fast as they can be.
         if changing, !making, t != drawnAt, let signature {
-            prepare(board, at: t, pixels: signature.step)
+            prepare(board, at: t, pixels: signature.step, again: signature.version == store.version)
         }
     }
 
@@ -348,6 +397,17 @@ final class FilmStageView: NSView {
         needsLayout = true
         if window == nil { stop() } else if store.film.playing { run() }
     }
+
+    #if DEBUG
+    // For the tests, which drive the stage without a window and wait for its pictures.
+
+    /// How many pictures have been drawn since the stage was made.
+    private(set) var picturesMade = 0
+    /// Whether pictures are being drawn right now, away from here.
+    var isDrawing: Bool { making }
+    /// Whether the film runs: each frame of the screen moves it on.
+    var isRunning: Bool { link != nil }
+    #endif
 
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
