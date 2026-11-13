@@ -6,7 +6,18 @@
   // No scroll bars from the first, so the page is laid out as wide as it is read, scripts and all.
   const bars = document.createElement('style');
   bars.textContent = 'html, * { scrollbar-width: none !important; } ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }';
-  (document.head || document.documentElement).appendChild(bars);
+  // WebView2 runs this before the page has a root to put it in, WebKit once it has one.
+  const root = document.head || document.documentElement;
+  if (root) {
+    root.appendChild(bars);
+  } else {
+    new MutationObserver((_, watch) => {
+      const now = document.head || document.documentElement;
+      if (!now) return;
+      now.appendChild(bars);
+      watch.disconnect();
+    }).observe(document, { childList: true, subtree: true });
+  }
 
   const Native = window.IntersectionObserver;
   if (!Native || Native.__bezzle) return;
@@ -40,7 +51,8 @@
   window.IntersectionObserver = SeesAll;
 
   // A WebGL canvas keeps what it drew, so it can be read back whenever Bezzle asks, rather
-  // than only in the moment it is drawn.
+  // than only in the moment it is drawn. On the Mac, WebPageGL.js does so too, and records what
+  // it draws; Windows reads pages with this alone.
   const getContext = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = function (type, attributes) {
     if (/^(webgl2?|experimental-webgl)$/.test(type)) attributes = Object.assign({}, attributes, { preserveDrawingBuffer: true });
