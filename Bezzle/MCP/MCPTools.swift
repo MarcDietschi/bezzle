@@ -89,7 +89,15 @@ final class MCPTools {
         is also a prototype: prototype links layers to screens, get_prototype hands over screens, \
         flows, component states and design tokens in one go to build it in code, inspect gives one \
         layer's sizes, distances, looks and code as a developer reads them, and the same tools \
-        write changes made in the code back. Every \
+        write changes made in the code back. An artboard is also a film, in Animate: \
+        get_animation reads its keys and animate sets them, for its layers and for a camera that \
+        looks at it. Keys hold changes from the design, never places of their own, so a layer \
+        comes on with one key away from the design at the start (fade 0, move a little below) and \
+        one back at the design a little later (fade 1, move 0, 0). Its moves give several layers \
+        such an entrance ready made, one after another by apart seconds. Leave pace at auto unless \
+        there is a reason: it settles what comes home and flows through keys that keep going. The \
+        camera at rest (zoom 1, no tilt) shows the whole artboard, and a fly over is a few camera \
+        keys with tilt and zoom, ending at rest. Every \
         change is one step the person can undo with Command-Z, and designs save themselves: there \
         is no save.
         """

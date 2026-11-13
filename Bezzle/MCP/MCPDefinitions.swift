@@ -385,6 +385,7 @@ extension MCPTools {
         ] + resourceDefinitions(design: design) + componentDefinitions(design: design) + libraryDefinitions(design: design)
           + curveDefinitions(design: design)
           + prototypeDefinitions(design: design)
+          + animateDefinitions(design: design)
     }
 
     /// What a layer can be given, when it is added or changed.
