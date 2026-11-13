@@ -500,6 +500,24 @@ extension AnimateCanvasTests {
         #expect(f.store.selection.isEmpty)
     }
 
+    @Test func afterAClickAScrollOrAKeyTheDesignsHoverDoesNotShowThrough() {
+        let f = FilmBench()
+        let at = f.middle("Card")
+        // A click that begins no drag ends as the design's would: the hover stays Animate's own.
+        f.click(at, flags: .shift)
+        #expect(f.store.hovered == nil)
+        f.click(f.chip)
+        #expect(f.store.hovered == nil)
+        f.click(f.chip)
+        let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 0, wheel2: 0, wheel3: 0)!
+        wheel.location = .zero
+        if let event = NSEvent(cgEvent: wheel) { f.canvas.scrollWheel(with: event) }
+        #expect(f.store.hovered == nil)
+        f.space(from: 10, to: 11)
+        #expect(f.store.hovered == nil)
+        #expect(!f.store.film.playing && !f.undo.canUndo)
+    }
+
     @Test func comingInAnewEachTimeNothingIsInHand() {
         let f = FilmBench(animated: false)
         // With a layer of the other artboard picked in the design, its film is the one on the desk.

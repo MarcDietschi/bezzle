@@ -1170,6 +1170,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func updateHover(_ v: CGPoint) {
+        // Seen as a prototype, inspected or animated, what the pointer rests on is told that way's
+        // own tool, as when the pointer moves: after a click, a scroll or a key let go, the
+        // design's hover does not show through.
+        if store.prototyping {
+            if store.hovered != nil { store.hovered = nil }
+            guard case .none = interaction else { return }
+            if store.animating { motionTool.hover(v) } else if store.inspecting { inspectTool.hover(v) } else { flowTool.hover(v) }
+            return
+        }
         guard case .none = interaction, store.tool == .select else {
             if store.hovered != nil { store.hovered = nil }
             return
@@ -1180,6 +1189,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     private func updateCursor(_ v: CGPoint, flags: NSEvent.ModifierFlags) {
         if spaceHeld { NSCursor.openHand.set(); return }
+        if store.prototyping {
+            let cursor = store.animating ? motionTool.cursor(at: v) : store.inspecting ? inspectTool.cursor(at: v) : flowTool.cursor(at: v) ?? .arrow
+            cursor.set()
+            return
+        }
         if let cursor = guideTool.cursor(at: v) ?? layoutTool.cursor(at: v) { cursor.set(); return }
         if let cursor = pathTool.cursor { cursor.set(); return }
         if let cursor = pictureTool.cursor(at: v) { cursor.set(); return }
