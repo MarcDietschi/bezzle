@@ -99,18 +99,28 @@ final class FilmStageView: NSView {
         super.layout()
         guard let layer else { return }
         if content.superlayer == nil { layer.addSublayer(content) }
-        // Laid out from the top, as the canvas is. Each layer above that flips its own turns
-        // everything in it over once more, so the content flips only when they come out even.
+        Self.still { content.frame = bounds }
+        layFromTheTop()
+    }
+
+    /// Lays the content out from the top, as the canvas is. Each layer above that flips its own
+    /// turns everything in it over once more, so the content flips only when they come out even.
+    ///
+    /// Asked every time the stage is brought to the design, not only when it is laid out: the
+    /// layers above are hung into one another, and told which way up they lie, when the window
+    /// first shows them, which is after the first layout. Found once at layout, a design opened
+    /// in a window that was never resized had its film upside down: every piece upright but at the
+    /// mirrored place, so it moved against the scroll and a layer picked jumped across the artboard.
+    private func layFromTheTop() {
+        guard let layer else { return }
         var flips = 0
         var above: CALayer? = layer
         while let l = above {
             if l.isGeometryFlipped { flips += 1 }
             above = l.superlayer
         }
-        Self.still {
-            content.isGeometryFlipped = flips % 2 == 0
-            content.frame = bounds
-        }
+        let turned = flips % 2 == 0
+        if content.isGeometryFlipped != turned { Self.still { content.isGeometryFlipped = turned } }
     }
 
     /// How sharp to draw for something shown this many times its size: the next of the steps
@@ -158,6 +168,7 @@ final class FilmStageView: NSView {
             Self.still { gate.isHidden = true }
             return nil
         }
+        layFromTheTop()
         Self.still {
             gate.isHidden = false
             gate.frame = rect
@@ -385,6 +396,7 @@ final class FilmStageView: NSView {
             return
         }
         let t = store.film.head
+        layFromTheTop()
         Self.still { place(board, at: t, pixels: store.viewport.zoom * (window?.backingScaleFactor ?? 2)) }
         // Pieces whose insides move are drawn again as it goes, as fast as they can be.
         if changing, !making, t != drawnAt, let signature {

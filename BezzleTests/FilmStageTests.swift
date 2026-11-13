@@ -724,6 +724,27 @@ struct FilmStageTests {
             parent.layoutSubtreeIfNeeded()
             #expect(stage.bounds.size == CGSize(width: 900, height: 700) && content.frame == stage.bounds)
             #expect(try flips(stage) % 2 == 1)
+            // The layers above are told which way up they lie when the window first shows them,
+            // which is after the stage was laid out, and nothing lays it out again. Brought to the
+            // design as each drawing of the canvas does, it lies from the top again; left as it
+            // was, the film is upside down, moves against the scroll, and a layer picked jumps.
+            let above = try #require(parent.layer)
+            for _ in 0..<2 {
+                above.isGeometryFlipped.toggle()
+                #expect(try flips(stage) % 2 == 0)
+                try await settle(stage)
+                #expect(try flips(stage) % 2 == 1, "from the top \(fromTheTop)")
+                try check(stage, bench.store)
+            }
+            // And while the film plays, when the canvas draws nothing: with its next frame.
+            above.isGeometryFlipped.toggle()
+            bench.store.playFilm(fromStart: true)
+            stage.advance(to: CACurrentMediaTime() + 0.1)
+            #expect(try flips(stage) % 2 == 1, "playing, from the top \(fromTheTop)")
+            bench.store.pauseFilm()
+            above.isGeometryFlipped.toggle()
+            try await settle(stage)
+            #expect(try flips(stage) % 2 == 1)
             window.contentView = nil
         }
     }
