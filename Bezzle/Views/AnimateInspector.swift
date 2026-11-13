@@ -283,8 +283,8 @@ private struct PropertyRow<Fields: View>: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.ink2)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Spacer(minLength: 4)
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: 0)
             fields
         }
         .padding(.leading, -5)
@@ -305,8 +305,8 @@ private struct PoseCard: View {
             PoseGlyph()
         } content: {
             PropertyRow(store: store, property: .move) {
-                field(.move, 0, label: "X", width: 68)
-                field(.move, 1, label: "Y", width: 68)
+                field(.move, 0, label: "X", width: 64)
+                field(.move, 1, label: "Y", width: 64)
             }
             PropertyRow(store: store, property: .scale) {
                 field(.scale, 0, unit: "%", range: 0.1...10_000, times: 100, decimals: 0)
@@ -414,8 +414,8 @@ private struct CameraCard: View {
                 field(.cameraZoom, 0, unit: "×", range: 0.1...16, scrub: 0.01, decimals: 2)
             }
             PropertyRow(store: store, property: .cameraMove) {
-                field(.cameraMove, 0, label: "X", width: 68)
-                field(.cameraMove, 1, label: "Y", width: 68)
+                field(.cameraMove, 0, label: "X", width: 64)
+                field(.cameraMove, 1, label: "Y", width: 64)
             }
             PropertyRow(store: store, property: .cameraRoll) {
                 field(.cameraRoll, 0, unit: "°", range: -3600...3600)
