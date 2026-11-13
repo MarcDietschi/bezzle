@@ -1,8 +1,10 @@
 # Shaders
 
-Keeps a website's WebGL canvas live: the page's GLSL turned into Metal, and a recorded WebGL
-frame drawn into a picture or a texture, at any size, in tiles, from any thread. It has no part of
-the app in it. glslang and SPIRV-Cross are vendored in `Sources/ShaderCompiler` (below).
+Keeps a website's WebGL canvas live: the page's GLSL turned into Metal on the Mac and into
+Direct3D 11 on Windows, and a recorded WebGL frame drawn into a picture or a texture, at any size,
+in tiles, from any thread. It has no part of the app in it. glslang and SPIRV-Cross are vendored
+in `Sources/ShaderCompiler` (below). Both platforms upgrade the GLSL, compile it and work out each
+draw with the same code, and draw the same frames to within a level or two of 255 (Agreement).
 
 ```swift
 let renderer = ShaderRenderer.shared!            // nil where Metal is not available
@@ -25,6 +27,12 @@ let draw = ShaderDraw(vertex: vertexSource, fragment: fragmentSource,
                       blend: .premultipliedOver, viewport: nil)
 let frame = ShaderFrame(size: CGSize(width: 1440, height: 900), clear: [0, 0, 0, 0], draws: [draw])
 ```
+
+On Windows the API is the same but for its pictures: `ShaderPicture`, which on the Mac is `CGImage`,
+is there a picture's premultiplied RGBA pixels, rows top first (as Core Graphics keeps a picture on
+the Mac), and `image(of:)` returns one; there is no `draw(into:)`. `ShaderRenderer.shared` draws on
+the graphics card, or with WARP, Windows' own Direct3D on the processor, where there is none
+(`adapter` says which); `ShaderRenderer(software: true)` takes WARP anyway.
 
 For a page that draws a fragment shader alone, `ShaderDraw.fullSurface(fragment:uniforms:textures:)`
 draws it over everything with `ShaderDraw.fullSurfaceVertex` (`attribute vec2 a_position`) and its
@@ -70,6 +78,13 @@ and `antialias` (four samples on the edges of triangles, lines and points), each
 
 ## How it works
 
+Shared by both platforms: `Upgrade.swift`, `Scanner.swift`, `Layout.swift` (what the compilers
+laid out), `Plan.swift` (each draw worked out: vertex buffers, fans and loops as indices, the
+viewport's cut, uniforms packed), `Cache.swift`, `Types.swift`, and in C++ `Bridge/GLSL.cpp`,
+`Common.cpp` and `Cross.cpp` (SPIRV-Cross's reflection). Each platform builds its own back end
+alone (`Package.swift`): `Metal/` with `Bridge/MSL.cpp`, or `Direct3D/` with `Bridge/HLSL.cpp` and
+the C++ target `ShaderDirect3D`.
+
 1. **Upgrade** (`Upgrade.swift`, `Scanner.swift`). glslang makes SPIR-V only from GLSL ES 3.10,
    so the page's GLSL ES 1.00 or 3.00 is rewritten token by token, leaving comments, macros and
    the preprocessor to glslang: the version line becomes 3.10 (`#line 1` keeps the page's line
@@ -80,7 +95,10 @@ and `antialias` (four samples on the edges of triangles, lines and points), each
    version but 3.10 keeps for itself (`texture`, `sample`, `round`, `uint`, `buffer`, ...) get a
    `bezzle_` before them and are named back in reflection; the lists were found by asking glslang
    which words each version takes (`LanguageTests.howTheListsWereFound`, with `bz_parses`), and
-   a test translates every word in them. lowp and mediump become highp, as Metal computes in 32
+   a test translates every word in them. So are 226 names WebGL allows that SPIRV-Cross leaves
+   as they are and the Metal or HLSL compiler refuses (C++'s keywords, `float2`, `private`,
+   `register`...: `keptByTheBackEnds`, found by building each with both and tested so, values
+   and all), on both platforms alike. lowp and mediump become highp, as Metal computes in 32
    bits anyway. The page's `main` is called from one of Bezzle's, which maps clip space and
    gl_FragCoord as above. A depth written goes to a plain variable, as no depth buffer is kept.
    Globals may start from uniforms and other globals, which is not GLSL ES but which browsers
@@ -92,14 +110,39 @@ and `antialias` (four samples on the edges of triangles, lines and points), each
 3. **SPIR-V to MSL** (`Bridge/MSL.cpp`): SPIRV-Cross, MSL 2.3 for macOS, clip space z fixed up
    for Metal; uniform blocks at `buffer(0)` on, textures and samplers at `texture(0)` and
    `sampler(0)` on, vertex buffers from `buffer(14)`. Each stage's layout (every member's offset,
-   array and matrix stride) goes back to Swift as JSON. The C API (`include/ShaderCompiler.h`)
-   is plain C; calls into glslang and SPIRV-Cross are serialised inside.
+   array and matrix stride, read before SPIRV-Cross renames anything, so a uniform keeps its
+   page's name) goes back to Swift as JSON (`Bridge/Cross.cpp`). The C API
+   (`include/ShaderCompiler.h`) is plain C; calls into glslang and SPIRV-Cross are serialised inside.
 4. **Metal** (`Program.swift`, `Renderer.swift`): the MSL is compiled with safe math, pipeline
    states are made per vertex layout, pixel format, sample count and blending. A draw's uniforms
    are packed into each stage's blocks by name. Programs, pipeline states, uploaded pictures
    (at most 48 and 512 MB) and sampler states are kept by what they are made of, made once
    however many threads ask for them at the same moment, so the tiles of one frame share them.
    `image(of:)` and `draw(into:)` may be called from any thread, many at once.
+
+On Windows, 3 and 4 are:
+
+3. **SPIR-V to HLSL** (`Bridge/HLSL.cpp`): SPIRV-Cross, shader model 5.0, the same clip space fix
+   and the layout in the same JSON; uniform blocks at `b0` on, textures and samplers at `t0` and
+   `s0` on, attributes at `TEXCOORD<location>` (a matrix's columns each its own). Then three
+   things Direct3D 11 needs that Metal does not: the pixel stage's inputs are declared as the
+   vertex stage's outputs are, in their order and with their interpolation, a placeholder where
+   it reads nothing, since Direct3D links the stages by register (WebGL by name); its derivatives
+   are fine ones (`ddx_fine`), as Metal's are, where WARP's `ddx` is coarse; and two geometry
+   shaders are written from the vertex stage's outputs: one draws each point as a square
+   `gl_PointSize` pixels across with `gl_PointCoord` (Direct3D 11 draws points one pixel big;
+   the upgrade gives the point size and coordinate as varyings for it), none whose centre is out
+   of clip space and none over 511 pixels, as Metal; the other draws lines with antialias as
+   rectangles one pixel wide, as Metal does (Direct3D's own are wider).
+4. **Direct3D 11** (`Direct3D/`, `Sources/ShaderDirect3D/Direct3D.cpp`): Windows' own HLSL
+   compiler (d3dcompiler_47, with IEEE strictness as Metal's safe math), input layouts per vertex
+   layout (a constant attribute read once per instance, of one instance), blend and sampler
+   states, textures uploaded as the Mac's (`Packing.straighten`, the same flip and cube faces) and
+   kept the same way, four samples with the standard pattern, the opaque and premultiplying passes
+   by blending, and the frame read back from a staging texture. The device's context is used under
+   a lock; everything else may be made on any thread. Direct3D has one blend constant, so
+   CONSTANT_ALPHA factors take its alpha as the colour, which is exact unless a draw also takes
+   CONSTANT_COLOR.
 
 ## What WebGL does that this does not (yet)
 
@@ -121,6 +164,25 @@ and `antialias` (four samples on the edges of triangles, lines and points), each
 - WebGL 1 rules ES 3.10 no longer has: user functions that overload a built-in with a new
   signature, and the few constants ES 3.00 renamed (`gl_MaxVaryingVectors`).
 
+## Agreement
+
+`AgreementTests` draws 51 frames that cover what the two back ends could part on: gl_FragCoord at
+two and four times and in uneven regions, depth, w and perspective, derivatives, faces, the
+viewport, points (sized, with gl_PointCoord, cut by a tile, antialiased), lines, fans, antialiased
+edges, pictures (nearest, linear, flipped, premultiplied, repeated, mirrored, mipmapped, cubes),
+every blend factor and equation and the constant, the canvas not premultiplied and opaque,
+indices, matrices, attributes, uniforms of every kind and WebGL 2 blocks, and the real-world
+shaders whole and in tiles. `Windows/VM/shader-agreement.sh` draws them with Metal here, then with
+Direct3D in the VM, and compares.
+
+On 2026-11-13 (WARP in the VM against an M5 Pro), of 255: 31 samples alike to the byte; 16 at most
+1 or 2 apart (linear filtering weighs texels its own way, blending rounds); the gradient mesh at
+most 4 on 0.006% of its channels (simplex noise in the vertex stage); one film grain pixel 21
+apart (a hash through `fract` that the last bit of a float turns); lines one pixel wide differ in
+the pixel a tie lights (0.1% of the channels) and antialiased lines in the samples a line passes
+exactly through (1.9%). Each sample's tolerance, and why where it is more than rounding, is in
+the test.
+
 ## Measured
 
 On an M5 Pro, 2026-11-13 (`swift test --filter MeasureTests` prints them):
@@ -132,6 +194,11 @@ On an M5 Pro, 2026-11-13 (`swift test --filter MeasureTests` prints them):
 | A typical program, after that | GLSL to MSL 1 to 3 ms, Metal's compiler 7 to 25 ms (a grain shader 8 ms, a gradient mesh with simplex noise 24 ms) |
 | A 1440 by 900 frame, into a CGImage | 0.4 to 0.8 ms for full-surface shaders, 1.7 ms for a 2,400 triangle mesh with noise in its vertex shader; 2880 by 1800, 2.2 ms |
 
+On Windows, in the test VM (WARP on the processor, 8 Arm cores shared with other builds,
+2026-11-13): GLSL to HLSL 2 to 5 ms, Direct3D's compiler 5 to 9 ms (the gradient mesh 50 to
+120 ms); a 1440 by 900 frame 2 to 9 ms for the grain, 9 to 20 ms for the Shadertoy, 7 to 10 ms
+for the mesh, which at 2880 by 1800 takes 27 to 39 ms. A graphics card draws them far faster.
+
 ## Working on it
 
 ```sh
@@ -139,9 +206,14 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 MTL_DEBUG_LAYER=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test   # with Metal's validation
 ```
 
+On Windows (in the VM, in a folder `Windows/VM/sync.sh` filled), `swift test -j 2` in
+`Packages\Shaders` runs the same tests with Direct3D, all but the one that draws into a Metal
+texture; `Windows/VM/shader-agreement.sh` compares the two.
+
 The tests check pixels: WebGL's conventions (`ConventionsTests`), GLSL as pages write it
-(`LanguageTests`), WebGL's state (`DrawingTests`, sixteen tiles drawn at once among them) and
-shaders as sites write them for hero backgrounds (`RealWorldTests`).
+(`LanguageTests`), WebGL's state (`DrawingTests`, sixteen tiles drawn at once among them),
+shaders as sites write them for hero backgrounds (`RealWorldTests`) and the two back ends
+against each other (`AgreementTests`).
 
 ## Vendored
 
@@ -152,19 +224,20 @@ shaders as sites write them for hero backgrounds (`RealWorldTests`).
 
 Taken from glslang: `glslang/Include`, `glslang/Public` (`ShaderLang.h`, `ResourceLimits.h`),
 `glslang/MachineIndependent` with its preprocessor (without the grammar `glslang.y` and
-`pch.h`), `glslang/GenericCodeGen`, `glslang/OSDependent/osinclude.h` and `Unix/ossource.cpp`,
+`pch.h`), `glslang/GenericCodeGen`, `glslang/OSDependent/osinclude.h`, `Unix/ossource.cpp` and `Windows/ossource.cpp`,
 `glslang/ResourceLimits/ResourceLimits.cpp`, and `SPIRV` without its C interface and without
 `SpvTools.cpp` (SPIRV-Tools, the optimizer, is left out: `ENABLE_OPT=0`). Not taken: HLSL, the C
 interfaces, the command line, tests and test shaders. `glslang/glslang/build_info.h` is made
 from `build_info.h.tmpl` with the version, by hand. From SPIRV-Cross: the parser, the common
-compiler, its GLSL and MSL back ends and their headers (`spirv_cfg`, `spirv_common`,
+compiler, its GLSL, MSL and HLSL back ends and their headers (`spirv_cfg`, `spirv_common`,
 `spirv_cross`, `spirv_cross_containers`, `spirv_cross_error_handling`, `spirv_cross_parsed_ir`,
-`spirv_glsl`, `spirv_msl`, `spirv_parser`, `spirv.hpp`, `GLSL.std.450.h`,
-`NonSemanticShaderDebugInfo100.h`); not its C API, HLSL, C++ and reflection back ends, tests or
-shaders. Nothing in them is changed. They are built with `NDEBUG` (an assertion in glslang
+`spirv_glsl`, `spirv_msl`, `spirv_hlsl`, `spirv_parser`, `spirv.hpp`, `GLSL.std.450.h`,
+`NonSemanticShaderDebugInfo100.h`); not its C API, C++ and reflection back ends, tests or
+shaders. The Mac builds the MSL back end and glslang's Unix file alone, Windows the HLSL one and
+its Windows file. Bezzle for Windows shows the licences in About Bezzle (`Windows/Credits`). Nothing in them is changed. They are built with `NDEBUG` (an assertion in glslang
 otherwise stops the process on some inputs) and without warnings shown.
 
-`Bridge/` and `include/ShaderCompiler.h` are Bezzle's own.
+`Bridge/`, `include/ShaderCompiler.h` and `Sources/ShaderDirect3D` are Bezzle's own.
 
 To update: clone a newer release of each with `git clone --depth 1 --branch <tag>` into a
 scratch folder outside the repository, copy the same files over these (only copying, running none
