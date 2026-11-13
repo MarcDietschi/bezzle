@@ -115,12 +115,12 @@ struct AnimateStressTests {
         return out
     }
 
-    /// A dozen runs every time; `TEST_RUNNER_BEZZLE_STRESS=500 xcodebuild test …` makes it that
+    /// A dozen runs every time; `TEST_RUNNER_ANIMATE_RUNS=500 xcodebuild test …` makes it that
     /// many more, to go looking for what is rare.
     nonisolated static var seeds: [Int] {
-        // One run alone, to follow it: `TEST_RUNNER_BEZZLE_STRESS_ONLY=<seed>`.
-        if let only = ProcessInfo.processInfo.environment["BEZZLE_STRESS_ONLY"].flatMap(Int.init) { return [only] }
-        let more = ProcessInfo.processInfo.environment["BEZZLE_STRESS"].flatMap(Int.init) ?? 0
+        // One run alone, to follow it: `TEST_RUNNER_ANIMATE_RUN=<seed>`.
+        if let only = ProcessInfo.processInfo.environment["ANIMATE_RUN"].flatMap(Int.init) { return [only] }
+        let more = ProcessInfo.processInfo.environment["ANIMATE_RUNS"].flatMap(Int.init) ?? 0
         return [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233] + (0..<max(more, 0)).map { 1000 + $0 }
     }
 
@@ -347,8 +347,8 @@ struct AnimateStressTests {
         }
 
         // Slow, for following one run: everything undone and redone after every step.
-        // `BEZZLE_STRESS_DEEP=<every>,<from>`: from that step on, every so many steps.
-        let deeply = (ProcessInfo.processInfo.environment["BEZZLE_STRESS_DEEP"] ?? "").split(separator: ",").compactMap { Int($0) }
+        // `ANIMATE_DEEP=<every>,<from>`: from that step on, every so many steps.
+        let deeply = (ProcessInfo.processInfo.environment["ANIMATE_DEEP"] ?? "").split(separator: ",").compactMap { Int($0) }
         func deep(_ n: Int) -> Bool {
             guard let every = deeply.first, every > 0 else { return false }
             let from = deeply.count > 1 ? deeply[1] : 0
