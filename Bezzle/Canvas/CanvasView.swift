@@ -295,7 +295,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { window?.makeFirstResponder(self) }
+        if window != nil {
+            window?.makeFirstResponder(self)
+        } else {
+            // Taken out of its window with something still easing, as when its tab is closed:
+            // the link is ended here, since no frame will come to end it.
+            easing?.invalidate()
+            easing = nil
+        }
         holdWindow()
     }
 
@@ -380,7 +387,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var deviceScale: CGFloat { window?.backingScaleFactor ?? 2 }
 
     private func keepEasing() {
-        guard easing == nil else { return }
+        // Only in a window: the link keeps the canvas until its own next frame ends it, and a
+        // canvas in no window has no next frame, so it would be kept, with its whole design, for good.
+        guard easing == nil, window != nil else { return }
         let link = displayLink(target: self, selector: #selector(easeStep))
         link.add(to: .main, forMode: .common)
         easing = link

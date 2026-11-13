@@ -311,7 +311,10 @@ struct FilmPlaybackTests {
         animate()
         let a = bench.a.id
         store.seek(1)
+        // Its artboard hidden, the desk turns to the other; with that hidden too there is no film.
         bench.step { store.setHidden(true, [a]) }
+        #expect(store.film.board == bench.b.id && store.filmTime == 0)
+        bench.step { store.setHidden(true, [bench.b.id]) }
         #expect(store.filmBoard == nil && store.filmTime == 0)
         store.playFilm()
         #expect(!store.film.playing)
@@ -369,7 +372,7 @@ struct FilmPlaybackTests {
         #expect(atRest && store.film.time == 2)
     }
 
-    @Test(.disabled("Outside this area: the playhead is not brought back when the film gets shorter by losing its last key, by Undo, or by the AI server; only DocumentStore.setFilm seeks again. FilmTimeline.swift:457 and :497 draw film.live as it is, past the end flag, while the canvas poses the film's last moment."))
+    @Test
     func aFilmThatLosesItsLastKeyBringsThePlayheadBackWithinIt() {
         animate()
         let card = id("Card")
@@ -380,29 +383,39 @@ struct FilmPlaybackTests {
         #expect(store.film.live <= 2 && store.film.time <= 2)
     }
 
-    @Test func theArtboardGoingAwayWhileItPlaysStopsTheFilm() {
+    @Test func theArtboardGoingAwayWhileItPlaysStopsTheFilmAndTurnsTheDeskToAnother() {
         animate()
-        let a = bench.a.id
+        let a = bench.a.id, b = bench.b.id
         store.seek(0.3)
         store.playFilm()
         #expect(step(0.6) && near(store.film.head, 0.9))
         // Taken out of the design behind the scenes, as someone sharing the design might.
         bench.step { store.edit("Delete") { doc in doc.nodes.removeAll { $0.id == a } } }
-        #expect(store.filmBoard == nil)
+        // The film stops, and the desk turns to the artboard that is left, at its start.
+        #expect(store.film.board == b && store.filmBoard?.id == b)
         #expect(!step(0.7))
-        // Stopped, and the playhead shows where it rests.
-        #expect(atRest && store.film.time == 0.3)
-        #expect(store.filmTime == 0)
-        // Back again, it is posed where the playhead rested.
+        #expect(atRest && store.filmTime == 0)
+        // Back again, it is there to turn to, and the desk stays where it is until it is picked.
         bench.undo.undo()
-        #expect(store.filmBoard?.id == a && atRest && store.filmTime == 0.3)
+        #expect(store.film.board == b && atRest)
+        store.selection = [a]
+        #expect(store.filmBoard?.id == a && atRest && store.filmTime == 0)
 
-        // Hidden, likewise.
+        // Hidden while it plays, likewise.
+        store.seek(0.3)
         store.playFilm()
         step(0.2)
         bench.step { store.setHidden(true, [a]) }
+        #expect(store.film.board == b)
         #expect(!step(0.3))
-        #expect(atRest && store.film.time == 0.3)
+        #expect(atRest && store.filmTime == 0)
+        // With no artboard left to show there is no film, and nothing runs.
+        store.playFilm()
+        #expect(step(0.2))
+        bench.step { store.setHidden(true, [b]) }
+        #expect(store.filmBoard == nil)
+        #expect(!step(0.3))
+        #expect(atRest)
     }
 
     // MARK: Head, live and time

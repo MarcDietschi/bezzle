@@ -721,6 +721,9 @@ final class MotionTool {
             store.seek(store.filmBoard?.filmLength ?? 0)
         case 123, 124, 125, 126:
             guard flags.subtracting([.shift, .option]).isEmpty else { return false }
+            // A film that plays stops first, as under a press: what is posed or stepped from is
+            // the moment it shows, not the one it was started at.
+            store.pauseFilm()
             let dx: Double = event.keyCode == 123 ? -1 : event.keyCode == 124 ? 1 : 0
             let dy: Double = event.keyCode == 126 ? -1 : event.keyCode == 125 ? 1 : 0
             if flags.contains(.option), dx != 0 {
@@ -747,7 +750,9 @@ final class MotionTool {
             switch chars {
             case ",": stepFrames(shift ? -10 : -1)
             case ".": stepFrames(shift ? 10 : 1)
-            case "k": store.holdHere()
+            case "k":
+                store.pauseFilm()
+                store.holdHere()
             default:
                 // The drawing tools' letters do nothing here; anything else goes on as it would.
                 return Tool.forKey(chars) != nil
@@ -760,6 +765,7 @@ final class MotionTool {
     /// moment is kept to the thousandth, so a sixtieth added to it each time would drift, and
     /// sixty steps come out longer than a second.
     private func stepFrames(_ count: Int) {
+        store.pauseFilm()
         let frames = store.filmTime * 60
         let from = count > 0 ? (frames + 0.05).rounded(.down) : (frames - 0.05).rounded(.up)
         store.seek((from + Double(count)) / 60)

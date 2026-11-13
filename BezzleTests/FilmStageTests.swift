@@ -811,7 +811,7 @@ struct FilmStageTests {
 
     @Test func withItsArtboardGoneOrTheModeLeftNothingRuns() async throws {
         let (bench, stage) = staged(cast())
-        let store = bench.store, a = bench.a.id
+        let store = bench.store, a = bench.a.id, b = bench.b.id
         try await settle(stage)
         let holder = HolderFromTheTop(frame: bench.canvas.frame)
         holder.addSubview(stage)
@@ -819,26 +819,43 @@ struct FilmStageTests {
         store.seek(0.4)
         store.playFilm()
         #expect(stage.isRunning)
-        // The artboard taken out of the design: when the canvas draws next, the stage is put
-        // away, the run ends, and the desk is told the film has stopped.
-        edit(bench) { doc in doc.nodes.removeAll { $0.id == a } }
+        // Every artboard taken out of the design, so that there is none for the desk to turn to:
+        // the film has stopped, and when the canvas draws next, the stage is put away and the
+        // run ends.
+        edit(bench) { doc in doc.nodes.removeAll { $0.isArtboard } }
+        #expect(store.filmBoard == nil && !store.film.playing && store.film.pass == nil)
         #expect(stage.sync(scale: 2) == nil)
-        #expect(!stage.isRunning && !store.film.playing && store.film.pass == nil)
-        #expect(store.film.live == store.film.time && store.film.head == store.film.time && store.film.time == 0.4)
+        #expect(!stage.isRunning)
+        #expect(store.film.live == store.film.time && store.film.head == store.film.time)
         #expect(try layers(stage).gate.isHidden && layers(stage).pictures.isEmpty)
-        // Back, it shows again, at rest.
+        // Back, the first of them shows again, at rest at its start.
         bench.undo.undo()
+        #expect(store.film.board == a)
         #expect(try await settle(stage) == CGRect(x: 100, y: 100, width: 400, height: 300))
-        #expect(!stage.isRunning && store.filmTime == 0.4)
+        #expect(!stage.isRunning && store.filmTime == 0)
         try check(stage, store)
 
         // When a frame comes first instead, it ends the run itself.
         store.playFilm()
         #expect(stage.isRunning)
-        edit(bench) { doc in doc.nodes.removeAll { $0.id == a } }
+        edit(bench) { doc in doc.nodes.removeAll { $0.isArtboard } }
         stage.advance(to: CACurrentMediaTime() + 0.1)
         #expect(!stage.isRunning && !store.film.playing && store.film.live == store.film.time)
         bench.undo.undo()
+
+        // Its own artboard alone taken away: the film stops, and the stage shows the other's.
+        try await settle(stage)
+        store.playFilm()
+        #expect(stage.isRunning)
+        edit(bench) { doc in doc.nodes.removeAll { $0.id == a } }
+        #expect(store.film.board == b && !store.film.playing)
+        #expect(try await settle(stage) == CGRect(x: 600, y: 100, width: 400, height: 300))
+        // The run ends with its next frame, which finds the film stopped.
+        stage.advance(to: CACurrentMediaTime() + 0.1)
+        #expect(!stage.isRunning && !store.film.playing)
+        bench.undo.undo()
+        store.selection = [a]
+        #expect(store.film.board == a)
 
         // The mode left while it plays.
         try await settle(stage)
@@ -912,7 +929,7 @@ struct FilmStageTests {
         #expect(store == nil)
     }
 
-    @Test(.disabled("CanvasView.keepEasing (Bezzle/Canvas/CanvasView.swift:382) gives the canvas a display link that only its own next frame ends (:392). A canvas with no window has no next frame, so the link keeps it, and with it the whole design, for good. Nothing ends the link when the canvas leaves its window (:296)."))
+    @Test
     func aCanvasThatHeardOfTheModeChangingIsLetGoOfWithItsDesign() async throws {
         weak var store: DocumentStore?
         weak var canvas: CanvasView?

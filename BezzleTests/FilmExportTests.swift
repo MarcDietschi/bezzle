@@ -941,9 +941,9 @@ struct FilmExportTests {
         let fresh = Bench(extra: [box("Still", CGRect(x: 20, y: 20, width: 60, height: 60), blue)])
         #expect(fresh.store.film.board == nil)
         #expect(!save(fresh, to: url, told))
-        // The film's artboard hidden.
-        let bench = desk(1), store = bench.store, a = bench.a.id
-        bench.step { store.setHidden(true, [a]) }
+        // Every artboard hidden, so that the desk has none to turn to.
+        let bench = desk(1), store = bench.store
+        bench.step { store.setHidden(true, [bench.a.id, bench.b.id]) }
         #expect(store.filmBoard == nil)
         #expect(!save(bench, to: url, told))
         try await Task.sleep(for: .milliseconds(50))
@@ -952,9 +952,9 @@ struct FilmExportTests {
     }
 
     /// How long a film takes to write: three seconds at 60 frames a second of an 800 by 600
-    /// artboard at two pixels to the point. Run with `TEST_RUNNER_BEZZLE_FILM_TIMING=1` before
+    /// artboard at two pixels to the point. Run with `TEST_RUNNER_ANIMATE_FILM_TIMING=1` before
     /// `xcodebuild`; the answer is written to `$TMPDIR/bezzle-film-timing.txt`.
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["BEZZLE_FILM_TIMING"] != nil))
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["ANIMATE_FILM_TIMING"] != nil))
     func timesAThreeSecondFilm() async throws {
         var b = board(CGSize(width: 800, height: 600))
         b.film = Film(length: 3)

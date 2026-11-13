@@ -484,6 +484,57 @@ extension AnimateCanvasTests {
         #expect(f.store.doc.allNodes.filter { $0[track: .move]?.keys == moves }.count == 2)
     }
 
+    // MARK: While the film plays
+
+    @Test func theKeysThatStepOrPoseStopAPlayingFilmAtTheMomentItShows() {
+        let f = FilmBench()
+        let card = f.id("Card")
+        f.edit { doc in doc.update(card) { $0.setKey(.move, [0, 0], at: 0); $0.setKey(.move, [60, 0], at: 2) } }
+        f.fresh()
+        /// The film played from its start, and so many seconds on.
+        func played(_ seconds: Double) {
+            f.store.seek(0)
+            f.store.playFilm()
+            _ = f.store.filmStep((f.store.film.pass?.began ?? 0) + seconds)
+            #expect(f.store.film.playing && f.store.filmTime == 0)
+        }
+        // A frame on, a frame back, ten on: from the moment shown, not the one it was started at.
+        played(0.5)
+        f.key(47, ".")
+        #expect(!f.store.film.playing && f.store.filmTime == MotionTiming.time(31.0 / 60))
+        played(0.5)
+        f.key(43, ",")
+        #expect(!f.store.film.playing && f.store.filmTime == MotionTiming.time(29.0 / 60))
+        played(0.5)
+        f.arrow(124, flags: .shift)
+        #expect(!f.store.film.playing && f.store.filmTime == MotionTiming.time(40.0 / 60))
+        // To the next key, likewise.
+        played(0.5)
+        f.arrow(124, flags: .option)
+        #expect(!f.store.film.playing && f.store.filmTime == 2)
+        played(0.5)
+        f.arrow(123, flags: .option)
+        #expect(!f.store.film.playing && f.store.filmTime == 0)
+        #expect(f.keys("Card", .move).map(\.t) == [0, 2] && !f.undo.canUndo)
+        // An arrow with a layer picked poses it where it is seen, at the moment that is seen.
+        f.store.selection = [card]
+        played(1)
+        let shown = f.node("Card").value(of: .move, at: 1)
+        f.arrow(124)
+        #expect(!f.store.film.playing && f.store.filmTime == 1)
+        #expect(f.keys("Card", .move).map(\.t) == [0, 1, 2])
+        #expect(abs(f.value("Card", .move)[0] - (shown[0] + 1)) < 0.01 && abs(f.value("Card", .move)[1] - shown[1]) < 0.01)
+        f.undo.undo()
+        #expect(f.keys("Card", .move).map(\.t) == [0, 2] && !f.undo.canUndo)
+        // K holds it as it shows there.
+        played(1.5)
+        f.key(40, "k")
+        #expect(!f.store.film.playing && f.store.filmTime == 1.5)
+        #expect(f.keys("Card", .move).map(\.t) == [0, 1.5, 2])
+        f.undo.undo()
+        #expect(f.keys("Card", .move).map(\.t) == [0, 2] && !f.undo.canUndo)
+    }
+
     // MARK: With something in hand
 
     @Test func withADragInHandOnlyEscapeDoesAnything() {
