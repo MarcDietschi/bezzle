@@ -137,7 +137,7 @@ extension DocumentStore {
 
     /// A change made after the click that asked for it is over: a step of the undo history of
     /// its own, which would otherwise wait open for the next click's.
-    private func editApart(_ action: LocalizedStringResource, _ change: (inout BezzleDocument) -> Void) {
+    func editApart(_ action: LocalizedStringResource, _ change: (inout BezzleDocument) -> Void) {
         guard let undo = undoManager, !inGesture else {
             edit(action, change)
             return

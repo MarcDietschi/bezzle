@@ -367,6 +367,11 @@ extension MCPTools {
                description: "Compares a prototype built from the design with the design, and writes what changed in the code (words, colours, layout, flows) back into the design, so the design stays the source.",
                arguments: [("design", "The design, by name; the one in front otherwise.", false),
                            ("code", "Where the prototype's code is, or what changed in it.", false)]),
+        Prompt(name: "animate", title: "Animate an artboard",
+               description: "Makes an artboard come alive in Animate: entrances, a camera that flies, depth, focus and living shader backgrounds, timed as motion designers time them, checked frame by frame and shown playing.",
+               arguments: [("design", "The design, by name; the one in front otherwise.", false),
+                           ("artboard", "The artboard, by name; the one in sight otherwise.", false),
+                           ("brief", "What the film is for or should feel like: a launch teaser, a calm product tour, a playful loop…", false)]),
     ]
 
     var promptList: [JSONValue] {
@@ -418,8 +423,62 @@ extension MCPTools {
             return ["description": .string("Write the code back into \(store.name)"),
                     "messages": [["role": "user", "content": ["type": "text", "text": .string(text)]],
                                  ["role": "user", "content": ["type": "text", "text": .string(listing.text)]]]]
+        case "animate":
+            let store = try await store(args)
+            var board: [String: Any] = ["design": store.name]
+            if let artboard = try args.string("artboard") { board["artboard"] = artboard }
+            let brief = try args.string("brief")
+            let film = try await getAnimation(Arguments(board))
+            var named = board
+            named["layer"] = board["artboard"] ?? store.focusedArtboard?.id.uuidString
+            named.removeValue(forKey: "artboard")
+            let picture = try await render(Arguments(named))
+            var layers: [Content] = []
+            if let ref = named["layer"] as? String { layers = try await getLayers(Arguments(["design": store.name, "layers": [ref], "children": true])) }
+            var messages: [JSONValue] = [["role": "user", "content": ["type": "text", "text": .string(Self.animateBrief(store.name, brief))]]]
+            for c in layers + film + picture {
+                switch c {
+                case .text(let t): messages.append(["role": "user", "content": ["type": "text", "text": .string(t)]])
+                case .png(let d): messages.append(["role": "user", "content": ["type": "image", "data": .string(d.base64EncodedString()), "mimeType": "image/png"]])
+                }
+            }
+            return ["description": .string("Animate \(store.name)"), "messages": .array(messages)]
         default:
             throw MCPError("There is no prompt called \(name).")
         }
+    }
+
+    /// What an assistant is told to animate well with: what Bezzle's films can do, and how
+    /// motion is timed so it feels made rather than moved.
+    static func animateBrief(_ design: String, _ brief: String?) -> String {
+        """
+        Animate the artboard of my Bezzle design "\(design)" that follows\(brief.map { ": \($0)" } ?? ""). Its layers, its film as it \
+        is now, and a picture of it come after this. Go on from what is there rather than writing over it.
+
+        What a Bezzle film can do, all through animate:
+        - Entrances and exits in one go: moves (rise, fade, drop, slide, pop, zoom, flip, focus), with apart for one layer after \
+        another. Keys are changes from the design, so a layer coming on takes a key away from the design and a key back at it.
+        - Depth: lift brings a layer nearer the eye, tilt and swing turn it in space. With the camera tilted or swung, lifted \
+        layers part from the page like real layers of a scene.
+        - The camera: cameraMove, cameraZoom, cameraRoll, cameraTilt, cameraSwing; a key with to looks at layers, framed whole. \
+        A fly over is a few camera keys with tilt and zoom, ending at rest (move [0, 0], zoom 1, the rest 0).
+        - Focus: blur on a layer, or a focus move, pulls attention; blur what lies behind while what matters is sharp.
+        - Paces: leave auto unless there is a reason; spring with bounce 0.2 to 0.4 for something playful; hold for a cut.
+        - Shaders: a layer filled with a shader moves by itself as the film plays, a living background. update_layers sets its \
+        speed and at (fill.shader), or paints a layer with GLSL of your own (fill.shader.fragment) for a gradient mesh, grain or an aurora.
+        - The film: length, loop (round and round) or once, and the backdrop seen past the artboard's edges.
+
+        How it is done well:
+        - Lead the eye: one thing first, what goes with it after, the rest last or not at all. Not everything moves.
+        - Timing: small things 0.2 to 0.4 seconds, cards and panels 0.4 to 0.7, the camera 1 to 2.5. Between items in a row, \
+        0.05 to 0.12 seconds apart reads as one gesture.
+        - Distances: entrances travel little, 16 to 40 points; scale from 0.9 to 1, not from 0. Depth is felt at lift 20 to 120.
+        - Let it breathe: hold a finished moment a second before the film ends or goes round. A loop ends as it began.
+        - Camera moves are slow and few; a fly over that tips the scene 25 to 45 degrees and comes back reads as cinematic.
+
+        Check as you go: render with frames (8 to 12) to see the whole film on one sheet, and with time for one moment; fix \
+        what jumps, crowds or waits too long. Then show it to me playing (animate with play true), and say what you made. \
+        export with format mp4 saves it as a movie when I ask for one.
+        """
     }
 }

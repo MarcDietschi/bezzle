@@ -431,7 +431,7 @@ struct PrototypeMCPTests {
     }
 
     @Test func thePromptsBringEverythingWithThem() async throws {
-        #expect(tools.promptList.count == 2)
+        #expect(tools.promptList.count == 3)
         let built = try await tools.prompt("build_prototype", ["design": bench.store.name, "stack": "SwiftUI"])
         let object = try JSONSerialization.jsonObject(with: built.data) as? [String: Any]
         let messages = object?["messages"] as? [[String: Any]] ?? []

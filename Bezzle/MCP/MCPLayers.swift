@@ -236,7 +236,7 @@ extension MCPTools {
 
     static func fill(_ f: Fill) -> JSONValue {
         guard f.on else { return "none" }
-        if f.gradient == nil && f.image == nil { return .string(hex(f.color)) }
+        if f.gradient == nil && f.image == nil && f.shader == nil { return .string(hex(f.color)) }
         return .compact([("color", .string(hex(f.color)))] + paint(f))
     }
 
@@ -262,7 +262,24 @@ extension MCPTools {
                 ("develop", Self.describe(i.develop)),
             ])))
         }
+        if let s = f.shader { pairs.append(("shader", describe(s))) }
         return pairs
+    }
+
+    /// A shader fill as the assistant is told of it: what it draws with and what moves it, not
+    /// its whole source, which `inspect` hands over.
+    static func describe(_ s: ShaderFill) -> JSONValue {
+        let inputs: [(String, JSONValue)] = s.inputs.compactMap { name in
+            s.draws.first { $0.uniforms[name] != nil }?.uniforms[name].map { (name, .array($0.prefix(16).map { .number($0) })) }
+        }
+        return .compact([
+            ("pixelWidth", .number(s.size.width)), ("pixelHeight", .number(s.size.height)),
+            ("programs", .number(s.programs.count)), ("draws", .number(s.draws.count)),
+            ("time", s.clocks.isEmpty ? nil : .array(Array(Set(s.clocks.map(\.uniform))).sorted().map { .string($0) })),
+            ("recorded", (s.recordings ?? []).isEmpty ? nil : .array(Array(Set((s.recordings ?? []).map(\.uniform))).sorted().map { .string($0) })),
+            ("speed", s.speed != 1 ? .number(s.speed) : nil), ("at", s.at != 0 ? .number(s.at) : nil),
+            ("inputs", inputs.isEmpty ? nil : .object(inputs)),
+        ])
     }
 
     /// A path's outline in its parent, as it lies before it is turned: what `path` takes back.
@@ -453,11 +470,11 @@ extension MCPTools {
         if has("fill") {
             if let list = value("fill") as? [Any] {
                 if kind == .text && list.count > 1 { warnings.append("Text takes one colour: only the first fill kept on \(name).") }
-                let fills = try list.enumerated().map { i, item in try fill(item, on: i < node.slots(.fill) ? node[fill: i] : Fill(color: .shape)) }
+                let fills = try list.enumerated().map { i, item in try fill(item, on: i < node.slots(.fill) ? node[fill: i] : Fill(color: .shape), size: node.frame.size) }
                 node.fills = Array(fills.filter(\.on).prefix(kind == .text ? 1 : .max))
                 if !node.fill.on { node.blend = nil }
             } else {
-                node.fill = try fill(value("fill"), on: node.fill)
+                node.fill = try fill(value("fill"), on: node.fill, size: node.frame.size)
                 if !node.fill.on { node.moreFills = nil }
             }
         }
@@ -708,7 +725,7 @@ extension MCPTools {
         return c
     }
 
-    private static func fill(_ v: Any?, on current: Fill) throws -> Fill {
+    private static func fill(_ v: Any?, on current: Fill, size: CGSize? = nil) throws -> Fill {
         var f = current
         guard let v else { f.on = false; return f }
         if let s = v as? String {
@@ -717,12 +734,13 @@ extension MCPTools {
             f.color = try color(s, "fill")
             f.gradient = nil
             f.image = nil
+            f.shader = nil
             f.on = true
             return f
         }
         guard let o = v as? [String: Any] else { throw MCPError("fill should be a colour, \"none\", or {color, gradient, image}.") }
-        let unknown = Set(o.keys).subtracting(["on", "color", "gradient", "image"])
-        guard unknown.isEmpty else { throw MCPError("fill has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, gradient and image.") }
+        let unknown = Set(o.keys).subtracting(["on", "color", "gradient", "image", "shader"])
+        guard unknown.isEmpty else { throw MCPError("fill has no \(unknown.sorted().joined(separator: ", ")). It takes on, color, gradient, image and shader.") }
         if let c = o["color"], !(c is NSNull) { f.color = try color(c, "fill.color") }
         if o.keys.contains("gradient") { f.gradient = o["gradient"] is NSNull ? nil : try gradient(o["gradient"]) }
         if o.keys.contains("image") {
@@ -740,8 +758,49 @@ extension MCPTools {
                 f.image = image
             }
         }
+        if o.keys.contains("shader") {
+            f.shader = o["shader"] is NSNull ? nil : try shader(o["shader"], in: f.shader, size: size)
+        }
         f.on = try Read.bool(o["on"], "fill.on") ?? true
         return f
+    }
+
+    /// A shader fill made from a fragment shader, or one there is changed: its speed, its moment
+    /// in the design, its inputs.
+    private static func shader(_ v: Any?, in current: ShaderFill?, size: CGSize?) throws -> ShaderFill {
+        guard let o = v as? [String: Any] else { throw MCPError("fill.shader should be {fragment, uniforms, time, resolution, speed, at} or null.") }
+        let unknown = Set(o.keys).subtracting(["fragment", "uniforms", "time", "resolution", "speed", "at", "pixelWidth", "pixelHeight"])
+        guard unknown.isEmpty else { throw MCPError("fill.shader has no \(unknown.sorted().joined(separator: ", ")). It takes fragment, uniforms, time, resolution, speed, at, pixelWidth and pixelHeight.") }
+        var values: [String: [Double]] = [:]
+        if let u = o["uniforms"], !(u is NSNull) {
+            guard let list = u as? [String: Any] else { throw MCPError("fill.shader.uniforms should be {name: a number, a list of numbers, or a colour}.") }
+            for (name, value) in list {
+                if let n = value as? NSNumber { values[name] = [n.doubleValue] }
+                else if let ns = value as? [Any] { values[name] = try ns.map { try Read.number($0, "fill.shader.uniforms.\(name)") ?? 0 } }
+                else if let s = value as? String { let c = try color(s, "fill.shader.uniforms.\(name)"); values[name] = [c.r, c.g, c.b, c.a] }
+                else { throw MCPError("fill.shader.uniforms.\(name) should be a number, a list of numbers or a colour.") }
+            }
+        }
+        var s: ShaderFill
+        if let fragment = try Read.string(o["fragment"], "fill.shader.fragment") {
+            let base = size ?? CGSize(width: 400, height: 300)
+            let w = try Read.number(o["pixelWidth"], "fill.shader.pixelWidth") ?? Double(base.width * 2)
+            let h = try Read.number(o["pixelHeight"], "fill.shader.pixelHeight") ?? Double(base.height * 2)
+            let time = o["time"] is NSNull ? nil : try Read.string(o["time"], "fill.shader.time") ?? "u_time"
+            let resolution = o["resolution"] is NSNull ? nil : try Read.string(o["resolution"], "fill.shader.resolution") ?? "u_resolution"
+            s = ShaderFill.surface(fragment: fragment, size: CGSize(width: max(1, min(w, 8192)), height: max(1, min(h, 8192))),
+                                   uniforms: values, time: time, resolution: resolution)
+        } else {
+            guard var there = current else { throw MCPError("This fill has no shader to change: give fragment, a fragment shader in GLSL as WebGL takes it, to make one.") }
+            for (name, v) in values {
+                guard there.draws.contains(where: { $0.uniforms[name] != nil }) else { throw MCPError("The shader has no input \(name). It has \(there.inputs.joined(separator: ", ")).") }
+                there = there.setting(name, to: v)
+            }
+            s = there
+        }
+        if let speed = try Read.number(o["speed"], "fill.shader.speed") { s.speed = min(max(speed, -100), 100) }
+        if let at = try Read.number(o["at"], "fill.shader.at") { s.at = at }
+        return s
     }
 
     private static func gradient(_ v: Any?) throws -> Gradient {

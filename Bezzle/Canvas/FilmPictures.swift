@@ -42,6 +42,8 @@ nonisolated enum FilmPictures {
         /// the design does; a camera that draws back sees what lies there, a shadow that falls
         /// past the edge or a layer waiting outside, whether or not the layer has keys.
         var clipped: Bool
+        /// The film's moment, for what moves by itself (a shader) in its layers; nil for none.
+        var time: Double? = nil
         fileprivate let ground: Ground
 
         /// The artboard they lie on, for what blurs the layers behind it; without its own layers'
@@ -57,7 +59,7 @@ nonisolated enum FilmPictures {
         }
 
         static func == (a: Subject, b: Subject) -> Bool {
-            a.kind == b.kind && a.clipped == b.clipped && a.origin == b.origin && a.layers == b.layers
+            a.kind == b.kind && a.clipped == b.clipped && a.origin == b.origin && a.time == b.time && a.layers == b.layers
                 && (a.ground === b.ground || a.ground.board == b.ground.board)
         }
 
@@ -65,7 +67,7 @@ nonisolated enum FilmPictures {
         /// made one after the other (`Ground.of(_:before:)`): then another ground is another
         /// artboard, and is not read through for each piece to find that out.
         func isDrawn(as other: Subject) -> Bool {
-            guard kind == other.kind, clipped == other.clipped, origin == other.origin, layers == other.layers else { return false }
+            guard kind == other.kind, clipped == other.clipped, origin == other.origin, time == other.time, layers == other.layers else { return false }
             // The ground's own is the bare artboard, which is soon read.
             return ground === other.ground || (kind == .ground && ground.board == other.ground.board)
         }
@@ -95,7 +97,10 @@ nonisolated enum FilmPictures {
             if piece.flat { n.transform3D = nil }
             return n.withoutMotion
         }
-        return Subject(kind: piece.kind, layers: layers, origin: piece.origin, ground: ground, clipped: false)
+        var subject = Subject(kind: piece.kind, layers: layers, origin: piece.origin, ground: ground, clipped: false)
+        // Judged by the layers with their keys, which the drawing has no more.
+        if from.contains(where: { piece.layers.contains($0.id) && $0.holdsMovingShader }) { subject.time = t }
+        return subject
     }
 
     /// Where a subject draws, in the artboard's points, however far past its edges that reaches.
@@ -187,6 +192,7 @@ nonisolated enum FilmPictures {
             var o = Renderer.Options()
             o.deviceScale = scale
             o.assets = assets
+            o.time = subject.time
             if subject.kind == .ground {
                 Renderer.drawArtboard(subject.board, in: ctx, options: o)
                 return

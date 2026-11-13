@@ -9,12 +9,15 @@ struct FilmKeyRef: Hashable {
     var layer: UUID
     /// One property's key, or every key the layer has at that moment.
     var property: MotionProperty?
+    /// One shader input's key, in place of a property's.
+    var input: String?
     /// The moment, in thousandths of a second.
     var ms: Int
 
-    init(_ layer: UUID, _ property: MotionProperty? = nil, at time: Double) {
+    init(_ layer: UUID, _ property: MotionProperty? = nil, input: String? = nil, at time: Double) {
         self.layer = layer
         self.property = property
+        self.input = input
         ms = Int((time * 1000).rounded())
     }
 
@@ -367,6 +370,86 @@ extension DocumentStore {
         poseCamera(property, now)
     }
 
+    // MARK: Shader inputs
+
+    /// The inputs of the shader every picked layer has, by name: those a person may set and key.
+    var posedInputs: [String] {
+        guard let board = filmBoard else { return [] }
+        let shaders = posedLayers.compactMap { board.descendant($0)?.keyedShader }
+        guard let first = shaders.first, shaders.count == posedLayers.count else { return [] }
+        return first.inputs.filter { name in shaders.allSatisfy { $0.value(of: name)?.count == first.value(of: name)?.count } }
+    }
+
+    /// One number of an input the picked layers share at the playhead; nil where they differ.
+    func sharedInput(_ name: String, _ index: Int) -> Double? {
+        guard let board = filmBoard else { return nil }
+        let t = filmTime
+        let values = posedLayers.compactMap { board.descendant($0)?.shaderInput(name, at: t) }.compactMap { index < $0.count ? $0[index] : nil }
+        guard values.count == posedLayers.count, let first = values.first, values.allSatisfy({ abs($0 - first) < 1e-6 }) else { return nil }
+        return first
+    }
+
+    /// Poses an input of the picked layers at the playhead, each at the value worked out from
+    /// what it is there.
+    func poseInput(_ name: String, _ value: @escaping (Node) -> [Double]?) {
+        let t = filmTime
+        let ids = posedLayers
+        edit("Change Shader") { doc in
+            for id in ids {
+                doc.update(id) { n in
+                    guard !n.locked, let v = value(n) else { return }
+                    n.poseInput(name, v, at: t)
+                }
+            }
+        }
+    }
+
+    /// Sets one number of an input at the playhead, as the panel's fields do.
+    func poseInput(_ name: String, number index: Int, to v: Double) {
+        guard v.isFinite else { return }
+        let t = filmTime
+        poseInput(name) { n in
+            guard var now = n.shaderInput(name, at: t), index < now.count else { return nil }
+            now[index] = v
+            return now
+        }
+    }
+
+    /// How an input stands at the playhead, over the picked layers.
+    func inputKeyState(_ name: String) -> FilmKeyState {
+        guard let board = filmBoard else { return .none }
+        let t = filmTime
+        var state = FilmKeyState.none
+        for id in posedLayers {
+            guard let track = board.descendant(id)?[track: ShaderFill.inputTrack(name)] else { continue }
+            if track.index(at: t) != nil { return .here }
+            state = .between
+        }
+        return state
+    }
+
+    /// Sets a key of an input at the playhead, holding what it is there; or, where every picked
+    /// layer has one there already, takes it away.
+    func toggleInputKey(_ name: String) {
+        guard let board = filmBoard else { return }
+        let t = filmTime, track = ShaderFill.inputTrack(name)
+        let ids = posedLayers.filter { board.descendant($0)?.shaderInput(name) != nil }
+        guard !ids.isEmpty else { return }
+        let all = ids.allSatisfy { board.descendant($0)?[track: track]?.index(at: t) != nil }
+        edit(all ? "Remove Key" : "Add Key") { doc in
+            for id in ids {
+                doc.update(id) { n in
+                    if all {
+                        n.removeKeys(at: t, tracks: [track])
+                    } else if n[track: track]?.index(at: t) == nil, let design = n.shaderInput(name) {
+                        let change = n[track: track]?.value(at: t, rest: Array(repeating: 0, count: design.count)) ?? Array(repeating: 0, count: design.count)
+                        n.setInputKey(name, change: change, at: t)
+                    }
+                }
+            }
+        }
+    }
+
     /// What poses and keys go to: the camera's artboard when the camera is picked, or the layers.
     private var keyTargets: [UUID] {
         if film.camera { return film.board.map { [$0] } ?? [] }
@@ -423,6 +506,12 @@ extension DocumentStore {
                     for p in n.motionProperties where n[track: p]?.index(at: t) == nil {
                         n.setKey(p, n.value(of: p, at: t), at: t)
                     }
+                    for name in n.inputTracks {
+                        guard var track = n[track: name], track.index(at: t) == nil else { continue }
+                        track.keys.append(MotionKey(t: t, v: track.value(at: t, rest: n.rest(of: name))))
+                        track.keys.sort { $0.t < $1.t }
+                        n[track: name] = track
+                    }
                 }
             }
         }
@@ -436,17 +525,21 @@ extension DocumentStore {
         var state = FilmKeyState.none
         for id in keyTargets {
             guard let node = id == board.id ? board : board.descendant(id) else { continue }
-            let tracks = node.motionProperties.compactMap { node[track: $0] }
+            let tracks = node.motionProperties.compactMap { node[track: $0] } + node.inputTracks.compactMap { node[track: $0] }
             if tracks.contains(where: { $0.index(at: t) != nil }) { return .here }
             if !tracks.isEmpty { state = .between }
         }
         return state
     }
 
-    /// The properties a picked key stands for.
-    private func properties(of ref: FilmKeyRef) -> [MotionProperty] {
-        if let p = ref.property { return [p] }
-        return ref.layer == film.board ? MotionProperty.camera : MotionProperty.layer
+    /// The tracks a picked key stands for: one property's, one input's, or all the layer's, or
+    /// all the camera's.
+    private func tracks(of ref: FilmKeyRef) -> [String] {
+        if let p = ref.property { return [p.rawValue] }
+        if let input = ref.input { return [ShaderFill.inputTrack(input)] }
+        if ref.layer == film.board { return MotionProperty.camera.map(\.rawValue) }
+        guard let node = filmBoard?.descendant(ref.layer) else { return MotionProperty.layer.map(\.rawValue) }
+        return node.layerTracks
     }
 
     /// The keys picked in the timeline that are still there. An undo, the AI or someone working
@@ -456,7 +549,7 @@ extension DocumentStore {
         guard !film.keys.isEmpty, let board = filmBoard else { return [] }
         return film.keys.filter { ref in
             guard let node = ref.layer == board.id ? board : board.descendant(ref.layer) else { return false }
-            return properties(of: ref).contains { node[track: $0]?.index(at: ref.time) != nil }
+            return tracks(of: ref).contains { node[track: $0]?.index(at: ref.time) != nil }
         }
     }
 
@@ -481,7 +574,7 @@ extension DocumentStore {
         guard !refs.isEmpty else { return }
         edit("Remove Key") { doc in
             for ref in refs {
-                doc.update(ref.layer) { $0.removeKeys(at: ref.time, of: properties(of: ref)) }
+                doc.update(ref.layer) { $0.removeKeys(at: ref.time, tracks: tracks(of: ref)) }
             }
         }
     }
@@ -494,7 +587,7 @@ extension DocumentStore {
         guard !refs.isEmpty else { return }
         edit("Change Pace") { doc in
             for ref in refs {
-                doc.update(ref.layer) { $0.setEase(ease, at: ref.time, of: properties(of: ref)) }
+                doc.update(ref.layer) { $0.setEase(ease, at: ref.time, tracks: tracks(of: ref)) }
             }
         }
     }
@@ -509,8 +602,8 @@ extension DocumentStore {
         var any = false
         for ref in refs {
             guard let node = ref.layer == board.id ? board : board.descendant(ref.layer) else { continue }
-            for p in properties(of: ref) {
-                guard let track = node[track: p], let i = track.index(at: ref.time) else { continue }
+            for name in tracks(of: ref) {
+                guard let track = node[track: name], let i = track.index(at: ref.time) else { continue }
                 let ease = track.keys[i].ease ?? .auto
                 if any, found != ease { return nil }
                 found = ease
@@ -534,10 +627,10 @@ extension DocumentStore {
                 doc.update(layer) { $0.motion = was }
             }
             for ref in ordered {
-                doc.update(ref.layer) { $0.moveKeys(from: ref.time, to: ref.time + delta, of: properties(of: ref)) }
+                doc.update(ref.layer) { $0.moveKeys(from: ref.time, to: ref.time + delta, tracks: tracks(of: ref)) }
             }
         }
-        return refs.map { FilmKeyRef($0.layer, $0.property, at: MotionTiming.time($0.time + delta)) }
+        return refs.map { FilmKeyRef($0.layer, $0.property, input: $0.input, at: MotionTiming.time($0.time + delta)) }
     }
 
     // MARK: The camera, sent somewhere
@@ -548,11 +641,25 @@ extension DocumentStore {
     func flyCamera(to ids: [UUID]) {
         guard let board = filmBoard else { return }
         let t = filmTime
+        guard let aim = Self.cameraAim(at: ids, on: board, in: seenDoc, time: t) else { return }
+        let before = board.keyTimes(MotionProperty.camera).last { $0 < t - 0.0042 } ?? 0
+        let was = board.motion
+        beginGesture()
+        poseCamera(.cameraMove, aim.move)
+        poseCamera(.cameraZoom, [aim.zoom])
+        endGesture("Fly the Camera Here")
+        // Already looking there, there is no flight to show.
+        if filmBoard?.motion != was, t > before + 0.05 { showFilm(from: before, to: t, back: t) }
+    }
+
+    /// Where the camera looks, and how close, to show layers whole with room round them at a
+    /// moment: as close as they fit with a third more round them, and never further back than
+    /// the whole artboard nor closer than eight times. Where each is then: its place in the
+    /// design, grown as it is posed, and moved as it and everything that holds it are.
+    static func cameraAim(at ids: [UUID], on board: Node, in doc: BezzleDocument, time t: Double) -> (move: [Double], zoom: Double)? {
         var whole = CGRect.null
         for id in ids {
-            guard let way = board.way(to: id), let node = way.last, let frame = seenDoc.absoluteFrame(of: id) else { continue }
-            // Where it is at that moment: its place in the design, grown as it is posed, and moved
-            // as it and everything that holds it are.
+            guard let way = board.way(to: id), let node = way.last, let frame = doc.absoluteFrame(of: id) else { continue }
             let pose = node.pose(at: t)
             var r = frame.offsetBy(dx: -board.frame.minX, dy: -board.frame.minY)
             for holder in way {
@@ -562,18 +669,11 @@ extension DocumentStore {
             r = r.insetBy(dx: r.width * (1 - pose.scale.x) / 2, dy: r.height * (1 - pose.scale.y) / 2)
             whole = whole.union(r)
         }
-        guard !whole.isNull else { return }
+        guard !whole.isNull else { return nil }
         let size = board.frame.size
         // A line has no height to fill the picture with, and is looked at by its length alone.
         let zoom = min(max(min(size.width / (max(whole.width, 1) * 1.35), size.height / (max(whole.height, 1) * 1.35)), 1), 8)
-        let before = board.keyTimes(MotionProperty.camera).last { $0 < t - 0.0042 } ?? 0
-        let was = board.motion
-        beginGesture()
-        poseCamera(.cameraMove, [Double(whole.midX - size.width / 2), Double(whole.midY - size.height / 2)])
-        poseCamera(.cameraZoom, [Double(zoom)])
-        endGesture("Fly the Camera Here")
-        // Already looking there, there is no flight to show.
-        if filmBoard?.motion != was, t > before + 0.05 { showFilm(from: before, to: t, back: t) }
+        return ([Double(whole.midX - size.width / 2), Double(whole.midY - size.height / 2)], Double(zoom))
     }
 
     /// Turns the scene under the camera as its pad is dragged: from how the camera stood when

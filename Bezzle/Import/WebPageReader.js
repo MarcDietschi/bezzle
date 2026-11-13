@@ -506,8 +506,16 @@
     }
     if (tag === 'canvas') {
       if (box[2] <= 0 || box[3] <= 0) return item;
+      // Marked for the page's own world, where what it draws is recorded (WebPageGL.js).
+      if (!el.hasAttribute('data-bz-canvas')) {
+        el.setAttribute('data-bz-canvas', String(item.id));
+        afterwards.push(() => el.removeAttribute('data-bz-canvas'));
+      }
       // Read back as it was drawn, see-through where it is; a canvas holding pictures from
       // elsewhere cannot be, and is photographed.
+      // The moment its picture is taken, for its WebGL to be kept as it was then.
+      el.setAttribute('data-bz-canvas-at', String(performance.now() / 1000));
+      afterwards.push(() => el.removeAttribute('data-bz-canvas-at'));
       try {
         const data = el.width > 0 && el.height > 0 ? el.toDataURL('image/png') : '';
         if (data.length > 100) {
@@ -1522,8 +1530,8 @@
     for (const el of [document.documentElement, document.body]) {
       if (!el) continue;
       const cs = getComputedStyle(el);
-      if (cs.overflowY === 'hidden') el.style.setProperty('overflow-y', 'visible', 'important');
-      if (cs.position === 'fixed' && el === document.body) el.style.setProperty('position', 'static', 'important');
+      if (cs.overflowY === 'hidden') setForNow(el, 'overflow-y', 'visible');
+      if (cs.position === 'fixed' && el === document.body) setForNow(el, 'position', 'static');
     }
     return hidden;
   }
@@ -1558,13 +1566,15 @@
       if (el.scrollHeight > most) { most = el.scrollHeight; best = el; }
     }
     if (!best) return false;
+    const scroller = best, top = best.scrollTop;
+    afterwards.push(() => { scroller.scrollTop = top; });
     for (let e = best; e && e !== document.documentElement; e = e.parentElement) {
-      e.style.setProperty('height', 'auto', 'important');
-      e.style.setProperty('max-height', 'none', 'important');
-      e.style.setProperty('overflow', 'visible', 'important');
+      setForNow(e, 'height', 'auto');
+      setForNow(e, 'max-height', 'none');
+      setForNow(e, 'overflow', 'visible');
     }
-    document.documentElement.style.setProperty('height', 'auto', 'important');
-    document.documentElement.style.setProperty('overflow', 'visible', 'important');
+    setForNow(document.documentElement, 'height', 'auto');
+    setForNow(document.documentElement, 'overflow', 'visible');
     return true;
   }
 
@@ -1575,10 +1585,38 @@
 
   let styleSheet = null;
 
+  // MARK: Leaving the page as it was
+
+  /// What reading the page changed in it, each undone by `finish` in turn, the last first, so a
+  /// page read as someone left it in a browser is theirs again afterwards: as tall as it was,
+  /// scrolled where it was, its banners back, and what moved moving again.
+  let afterwards = [];
+
+  /// Sets a style of an element's own until the page has been read.
+  function setForNow(el, property, value) {
+    const was = el.style.getPropertyValue(property), priority = el.style.getPropertyPriority(property);
+    afterwards.push(() => {
+      if (was) el.style.setProperty(property, was, priority);
+      else el.style.removeProperty(property);
+    });
+    el.style.setProperty(property, value, 'important');
+  }
+
+  function putBack() {
+    const undo = afterwards;
+    afterwards = [];
+    for (let i = undo.length - 1; i >= 0; i--) { try { undo[i](); } catch (e) {} }
+  }
+
   /// Gets the page ready to be read: banners away, everything loaded that waits for scrolling,
   /// fonts and pictures in, and every animation at its end.
   B.prepare = async (opts) => {
     notes = {};
+    putBack();
+    const [x0, y0] = [window.scrollX, window.scrollY];
+    afterwards.push(() => window.scrollTo(x0, y0));
+    afterwards.push(() => { for (const el of document.querySelectorAll('[data-bz-hide]')) el.removeAttribute('data-bz-hide'); });
+    if (styleSheet) styleSheet.remove();
     styleSheet = document.createElement('style');
     styleSheet.id = 'bz-style';
     styleSheet.textContent = `
@@ -1597,7 +1635,8 @@
     await quiet(still, 3000);
     let hidden = opts.hideBanners ? hideBanners() : 0;
     wakeLazy();
-    if (unrollScroller()) note('scroller');
+    // A page read as someone left it keeps its scrolling boxes as they are, scrolled where they are.
+    if (opts.unroll !== false && unrollScroller()) note('scroller');
     // Down the page and back, a screen at a time, for what loads as it comes into view.
     const limit = opts.maxHeight || 30000;
     const step = Math.max(200, innerHeight * 0.85);
@@ -1617,15 +1656,23 @@
     if (document.fonts) await Promise.race([document.fonts.ready, sleep(5000)]);
     await quiet(still, 2000);
     for (const a of document.getAnimations ? document.getAnimations() : []) {
+      const running = a.playState === 'running';
       try {
         const timing = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null;
         if (timing && timing.iterations === Infinity) { a.pause(); a.currentTime = 0; } else a.finish();
       } catch (e) {
         try { a.pause(); } catch (e2) {}
       }
+      if (running && a.playState === 'paused') afterwards.push(() => a.play());
     }
     // Videos stop where they are, so each photograph of one shows the same frame.
-    for (const v of document.querySelectorAll('video')) { try { v.pause(); } catch (e) {} }
+    for (const v of document.querySelectorAll('video')) {
+      try {
+        if (v.paused) continue;
+        v.pause();
+        afterwards.push(() => v.play().catch(() => {}));
+      } catch (e) {}
+    }
     window.scrollTo(0, 0);
     await sleep(100);
     return { hidden, height: pageHeight() };
@@ -1816,6 +1863,7 @@
   B.finish = () => {
     B.release();
     if (styleSheet) styleSheet.remove();
-    window.scrollTo(0, 0);
+    styleSheet = null;
+    putBack();
   };
 })();

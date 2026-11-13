@@ -23,8 +23,10 @@ extension MCPTools {
                 ("value", ["description": "The value there: [x, y] for move, scale and cameraMove (one number for scale is both ways); one number for the rest."]),
                 ("pace", choice(MotionEase.Kind.allCases.map(\.rawValue), "How the value arrives here from the key before. Left out, a new key is auto and a key already there keeps its pace.")),
                 ("bounce", number("With pace spring: how far past it goes, 0 (not at all) to 1; 0.3 otherwise.")),
+                ("to", list("The camera's key only, in place of property and value: the layers it looks at then, whole with room round them, wherever they are at that moment. Sets cameraMove and cameraZoom together, as Bezzle's own fly-to does; tilt, swing and roll stay as they are.")),
+                ("input", text("In place of property: an input of the layer's shader (a uniform of its fill.shader, as get_animation lists them with what the design sets), keyed like a property. value is how far it is from the design there, as many numbers as the input has: [0.4, -0.2, 0] turns a colour input more red and less green; 0 for each is the design.")),
             ])),
-            ("required", ["property", "time", "value"]),
+            ("required", ["time"]),
         ])
         let move: JSONValue = .object([
             ("type", "object"),
@@ -76,7 +78,9 @@ extension MCPTools {
                        is where it looks, in points from the artboard's middle; cameraZoom is how many times closer than seeing the \
                        whole artboard; cameraRoll, cameraTilt and cameraSwing are degrees. At rest (cameraMove [0, 0], cameraZoom 1, \
                        the others 0) it shows the whole artboard straight on, and a fly over is a few camera keys with tilt and zoom, \
-                       ending at rest. moves give layers a whole entrance or exit as keys, one layer after another apart seconds in \
+                       ending at rest. A layer filled with a shader also has its inputs keyed (input in place of property): its \
+                       colours, intensities and the like, each value a change from what the design sets, so a gradient can shift its \
+                       colours as the film plays; the shader's own time runs by itself. moves give layers a whole entrance or exit as keys, one layer after another apart seconds in \
                        the order they are read on the artboard, from the top down and across; the keys can be changed afterwards like \
                        any. In a deck each post's layers have keys of their own and the film shows the post in front: a name is the \
                        layer in the first post, and a layer of another post is given by its id (deck with post lists them). \
@@ -151,7 +155,7 @@ extension MCPTools {
                         ("post", post.map { .number(Double($0)) }),
                     ]
                     if child.isAnimated {
-                        moving.append(.compact(who + [("tracks", tracks(of: child, MotionProperty.layer))]))
+                        moving.append(.compact(who + [("tracks", tracks(of: child, MotionProperty.layer)), ("shader", inputs(of: child))]))
                     } else if only != nil {
                         still.append(.compact(who))
                     }
@@ -192,6 +196,26 @@ extension MCPTools {
             pairs.append((p.rawValue, .array(keys)))
         }
         return pairs.isEmpty ? nil : .object(pairs)
+    }
+
+    /// A layer's shader inputs, when it has a shader: each as the design sets it, and its keys,
+    /// each a change from that, as every key is.
+    private static func inputs(of node: Node) -> JSONValue? {
+        guard let shader = node.keyedShader else { return nil }
+        let names = shader.inputs
+        guard !names.isEmpty else { return nil }
+        let pairs: [(String, JSONValue)] = names.map { name in
+            var fields: [(String, JSONValue?)] = [("design", .array((shader.value(of: name) ?? []).map { .number($0) }))]
+            if let track = node[track: ShaderFill.inputTrack(name)], !track.keys.isEmpty {
+                fields.append(("keys", .array(track.keys.map { key in
+                    let pace: MotionEase? = key.ease.flatMap { $0.kind == .auto ? nil : $0 }
+                    return .compact([("time", .number(key.t)), ("change", .array(key.v.map { .number($0) })),
+                                     ("pace", pace.map { .string($0.kind.rawValue) }), ("given", key.given == true ? true : nil)])
+                })))
+            }
+            return (name, .compact(fields))
+        }
+        return .object(pairs)
     }
 
     /// A key's value as it is written and as it plays: one number, or two for what has an x and a y.
@@ -243,6 +267,8 @@ extension MCPTools {
         var ids: [UUID]?
         /// Only these properties; nil for all of them.
         var properties: [MotionProperty]?
+        /// Only this shader input's keys, in place of properties.
+        var input: String? = nil
         /// Only the keys at this moment; nil for whole tracks.
         var time: Double?
     }
@@ -357,8 +383,15 @@ extension MCPTools {
         var removals: [FilmRemoval] = []
         for (i, spec) in removeSpecs.enumerated() {
             let place = "remove[\(i)]"
-            try Self.known(spec, ["layer", "layers", "property", "time"], place)
+            try Self.known(spec, ["layer", "layers", "property", "time", "input"], place)
             let word = try Read.string(spec["property"], "\(place).property")
+            if let input = try Read.string(spec["input"], "\(place).input") {
+                guard word == nil, let named = try refs(spec) else { throw MCPError("\(place): an input is a layer's shader's: give layer, and no property.") }
+                let ids = try layers(named, place)
+                try ids.forEach(onFilm)
+                removals.append(FilmRemoval(ids: ids, properties: [], input: input, time: try Self.motionTime(spec["time"], "\(place).time")))
+                continue
+            }
             let time = try Self.motionTime(spec["time"], "\(place).time")
             if let named = try refs(spec) {
                 let ids = try layers(named, place)
@@ -413,9 +446,51 @@ extension MCPTools {
         }
 
         var keys: [FilmKey] = []
+        /// Camera keys that look at layers: where, worked out once the call's moves are in place.
+        var aims: [(ids: [UUID], time: Double, ease: MotionEase?)] = []
+        /// Keys of shader inputs, each a change from the input the design sets.
+        var inputKeys: [(id: UUID, input: String, change: [Double], time: Double, ease: MotionEase?)] = []
         for (i, spec) in keySpecs.enumerated() {
             let place = "keys[\(i)]"
-            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce"], place)
+            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce", "to", "input"], place)
+            if let to = spec["to"] {
+                let named = (to as? String).map { [$0] } ?? (to as? [String])
+                guard let named, !named.isEmpty else { throw MCPError("\(place).to is the layers the camera looks at, by id or name.") }
+                guard spec["layer"] == nil, spec["layers"] == nil, spec["value"] == nil else {
+                    throw MCPError("\(place): a key with to is the camera's, and its value is worked out: leave layer, layers and value out.")
+                }
+                if let word = try Read.string(spec["property"], "\(place).property"), !["cameramove", "camerazoom"].contains(word.lowercased()) {
+                    throw MCPError("\(place): to sets cameraMove and cameraZoom together; leave property out.")
+                }
+                let ids = try layers(named, place)
+                try ids.forEach(onFilm)
+                guard let time = try Self.motionTime(spec["time"], "\(place).time") else { throw MCPError("\(place) needs time: seconds from the film's start.") }
+                aims.append((ids, time, try Self.motionEase(spec, place)))
+                continue
+            }
+            if let input = try Read.string(spec["input"], "\(place).input") {
+                guard spec["property"] == nil else { throw MCPError("\(place): a key is of a property or of a shader input, not both.") }
+                guard let named = try refs(spec) else { throw MCPError("\(place): say whose shader, as layer.") }
+                let ids = try layers(named, place)
+                try ids.forEach(onFilm)
+                for id in ids {
+                    guard let n = doc.node(id), let design = n.shaderInput(input) else {
+                        let there = doc.node(id)?.keyedShader?.inputs.joined(separator: ", ")
+                        throw MCPError("\(place): \(doc.node(id)?.name ?? "That layer") has \(there.map { "no shader input \(input); its shader has \($0)" } ?? "no shader"). update_layers gives a layer one (fill.shader).")
+                    }
+                    let raw = spec["value"]
+                    let change: [Double]
+                    if let n = raw as? NSNumber { change = [n.doubleValue] }
+                    else if let list = raw as? [Any] { change = try list.map { try Read.number($0, "\(place).value") ?? 0 } }
+                    else { throw MCPError("\(place) needs value: how far the input is from the design there, a number or a list of numbers.") }
+                    guard change.count == design.count else {
+                        throw MCPError("\(place): \(input) has \(design.count) number\(design.count == 1 ? "" : "s"), so value needs as many.")
+                    }
+                    guard let time = try Self.motionTime(spec["time"], "\(place).time") else { throw MCPError("\(place) needs time: seconds from the film's start.") }
+                    inputKeys.append((id, input, change, time, try Self.motionEase(spec, place)))
+                }
+                continue
+            }
             guard let word = try Read.string(spec["property"], "\(place).property") else {
                 throw MCPError("\(place) needs property. \(Self.propertyHelp)")
             }
@@ -447,6 +522,12 @@ extension MCPTools {
             for removal in removals {
                 for id in removal.ids ?? [board.id] {
                     guard let n = doc.node(id) else { continue }
+                    if let input = removal.input {
+                        let track = ShaderFill.inputTrack(input)
+                        if n[track: track] == nil { warnings.append("\(n.name) has no keys of \(input).") }
+                        if let time = removal.time { doc.update(id) { $0.removeKeys(at: time, tracks: [track]) } } else { doc.update(id) { $0[track: track] = nil } }
+                        continue
+                    }
                     let who = removal.ids == nil ? "The camera" : n.name
                     guard let time = removal.time else {
                         guard let properties = removal.properties else {
@@ -459,13 +540,14 @@ extension MCPTools {
                         doc.update(id) { layer in for p in properties { layer[track: p] = nil } }
                         continue
                     }
-                    let properties = removal.properties ?? MotionProperty.layer
-                    if !properties.contains(where: { n[track: $0]?.index(at: time) != nil }), !everything {
-                        let what = properties.count == 1 ? "\(properties[0].rawValue) key" : "key"
-                        let times = n.keyTimes(properties).map { Self.plain($0) }.joined(separator: ", ")
+                    // At a moment with no property named: every key it has there, its shader's inputs' too.
+                    let tracks = removal.properties.map { $0.map(\.rawValue) } ?? (removal.ids == nil ? MotionProperty.layer.map(\.rawValue) : n.layerTracks)
+                    if !tracks.contains(where: { n[track: $0]?.index(at: time) != nil }), !everything {
+                        let what = tracks.count == 1 ? "\(tracks[0]) key" : "key"
+                        let times = n.keyTimes(tracks: tracks).map { Self.plain($0) }.joined(separator: ", ")
                         warnings.append("\(who) has no \(what) at \(Self.plain(time)) s" + (times.isEmpty ? "." : ": its keys are at \(times) s."))
                     }
-                    doc.update(id) { $0.removeKeys(at: time, of: properties) }
+                    doc.update(id) { $0.removeKeys(at: time, tracks: tracks) }
                 }
             }
             taken = before - (doc.node(board.id).map(Self.keyCount) ?? 0)
@@ -473,6 +555,16 @@ extension MCPTools {
             for key in keys {
                 for id in key.ids.isEmpty ? [board.id] : key.ids {
                     doc.update(id) { $0.setKey(key.property, key.value, at: key.time, ease: key.ease) }
+                }
+            }
+            for key in inputKeys {
+                doc.update(key.id) { $0.setInputKey(key.input, change: key.change, at: key.time, ease: key.ease) }
+            }
+            for aim in aims {
+                guard let now = doc.node(board.id), let seen = DocumentStore.cameraAim(at: aim.ids, on: now, in: doc, time: aim.time) else { continue }
+                doc.update(board.id) { n in
+                    n.setKey(.cameraMove, MotionProperty.cameraMove.clamped(seen.move), at: aim.time, ease: aim.ease)
+                    n.setKey(.cameraZoom, MotionProperty.cameraZoom.clamped([seen.zoom]), at: aim.time, ease: aim.ease)
                 }
             }
             if setsFilm {
@@ -491,7 +583,7 @@ extension MCPTools {
         if changed {
             if everything { done.append("All motion taken from \(board.name).") } else if taken > 0 { done.append("\(Self.counted(taken, "key")) taken away.") }
             for move in moves { done.append("\(move.move.rawValue) given to \(Self.counted(move.ids.count, "layer")).") }
-            let set = keys.reduce(0) { $0 + max($1.ids.count, 1) }
+            let set = keys.reduce(0) { $0 + max($1.ids.count, 1) } + aims.count * 2 + inputKeys.count
             if set > 0 { done.append("\(Self.counted(set, "key")) set.") }
             if setsFilm { done.append("The film's settings changed.") }
         } else if edits {

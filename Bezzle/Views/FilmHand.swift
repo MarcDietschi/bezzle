@@ -11,9 +11,21 @@ struct FilmRow: Identifiable, Equatable {
     var camera = false
     /// One property's keys alone, on a line opened out of its layer's.
     var property: MotionProperty?
+    /// One shader input's keys alone, likewise.
+    var input: String?
     var name: String
     var kind: Node.Kind?
     var marks: [Mark] = []
+
+    /// Whether it is one property's or one input's line, opened out of its layer's.
+    var single: Bool { property != nil || input != nil }
+
+    /// Whether a picked key is on this line: one of its own, or any of its layer's on the layer's line.
+    func holds(_ ref: FilmKeyRef) -> Bool {
+        guard ref.layer == layer else { return false }
+        let whole = ref.property == nil && ref.input == nil
+        return whole || !single || (ref.property == property && ref.input == input)
+    }
 
     /// A moment with a key.
     struct Mark: Equatable {
@@ -35,12 +47,19 @@ struct FilmRow: Identifiable, Equatable {
             var row = FilmRow(id: node.id.uuidString + (camera ? ":camera" : ""), layer: node.id, camera: camera,
                               name: camera ? String(localized: "animate.camera", defaultValue: "Camera") : node.name,
                               kind: camera ? nil : node.kind)
-            row.marks = marks(of: node, properties)
+            let inputs = camera ? [] : node.inputTracks
+            row.marks = marks(of: node, tracks: properties.map(\.rawValue) + inputs)
             out.append(row)
             guard open.contains(node.id) else { return }
             for p in properties {
                 var line = FilmRow(id: row.id + ":" + p.rawValue, layer: node.id, camera: camera, property: p, name: p.title)
                 line.marks = marks(of: node, [p])
+                out.append(line)
+            }
+            for track in inputs {
+                guard let input = ShaderFill.input(of: track) else { continue }
+                var line = FilmRow(id: row.id + ":" + track, layer: node.id, camera: false, input: input, name: input)
+                line.marks = marks(of: node, tracks: [track])
                 out.append(line)
             }
         }
@@ -56,17 +75,23 @@ struct FilmRow: Identifiable, Equatable {
     }
 
     static func marks(of node: Node, _ properties: [MotionProperty]) -> [Mark] {
+        marks(of: node, tracks: properties.map(\.rawValue))
+    }
+
+    /// The moments of these tracks' keys, by name: a property's or a shader input's.
+    static func marks(of node: Node, tracks names: [String]) -> [Mark] {
         var out: [Mark] = []
-        for p in properties {
-            guard let track = node[track: p] else { continue }
+        for name in names {
+            guard let track = node[track: name] else { continue }
+            let rest = node.rest(of: name)
             for (i, key) in track.keys.enumerated() {
-                let home = MotionTiming.alike(key.v, p.rest)
+                let home = MotionTiming.alike(key.v, rest)
                 if let j = out.firstIndex(where: { MotionTiming.same($0.t, key.t) }) {
                     out[j].home = out[j].home && home
                     out[j].given = out[j].given && key.given == true
                 } else {
                     out.append(Mark(t: key.t, home: home, given: key.given == true,
-                                    pace: properties.count == 1 && i > 0 ? track.pace(of: i - 1, rest: p.rest) : nil))
+                                    pace: names.count == 1 && i > 0 ? track.pace(of: i - 1, rest: rest) : nil))
                 }
             }
         }
@@ -149,7 +174,7 @@ final class FilmHand {
         out.row = row.id
         let near = row.marks.min { abs(scale.x($0.t) - p.x) < abs(scale.x($1.t) - p.x) }
         if let near, abs(scale.x(near.t) - p.x) <= Self.reach {
-            out.key = FilmKeyRef(row.layer, row.property, at: near.t)
+            out.key = FilmKeyRef(row.layer, row.property, input: row.input, at: near.t)
         } else if let first = row.marks.first, let last = row.marks.last, last.t > first.t, p.x > scale.x(first.t), p.x < scale.x(last.t) {
             out.band = row.id
         }
@@ -194,11 +219,11 @@ final class FilmHand {
             pick(row)
             store.film.keys = []
             store.seek(snapped(scale.t(p.x)))
-            if let property = row.property { store.toggleKey(property) } else { store.holdHere() }
+            if let property = row.property { store.toggleKey(property) } else if let input = row.input { store.toggleInputKey(input) } else { store.holdHere() }
             drag = Drag(kind: .nothing)
         } else if at.band != nil, let row {
             pick(row)
-            let refs = row.marks.map { FilmKeyRef(row.layer, row.property, at: $0.t) }
+            let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, at: $0.t) }
             store.film.keys = Set(refs)
             drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0)
         } else {
@@ -347,11 +372,11 @@ final class FilmHand {
             entries.append(.item("Remove Key", shortcut: "⌫") { store.removeFilmKeys() })
         } else {
             let t = snapped(scale.t(hot.x))
-            let property = row.property
+            let property = row.property, input = row.input
             store.film.keys = []
             entries.append(.item("Add Key Here") {
                 store.seek(t)
-                if let property { store.toggleKey(property) } else { store.holdHere() }
+                if let property { store.toggleKey(property) } else if let input { store.toggleInputKey(input) } else { store.holdHere() }
             })
             entries.append(.separator)
             entries.append(.item(row.camera ? "Remove the Camera's Motion" : "Remove Motion") { store.clearFilmMotion() })

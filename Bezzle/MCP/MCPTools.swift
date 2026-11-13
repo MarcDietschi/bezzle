@@ -99,7 +99,13 @@ final class MCPTools {
         camera at rest (zoom 1, no tilt) shows the whole artboard, and a fly over is a few camera \
         keys with tilt and zoom, ending at rest. animate's playhead and play show the film to the \
         person in Animate, posed at a moment or playing, and get_animation says whether it is \
-        shown and where its playhead is. Every \
+        shown and where its playhead is. A camera key with to looks at layers, framed whole. render \
+        with frames shows a film as it plays, a sheet of its moments, and with time one moment; \
+        export with format mp4 saves it as a movie. A layer filled with a shader (fill.shader, GLSL \
+        as WebGL takes it, from a website or written by you) moves by itself as the film plays. \
+        The animate prompt brings an artboard's film with how motion is done well. browse opens \
+        websites in Bezzle's own browser, signed in as the person left it and clicked through, \
+        and import_website brings in the pages it shows, several at once into one design. Every \
         change is one step the person can undo with Command-Z, and designs save themselves: there \
         is no save.
         """
@@ -250,25 +256,33 @@ final class MCPTools {
     }
 
     func importWebsite(_ args: Arguments) async throws -> [Content] {
+        if let urls = try args.strings("urls"), !urls.isEmpty { return try await importPages(urls, args) }
+        if try args.bool("shown") == true { return try await importShown(args) }
         guard let address = try args.string("url"), let url = WebCapture.address(address) else {
-            throw MCPError("Give the page's address, such as https://example.com.")
+            throw MCPError("Give the page's address, such as https://example.com, or shown true to read the page in Bezzle's browser.")
         }
         var sizes: [WebCapture.Size] = []
         if let widths = args["widths"] as? [Any] {
             for w in widths {
                 guard let n = (w as? NSNumber)?.doubleValue ?? Double("\(w)"), n >= 240 else { throw MCPError("widths should be numbers of pixels, from 240 up.") }
-                let size: WebCapture.Size = switch Int(n.rounded()) {
-                case Int(WebCapture.Size.desktop.width): .desktop
-                case Int(WebCapture.Size.tablet.width): .tablet
-                case Int(WebCapture.Size.mobile.width): .mobile
-                default: .custom(CGFloat(n))
-                }
+                let size = Self.webSize(n)
                 if !sizes.contains(where: { $0.width == size.width }) { sizes.append(size) }
             }
         }
+        let hide = try args.bool("hide_banners") ?? true
+        if try args.string("design") != nil {
+            let store = try await store(args)
+            let ids: [UUID], report: ImportReport
+            do {
+                (ids, report) = try await WebImport.run(url, sizes: sizes, hideBanners: hide, into: store, named: try args.string("name"))
+            } catch {
+                throw MCPError("\(address) could not be brought in: \(error.localizedDescription)")
+            }
+            return [.text(brought(ids, report, into: store))]
+        }
         let design: URL, report: ImportReport
         do {
-            (design, report) = try await WebImport.run(url, sizes: sizes, hideBanners: try args.bool("hide_banners") ?? true, into: Library.shared.folder)
+            (design, report) = try await WebImport.run(url, sizes: sizes, hideBanners: hide, into: Library.shared.folder)
         } catch {
             throw MCPError("\(address) could not be brought in: \(error.localizedDescription)")
         }
@@ -280,6 +294,111 @@ final class MCPTools {
         let lines = report.lines
         if !lines.isEmpty { text += "\n\nOnly approximated:\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
         return [.text(text)]
+    }
+
+    /// Several pages into one design together, side by side and one step of its undo history:
+    /// with shown, through Bezzle's browser, the page open as it is first; else each read afresh
+    /// at every width asked for. Both are signed in as the browser is.
+    private func importPages(_ addresses: [String], _ args: Arguments) async throws -> [Content] {
+        var urls: [URL] = []
+        for a in addresses {
+            guard let url = WebCapture.address(a) else { throw MCPError("\(a) is not a web address Bezzle can open.") }
+            urls.append(url)
+        }
+        let into = try args.string("design") != nil ? try await store(args) : nil
+        if try args.bool("shown") == true {
+            let browser = WebBrowser.shared
+            guard let here = browser.url else { throw MCPError("Bezzle's browser has no page open: browse with action open and a url first.") }
+            var pages = [WebBrowser.Page(url: WebBrowser.plain(here), name: browser.title, kind: .open)]
+            for url in urls where !pages.contains(where: { $0.id == WebBrowser.plain(url).absoluteString }) {
+                pages.append(WebBrowser.Page(url: WebBrowser.plain(url), name: url.path, kind: .linked))
+            }
+            let done: WebBrowser.Brought
+            do { done = try await browser.importPages(pages, into: into) } catch {
+                throw MCPError("The pages could not be brought in: \(error.localizedDescription)")
+            }
+            var text = brought(done.ids, done.report, into: done.store)
+            if !done.missed.isEmpty { text += "\nNot read: " + done.missed.map(\.absoluteString).joined(separator: ", ") }
+            return [.text(text)]
+        }
+        var sizes: [WebCapture.Size] = []
+        if let widths = args["widths"] as? [Any] {
+            for w in widths {
+                guard let n = (w as? NSNumber)?.doubleValue ?? Double("\(w)"), n >= 240 else { throw MCPError("widths should be numbers of pixels, from 240 up.") }
+                let size = Self.webSize(n)
+                if !sizes.contains(where: { $0.width == size.width }) { sizes.append(size) }
+            }
+        }
+        if sizes.isEmpty { sizes = [.desktop] }
+        let hide = try args.bool("hide_banners") ?? true
+        var reads: [WebRead] = [], held: [String: Data] = [:], missed: [String] = []
+        var named = into?.doc.nodes ?? []
+        for url in urls {
+            do {
+                let (some, pictures) = try await WebImport.read(url, sizes: sizes, hideBanners: hide)
+                for (i, var read) in some.enumerated() {
+                    read.name = WebBrowser.boardName(of: read.page, size: sizes[i], among: named)
+                    named.append(Node(kind: .artboard, name: read.name, frame: .zero))
+                    reads.append(read)
+                }
+                held.merge(pictures) { a, _ in a }
+            } catch {
+                missed.append("\(url.absoluteString) (\(error.localizedDescription))")
+            }
+        }
+        guard let first = urls.first, !reads.isEmpty else { throw MCPError("None of the pages could be read: " + missed.joined(separator: "; ")) }
+        var text: String
+        if let into {
+            let (ids, report) = try into.bringIn(reads, held: held, source: WebImport.source(of: first))
+            text = brought(ids, report, into: into)
+        } else {
+            let (design, report) = try WebImport.write(reads, held: held, source: WebImport.source(of: first), into: Library.shared.folder)
+            Library.shared.refresh()
+            let store = try await open(design)
+            store.importReport = report
+            store.zoomToFit()
+            text = brought(store.doc.nodes.filter(\.isArtboard).map(\.id), report, into: store)
+        }
+        if !missed.isEmpty { text += "\nNot read: " + missed.joined(separator: "; ") }
+        return [.text(text)]
+    }
+
+    /// The page in Bezzle's browser, read as it is, into a design.
+    private func importShown(_ args: Arguments) async throws -> [Content] {
+        let into = try args.string("design") != nil ? try await store(args) : nil
+        let done: WebBrowser.Brought
+        do {
+            done = try await WebBrowser.shared.importShown(name: try args.string("name"), into: into)
+        } catch let error as WebBrowser.Failure {
+            if case .nothingOpen = error { throw MCPError("Bezzle's browser has no page open: browse with action open and a url first.") }
+            throw MCPError(error.localizedDescription)
+        } catch {
+            throw MCPError("The page could not be brought in: \(error.localizedDescription)")
+        }
+        return [.text(brought(done.ids, done.report, into: done.store))]
+    }
+
+    /// What was brought in, for the assistant: the new artboards, and what was only approximated.
+    private func brought(_ ids: [UUID], _ report: ImportReport, into store: DocumentStore) -> String {
+        let boards: [JSONValue] = ids.compactMap { id in
+            guard let n = store.doc.node(id) else { return nil }
+            return .object([("id", .string(id.uuidString)), ("name", .string(n.name)), ("x", .number(n.frame.minX)), ("y", .number(n.frame.minY)),
+                            ("width", .number(n.frame.width)), ("height", .number(n.frame.height))])
+        }
+        var pairs: [(String, JSONValue)] = [("design", .string(store.name)), ("artboards", .array(boards))]
+        let lines = report.lines
+        if !lines.isEmpty { pairs.append(("approximated", .array(lines.map { .string($0) }))) }
+        return JSONValue.object(pairs).text
+    }
+
+    /// A width a page is read at, as the import's sizes know it.
+    static func webSize(_ width: Double) -> WebCapture.Size {
+        switch Int(width.rounded()) {
+        case Int(WebCapture.Size.desktop.width): .desktop
+        case Int(WebCapture.Size.tablet.width): .tablet
+        case Int(WebCapture.Size.mobile.width): .mobile
+        default: .custom(CGFloat(width))
+        }
     }
 
     func openDesign(_ args: Arguments) async throws -> [Content] {

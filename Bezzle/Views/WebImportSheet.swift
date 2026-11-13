@@ -1,9 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// Bringing a web page in as a design: the address, the widths to read it at, whether cookie
-/// banners go, and the import running. Kept apart from the sheet so a menu, a dropped link or
-/// the home screen can open it.
+/// Bringing a web page in: the address, the widths to read it at, whether cookie banners go,
+/// into the design open or as a new one, and the import running; or the page opened in Bezzle's
+/// browser first (`WebBrowser`), to sign in and click through to the screen wanted. Kept apart
+/// from the sheet so a menu, a dropped link or the home screen can open it.
 @MainActor @Observable
 final class WebImporting {
     static let shared = WebImporting()
@@ -16,6 +17,11 @@ final class WebImporting {
     var custom = false
     var customWidth: Double = 1280
     var hideBanners = true
+    /// The design in front when the sheet opened, which the page can go into beside its artboards.
+    @ObservationIgnored private(set) weak var openDesign: DocumentStore?
+    private(set) var openName: String?
+    /// Whether the page goes into that design rather than a new one.
+    var intoOpen = false
     private(set) var stage: String?
     private(set) var progress: Double?
     private(set) var failure: String?
@@ -35,6 +41,13 @@ final class WebImporting {
     }
 
     var canStart: Bool { !running && WebCapture.address(address) != nil && !sizes.isEmpty }
+    var canBrowse: Bool { !running && WebCapture.address(address) != nil }
+
+    /// Where the page goes: the design open, while it still is and may be changed.
+    private var destination: DocumentStore? {
+        guard intoOpen, let store = openDesign, !store.isReadOnly, Tabs.shared.tab(of: store) != nil else { return nil }
+        return store
+    }
 
     /// Opens the sheet, with an address to bring in or the one on the clipboard.
     func present(_ address: String? = nil) {
@@ -44,7 +57,13 @@ final class WebImporting {
                   copied.lowercased().hasPrefix("http"), WebCapture.address(copied) != nil {
             self.address = copied
         }
-        if !running { failure = nil }
+        if !running {
+            failure = nil
+            let front = Tabs.shared.selected?.store
+            openDesign = front.flatMap { $0.isReadOnly ? nil : $0 }
+            openName = openDesign?.name
+            intoOpen = openDesign != nil
+        }
         showing = true
     }
 
@@ -63,14 +82,24 @@ final class WebImporting {
         cancelled = false
         stage = String(localized: "Loading the page…")
         progress = 0.01
-        let sizes = sizes, hide = hideBanners
+        let sizes = sizes, hide = hideBanners, into = destination
         task = Task { [weak self] in
+            let say: (String, Double) -> Void = { what, done in
+                guard let self, !self.cancelled else { return }
+                self.stage = what
+                self.progress = max(self.progress ?? 0, done)
+            }
             do {
-                let (design, report) = try await WebImport.run(url, sizes: sizes, hideBanners: hide, into: Library.shared.folder) { what, done in
+                if let into {
+                    let (ids, _) = try await WebImport.run(url, sizes: sizes, hideBanners: hide, into: into, progress: say)
                     guard let self, !self.cancelled else { return }
-                    self.stage = what
-                    self.progress = max(self.progress ?? 0, done)
+                    self.done(nil)
+                    self.showing = false
+                    WindowRouter.shared.show(into)
+                    if !ids.isEmpty { into.zoomToSelection() }
+                    return
                 }
+                let (design, report) = try await WebImport.run(url, sizes: sizes, hideBanners: hide, into: Library.shared.folder, progress: say)
                 guard let self, !self.cancelled else { return }
                 self.done(nil)
                 self.showing = false
@@ -81,6 +110,14 @@ final class WebImporting {
                 self.done(error is CancellationError ? nil : error.localizedDescription)
             }
         }
+    }
+
+    /// Opens the page in Bezzle's browser, at the widest size chosen, its pages to come into the
+    /// design chosen here.
+    func browse() {
+        guard canBrowse, let url = WebCapture.address(address) else { return }
+        showing = false
+        WebBrowser.shared.show(url, size: sizes.first ?? .desktop, into: destination)
     }
 
     func cancel() {
@@ -162,6 +199,16 @@ struct WebImportSheet: View {
                     .disabled(model.running)
                 }
                 .disabled(model.running)
+                if let name = model.openName {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Into").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.ink)
+                        HStack(spacing: 8) {
+                            IntoChoice(title: Text(verbatim: name), symbol: "rectangle.on.rectangle", isOn: model.intoOpen) { model.intoOpen = true }
+                            IntoChoice(title: Text("New Design"), symbol: "plus", isOn: !model.intoOpen) { model.intoOpen = false }
+                        }
+                    }
+                    .disabled(model.running)
+                }
                 HStack(spacing: 8) {
                     CheckBox(isOn: $model.hideBanners)
                     Text("Hide cookie banners")
@@ -190,6 +237,15 @@ struct WebImportSheet: View {
                             TextButton(title: "Cancel") { model.cancel() }
                         }
                         .transition(.opacity)
+                    } else {
+                        HStack {
+                            CardButton(title: "Open the Page…", symbol: "safari", height: 28) { model.browse() }
+                                .help(Text("Sign in or click through to the screen you want, then import it as it is."))
+                                .opacity(model.canBrowse ? 1 : 0.45)
+                                .disabled(!model.canBrowse)
+                            Spacer()
+                        }
+                        .transition(.opacity)
                     }
                 }
             }
@@ -204,6 +260,45 @@ struct WebImportSheet: View {
         }
         .onExitCommand { model.close() }
         .onAppear { focused = true }
+    }
+}
+
+/// Where the page goes: the design open, or a new one.
+private struct IntoChoice: View {
+    let title: Text
+    let symbol: String
+    let isOn: Bool
+    let choose: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isOn ? Theme.pencil : Theme.ink3)
+            title
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
+                .fill(isOn ? Theme.pencilWash : Theme.ink.opacity(hovering ? 0.07 : 0.04))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
+                .strokeBorder(isOn ? Theme.pencil.opacity(0.8) : Theme.hairline, lineWidth: isOn ? 1.2 : 0.5)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(Theme.quick) { choose() } }
+        .onHover { hovering = $0 }
+        .animation(Theme.quick, value: hovering)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
     }
 }
 

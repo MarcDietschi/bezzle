@@ -171,6 +171,7 @@ extension SelectionInspector {
                 .frame(width: 15, height: 15)
         } picks: {
             fillControls(blends: blends, action: "Change Fill", suggest: true, slot: slot)
+            if those.allSatisfy({ $0[keyPath: path].shader != nil }) { shaderRows(path) }
             // A subject is cut out of a picture filling a shape; in letters it would leave little to read.
             if slot == 0, nodes.allSatisfy({ $0.fill.on && $0.fill.image != nil && $0.kind != .text }) {
                 backgroundRow
@@ -192,6 +193,26 @@ extension SelectionInspector {
         // done now, behind everything else.
         .task(id: slot == 0 && first.kind != .text ? first.fill.image?.asset : nil) {
             if slot == 0, first.kind != .text, first.fill.image != nil { store.readyToRemoveBackground(pointing: false) }
+        }
+    }
+
+    /// A shader fill's time: how fast it runs, and the moment the design shows, which is where a
+    /// film starts it. Its picture alone, as it came in, is a click away.
+    @ViewBuilder private func shaderRows(_ path: WritableKeyPath<Node, Fill>) -> some View {
+        HStack(spacing: 8) {
+            layerField(LocalizedStringResource("shader.speed", defaultValue: "Speed", comment: "How fast a shader's time runs, 1 as the page ran it."),
+                       unit: "×", range: -10...10, scrub: 0.02, decimals: 2, action: "Change Shader",
+                       get: { $0[keyPath: path].shader?.speed ?? 1 }, set: { $0[keyPath: path].shader?.speed = $1 })
+            layerField(LocalizedStringResource("shader.moment", defaultValue: "Moment", comment: "The second of a shader's time the design shows."),
+                       unit: "s", range: -100_000...100_000, scrub: 0.02, decimals: 2, action: "Change Shader",
+                       get: { $0[keyPath: path].shader?.at ?? 0 }, set: { $0[keyPath: path].shader?.at = $1 })
+        }
+        if nodes.allSatisfy({ $0[keyPath: path].image != nil }) {
+            HStack {
+                Spacer()
+                TextButton(title: "Use the Picture") { store.updateSelection("Change Shader") { $0[keyPath: path].shader = nil } }
+                    .help(Text("Show the picture it came in as, still, in place of what its shaders draw."))
+            }
         }
     }
 

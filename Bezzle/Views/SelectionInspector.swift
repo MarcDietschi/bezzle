@@ -554,6 +554,9 @@ struct SelectionInspector: View {
         case .radial: said = [String(localized: "Radial")]
         case .picture: said = [String(localized: "Picture")]
         }
+        if let shader = fill.shader {
+            said = [shader.moves ? String(localized: "Shader, moving") : String(localized: "Shader")]
+        }
         switch blend {
         case .some(.some(let mode)): said.append(mode.title)
         case .some(.none), .none: break

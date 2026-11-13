@@ -39,6 +39,7 @@ nonisolated extension Node {
     var paintedPictures: [ImageFill] {
         var out: [ImageFill] = []
         if let image = fill.image { out.append(image) }
+        out += fill.shader?.pictures ?? []
         if let image = border.image { out.append(image) }
         for b in moreBorders ?? [] { if let image = b.image { out.append(image) } }
         return out

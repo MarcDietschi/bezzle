@@ -39,6 +39,9 @@ nonisolated enum Renderer {
         /// Drawing a layer only for the shadow it casts: what it holds casts its own shadows as
         /// Core Graphics makes them, rather than apart. See `drawShadowApart`.
         var castingShadow = false
+        /// The moment of an Animate film being drawn, in seconds from its start: a shader is drawn
+        /// as it is then. As the design shows it when nil.
+        var time: Double?
     }
 
     static func draw(_ doc: BezzleDocument, in ctx: CGContext, options: Options = Options()) {
@@ -334,6 +337,12 @@ nonisolated enum Renderer {
     static func paint(_ fill: Fill, in path: CGPath, size: CGSize, evenOdd: Bool, in ctx: CGContext, options: Options, pictureBox: CGRect? = nil) {
         guard fill.on else { return }
         let rule: CGPathFillRule = evenOdd ? .evenOdd : .winding
+        // A shader draws itself, at the film's moment, where its picture would lie; the picture
+        // stands in where it cannot.
+        if let shader = fill.shader,
+           ShaderPainting.paint(shader, picture: fill.image, in: path, size: size, rule: rule, in: ctx, film: options.time, assets: options.assets, box: pictureBox) {
+            return
+        }
         if let image = fill.image {
             // Read at about the size it is drawn, not the size it was shot at.
             let box = pictureBox ?? CGRect(origin: .zero, size: size)

@@ -22,6 +22,11 @@ struct AnimateInspector: View {
                         if !layers.isEmpty {
                             PoseCard(store: store, board: board, layers: layers)
                                 .transition(.card)
+                            let inputs = store.posedInputs
+                            if !inputs.isEmpty {
+                                ShaderInputsCard(store: store, inputs: inputs)
+                                    .transition(.card)
+                            }
                             FlyCard(store: store, layers: layers)
                                 .transition(.card)
                         }
@@ -342,6 +347,111 @@ private struct PoseCard: View {
             store.pose(property, number: index, to: shown / times, of: layers)
         }
         .frame(width: width)
+    }
+}
+
+/// The inputs of the picked layers' shader at the playhead, each with its key: a colour, or its
+/// numbers. Each key holds how far the input is from what the design sets, as every key here does.
+private struct ShaderInputsCard: View {
+    let store: DocumentStore
+    let inputs: [String]
+
+    var body: some View {
+        PanelCard(title: "Shader", summary: seconds(store.filmTime)) {
+            Image(systemName: "sparkles").font(.system(size: 12, weight: .medium))
+        } content: {
+            ForEach(inputs, id: \.self) { name in
+                let count = store.filmBoard.flatMap { board in store.posedLayers.first.flatMap { board.descendant($0)?.shaderInput(name)?.count } } ?? 1
+                if Self.isColour(name, count: count) {
+                    InputRow(store: store, name: name) {
+                        ColorField(id: "shader-" + name, color: colour(name, count), action: "Change Shader") { c in
+                            store.poseInput(name) { _ in count == 4 ? [c.r, c.g, c.b, c.a] : [c.r, c.g, c.b] }
+                        }
+                        .frame(width: 150)
+                    }
+                } else if count <= 2 {
+                    InputRow(store: store, name: name) {
+                        ForEach(0..<count, id: \.self) { i in field(name, i, label: count == 1 ? "" : ["X", "Y"][i], width: count == 1 ? 84 : 64) }
+                    }
+                } else {
+                    InputRow(store: store, name: name) { EmptyView() }
+                    HStack(spacing: 4) {
+                        Spacer(minLength: 0)
+                        ForEach(0..<min(count, 4), id: \.self) { i in field(name, i, label: ["X", "Y", "Z", "W"][i], width: 52) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// An input that reads as a colour: named as one, three or four numbers from 0 to 1.
+    static func isColour(_ name: String, count: Int) -> Bool {
+        (count == 3 || count == 4) && name.range(of: "colou?r|tint|hue|ink|paint", options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private func colour(_ name: String, _ count: Int) -> RGBA? {
+        let values = (0..<count).map { store.sharedInput(name, $0) }
+        guard values.allSatisfy({ $0 != nil }) else { return nil }
+        let v = values.map { min(max($0!, 0), 1) }
+        return RGBA(r: v[0], g: v[1], b: v[2], a: count == 4 ? v[3] : 1)
+    }
+
+    private func field(_ name: String, _ index: Int, label: String, width: CGFloat) -> some View {
+        NumberField(label: .verbatim(label), value: store.sharedInput(name, index), scrub: 0.01, decimals: 3, action: "Change Shader") { v in
+            store.poseInput(name, number: index, to: v)
+        }
+        .frame(width: width)
+    }
+}
+
+/// One shader input on a line: its key, its name, and what sets it.
+private struct InputRow<Fields: View>: View {
+    let store: DocumentStore
+    let name: String
+    @ViewBuilder let fields: Fields
+
+    var body: some View {
+        HStack(spacing: 4) {
+            InputBead(store: store, name: name)
+            Text(verbatim: name)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.ink2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            fields
+        }
+        .padding(.leading, -5)
+    }
+}
+
+/// An input's key at the playhead, as a property's bead is (`KeyBead`).
+private struct InputBead: View {
+    let store: DocumentStore
+    let name: String
+    @State private var hovering = false
+
+    var body: some View {
+        let state = store.inputKeyState(name)
+        ZStack {
+            Circle().fill(Theme.ink.opacity(hovering ? 0.07 : 0))
+            Circle()
+                .fill(state == .here ? Theme.pencil : Theme.card)
+                .overlay {
+                    Circle().strokeBorder(state == .here ? Theme.pencil : state == .between ? Theme.ink2 : Theme.ink4, lineWidth: 1.4)
+                }
+                .frame(width: 9, height: 9)
+                .scaleEffect(state == .here ? 1.1 : 1)
+        }
+        .frame(width: 20, height: 20)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { store.toggleInputKey(name) }
+        .help(state == .here ? Text("A key here. Click to take it away.") : Text("Set a key here"))
+        .animation(Theme.pop, value: state)
+        .animation(Theme.quick, value: hovering)
+        .accessibilityLabel(Text(verbatim: name))
+        .accessibilityAddTraits(state == .here ? [.isButton, .isSelected] : .isButton)
     }
 }
 

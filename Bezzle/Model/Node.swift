@@ -80,15 +80,19 @@ nonisolated struct Fill: Codable, Hashable {
     /// The design's named colour it is, the same wherever that is used; nil is a colour of its
     /// own. See `Style`.
     var named: UUID? = nil
+    /// Drawn instead of the colour, a gradient or the picture when there is one and it can be
+    /// drawn; the picture then is how it looked when it came in. See `ShaderFill`.
+    var shader: ShaderFill? = nil
 
-    /// Whether it paints with more than its one colour: a gradient, or a picture.
-    var paints: Bool { image != nil || gradient?.stops.isEmpty == false }
+    /// Whether it paints with more than its one colour: a gradient, a picture or a shader.
+    var paints: Bool { image != nil || shader != nil || gradient?.stops.isEmpty == false }
 
     /// The same fill turned over with its layer, left to right or top to bottom.
     func flipped(horizontally: Bool) -> Fill {
         var f = self
         f.gradient = gradient?.flipped(horizontally: horizontally)
         f.image = image?.flipped(horizontally: horizontally)
+        f.shader = shader?.flipped(horizontally: horizontally)
         return f
     }
 }

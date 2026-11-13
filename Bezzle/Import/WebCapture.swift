@@ -1,4 +1,5 @@
 import AppKit
+import os
 import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
@@ -54,6 +55,9 @@ final class WebCapture: NSObject, WKNavigationDelegate {
     var maxHeight: CGFloat = 30_000
     /// How long to wait, a screen at a time, for what a page loads as it is scrolled through.
     var stepDelay = 120
+    /// Whether a page that scrolls inside a box of its own, as a web app does, is let out to the
+    /// full height of what the box holds; otherwise the box stays as it shows, scrolled where it is.
+    var unrollsScrollers = true
     /// Says how far it has come: what it is doing, and how much of it is done, 0…1.
     var progress: ((String, Double) -> Void)?
     /// Whether the window the page is read in is put on screen, though no one sees it, so that
@@ -63,6 +67,8 @@ final class WebCapture: NSObject, WKNavigationDelegate {
 
     private var web: WKWebView?
     private var host: NSWindow?
+    /// A web view someone else keeps, read as it is: Bezzle's browser (`WebBrowser`).
+    private var adopted = false
     private var finished = false
     private var failure: Error?
     private var status: Int?
@@ -76,6 +82,25 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         return URLSession(configuration: config)
     }()
 
+    /// Where pages read and browsed keep their cookies and what else they store, apart from
+    /// Safari's and from any other app's: a sign-in made in Bezzle's browser holds for the pages
+    /// imported after it, and lasts from one launch to the next. Test runs keep nothing.
+    static let dataStore: WKWebsiteDataStore = BezzleApp.isTesting
+        ? .nonPersistent()
+        : WKWebsiteDataStore(forIdentifier: UUID(uuidString: "6D3C2B51-4E8F-4B7A-9C1D-2F5E8A7B0C34")!)
+
+    override init() { super.init() }
+
+    /// Reads the page a web view shows as it is now, without loading it again: what was signed
+    /// in to, clicked open and typed stays as it is. The web view is left as it was found.
+    init(adopting web: WKWebView) {
+        super.init()
+        self.web = web
+        adopted = true
+        finished = true
+        unrollsScrollers = false
+    }
+
     static let desktopAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
     static let mobileAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1"
 
@@ -83,8 +108,10 @@ final class WebCapture: NSObject, WKNavigationDelegate {
     static let script = resource("WebPageReader")
     /// What runs in the page before its own scripts, so that what waits to be scrolled to is there.
     static let awake = resource("WebPageAwake")
+    /// What records the page's WebGL drawing, before its own scripts, in its own world.
+    static let recorder = resource("WebPageGL")
 
-    private static func resource(_ name: String) -> String {
+    static func resource(_ name: String) -> String {
         guard let url = Bundle.main.url(forResource: name, withExtension: "js"),
               let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         return text
@@ -120,8 +147,19 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         return try await take(web, size: size)
     }
 
+    /// Reads the page as it is now in the web view adopted, at the size it is laid out at.
+    func readAsShown(size: Size) async throws -> (WebRead, [String: Data]) {
+        guard let web, adopted else { throw Failure.unreadable(String(localized: "nothing came back.")) }
+        status = nil
+        return try await take(web, size: size)
+    }
+
     /// Lets go of the web view and its window.
     func close() {
+        if adopted {
+            web = nil
+            return
+        }
         web?.stopLoading()
         web?.navigationDelegate = nil
         host?.orderOut(nil)
@@ -142,13 +180,14 @@ final class WebCapture: NSObject, WKNavigationDelegate {
             web = existing
         } else {
             let config = WKWebViewConfiguration()
-            config.websiteDataStore = .nonPersistent()
+            config.websiteDataStore = Self.dataStore
             config.suppressesIncrementalRendering = false
             config.mediaTypesRequiringUserActionForPlayback = .all
             config.preferences.isElementFullscreenEnabled = false
             config.preferences.javaScriptCanOpenWindowsAutomatically = false
             if #available(macOS 14.0, *) { config.preferences.inactiveSchedulingPolicy = .none }
             config.userContentController.addUserScript(WKUserScript(source: Self.awake, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+            config.userContentController.addUserScript(WKUserScript(source: Self.recorder, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
             config.userContentController.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world))
             web = WKWebView(frame: frame, configuration: config)
             web.navigationDelegate = self
@@ -201,7 +240,7 @@ final class WebCapture: NSObject, WKNavigationDelegate {
     /// Reads the page loaded: gets it ready, takes it apart, and fetches and photographs what it shows.
     private func take(_ web: WKWebView, size: Size) async throws -> (WebRead, [String: Data]) {
         say(String(localized: "Scrolling through the page…"), 0.15)
-        let options: [String: Any] = ["hideBanners": hideBanners, "maxHeight": maxHeight, "stepDelay": stepDelay]
+        let options: [String: Any] = ["hideBanners": hideBanners, "maxHeight": maxHeight, "stepDelay": stepDelay, "unroll": unrollsScrollers]
         try await ensureReader()
         _ = try await call("return await __bezzle.prepare(opts)", ["opts": options])
         say(String(localized: "Taking the page apart…"), 0.4)
@@ -215,6 +254,7 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         var assets = WebAssets()
         var held: [String: Data] = [:]
         try await fetchPictures(page, into: &assets, held: &held)
+        await keepScenes(page, into: &assets, held: &held)
         try await photograph(page, into: &assets, held: &held)
         _ = try? await call("__bezzle.finish()", [:])
         var name = size.name
@@ -253,6 +293,8 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         guard !urls.isEmpty else { return }
         let referer = page.url, agent = web?.customUserAgent ?? Self.desktopAgent
         let session = self.session
+        // Pictures behind a sign-in come with the cookies the page was read with.
+        let cookies = await (web?.configuration.websiteDataStore ?? Self.dataStore).httpCookieStore.allCookies()
         var fetched: [Int: Data] = [:]
         var done = 0
         try await withThrowingTaskGroup(of: (Int, Data?).self) { group in
@@ -261,7 +303,7 @@ final class WebCapture: NSObject, WKNavigationDelegate {
                 guard next < urls.count else { return }
                 let i = next, address = urls[i]
                 next += 1
-                group.addTask { (i, await Self.fetch(address, session: session, referer: referer, agent: agent)) }
+                group.addTask { (i, await Self.fetch(address, session: session, referer: referer, agent: agent, cookies: cookies)) }
             }
             for _ in 0..<8 { add() }
             for try await (i, data) in group {
@@ -288,6 +330,62 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         }
     }
 
+    // MARK: WebGL
+
+    /// The scene of each WebGL canvas that draws from its shaders alone (WebPageGL.js), as the
+    /// shader fill its layer is drawn with, its pictures fetched; or why it is a picture only.
+    private func keepScenes(_ page: WebPage, into assets: inout WebAssets, held: inout [String: Data]) async {
+        guard let web, let json = try? await web.callAsyncJavaScript("return window.__bezzleGL ? window.__bezzleGL.scenes() : '{}'", arguments: [:], in: nil, contentWorld: .page) as? String,
+              let scenes = try? JSONDecoder().decode([String: WebGLScene].self, from: Data(json.utf8)), !scenes.isEmpty else { return }
+        say(String(localized: "Keeping what WebGL draws…"), 0.5)
+        let cookies = await web.configuration.websiteDataStore.httpCookieStore.allCookies()
+        let agent = web.customUserAgent ?? Self.desktopAgent
+        for (key, scene) in scenes {
+            guard let id = Int(key) else { continue }
+            if let why = scene.why {
+                if why != "not webgl" && why != "nothing drawn" {
+                    assets.stills[id] = why
+                    Self.log.notice("A WebGL canvas stays a picture: \(why, privacy: .public)")
+                }
+                continue
+            }
+            var textures: [Int: ShaderTexture] = [:]
+            var missing = false
+            for (pid, picture) in scene.pictures ?? [:] {
+                guard let n = Int(pid) else { continue }
+                var data: Data?
+                if let url = picture.url { data = await Self.fetch(url, session: session, referer: page.url, agent: agent, cookies: cookies) }
+                if data == nil, let inline = picture.data { data = Self.dataURL(inline) }
+                guard let data, let (ext, pixels) = Importer.picture(data) else { missing = true; continue }
+                let name = Self.assetName(data, ext: ext)
+                held[name] = data
+                textures[n] = ShaderTexture(asset: name, size: pixels)
+            }
+            if missing {
+                assets.stills[id] = "texture"
+                Self.log.notice("A WebGL canvas stays a picture: a texture could not be fetched")
+                continue
+            }
+            let fill: ShaderFill
+            do { fill = try scene.make(textures: textures) } catch {
+                assets.stills[id] = "unreadable"
+                Self.log.notice("A WebGL canvas stays a picture: its scene could not be read: \(String(describing: error), privacy: .public)")
+                continue
+            }
+            // Kept only when Bezzle can draw it again.
+            let pictures = held.filter { name, _ in textures.values.contains { $0.asset == name } }
+            guard ShaderPainting.builds(fill, pictures: pictures) else {
+                assets.stills[id] = "does not build"
+                Self.log.notice("A WebGL canvas stays a picture: its programs do not build")
+                continue
+            }
+            assets.scenes[id] = fill
+        }
+    }
+
+    /// What reading a page could not keep, and why: for the person who works on Bezzle.
+    nonisolated static let log = Logger(subsystem: "com.erik.Bezzle", category: "WebImport")
+
     nonisolated static func isSVG(_ data: Data, url: String) -> Bool {
         let head = String(decoding: data.prefix(600), as: UTF8.self).lowercased()
         if head.contains("<svg") { return true }
@@ -300,8 +398,9 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         return "web-\(hash).\(ext)"
     }
 
-    /// A picture by its address: a data: URL read in place, any other fetched as the page would.
-    nonisolated static func fetch(_ address: String, session: URLSession, referer: String, agent: String) async -> Data? {
+    /// A picture by its address: a data: URL read in place, any other fetched as the page would,
+    /// with the cookies of its site among `cookies`.
+    nonisolated static func fetch(_ address: String, session: URLSession, referer: String, agent: String, cookies: [HTTPCookie] = []) async -> Data? {
         if address.hasPrefix("data:") { return dataURL(address) }
         guard let url = URL(string: address) ?? URL(string: address.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? "") else { return nil }
         if url.isFileURL { return try? Data(contentsOf: url) }
@@ -310,10 +409,32 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         request.setValue(agent, forHTTPHeaderField: "User-Agent")
         request.setValue(referer, forHTTPHeaderField: "Referer")
         request.setValue("image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5", forHTTPHeaderField: "Accept")
+        let sent = Self.cookies(for: url, among: cookies)
+        if !sent.isEmpty { HTTPCookie.requestHeaderFields(with: sent).forEach { request.setValue($1, forHTTPHeaderField: $0) } }
         guard let (data, response) = try? await session.data(for: request) else { return nil }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { return nil }
         guard data.count < 40_000_000 else { return nil }
         return data
+    }
+
+    /// The cookies a browser sends along to `url`: those of its host or of a domain it is in, on
+    /// a path it is on, not yet gone, and only over HTTPS when they say so.
+    nonisolated static func cookies(for url: URL, among all: [HTTPCookie], now: Date = Date()) -> [HTTPCookie] {
+        guard let host = url.host?.lowercased() else { return [] }
+        let path = url.path.isEmpty ? "/" : url.path
+        let secure = url.scheme?.lowercased() == "https"
+        return all.filter { c in
+            var domain = c.domain.lowercased()
+            let wide = domain.hasPrefix(".")
+            if wide { domain.removeFirst() }
+            // A cookie a site set for its domain says so with a dot, and holds for the hosts in it.
+            guard host == domain || (wide && host.hasSuffix("." + domain)) else { return false }
+            let cp = c.path.isEmpty ? "/" : c.path
+            guard path == cp || path.hasPrefix(cp.hasSuffix("/") ? cp : cp + "/") else { return false }
+            if c.isSecure && !secure { return false }
+            if let expires = c.expiresDate, expires < now { return false }
+            return true
+        }
     }
 
     /// What a data: URL holds.
@@ -578,6 +699,33 @@ enum WebImport {
     /// Reads the page and writes the design in `folder`. Says where it is and what came across.
     static func run(_ url: URL, sizes: [WebCapture.Size], hideBanners: Bool = true, into folder: URL,
                     progress: ((String, Double) -> Void)? = nil) async throws -> (URL, ImportReport) {
+        let (reads, held) = try await read(url, sizes: sizes, hideBanners: hideBanners, progress: progress)
+        progress?(String(localized: "Laying out the layers…"), 0.96)
+        try Task.checkCancellation()
+        return try write(reads, held: held, source: source(of: url), into: folder)
+    }
+
+    /// Reads the page and brings it into a design that is open, beside what is there, an
+    /// artboard a size, each named for the page. Says which they are and what came across.
+    static func run(_ url: URL, sizes: [WebCapture.Size], hideBanners: Bool = true, into store: DocumentStore, named name: String? = nil,
+                    progress: ((String, Double) -> Void)? = nil) async throws -> (ids: [UUID], report: ImportReport) {
+        var (reads, held) = try await read(url, sizes: sizes, hideBanners: hideBanners, progress: progress)
+        progress?(String(localized: "Laying out the layers…"), 0.96)
+        try Task.checkCancellation()
+        var named = store.doc.nodes
+        for i in reads.indices {
+            let size = sizes.isEmpty ? WebCapture.Size.desktop : sizes[i]
+            let given = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            reads[i].name = !given.isEmpty && reads.count == 1 ? given : WebBrowser.boardName(of: reads[i].page, size: size, among: named)
+            named.append(Node(kind: .artboard, name: reads[i].name, frame: .zero))
+        }
+        return try store.bringIn(reads, held: held, source: source(of: url))
+    }
+
+    /// Reads the page at each size asked for, a desktop's when none is: what each is made of,
+    /// and the pictures they show.
+    static func read(_ url: URL, sizes: [WebCapture.Size], hideBanners: Bool = true,
+                     progress: ((String, Double) -> Void)? = nil) async throws -> ([WebRead], [String: Data]) {
         let capture = WebCapture()
         capture.hideBanners = hideBanners
         defer { capture.close() }
@@ -593,9 +741,7 @@ enum WebImport {
             reads.append(read)
             held.merge(pictures) { a, _ in a }
         }
-        progress?(String(localized: "Laying out the layers…"), 0.96)
-        try Task.checkCancellation()
-        return try write(reads, held: held, source: source(of: url), into: folder)
+        return (reads, held)
     }
 
     /// The design made of what was read, written as a new design in `folder`.

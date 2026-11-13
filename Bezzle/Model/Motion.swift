@@ -378,14 +378,36 @@ nonisolated extension Node {
         }
     }
 
+    /// Any track's keys by its name: a property's raw value, or a shader input's
+    /// (`ShaderFill.inputTrack`). Setting a track without keys takes it away.
+    subscript(track name: String) -> MotionTrack? {
+        get { motion?[name] }
+        set {
+            var all = motion ?? [:]
+            all[name] = newValue.flatMap { $0.keys.isEmpty ? nil : $0 }
+            motion = all.isEmpty ? nil : all
+        }
+    }
+
     /// The properties with keys, layers' before the camera's, in their own order.
     var motionProperties: [MotionProperty] {
         guard let motion, !motion.isEmpty else { return [] }
         return MotionProperty.allCases.filter { motion[$0.rawValue]?.keys.isEmpty == false }
     }
 
-    /// Whether the layer itself moves in time: any of its own properties has keys.
-    var isAnimated: Bool { motionProperties.contains { !$0.isCamera } }
+    /// Whether the layer itself moves in time: any of its own properties has keys, or an input
+    /// of its shader does.
+    var isAnimated: Bool { motionProperties.contains { !$0.isCamera } || !inputTracks.isEmpty }
+
+    /// The tracks of every key a layer has at a moment: its own properties', and its shader's inputs'.
+    var layerTracks: [String] { MotionProperty.layer.map(\.rawValue) + inputTracks }
+
+    /// What a track's value is where the design has it: a property's rest, or no change to an input.
+    func rest(of track: String) -> [Double] {
+        if let p = MotionProperty(rawValue: track) { return p.rest }
+        let count = self[track: track]?.keys.first?.v.count ?? ShaderFill.input(of: track).flatMap { shaderInput($0)?.count } ?? 1
+        return Array(repeating: 0, count: count)
+    }
 
     /// Whether anything it holds does, however deep.
     var holdsMotion: Bool { children.contains { $0.isAnimated || $0.holdsMotion } }
@@ -401,9 +423,14 @@ nonisolated extension Node {
 
     /// Every moment the layer has a key at, for any of these properties, in order.
     func keyTimes(_ properties: [MotionProperty] = MotionProperty.layer) -> [Double] {
+        keyTimes(tracks: properties.map(\.rawValue))
+    }
+
+    /// Every moment the layer has a key at, on any of these tracks, in order.
+    func keyTimes(tracks: [String]) -> [Double] {
         var out: [Double] = []
-        for p in properties {
-            for k in self[track: p]?.keys ?? [] where !out.contains(where: { MotionTiming.same($0, k.t) }) { out.append(k.t) }
+        for name in tracks {
+            for k in self[track: name]?.keys ?? [] where !out.contains(where: { MotionTiming.same($0, k.t) }) { out.append(k.t) }
         }
         return out.sorted()
     }
@@ -465,23 +492,34 @@ nonisolated extension Node {
     /// Takes away the keys at a moment, of these properties. A property left with one key that
     /// says what the design does has nothing more to say, and goes too.
     mutating func removeKeys(at time: Double, of properties: [MotionProperty]) {
-        for p in properties {
-            guard var track = self[track: p] else { continue }
+        removeKeys(at: time, tracks: properties.map(\.rawValue))
+    }
+
+    /// The same, of tracks by name.
+    mutating func removeKeys(at time: Double, tracks: [String]) {
+        for name in tracks {
+            guard var track = self[track: name] else { continue }
+            let rest = rest(of: name)
             let before = track.keys.count
             track.keys.removeAll { MotionTiming.same($0.t, time) }
             // Only where a key went: a lone key set to hold the design at another moment stays.
             guard track.keys.count != before else { continue }
-            if track.keys.count == 1, MotionTiming.alike(track.keys[0].v, p.rest) { track.keys = [] }
-            self[track: p] = track
+            if track.keys.count == 1, MotionTiming.alike(track.keys[0].v, rest) { track.keys = [] }
+            self[track: name] = track
         }
     }
 
     /// Moves the keys at one moment to another, of these properties; a key already there gives way.
     mutating func moveKeys(from: Double, to: Double, of properties: [MotionProperty]) {
+        moveKeys(from: from, to: to, tracks: properties.map(\.rawValue))
+    }
+
+    /// The same, of tracks by name.
+    mutating func moveKeys(from: Double, to: Double, tracks: [String]) {
         let to = MotionTiming.time(to)
         guard !MotionTiming.same(from, to) else { return }
-        for p in properties {
-            guard var track = self[track: p], let i = track.index(at: from) else { continue }
+        for name in tracks {
+            guard var track = self[track: name], let i = track.index(at: from) else { continue }
             var key = track.keys[i]
             key.t = to
             key.given = nil
@@ -489,17 +527,22 @@ nonisolated extension Node {
             track.keys.removeAll { MotionTiming.same($0.t, to) }
             track.keys.append(key)
             track.keys.sort { $0.t < $1.t }
-            self[track: p] = track
+            self[track: name] = track
         }
     }
 
     /// Sets how the keys at a moment are come to, of these properties.
     mutating func setEase(_ ease: MotionEase, at time: Double, of properties: [MotionProperty]) {
-        for p in properties {
-            guard var track = self[track: p], let i = track.index(at: time) else { continue }
+        setEase(ease, at: time, tracks: properties.map(\.rawValue))
+    }
+
+    /// The same, of tracks by name.
+    mutating func setEase(_ ease: MotionEase, at time: Double, tracks: [String]) {
+        for name in tracks {
+            guard var track = self[track: name], let i = track.index(at: time) else { continue }
             track.keys[i].ease = ease.kind == .auto ? nil : ease
             track.keys[i].given = nil
-            self[track: p] = track
+            self[track: name] = track
         }
     }
 
@@ -777,7 +820,7 @@ nonisolated extension BezzleDocument {
 
     private static func crowded(_ node: Node) -> [String] {
         guard let motion = node.motion else { return [] }
-        return motion.compactMap { MotionProperty(rawValue: $0.key) != nil && $0.value.isCrowded ? $0.key : nil }
+        return motion.compactMap { (MotionProperty(rawValue: $0.key) != nil || ShaderFill.input(of: $0.key) != nil) && $0.value.isCrowded ? $0.key : nil }
     }
 
     private static func hasCrowdedKeys(_ list: [Node]) -> Bool {

@@ -159,12 +159,12 @@ struct FilmTimeline: View {
             VStack(spacing: 0) {
                 ForEach(rows) { row in
                     FilmTrack(row: row, scale: scale,
-                              picked: Set(keys.filter { $0.layer == row.layer && ($0.property == nil || row.property == nil || $0.property == row.property) }.map(\.ms)),
+                              picked: Set(keys.filter { row.holds($0) }.map(\.ms)),
                               hot: hot.row == row.id ? hot.key?.ms : nil,
                               band: hot.band == row.id || (hand.drag?.kind == .band && hot.row == row.id), still: still)
                         .frame(width: scale.width, height: Self.rowHeight)
                         .background {
-                            if hand.picked(row) { Theme.pencilWash.opacity(row.property == nil ? 0.7 : 0.35) }
+                            if hand.picked(row) { Theme.pencilWash.opacity(row.single ? 0.35 : 0.7) }
                         }
                         .transition(.opacity)
                 }
@@ -204,7 +204,7 @@ private struct FilmName: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            if row.property == nil {
+            if !row.single {
                 Chevron(color: hovering || open ? Theme.ink2 : Theme.ink4)
                     .rotationEffect(.degrees(open ? 0 : -90))
                     .frame(width: 14, height: Self.height)
@@ -224,8 +224,8 @@ private struct FilmName: View {
                 Color.clear.frame(width: 34, height: 1)
             }
             Text(verbatim: row.name)
-                .font(.system(size: row.property == nil ? 12 : 11, weight: picked && row.property == nil ? .medium : .regular))
-                .foregroundStyle(row.property != nil ? Theme.ink3 : picked ? Theme.pencil : Theme.ink)
+                .font(.system(size: row.single ? 11 : 12, weight: picked && !row.single ? .medium : .regular))
+                .foregroundStyle(row.single ? Theme.ink3 : picked ? Theme.pencil : Theme.ink)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
@@ -234,7 +234,7 @@ private struct FilmName: View {
         .padding(.trailing, 6)
         .frame(maxHeight: .infinity)
         .background {
-            if picked { Theme.pencilWash.opacity(row.property == nil ? 0.7 : 0.35) }
+            if picked { Theme.pencilWash.opacity(row.single ? 0.35 : 0.7) }
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
@@ -267,7 +267,7 @@ private struct FilmTrack: View {
     let still: Bool
 
     var body: some View {
-        let own = row.property != nil
+        let own = row.single
         ZStack(alignment: .leading) {
             if let first = row.marks.first, let last = row.marks.last, last.t > first.t {
                 Capsule()

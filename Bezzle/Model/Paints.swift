@@ -74,6 +74,7 @@ extension Fill {
             if let first = gradient?.stops.first { color = first.color }
             gradient = nil
             image = nil
+            shader = nil
         case .linear, .radial:
             let was = gradient?.kind
             var g = gradient ?? .fading(from: color)
@@ -89,6 +90,7 @@ extension Fill {
             }
             gradient = g
             image = nil
+            shader = nil
         case .picture:
             break
         }

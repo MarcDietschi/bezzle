@@ -261,22 +261,23 @@ nonisolated extension Node {
                 run = []
             }
             for n in nodes where !n.hidden {
-                let own = n.isAnimated || loose.contains(n.id)
-                let inside = n.holdsMotion || holdsLoose(n)
+                // A shader that moves is drawn again at every moment, as a layer whose insides move.
+                let own = n.isAnimated || loose.contains(n.id) || n.shaderMoves
+                let inside = n.holdsMotion || holdsLoose(n) || n.children.contains(where: \.holdsMovingShader)
                 if own {
                     flush()
                     // Turned in depth by the design, and by its keys too: drawn flat, for the
                     // film to turn in its own space. With no such keys it keeps the look it has.
                     let turns = n.motionProperties.contains { $0 == .lift || $0 == .tilt || $0 == .swing }
                     let flat = turns && (n.transform3D.map { !$0.pinned } ?? false)
-                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion, flat: flat))
+                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion || n.holdsMovingShader, flat: flat))
                 } else if inside, n.comesApart {
                     flush()
                     walk(n.children, origin: CGPoint(x: origin.x + n.frame.minX, y: origin.y + n.frame.minY), holders: holders + [n.id])
                 } else if inside {
                     // Masked, faded or the like as a whole: drawn again as what it holds moves.
                     flush()
-                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion))
+                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion || n.holdsMovingShader))
                 } else {
                     run.append(n.id)
                 }
@@ -363,7 +364,8 @@ extension Node {
     /// say, and everything in it likewise. `own` leaves its own pose out, for a piece of the film,
     /// which is placed by it; what it holds is posed all the same.
     func posed(at t: Double, own: Bool = true) -> Node {
-        var n = self
+        // Its shader's inputs are inside it, and posed with what it holds, own or not.
+        var n = inputTracks.isEmpty ? self : withInputs(at: t)
         if !children.isEmpty, holdsMotion { n.children = children.map { $0.posed(at: t) } }
         guard own, isAnimated else { return n }
         let pose = pose(at: t)

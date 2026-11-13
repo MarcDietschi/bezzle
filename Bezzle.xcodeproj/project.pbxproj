@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B30000000000000000000001 /* WebP in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* WebP */; };
 		B30000000000000000000002 /* Vectorizer in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000002 /* Vectorizer */; };
+		B30000000000000000000003 /* Shaders in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000003 /* Shaders */; };
 		D30000000000000000000001 /* BezzleThumbnails.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* BezzleThumbnails.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -88,6 +89,7 @@
 			files = (
 				B30000000000000000000001 /* WebP in Frameworks */,
 				B30000000000000000000002 /* Vectorizer in Frameworks */,
+				B30000000000000000000003 /* Shaders in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -153,6 +155,7 @@
 			packageProductDependencies = (
 				B20000000000000000000001 /* WebP */,
 				B20000000000000000000002 /* Vectorizer */,
+				B20000000000000000000003 /* Shaders */,
 			);
 			productName = Bezzle;
 			productReference = A10000000000000000000001 /* Bezzle.app */;
@@ -236,6 +239,7 @@
 			packageReferences = (
 				B10000000000000000000001 /* XCLocalSwiftPackageReference "Packages/WebP" */,
 				B10000000000000000000002 /* XCLocalSwiftPackageReference "Packages/Vectorizer" */,
+				B10000000000000000000003 /* XCLocalSwiftPackageReference "Packages/Shaders" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A40000000000000000000002 /* Products */;
@@ -641,6 +645,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/Vectorizer;
 		};
+		B10000000000000000000003 /* XCLocalSwiftPackageReference "Packages/Shaders" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Shaders;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -651,6 +659,10 @@
 		B20000000000000000000002 /* Vectorizer */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Vectorizer;
+		};
+		B20000000000000000000003 /* Shaders */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Shaders;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -23,6 +23,10 @@ struct WebAssets {
     /// By the element photographed: all of it, or only its own background.
     var shots: [Int: Shot] = [:]
     var backgrounds: [Int: Shot] = [:]
+    /// By the canvas: what its WebGL draws, kept to be drawn again (WebPageGL.js).
+    var scenes: [Int: ShaderFill] = [:]
+    /// By the canvas: why what its WebGL draws could not be kept, and it is a picture only.
+    var stills: [Int: String] = [:]
 }
 
 /// One width of a page as it was read, and what its pictures came to.
@@ -226,7 +230,7 @@ struct WebConverter {
         let name = label ?? Node.Kind.group.title
         if let id = item.id, let shot = assets.shots[id] {
             noteShot(item.shot ?? "filter")
-            return [picture(shot, name: label ?? String(localized: "Image"))]
+            return live([picture(shot, name: label ?? String(localized: "Image"))], item)
         }
         // A box shaped by a picture's outline that could not be photographed would be a box of
         // its colour, which it is not: it is left out.
@@ -238,7 +242,7 @@ struct WebConverter {
         over += sideBorders(item) + outline(item)
 
         var held: [Node] = []
-        if let img = item.img { held += picture(img, item: item, name: label ?? String(localized: "Image")) }
+        if let img = item.img { held += live(picture(img, item: item, name: label ?? String(localized: "Image")), item) }
         if let vec = item.vec { held += vectors(vec, item: item, name: label ?? String(localized: "Vector")) }
         for kid in Self.paintOrder(item.kids ?? []) { held += nodes(kid) }
 
@@ -365,6 +369,30 @@ struct WebConverter {
         case "luminosity": .luminosity
         default: nil
         }
+    }
+
+    /// A canvas's picture, drawn by what its WebGL drew when that could be kept (`ShaderFill`),
+    /// the picture staying as it looked, for what cannot draw it.
+    private mutating func live(_ nodes: [Node], _ item: WebItem) -> [Node] {
+        guard item.tag == "canvas", let id = item.id else { return nodes }
+        if assets.stills[id] != nil {
+            report.note("WebGL drawings Bezzle cannot draw again, as pictures")
+            return nodes
+        }
+        guard let scene = assets.scenes[id] else { return nodes }
+        var done = false
+        func give(_ n: Node) -> Node {
+            guard !done else { return n }
+            var n = n
+            if n.fill.image != nil {
+                n.fill.shader = scene
+                done = true
+                return n
+            }
+            n.children = n.children.map(give)
+            return n
+        }
+        return nodes.map(give)
     }
 
     private mutating func noteShot(_ why: String) {

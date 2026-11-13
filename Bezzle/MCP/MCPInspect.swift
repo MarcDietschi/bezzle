@@ -74,6 +74,7 @@ extension MCPTools {
                 ("color", f.gradient == nil && f.image == nil ? colour(f.color) : nil),
                 ("gradient", f.gradient.flatMap { $0.stops.isEmpty ? nil : .string(DesignTokens.cssGradient($0)) }),
                 ("image", f.image.map { .string($0.asset) }),
+                ("shader", f.shader.map(Self.handOver)),
                 ("token", token(f.named)),
             ])
         }
@@ -129,5 +130,33 @@ extension MCPTools {
             ("swiftui", format != "css" ? .string(Inspect.swiftUI(node, in: seen, tokens: tokens)) : nil),
         ])
         return [.text(json.text)]
+    }
+
+    /// A shader fill as a developer rebuilds it: each program's GLSL as WebGL takes it, and each
+    /// draw's inputs, with those that run with time and how fast.
+    static func handOver(_ s: ShaderFill) -> JSONValue {
+        .compact([
+            ("pixelWidth", .number(s.size.width)), ("pixelHeight", .number(s.size.height)),
+            ("clear", s.clear.map { .array($0.map { .number($0) }) }),
+            ("programs", .array(s.programs.map { ["vertex": .string($0.vertex), "fragment": .string($0.fragment)] })),
+            ("draws", .array(s.draws.map { d in
+                .compact([
+                    ("program", .number(d.program)), ("mode", .string(d.mode.rawValue)), ("first", .number(d.first)), ("count", .number(d.count)),
+                    ("uniforms", .object(d.uniforms.sorted { $0.key < $1.key }.map { ($0.key, .array($0.value.map { .number($0) })) })),
+                    ("attributes", .object(d.attributes.sorted { $0.key < $1.key }.map { name, a in
+                        (name, .compact([("components", .number(a.components)), ("vertices", a.values.map { .number(Double($0.count / 4 / max(a.components, 1))) }),
+                                         ("constant", a.constant.map { .array($0.map { .number($0) }) })]))
+                    })),
+                    ("textures", d.textures.map { .object($0.sorted { $0.key < $1.key }.map { ($0.key, .string($0.value.asset)) }) }),
+                    ("blend", d.blend.map { b in .string("\(b.source) \(b.destination), \(b.sourceAlpha) \(b.destinationAlpha)") }),
+                ])
+            })),
+            ("recorded", (s.recordings ?? []).isEmpty ? nil : .array((s.recordings ?? []).map { r in
+                ["uniform": .string(r.uniform), "component": .number(r.component), "seconds": .number(r.times.last ?? 0), "values": .number(r.values.count)]
+            })),
+            ("time", s.clocks.isEmpty ? nil : .array(s.clocks.map { c in
+                ["uniform": .string(c.uniform), "component": .number(c.component), "start": .number(c.start), "perSecond": .number(c.rate * s.speed)]
+            })),
+        ])
     }
 }
