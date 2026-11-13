@@ -519,7 +519,7 @@ extension MCPTools {
         A fly over is a few camera keys with tilt and zoom, ending at rest (move [0, 0], zoom 1, the rest 0).
         - Focus: blur on a layer, or a focus move, pulls attention; blur what lies behind while what matters is sharp.
         - Paces: leave auto unless there is a reason; spring with bounce 0.2 to 0.4 for something playful; hold for a cut.
-        - Shaders: a layer filled with a shader (brought in from a website on a Mac) moves by itself as the film plays, its inputs \
+        - Shaders: a layer filled with a shader (brought in from a website) moves by itself as the film plays, its inputs \
         keyed like any property.
         - The film: length, loop (round and round) or once, and the backdrop seen past the artboard's edges.
 
