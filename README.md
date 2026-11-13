@@ -17,6 +17,7 @@ Start here to find how anything is done. Each part has its own document; this pa
 | `Relay/` | The Cloudflare relay that shared designs and live co-working go through. `README.md`, `SHARING.md` |
 | `Packages/WebP/` | libwebp, vendored, for WebP export |
 | `Packages/Vectorizer/` | Vectorize's engine: a picture traced into shapes, in plain Swift (the Mac app builds it in; Windows does not have Vectorize yet). Its own tests and a command line that measures it. `README.md` |
+| `Packages/Shaders/` | Shader fills' engine: a website's WebGL GLSL turned into Metal (glslang and SPIRV-Cross, vendored) and a recorded WebGL frame drawn into a picture or a texture. Its own tests. `README.md` |
 | `Scripts/release.sh` | The Mac release. `Scripts/release-windows.sh`: the Windows release. `Scripts/release/`: the notes parser and the Windows feed writer |
 | `Scripts/subject-matte/` | Makes Remove Background's model (git-ignored, too large for git) for the Mac and for Windows. `README.md` |
 | `RELEASE_NOTES.md` | Every version's notes in English, German, French and Italian; the releases read them |
@@ -36,6 +37,7 @@ Start here to find how anything is done. Each part has its own document; this pa
 | Publish the browser viewer | `Web/README.md` › Hosting |
 | Make Remove Background's model | `Scripts/subject-matte/README.md` |
 | Work on Vectorize's engine, and measure it | `Packages/Vectorizer/README.md` |
+| Work on the shader engine, measure it, update glslang or SPIRV-Cross | `Packages/Shaders/README.md` |
 | Test the Mac updater without a release | `CLAUDE.md` › Testing the updater |
 | Withdraw a released version | `CLAUDE.md` › Withdrawing a version |
 
