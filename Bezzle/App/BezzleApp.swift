@@ -374,9 +374,18 @@ struct BezzleCommands: Commands {
             Toggle(LocalizedStringResource("mode.inspect", defaultValue: "Inspect"), isOn: Binding(get: { store?.inspecting == true }, set: { on in store?.show(on ? .inspect : .prototype) }))
                 .keyboardShortcut("i", modifiers: .control)
                 .disabled(store == nil)
-            Button("Play Prototype") { store?.play() }
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(store == nil || store?.doc.artboards.isEmpty == true || store?.player != nil)
+            Toggle(LocalizedStringResource("mode.animate", defaultValue: "Animate"), isOn: Binding(get: { store?.animating == true }, set: { on in store?.show(on ? .animate : .design) }))
+                .keyboardShortcut("a", modifiers: .control)
+                .disabled(store == nil)
+            if store?.animating == true {
+                Button("Play Film") { store?.playFilm(fromStart: true) }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(store?.filmBoard == nil)
+            } else {
+                Button("Play Prototype") { store?.play() }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(store == nil || store?.doc.artboards.isEmpty == true || store?.player != nil)
+            }
             Divider()
         }
     }

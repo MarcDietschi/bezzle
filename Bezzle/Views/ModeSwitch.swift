@@ -1,10 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// The switch at the top right between the design, its prototype and the design inspected: three
-/// words in a well, the one in front resting on a card that slides across to the others. Each has
-/// a small drawing that does what it says as it comes to the front: the nib writes a stroke, the
-/// flow lights up, the measure is drawn out between its ticks.
+/// The switch at the top right between the design, its prototype, the design inspected and the
+/// design animated: four words in a well, the one in front resting on a card that slides across to
+/// the others. Each has a small drawing that does what it says as it comes to the front: the nib
+/// writes a stroke, the flow lights up, the measure is drawn out between its ticks, the bead
+/// travels its path.
 struct ModeSwitch: View {
     let store: DocumentStore
     @Namespace private var space
@@ -34,6 +35,7 @@ extension CanvasMode {
         case .design: LocalizedStringResource("mode.design", defaultValue: "Design")
         case .prototype: LocalizedStringResource("mode.prototype", defaultValue: "Prototype")
         case .inspect: LocalizedStringResource("mode.inspect", defaultValue: "Inspect")
+        case .animate: LocalizedStringResource("mode.animate", defaultValue: "Animate")
         }
     }
 
@@ -42,6 +44,7 @@ extension CanvasMode {
         case .design: Text("Draw the design  ⌃P")
         case .prototype: Text("See the design as a prototype: its screens and the ways between them  ⌃P")
         case .inspect: Text("Inspect the design as it is built: sizes, distances, looks and code  ⌃I")
+        case .animate: Text("Animate the design: its layers and a camera, posed along a timeline  ⌃A")
         }
     }
 }
@@ -83,7 +86,8 @@ private struct ModeSide: View {
 }
 
 /// The nib for drawing, two screens and a flow between them for the prototype, a box measured
-/// between two ticks for inspecting; each draws itself in as it comes to the front.
+/// between two ticks for inspecting, a bead on its way along a path for animating; each draws
+/// itself in as it comes to the front.
 private struct ModeGlyph: View {
     let mode: CanvasMode
     let on: Bool
@@ -94,7 +98,21 @@ private struct ModeGlyph: View {
             let w = s.width, h = s.height
             let style = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
             let ink = GraphicsContext.Shading.color(on ? Theme.ink : Theme.ink2)
-            if mode == .inspect {
+            if mode == .animate {
+                // A path from one key to the next, and the bead that travels it: slowly away,
+                // quickly across, slowly home, as a layer does.
+                var way = Path()
+                way.move(to: CGPoint(x: w * 0.12, y: h * 0.8))
+                way.addCurve(to: CGPoint(x: w * 0.88, y: h * 0.3), control1: CGPoint(x: w * 0.16, y: h * 0.1), control2: CGPoint(x: w * 0.6, y: h * 0.02))
+                ctx.stroke(way, with: ink, style: StrokeStyle(lineWidth: 1.3, lineCap: .round))
+                let home = CGPoint(x: w * 0.12, y: h * 0.8)
+                ctx.fill(Path(ellipseIn: CGRect(x: home.x - 2.4, y: home.y - 2.4, width: 4.8, height: 4.8)), with: .color(Theme.card))
+                ctx.stroke(Path(ellipseIn: CGRect(x: home.x - 1.9, y: home.y - 1.9, width: 3.8, height: 3.8)), with: ink, lineWidth: 1.2)
+                let eased = drawn * drawn * (3 - 2 * drawn)
+                let at = way.trimmedPath(from: 0, to: max(eased, 0.001)).currentPoint ?? home
+                let bead = GraphicsContext.Shading.color(on ? Theme.pencil : Theme.ink2)
+                ctx.fill(Path(ellipseIn: CGRect(x: at.x - 2.6, y: at.y - 2.6, width: 5.2, height: 5.2)), with: bead)
+            } else if mode == .inspect {
                 // A box, and under it its width drawn out from the middle to a tick at each end.
                 let box = CGRect(x: w * 0.14, y: h * 0.08, width: w * 0.72, height: h * 0.46)
                 ctx.stroke(Path(roundedRect: box, cornerRadius: 1.5), with: ink, style: style)
@@ -142,32 +160,40 @@ private struct ModeGlyph: View {
         .onChange(of: on) { _, now in
             guard now else { return }
             drawn = 0
-            withAnimation(.easeOut(duration: 0.5).delay(0.08)) { drawn = 1 }
+            // The bead is eased as it is drawn, so time runs evenly for it.
+            withAnimation(mode == .animate ? .linear(duration: 0.6).delay(0.08) : .easeOut(duration: 0.5).delay(0.08)) { drawn = 1 }
         }
     }
 }
 
 /// At the very right of the bar: Export while drawing; Play once the design is seen as a
-/// prototype, the one button turning into the other.
+/// prototype, the one button turning into the other. Animated, it plays the film where it
+/// lies, and stops it.
 struct ModeAction: View {
     let store: DocumentStore
     @State private var hovering = false
 
     var body: some View {
         let play = store.prototyping
+        let film = store.animating
+        let running = film && store.film.playing
         Button {
-            if play { store.play() } else { store.exporting = true }
+            if film { store.toggleFilm() } else if play { store.play() } else { store.exporting = true }
         } label: {
             HStack(spacing: 6) {
                 if play {
-                    Image(systemName: "play.fill")
+                    Image(systemName: running ? "pause.fill" : "play.fill")
                         .font(.system(size: 10, weight: .bold))
-                        .offset(x: 0.5)
+                        .offset(x: running ? 0 : 0.5)
                         .scaleEffect(hovering ? 1.15 : 1)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 10)
                         .transition(.scale(scale: 0.2).combined(with: .opacity))
                 }
                 ZStack {
-                    if play {
+                    if running {
+                        Text("Pause").transition(.offset(y: 8).combined(with: .opacity))
+                    } else if play {
                         Text("Play").transition(.offset(y: 8).combined(with: .opacity))
                     } else {
                         Text("Export…").transition(.offset(y: -8).combined(with: .opacity))
@@ -197,7 +223,8 @@ struct ModeAction: View {
         .onHover { hovering = $0 }
         .animation(Theme.quick, value: hovering)
         .animation(.spring(response: 0.4, dampingFraction: 0.74), value: play)
-        .help(play ? "Play the prototype from where it starts, or from the picked screen  ⌘↩" : "Export  ⌘E")
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: running)
+        .help(film ? Text("Play the film, or stop it  Space") : play ? Text("Play the prototype from where it starts, or from the picked screen  ⌘↩") : Text("Export  ⌘E"))
         .disabled(play && store.doc.artboards.isEmpty)
     }
 }

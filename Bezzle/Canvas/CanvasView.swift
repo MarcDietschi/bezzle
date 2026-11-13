@@ -229,6 +229,20 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return tool
     }()
 
+    /// The design animated: layers and the camera posed at the playhead. See `MotionTool`.
+    private(set) lazy var motionTool: MotionTool = {
+        let tool = MotionTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        tool.titleHit = { [weak self] v in self?.titleHit(v) }
+        return tool
+    }()
+
+    /// The film's stage, which lies under the canvas and shows through a window cut over the
+    /// artboard being animated. See `FilmStageView`.
+    private(set) lazy var filmStage = FilmStageView(store: store)
+    /// The space bar pressed and let go without moving the view plays the film, in Animate.
+    private var spaceTap: (at: TimeInterval, moved: Bool)?
+
     /// An artboard's name typed into where it shows.
     private(set) lazy var naming: BoardNaming = {
         let tool = BoardNaming(store: store)
@@ -430,6 +444,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         drawDesign(shown, in: ctx, options: options)
         ctx.restoreGState()
         drawWashes(ctx)
+        // Animated, the artboard's film shows from under the canvas, through a window cut here.
+        if let film = filmStage.sync(scale: deviceScale) { ctx.clear(film) }
         if previewMotion.isMoving || deckTool.isAnimating || adaptTool.isAnimating || timeTable.isAnimating { keepEasing() }
         cutoutTool.draw(ctx, scale: deviceScale)
         if cutoutTool.animating { redrawSoon() }
@@ -444,6 +460,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // Seen as a prototype, nothing of drawing: its screens, their names and the flows.
         if store.prototyping {
             drawArtboardTitles(ctx)
+            // Animated, the film and what is posed in it; none of the prototype's threads.
+            if store.animating {
+                _ = (store.film.time, store.film.playing, store.film.camera)
+                motionTool.draw(ctx, scale: deviceScale, in: bounds)
+                drawLive(ctx, live)
+                return
+            }
             drawThreads(ctx)
             inspectTool.draw(ctx, scale: deviceScale, in: bounds)
             if inspectTool.isAnimating { keepEasing() }
@@ -1052,6 +1075,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         lastViewPoint = v
         if store.prototyping {
             if store.hovered != nil { store.hovered = nil }
+            if store.animating {
+                motionTool.hover(v)
+                (spaceHeld ? NSCursor.openHand : motionTool.cursor(at: v)).set()
+                return
+            }
             if store.inspecting {
                 inspectTool.hover(v)
                 (spaceHeld ? NSCursor.openHand : inspectTool.cursor(at: v)).set()
@@ -1130,6 +1158,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         timeTable.hover(nil)
         flowTool.hover(nil)
         inspectTool.hover(nil)
+        motionTool.hover(nil)
         developTool.hover(at: nil)
         rulers.hover(nil)
         guideTool.hover(nil)
@@ -1215,8 +1244,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             lastViewPoint = v
             mouseDownView = v
             if spaceHeld {
+                spaceTap?.moved = true
                 interaction = .pan(startOrigin: store.viewport.origin, startView: v)
                 NSCursor.closedHand.set()
+                return
+            }
+            if store.animating {
+                motionTool.down(at: v, event: event)
+                motionTool.cursor(at: v).set()
                 return
             }
             if deckTool.spreading, deckTool.down(at: v, event: event) { return }
@@ -1261,6 +1296,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         store.hovered = nil
 
         if spaceHeld {
+            spaceTap?.moved = true
             interaction = .pan(startOrigin: store.viewport.origin, startView: v)
             NSCursor.closedHand.set()
             return
@@ -1480,6 +1516,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 let xs = c.points.map(\.x), ys = c.points.map(\.y)
                 store.noteCircle = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
             }
+            return
+        }
+        if motionTool.dragging {
+            motionTool.drag(to: v, flags: flags)
+            motionTool.cursor(at: v).set()
             return
         }
         if inspectTool.dragging {
@@ -1742,6 +1783,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }
             return
         }
+        if motionTool.dragging {
+            motionTool.up(at: v, flags: event.modifierFlags)
+            motionTool.cursor(at: v).set()
+            return
+        }
         if inspectTool.dragging {
             inspectTool.up(at: v)
             inspectTool.cursor(at: v).set()
@@ -1949,7 +1995,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if store.editingText != nil { endEditing() }
         let v = convert(event.locationInWindow, from: nil)
         if store.prototyping {
-            let entries = store.inspecting ? inspectTool.menuEntries(at: v) : flowTool.menuEntries(at: v)
+            let entries = store.animating ? motionTool.menuEntries(at: v) : store.inspecting ? inspectTool.menuEntries(at: v) : flowTool.menuEntries(at: v)
             if let entries { onContextMenu?(windowPoint(v), entries) }
             return
         }
@@ -2017,7 +2063,22 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func magnify(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
+        // With the camera in hand, a pinch on its film brings it closer.
+        if store.animating, motionTool.takesGesture(at: v) {
+            motionTool.magnify(event)
+            return
+        }
         store.viewport.zoom(to: store.viewport.zoom * (1 + event.magnification), keeping: v)
+    }
+
+    /// Two fingers turned on the film roll the camera, while it is in hand.
+    override func rotate(with event: NSEvent) {
+        let v = convert(event.locationInWindow, from: nil)
+        if store.animating, motionTool.takesGesture(at: v) {
+            motionTool.rotate(event)
+        } else {
+            super.rotate(with: event)
+        }
     }
 
     /// A double tap with two fingers: in to actual size where the pointer is, or back out to everything.
@@ -2059,13 +2120,18 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if event.keyCode == 53, developTool.cancel() { return }
         if event.keyCode == 53, deckTool.cancel() { return }
         if pathTool.key(event) { return }
+        if store.animating, motionTool.key(event) { return }
         if store.inspecting, inspectTool.key(event) { return }
         if store.prototyping, prototypeKey(event) { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let step: CGFloat = flags.contains(.shift) ? 10 : 1
         switch event.keyCode {
         case 49: // space
-            if !spaceHeld { spaceHeld = true; NSCursor.openHand.set() }
+            if !spaceHeld {
+                spaceHeld = true
+                spaceTap = (event.timestamp, false)
+                NSCursor.openHand.set()
+            }
         case 51, 117: // delete
             store.deleteSelection()
         case 53: // escape
@@ -2117,6 +2183,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func keyUp(with event: NSEvent) {
         if event.keyCode == 49 {
             spaceHeld = false
+            // Pressed and let go without moving the view: the film plays, or stops.
+            if store.animating, let tap = spaceTap, !tap.moved, event.timestamp - tap.at < 0.4 { store.toggleFilm() }
+            spaceTap = nil
             updateCursor(lastViewPoint, flags: event.modifierFlags)
         } else {
             super.keyUp(with: event)
@@ -2207,11 +2276,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     // MARK: - Edit menu
 
     @objc func copy(_ sender: Any?) { store.copySelection() }
-    @objc func cut(_ sender: Any?) { if !store.inspecting { store.cutSelection() } }
-    @objc func paste(_ sender: Any?) { if !store.inspecting { store.paste() } }
+    @objc func cut(_ sender: Any?) { if !store.inspecting && !store.animating { store.cutSelection() } }
+    @objc func paste(_ sender: Any?) { if !store.inspecting && !store.animating { store.paste() } }
     @objc func delete(_ sender: Any?) {
         // Seen as a prototype, what is taken away is where the picked layers go, never the layers.
         if store.inspecting { return }
+        // Animated, it is keys.
+        if store.animating { store.removeFilmKeys(); return }
         if store.prototyping { store.unlinkFlow(store.linkSources); return }
         if store.editingPath != nil { store.deleteSelectedPoints() } else { store.deleteSelection() }
     }
@@ -2246,9 +2317,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(cut(_:)), #selector(delete(_:)): return !store.selection.isEmpty && !store.inspecting
+        case #selector(cut(_:)): return !store.selection.isEmpty && !store.inspecting && !store.animating
+        case #selector(delete(_:)): return store.animating ? store.hasKeysToRemove : !store.selection.isEmpty && !store.inspecting
         case #selector(copy(_:)): return !store.selection.isEmpty
-        case #selector(paste(_:)): return store.canPaste && !store.inspecting
+        case #selector(paste(_:)): return store.canPaste && !store.inspecting && !store.animating
         case #selector(selectAll(_:)): return !store.doc.nodes.isEmpty
         default: return true
         }

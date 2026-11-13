@@ -98,6 +98,14 @@ final class DocumentStore {
     var inspecting = false {
         didSet { if inspecting != oldValue { inspectingChanged() } }
     }
+    /// The design animated: its layers posed along a timeline and filmed by a camera, an
+    /// artboard at a time. On the prototype's table, so seen as a prototype too: the header's
+    /// switch. Here alone. See `MotionTool`.
+    var animating = false {
+        didSet { if animating != oldValue { animatingChanged() } }
+    }
+    /// Animate's desk: the film being worked on, where its playhead is and what of it is picked.
+    let film = FilmDesk()
     /// The prototype being played, over the design. See `Player`.
     var player: Player?
     /// The flow whose note is being written on its thread, and where on the canvas the thread's
@@ -412,6 +420,7 @@ final class DocumentStore {
             }
         }
         preview = nil
+        if animating { filmSelectionChanged() }
     }
 
     // MARK: Shapes opened as paths

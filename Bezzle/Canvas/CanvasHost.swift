@@ -6,17 +6,40 @@ struct CanvasHost: NSViewRepresentable {
     let store: DocumentStore
     let menus: MenuHost
 
-    func makeNSView(context: Context) -> CanvasView {
+    func makeNSView(context: Context) -> CanvasStack {
         // The canvas its tab kept while another was in front, tiles and all, or a new one.
         let view = store.canvas ?? CanvasView(store: store)
         view.onContextMenu = { point, entries in
             menus.show(at: point, width: 230, entries: entries)
         }
         store.canvas = view
-        return view
+        return CanvasStack(canvas: view)
     }
 
-    func updateNSView(_ view: CanvasView, context: Context) {}
+    func updateNSView(_ view: CanvasStack, context: Context) {}
+}
+
+/// The canvas, with the stage an animated artboard's film is shown on lying under it: the canvas
+/// cuts a window over that artboard, and draws its handles over what shows through.
+final class CanvasStack: NSView {
+    init(canvas: CanvasView) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        // Rounded as the canvas is, which the stage under it is cut to as well.
+        layer?.cornerRadius = 12
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+        for view in [canvas.filmStage, canvas] as [NSView] {
+            view.removeFromSuperview()
+            view.frame = bounds
+            view.autoresizingMask = [.width, .height]
+            addSubview(view)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
 }
 
 /// What a right click on the canvas offers.

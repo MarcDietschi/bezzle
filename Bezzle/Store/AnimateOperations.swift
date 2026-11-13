@@ -1,0 +1,583 @@
+import AppKit
+import Observation
+import QuartzCore
+import UniformTypeIdentifiers
+
+/// A key picked in the timeline.
+struct FilmKeyRef: Hashable {
+    /// The layer whose key it is; the artboard for the camera's.
+    var layer: UUID
+    /// One property's key, or every key the layer has at that moment.
+    var property: MotionProperty?
+    /// The moment, in thousandths of a second.
+    var ms: Int
+
+    init(_ layer: UUID, _ property: MotionProperty? = nil, at time: Double) {
+        self.layer = layer
+        self.property = property
+        ms = Int((time * 1000).rounded())
+    }
+
+    var time: Double { Double(ms) / 1000 }
+}
+
+/// Animate's desk: the film being worked on and what of it is in hand. Here alone, as the zoom
+/// is; the film itself is in the design (`Node.motion`, `Node.film`).
+@Observable
+final class FilmDesk {
+    /// The artboard whose film it is.
+    var board: UUID?
+    /// Where the playhead rests: the moment that is posed.
+    var time = 0.0
+    /// Where the playhead shows: the same, but for while the film plays, when it runs ahead.
+    /// Only what follows the playing reads it, so that nothing else is drawn again each frame.
+    var live = 0.0
+    /// The same again, where nothing watches it: the stage reads it each frame of the screen.
+    @ObservationIgnored var head = 0.0
+    var playing = false
+    /// The camera picked, rather than any layer.
+    var camera = false
+    /// The keys picked in the timeline.
+    var keys: Set<FilmKeyRef> = []
+    /// The layers whose rows are opened into one for each property.
+    var open: Set<UUID> = []
+    /// Whether the moves given in one go are how layers go, rather than how they come on.
+    var going = false
+    /// How many seconds apart several layers are given a move, one after another.
+    var apart = 0.06
+    /// How far saving the film as a movie has come, 0 to 1, while it is being saved.
+    var exporting: Double?
+
+    /// One run of the playhead: from where, begun when; for a look at something just made, to
+    /// where, and where the playhead rests after it.
+    struct Pass {
+        var began: CFTimeInterval
+        var from: Double
+        var to: Double?
+        var back: Double?
+    }
+    @ObservationIgnored var pass: Pass?
+    @ObservationIgnored var saving: Task<Void, Never>?
+
+    /// How long a film that goes round rests at its end before it begins again.
+    static let breath = 0.7
+}
+
+/// How a property stands at the playhead, for the bead beside it.
+enum FilmKeyState {
+    /// No keys at all: as designed throughout.
+    case none
+    /// Keys, but none at this moment.
+    case between
+    /// A key at this moment.
+    case here
+}
+
+extension MotionProperty {
+    /// Names a change to it in the Edit menu.
+    var action: LocalizedStringResource { .verbatim(title) }
+}
+
+extension DocumentStore {
+    // MARK: The mode
+
+    func animatingChanged() {
+        if animating {
+            // Animated on the prototype's table, where nothing is drawn.
+            if inspecting { inspecting = false }
+            if !prototyping { prototyping = true }
+            writingNote = nil
+            flowPreview = nil
+            focusFilm()
+            frameFilm()
+        } else {
+            pauseFilm()
+            film.camera = false
+            film.keys = []
+        }
+        canvas?.motionTool.modeChanged(animating)
+    }
+
+    // MARK: The film on the desk
+
+    /// The artboard whose film is worked on, as it is seen.
+    var filmBoard: Node? {
+        guard let id = film.board, let board = seenDoc.node(id), board.isArtboard, !board.hidden else { return nil }
+        return board
+    }
+
+    /// Turns the desk to the artboard the selection is on; with nothing picked it stays, and
+    /// before any was, takes the one most in sight.
+    func focusFilm() {
+        var id: UUID?
+        if let first = selection.first { id = doc.node(first)?.isArtboard == true ? first : doc.artboard(of: first)?.id }
+        if id == nil, let kept = film.board, doc.node(kept)?.isArtboard == true { id = kept }
+        if id == nil { id = focusedArtboard?.id ?? doc.artboards.first { !$0.hidden }?.id }
+        guard film.board != id else { return }
+        pauseFilm()
+        film.board = id
+        film.keys = []
+        film.camera = false
+        film.time = 0
+        film.live = 0
+        film.head = 0
+        if animating { frameFilm() }
+    }
+
+    /// Glides the view so the film's artboard lies whole above the timeline: it is what is worked
+    /// on, and belongs neither half out of sight nor under the card at the canvas's foot. One
+    /// that shows whole there already is left where it is.
+    func frameFilm() {
+        guard let board = filmBoard, canvasSize.width > 0, canvasSize.height > FilmTimeline.foot + 160 else { return }
+        let room = CGSize(width: canvasSize.width, height: canvasSize.height - FilmTimeline.foot)
+        let seen = CGRect(origin: viewport.origin, size: CGSize(width: room.width / viewport.zoom, height: room.height / viewport.zoom))
+        guard !seen.insetBy(dx: 12 / viewport.zoom, dy: 12 / viewport.zoom).contains(board.frame) else { return }
+        var target = viewport
+        target.fit(board.frame, in: room, padding: 40, maxZoom: max(1, min(viewport.zoom, 2)))
+        glide.fly(self, to: target)
+    }
+
+    func filmSelectionChanged() {
+        focusFilm()
+        if !selection.isEmpty, selection != film.board.map({ [$0] }) { film.camera = false }
+        let board = film.board
+        let kept = film.keys.filter { $0.layer == board || selection.contains($0.layer) }
+        if kept != film.keys { film.keys = kept }
+    }
+
+    /// The moment that is posed: the playhead, within the film as it is now.
+    var filmTime: Double { min(max(film.time, 0), filmBoard?.filmLength ?? 0) }
+
+    /// The layers a pose is given to: those picked that lie on the film's artboard.
+    var posedLayers: [UUID] {
+        guard let board = filmBoard else { return [] }
+        return selection.filter { id in id != board.id && board.descendant(id).map { !$0.locked } == true }
+    }
+
+    /// Picks the camera, and lets go of the layers.
+    func pickCamera() {
+        guard filmBoard != nil else { return }
+        if !selection.isEmpty { selection = [] }
+        film.keys = []
+        film.camera = true
+    }
+
+    // MARK: The playhead
+
+    /// Puts the playhead at a moment, and stops the film there.
+    func seek(_ t: Double) {
+        film.playing = false
+        film.pass = nil
+        let to = MotionTiming.time(min(max(t, 0), filmBoard?.filmLength ?? 0))
+        if film.time != to { film.time = to }
+        if film.live != to { film.live = to }
+        film.head = to
+    }
+
+    /// Plays the film from the playhead, or from its start once it has reached the end.
+    func playFilm(fromStart: Bool = false) {
+        guard let board = filmBoard else { return }
+        var from = fromStart ? 0 : filmTime
+        if from >= board.filmLength - 0.001 { from = 0 }
+        film.pass = FilmDesk.Pass(began: CACurrentMediaTime(), from: from)
+        film.live = from
+        film.head = from
+        film.playing = true
+        canvas?.filmStage.run()
+    }
+
+    /// Shows something just made by playing it once: from one moment to another, after which the
+    /// playhead rests at `back`, where it was.
+    func showFilm(from: Double, to: Double, back: Double) {
+        guard filmBoard != nil, to > from else { return }
+        film.pass = FilmDesk.Pass(began: CACurrentMediaTime(), from: from, to: to, back: back)
+        film.live = from
+        film.head = from
+        film.playing = true
+        canvas?.filmStage.run()
+    }
+
+    /// Stops the film where it is.
+    func pauseFilm() {
+        guard film.playing else { return }
+        let rest = film.pass?.back ?? film.live
+        film.playing = false
+        film.pass = nil
+        seek(rest)
+    }
+
+    func toggleFilm() {
+        if film.playing { pauseFilm() } else { playFilm() }
+    }
+
+    /// Moves the playing film on to now. False once it has stopped.
+    func filmStep(_ now: CFTimeInterval) -> Bool {
+        guard film.playing, let pass = film.pass, let board = filmBoard else {
+            film.playing = false
+            film.pass = nil
+            return false
+        }
+        let length = board.filmLength
+        let t = pass.from + (now - pass.began)
+        if let to = pass.to {
+            // A look at something just made: there, a moment's rest, and back.
+            if t >= to + 0.4 {
+                film.playing = false
+                film.pass = nil
+                seek(pass.back ?? to)
+                return false
+            }
+            film.head = min(t, to)
+        } else if board.film?.once == true {
+            if t >= length {
+                film.playing = false
+                film.pass = nil
+                seek(length)
+                return false
+            }
+            film.head = t
+        } else {
+            // Round and round, with a breath at the end before it begins again.
+            film.head = min(t.truncatingRemainder(dividingBy: length + FilmDesk.breath), length)
+        }
+        film.live = film.head
+        return true
+    }
+
+    /// The moments anything picked has a key at, or with nothing picked, anything in the film:
+    /// where the playhead steps to.
+    var filmStops: [Double] {
+        guard let board = filmBoard else { return [] }
+        var times: [Double] = []
+        func add(_ more: [Double]) {
+            for t in more where !times.contains(where: { MotionTiming.same($0, t) }) { times.append(t) }
+        }
+        let picked = posedLayers
+        if film.camera {
+            add(board.keyTimes(MotionProperty.camera))
+        } else if !picked.isEmpty {
+            for id in picked { add(board.descendant(id)?.keyTimes() ?? []) }
+        } else {
+            add(board.keyTimes(MotionProperty.camera))
+            func walk(_ n: Node) {
+                add(n.keyTimes())
+                n.children.forEach(walk)
+            }
+            board.children.forEach(walk)
+        }
+        return times.sorted()
+    }
+
+    /// Steps the playhead to the key before or after it.
+    func stepToKey(forward: Bool) {
+        let now = filmTime
+        let stops = filmStops
+        let next = forward ? stops.first { $0 > now + 0.0042 } : stops.last { $0 < now - 0.0042 }
+        seek(next ?? (forward ? filmBoard?.filmLength ?? 0 : 0))
+    }
+
+    // MARK: Posing
+
+    /// Poses a property of layers at the playhead, each at the value worked out from what it is.
+    func pose(_ property: MotionProperty, of ids: [UUID], _ value: (Node) -> [Double]) {
+        let t = filmTime
+        edit(property.action) { doc in
+            for id in ids {
+                doc.update(id) { n in
+                    guard !n.locked else { return }
+                    n.pose(property, value(n), at: t)
+                }
+            }
+        }
+    }
+
+    /// Poses the camera at the playhead. Its first key at the start has it fly out to the whole
+    /// artboard over the film's length, rather than in a layer's short beat.
+    func poseCamera(_ property: MotionProperty, _ value: [Double]) {
+        guard let board = filmBoard, property.isCamera else { return }
+        let t = filmTime, home = max(board.filmLength, 1)
+        edit(property.action) { doc in
+            doc.update(board.id) { $0.pose(property, value, at: t, home: home) }
+        }
+    }
+
+    /// What poses and keys go to: the camera's artboard when the camera is picked, or the layers.
+    private var keyTargets: [UUID] {
+        if film.camera { return film.board.map { [$0] } ?? [] }
+        return posedLayers
+    }
+
+    private func targets(of property: MotionProperty) -> [UUID] {
+        property.isCamera ? (film.board.map { [$0] } ?? []) : posedLayers
+    }
+
+    /// How a property stands at the playhead, over everything it would be keyed for.
+    func keyState(_ property: MotionProperty) -> FilmKeyState {
+        guard let board = filmBoard else { return .none }
+        let t = filmTime
+        var state = FilmKeyState.none
+        for id in targets(of: property) {
+            guard let track = (id == board.id ? board : board.descendant(id))?[track: property] else { continue }
+            if track.index(at: t) != nil { return .here }
+            state = .between
+        }
+        return state
+    }
+
+    /// Sets a key of a property at the playhead, holding what it is there; or, where everything
+    /// picked has one there already, takes it away.
+    func toggleKey(_ property: MotionProperty) {
+        guard let board = filmBoard else { return }
+        let t = filmTime
+        let ids = targets(of: property)
+        guard !ids.isEmpty else { return }
+        func node(_ id: UUID) -> Node? { id == board.id ? board : board.descendant(id) }
+        let all = ids.allSatisfy { node($0)?[track: property]?.index(at: t) != nil }
+        edit(all ? "Remove Key" : "Add Key") { doc in
+            for id in ids {
+                doc.update(id) { n in
+                    if all {
+                        n.removeKeys(at: t, of: [property])
+                    } else if n[track: property]?.index(at: t) == nil {
+                        n.setKey(property, n.value(of: property, at: t), at: t)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Holds what is picked as it is at the playhead: a key there for every property that moves.
+    func holdHere() {
+        let t = filmTime
+        let ids = keyTargets
+        guard !ids.isEmpty else { return }
+        edit("Add Key") { doc in
+            for id in ids {
+                doc.update(id) { n in
+                    for p in n.motionProperties where n[track: p]?.index(at: t) == nil {
+                        n.setKey(p, n.value(of: p, at: t), at: t)
+                    }
+                }
+            }
+        }
+    }
+
+    /// How what is picked stands at the playhead, over everything of it that moves: for the bead
+    /// that holds it there.
+    var holdState: FilmKeyState {
+        guard let board = filmBoard else { return .none }
+        let t = filmTime
+        var state = FilmKeyState.none
+        for id in keyTargets {
+            guard let node = id == board.id ? board : board.descendant(id) else { continue }
+            let tracks = node.motionProperties.compactMap { node[track: $0] }
+            if tracks.contains(where: { $0.index(at: t) != nil }) { return .here }
+            if !tracks.isEmpty { state = .between }
+        }
+        return state
+    }
+
+    /// The properties a picked key stands for.
+    private func properties(of ref: FilmKeyRef) -> [MotionProperty] {
+        if let p = ref.property { return [p] }
+        return ref.layer == film.board ? MotionProperty.camera : MotionProperty.layer
+    }
+
+    /// Whether Delete has keys to take away: some picked in the timeline, or some at the playhead
+    /// of what is picked.
+    var hasKeysToRemove: Bool {
+        if !film.keys.isEmpty { return true }
+        guard let board = filmBoard else { return false }
+        let t = filmTime
+        return keyTargets.contains { id in
+            (id == board.id ? board : board.descendant(id))?.motion?.values.contains { $0.index(at: t) != nil } == true
+        }
+    }
+
+    /// Takes away the keys picked in the timeline; with none picked, those at the playhead of
+    /// what is picked. Never a layer.
+    func removeFilmKeys() {
+        let t = filmTime
+        var refs = Array(film.keys)
+        if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
+        guard !refs.isEmpty else { return }
+        edit("Remove Key") { doc in
+            for ref in refs {
+                doc.update(ref.layer) { $0.removeKeys(at: ref.time, of: properties(of: ref)) }
+            }
+        }
+        film.keys = []
+    }
+
+    /// Sets how the picked keys are come to; with none picked, those at the playhead.
+    func setEase(_ ease: MotionEase) {
+        let t = filmTime
+        var refs = Array(film.keys)
+        if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
+        guard !refs.isEmpty else { return }
+        edit("Change Pace") { doc in
+            for ref in refs {
+                doc.update(ref.layer) { $0.setEase(ease, at: ref.time, of: properties(of: ref)) }
+            }
+        }
+    }
+
+    /// The pace the picked keys share, or those at the playhead; nil when they differ or there are none.
+    var sharedEase: MotionEase? {
+        guard let board = filmBoard else { return nil }
+        let t = filmTime
+        var refs = Array(film.keys)
+        if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
+        var found: MotionEase?
+        var any = false
+        for ref in refs {
+            guard let node = ref.layer == board.id ? board : board.descendant(ref.layer) else { continue }
+            for p in properties(of: ref) {
+                guard let track = node[track: p], let i = track.index(at: ref.time) else { continue }
+                let ease = track.keys[i].ease ?? .auto
+                if any, found != ease { return nil }
+                found = ease
+                any = true
+            }
+        }
+        return found
+    }
+
+    /// Moves keys in time, within a drag: `refs` are the keys as the drag began, and `delta` how
+    /// far they have been dragged since. Gives back where they are now.
+    @discardableResult
+    func retime(_ refs: [FilmKeyRef], by delta: Double) -> [FilmKeyRef] {
+        guard let before = gestureBefore, !refs.isEmpty else { return refs }
+        let delta = max(delta, -(refs.map(\.time).min() ?? 0))
+        // The later first when they go later, so none lands on one still to move.
+        let ordered = refs.sorted { delta > 0 ? $0.ms > $1.ms : $0.ms < $1.ms }
+        edit("Move Key") { doc in
+            for layer in Set(refs.map(\.layer)) {
+                let was = before.node(layer)?.motion
+                doc.update(layer) { $0.motion = was }
+            }
+            for ref in ordered {
+                doc.update(ref.layer) { $0.moveKeys(from: ref.time, to: ref.time + delta, of: properties(of: ref)) }
+            }
+        }
+        return refs.map { FilmKeyRef($0.layer, $0.property, at: MotionTiming.time($0.time + delta)) }
+    }
+
+    // MARK: The camera, sent somewhere
+
+    /// Has the camera look at layers from the playhead on, as close as shows them whole with
+    /// room round them, and shows the flight there from where it was before. Its roll and how
+    /// the scene is turned under it stay as they are, so a flight low over the page stays low.
+    func flyCamera(to ids: [UUID]) {
+        guard let board = filmBoard else { return }
+        let t = filmTime
+        var whole = CGRect.null
+        for id in ids {
+            guard let node = board.descendant(id), let frame = seenDoc.absoluteFrame(of: id) else { continue }
+            // Where it is at that moment: its place in the design, moved and grown as it is posed.
+            let pose = node.pose(at: t)
+            var r = frame.offsetBy(dx: -board.frame.minX + pose.move.x, dy: -board.frame.minY + pose.move.y)
+            r = r.insetBy(dx: r.width * (1 - pose.scale.x) / 2, dy: r.height * (1 - pose.scale.y) / 2)
+            whole = whole.union(r)
+        }
+        guard !whole.isNull, whole.width > 0, whole.height > 0 else { return }
+        let size = board.frame.size
+        let zoom = min(max(min(size.width / (whole.width * 1.35), size.height / (whole.height * 1.35)), 1), 8)
+        let before = board.keyTimes(MotionProperty.camera).last { $0 < t - 0.0042 } ?? 0
+        beginGesture()
+        poseCamera(.cameraMove, [Double(whole.midX - size.width / 2), Double(whole.midY - size.height / 2)])
+        poseCamera(.cameraZoom, [Double(zoom)])
+        endGesture("Fly the Camera Here")
+        if t > before + 0.05 { showFilm(from: before, to: t, back: t) }
+    }
+
+    /// Has the camera see the whole artboard, straight on, from the playhead on.
+    func restCamera() {
+        guard filmBoard?.hasCamera == true else { return }
+        beginGesture()
+        for p in MotionProperty.camera { poseCamera(p, p.rest) }
+        endGesture("See the Whole Artboard")
+    }
+
+    // MARK: Moves made in one go
+
+    /// Gives what is picked a move at the playhead, one after another when there are several;
+    /// with nothing picked, everything on the artboard. Then shows it.
+    func applyMove(_ move: MotionMove) {
+        guard let board = filmBoard else { return }
+        var ids = posedLayers
+        if ids.isEmpty { ids = board.children.filter { !$0.hidden && !$0.locked }.map(\.id) }
+        guard !ids.isEmpty else { return }
+        let t = filmTime
+        let apart = ids.count > 1 ? film.apart : 0
+        let going = film.going
+        edit(.verbatim(move.title)) { $0.apply(move, to: ids, at: t, going: going, apart: apart) }
+        let end = t + move.time + apart * Double(ids.count - 1)
+        showFilm(from: t, to: min(end, filmBoard?.filmLength ?? end), back: going ? t : min(end, filmBoard?.filmLength ?? end))
+    }
+
+    /// Takes all motion from what is picked: the camera's, the layers', or with nothing picked
+    /// the whole artboard's.
+    func clearFilmMotion() {
+        guard let board = filmBoard else { return }
+        if film.camera {
+            edit("Remove Motion") { doc in
+                doc.update(board.id) { n in
+                    for p in MotionProperty.camera { n[track: p] = nil }
+                }
+            }
+        } else {
+            let ids = posedLayers.isEmpty ? [board.id] : posedLayers
+            edit("Remove Motion") { $0.clearMotion(ids) }
+        }
+        film.keys = []
+    }
+
+    // MARK: The film's own settings
+
+    func setFilm(_ action: LocalizedStringResource, _ change: (inout Film) -> Void) {
+        guard let board = filmBoard else { return }
+        edit(action) { doc in
+            doc.update(board.id) { n in
+                var film = n.film ?? Film()
+                change(&film)
+                n.film = film == Film() ? nil : film
+            }
+        }
+        if film.time > (filmBoard?.filmLength ?? 0) { seek(film.time) }
+    }
+
+    // MARK: The film as a movie
+
+    /// Asks where, and saves the film there as a movie, while the desk tells how far it is; then
+    /// shows the movie in the Finder.
+    func saveFilm(scale: CGFloat, fps: Int) {
+        guard film.saving == nil, let board = filmBoard else { return }
+        pauseFilm()
+        let panel = NSSavePanel()
+        panel.title = String(localized: "Save the Film as a Movie")
+        panel.nameFieldStringValue = board.name + ".mp4"
+        panel.allowedContentTypes = [.mpeg4Movie]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        film.exporting = 0
+        let assets = assets
+        film.saving = Task { [weak self] in
+            do {
+                try await FilmExport.write(board, assets: assets, to: url, settings: FilmExport.Settings(scale: scale, fps: fps)) { done in
+                    self?.film.exporting = done
+                }
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch is CancellationError {
+                // Stopped by hand: nothing to say.
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+            self?.film.exporting = nil
+            self?.film.saving = nil
+        }
+    }
+
+    func stopSavingFilm() {
+        film.saving?.cancel()
+    }
+}

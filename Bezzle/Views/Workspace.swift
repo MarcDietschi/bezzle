@@ -53,6 +53,16 @@ struct Workspace: View {
                         }
                     }
                     .animation(Theme.spring, value: store.versions.browsing)
+                    .overlay(alignment: .bottom) {
+                        // The film's timeline, along the foot of the canvas while the design is animated.
+                        if store.animating {
+                            FilmTimeline(store: store)
+                                .padding(.horizontal, 18)
+                                .padding(.bottom, 14)
+                                .transition(.offset(y: 18).combined(with: .opacity))
+                        }
+                    }
+                    .animation(Theme.spring, value: store.animating)
                     .overlay {
                         // Notes in the margins, beside the artboards they are about; of now, so
                         // away while looking back.
@@ -92,7 +102,11 @@ struct Workspace: View {
                     .padding(.bottom, 9)
                     .padding(.trailing, 2)
                 ZStack {
-                    if store.inspecting {
+                    if store.animating {
+                        AnimateInspector(store: store)
+                            .transition(.asymmetric(insertion: .offset(x: 18).combined(with: .opacity).animation(Theme.spring.delay(0.06)),
+                                                    removal: .opacity.animation(.easeOut(duration: 0.08))))
+                    } else if store.inspecting {
                         InspectInspector(store: store)
                             .transition(.asymmetric(insertion: .offset(x: 18).combined(with: .opacity).animation(Theme.spring.delay(0.06)),
                                                     removal: .opacity.animation(.easeOut(duration: 0.08))))
@@ -111,6 +125,7 @@ struct Workspace: View {
                 .readOnly((store.isReadOnly && !store.inspecting) || store.versions.travel != nil)
                 .animation(Theme.spring, value: store.prototyping)
                 .animation(Theme.spring, value: store.inspecting)
+                .animation(Theme.spring, value: store.animating)
             }
             // The prototype played: over the panels and the canvas, under the bar.
             .overlay {

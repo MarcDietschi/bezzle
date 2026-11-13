@@ -12,6 +12,7 @@ import SwiftUI
 ///   BEZZLE_TOOL=rectangle          pick a tool
 ///   BEZZLE_PROTOTYPE=seconds       see the design as a prototype
 ///   BEZZLE_INSPECT=seconds         inspect the design, as someone building it does
+///   BEZZLE_ANIMATE=seconds         animate the design; BEZZLE_FILM drives its film (see `AnimateHooks`)
 ///   BEZZLE_PLAY=seconds[:screen]   play the prototype, from this screen
 ///   BEZZLE_TAPS=t@x,y;t@back;…     tap the playing screen at its own points at these times, or go back
 ///   BEZZLE_DARKS=t,t,…[:log]       turn the first artboard dark, then light, at these times, as its card does
@@ -105,6 +106,7 @@ enum DebugHooks {
         // BEZZLE_PROTOTYPE=seconds sees the design as a prototype; BEZZLE_PLAY=seconds[:screen] plays it.
         if let s = env["BEZZLE_PROTOTYPE"].flatMap(Double.init) { after(s) { store.prototyping = true } }
         if let s = env["BEZZLE_INSPECT"].flatMap(Double.init) { after(s) { store.inspecting = true } }
+        AnimateHooks.attach(store, env: env, after: after)
         if let spec = env["BEZZLE_PLAY"] {
             let parts = spec.split(separator: ":").map(String.init)
             after(Double(parts[0]) ?? 1) {
