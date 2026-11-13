@@ -478,6 +478,28 @@ extension AnimateCanvasTests {
         #expect(f.store.selection == [f.id("Badge")])
     }
 
+    @Test func comingInWithADesignDragInHandEscapeStillPutsThatDragBack() {
+        let f = FilmBench(animated: false)
+        let before = f.store.doc
+        f.press(f.table(200, 180), flags: .command)
+        f.pull(to: f.table(220, 190), flags: .command)
+        f.pull(to: f.table(240, 200), flags: .command)
+        #expect(f.store.inGesture && f.store.doc != before)
+        f.animate()
+        f.store.glide.stop()
+        // Escape is the design's while its drag is in hand: the layer is back where it was.
+        f.key(53)
+        #expect(!f.store.inGesture && f.store.doc == before)
+        #expect(f.store.animating && f.store.film.board == f.bench.a.id)
+        f.letGo(at: f.table(240, 200), flags: .command)
+        #expect(f.store.doc == before && !f.undo.canUndo && !f.tool.dragging)
+        // The next Escape is Animate's own, and a press is too.
+        f.click(f.middle("Badge"))
+        #expect(f.store.selection == [f.id("Badge")])
+        f.key(53)
+        #expect(f.store.selection.isEmpty)
+    }
+
     @Test func comingInAnewEachTimeNothingIsInHand() {
         let f = FilmBench(animated: false)
         // With a layer of the other artboard picked in the design, its film is the one on the desk.

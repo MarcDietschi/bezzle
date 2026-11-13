@@ -193,7 +193,8 @@ extension DocumentStore {
 
     /// Plays the film from the playhead, or from its start once it has reached the end.
     func playFilm(fromStart: Bool = false) {
-        guard let board = filmBoard else { return }
+        // Not under a hand that is posing: the menu and the AI server can ask in the middle of a drag.
+        guard !inGesture, let board = filmBoard else { return }
         var from = fromStart ? 0 : filmTime
         if from >= board.filmLength - 0.001 { from = 0 }
         film.pass = FilmDesk.Pass(began: CACurrentMediaTime(), from: from)

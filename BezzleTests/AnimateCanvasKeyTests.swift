@@ -440,23 +440,119 @@ extension AnimateCanvasTests {
         #expect(!f.canvas.validateMenuItem(delete) && !f.canvas.validateMenuItem(cut))
     }
 
-    @Test(.disabled("BezzleApp.swift: Duplicate (line 169) and the Object menu (from line 213: Group, Align, Flip, Lock and the rest) are not turned off while animating, and the store does what they ask: each still changes the design. Reported, not changed"))
-    func theMenusCommandsThatChangeLayersDoNothingWhileAnimating() {
+    /// Decided: what the menus do to layers they still do while animating, as in Prototype and
+    /// Inspect, since grouping, duplicating and reordering are part of making a film. Only what
+    /// the film has keys of its own for is the film's: Delete, Cut and Paste. So each command
+    /// changes the design as it does there, in one step, and the film keeps up.
+    @Test func theMenusCommandsStillChangeTheDesignWhileAnimatingAndTheFilmKeepsUp() {
         let f = FilmBench()
-        // What the menus call, with two layers picked: nothing stands between them and the design.
+        f.store.seek(1)
+        let at = f.middle("Card")
+        f.drag(at, at + point(40, 0))
+        f.store.pauseFilm()
+        let moves = f.keys("Card", .move)
+        #expect(!moves.isEmpty)
+        f.fresh()
         let commands: [(name: String, run: (DocumentStore) -> Void)] = [
             ("Duplicate", { $0.duplicateSelection() }),
             ("Group", { $0.group() }),
             ("Align Left", { $0.align(.left) }),
             ("Flip Horizontally", { $0.flip(horizontally: true) }),
+            ("Bring to Front", { $0.arrange(.front) }),
             ("Lock", { $0.setLocked(true, $0.selection) }),
         ]
         for command in commands {
             f.store.selection = [f.id("Card"), f.id("Badge")]
             let before = f.store.doc
             f.step { command.run(f.store) }
-            #expect(f.store.doc == before, "\(command.name)")
-            if f.undo.canUndo { f.undo.undo() }
+            // The film is still on the desk and whole, and the layer that moved still does.
+            #expect(f.store.animating && f.store.filmBoard?.id == f.bench.a.id, "\(command.name)")
+            #expect(f.store.doc.allNodes.contains { $0.name == "Card" && $0[track: .move]?.keys == moves }, "\(command.name)")
+            #expect(!f.store.inGesture && !f.tool.dragging, "\(command.name)")
+            f.hover(at)
+            f.draw()
+            // One step, taken back whole.
+            if f.store.doc != before {
+                f.undo.undo()
+                #expect(f.store.doc == before && !f.undo.canUndo, "\(command.name)")
+            }
+            f.fresh()
         }
+        // Duplicated, a layer is there twice and moves twice.
+        f.store.selection = [f.id("Card")]
+        f.step { f.store.duplicateSelection() }
+        #expect(f.store.doc.allNodes.filter { $0[track: .move]?.keys == moves }.count == 2)
+    }
+
+    // MARK: With something in hand
+
+    @Test func withADragInHandOnlyEscapeDoesAnything() {
+        let f = FilmBench()
+        f.click(f.middle("Card"))
+        f.store.seek(1)
+        let before = f.store.doc
+        let at = f.middle("Card")
+        f.press(at)
+        f.pull(to: at + point(20, 10))
+        f.pull(to: at + point(40, 20))
+        #expect(f.tool.dragging && f.store.inGesture)
+        let held = f.store.doc
+        // Return and Space would play the film under the hand; the others would move the
+        // playhead, and have the rest of the drag pose at another moment, or change keys.
+        f.key(36, "\r")
+        f.space(from: 10, to: 10.1)
+        f.key(115)
+        f.key(119)
+        f.key(43, ",")
+        f.key(47, ".")
+        f.key(43, ";", flags: .shift)
+        f.arrow(124, flags: .option)
+        f.arrow(123)
+        f.arrow(126, flags: .shift)
+        f.key(40, "k")
+        f.key(51)
+        f.key(117)
+        #expect(!f.store.film.playing && f.store.filmTime == 1)
+        #expect(f.store.doc == held && f.tool.dragging && f.store.inGesture)
+        // Nor does the menu's Play Film, or the AI server's, play it under the hand.
+        f.store.playFilm(fromStart: true)
+        f.store.toggleFilm()
+        #expect(!f.store.film.playing && f.store.filmTime == 1)
+        // The drag goes on as if nothing had been pressed, and is one step.
+        f.pull(to: at + point(60, 30))
+        f.letGo(at: at + point(60, 30))
+        f.store.pauseFilm()
+        #expect(f.value("Card", .move) == [60, 30] && f.keys("Card", .move).map(\.t) == [0, 1])
+        f.undo.undo()
+        #expect(f.store.doc == before && !f.undo.canUndo)
+        // Escape in the middle of one puts it back.
+        f.press(at)
+        f.pull(to: at + point(30, 30))
+        f.key(53)
+        #expect(!f.tool.dragging && !f.store.inGesture && f.store.doc == before)
+        f.letGo(at: at + point(30, 30))
+        #expect(f.store.doc == before && !f.undo.canUndo)
+    }
+
+    @Test func withTwoFingersOnTheCameraOnlyEscapeDoesAnything() {
+        let f = FilmBench()
+        f.click(f.chip)
+        f.store.seek(1)
+        let before = f.store.doc
+        let at = f.canvas.convert(f.eye, to: nil)
+        f.step { f.canvas.magnify(with: TwoFingers(at: at, pinch: 0.2, .began)) }
+        #expect(f.store.inGesture)
+        let held = f.store.doc
+        f.key(36, "\r")
+        f.space(from: 10, to: 10.1)
+        f.key(115)
+        f.arrow(124, flags: .option)
+        f.key(40, "k")
+        f.key(51)
+        #expect(!f.store.film.playing && f.store.filmTime == 1 && f.store.doc == held && f.store.inGesture)
+        f.key(53)
+        #expect(!f.store.inGesture && f.store.doc == before && f.store.film.camera)
+        f.step { f.canvas.magnify(with: TwoFingers(at: at, pinch: 0, .ended)) }
+        #expect(f.store.doc == before && !f.undo.canUndo)
     }
 }

@@ -2083,6 +2083,39 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     // MARK: - Keyboard
 
+    /// Escape with one of the tools' own drags in hand: it is put back. False with none.
+    private func cancelToolDrag() -> Bool {
+        if outlineTool.dragging { outlineTool.cancel(); return true }
+        if depthTool.dragging { depthTool.cancel(); return true }
+        if curveTool.dragging {
+            store.cancelGesture()
+            curveTool.cancel()
+            return true
+        }
+        if gridTool.dragging { gridTool.cancel(); return true }
+        if guideTool.pressed { guideTool.cancel(); return true }
+        if layoutTool.dragging { layoutTool.cancel(); return true }
+        return false
+    }
+
+    /// Puts back what the pointer itself has in hand of the design: a move, a resize and the like.
+    private func cancelInteraction() {
+        store.cancelGesture()
+        maskTool.cancel()
+        endAdapting()
+        curveTool.cancel()
+        interaction = .none
+    }
+
+    /// Escape in a mode that has keys of its own, with a drag of the design still in hand: begun
+    /// before the mode came on, it is put back as in the design. False with none in hand.
+    private func cancelDesignDrag() -> Bool {
+        if cancelToolDrag() { return true }
+        if case .none = interaction { return false }
+        cancelInteraction()
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
         // With the time ruler out: Escape puts it away, and the arrows step through the versions,
         // unless at now they have something selected to move.
@@ -2096,7 +2129,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }
         }
         // Animated, a key is the film's before any tool of the design has it: Return plays, where
-        // on a picture, a mask or a path it would open them.
+        // on a picture, a mask or a path it would open them. Only a drag of the design still in
+        // hand, begun before the mode changed, is the design's to put back.
+        if store.animating, event.keyCode == 53, cancelDesignDrag() { return }
         if store.animating, motionTool.key(event) { return }
         // A picture first: Return on one places it, where on a path it would open the points.
         if pictureTool.key(event) { return }
@@ -2104,16 +2139,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if maskTool.key(event) { return }
         // Building and the knife before the pen: Return ends them, where on a path it would open its points.
         if shapeBuilder.key(event) || knifeTool.key(event) { return }
-        if event.keyCode == 53, outlineTool.dragging { outlineTool.cancel(); return }
-        if event.keyCode == 53, depthTool.dragging { depthTool.cancel(); return }
-        if event.keyCode == 53, curveTool.dragging {
-            store.cancelGesture()
-            curveTool.cancel()
-            return
-        }
-        if event.keyCode == 53, gridTool.dragging { gridTool.cancel(); return }
-        if event.keyCode == 53, guideTool.pressed { guideTool.cancel(); return }
-        if event.keyCode == 53, layoutTool.dragging { layoutTool.cancel(); return }
+        if event.keyCode == 53, cancelToolDrag() { return }
         if event.keyCode == 53, developTool.cancel() { return }
         if event.keyCode == 53, deckTool.cancel() { return }
         if pathTool.key(event) { return }
@@ -2149,11 +2175,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                     store.selection = [parent.id]
                 } else { store.selection = [] }
             } else {
-                store.cancelGesture()
-                maskTool.cancel()
-                endAdapting()
-                curveTool.cancel()
-                interaction = .none
+                cancelInteraction()
             }
         case 36, 76: // return
             if store.selection.count == 1, let id = store.selection.first, store.node(id)?.kind == .text {

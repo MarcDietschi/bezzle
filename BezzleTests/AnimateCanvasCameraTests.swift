@@ -25,6 +25,13 @@ extension AnimateCanvasTests {
         f.click(f.chip)
         f.click(f.view(350, 40))
         #expect(f.store.film.camera && f.store.selection.isEmpty)
+        // A click beside the film, on the table, lets go of it, as of anything picked.
+        f.click(f.table(60, 60))
+        #expect(!f.store.film.camera && f.store.selection.isEmpty)
+        f.click(f.chip)
+        // With Shift, which adds to what is picked, it stays.
+        f.click(f.table(60, 60), flags: .shift)
+        #expect(f.store.film.camera)
         // A loop pulled over layers from the table picks them, and so lets go of it.
         f.drag(f.table(80, 80), f.table(300, 250))
         #expect(f.store.selection == [f.id("Card")] && !f.store.film.camera)

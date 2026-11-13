@@ -353,6 +353,8 @@ final class MotionTool {
                     let p = store.viewport.toCanvas(v)
                     let other = store.seenDoc.artboards.last { !$0.hidden && $0.frame.contains(p) && $0.id != scene.board.id }
                     store.selection = other.map { [$0.id] } ?? []
+                    // Beside the film, on the table, the camera is let go of, as anything picked is.
+                    if store.film.camera { store.film.camera = false }
                 }
                 drag = .marquee(start: v, now: v, base: base)
                 return
@@ -695,6 +697,13 @@ final class MotionTool {
     func key(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
         let shift = flags.contains(.shift)
+        // With a drag or two fingers in hand only Escape does anything: it puts them back. Any
+        // other key would play the film under the hand, or move the playhead and have the rest of
+        // one drag pose at another moment.
+        if dragging || !fingers.isEmpty {
+            if event.keyCode == 53 { cancel() }
+            return true
+        }
         switch event.keyCode {
         case 49:
             return false
