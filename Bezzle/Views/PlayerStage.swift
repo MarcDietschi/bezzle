@@ -49,7 +49,7 @@ nonisolated enum PlayerPictures {
     /// One layer alone, lying in what holds it at `origin` on its screen, with all it paints round
     /// it, its shadow too: the picture, and where on the screen it lies.
     static func layer(_ n: Node, origin: CGPoint, board: Node, scale: CGFloat, assets: Assets?) -> (CGImage, CGRect)? {
-        let r = Renderer.reach(of: n).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -1, dy: -1).integral
+        let r = Renderer.reach(of: n, eye: Eye.stage(board.frame.size).inside(origin)).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -1, dy: -1).integral
         guard r.width > 0, r.height > 0, r.width * scale < 6000, r.height * scale < 6000 else { return nil }
         let size = CGSize(width: max(1, (r.width * scale).rounded()), height: max(1, (r.height * scale).rounded()))
         guard let ctx = Renderer.bitmap(size) else { return nil }

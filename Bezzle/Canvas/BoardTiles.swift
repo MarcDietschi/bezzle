@@ -452,7 +452,8 @@ enum Damage {
     static func between(_ old: Node, _ new: Node) -> CGRect? {
         guard shell(old) == shell(new) else { return nil }
         var damage = CGRect.null
-        compare(old.children, new.children, .zero, .zero, spread: 0, into: &damage)
+        // The artboard is as big as it was, so it is seen from where it was (`Eye.stage`).
+        compare(old.children, new.children, .zero, .zero, spread: 0, eye: Eye.stage(new.frame.size), into: &damage)
         return damage
     }
 
@@ -469,10 +470,11 @@ enum Damage {
     /// Where each background blur on an artboard reaches, in its coordinates.
     static func backdrops(of board: Node) -> [CGRect] {
         var out: [CGRect] = []
+        let eye = Eye.stage(board.frame.size)
         func walk(_ nodes: [Node], _ origin: CGPoint) {
             for node in nodes where !node.hidden {
                 if let blur = node.blur, blur.on, blur.background {
-                    out.append(Geometry.bounds(of: node).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -blur.radius * 3, dy: -blur.radius * 3))
+                    out.append(Geometry.bounds(of: node, eye: eye.inside(origin)).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -blur.radius * 3, dy: -blur.radius * 3))
                 }
                 if node.isGroup { walk(node.children, CGPoint(x: origin.x + node.frame.minX, y: origin.y + node.frame.minY)) }
             }
@@ -495,12 +497,12 @@ enum Damage {
 
     /// Layers `a` (in a parent at `ao`) against layers `b` (in one at `bo`), adding where they
     /// differ to `damage`. `spread` is how much further a parent's shadow or blur carries a change.
-    private static func compare(_ a: [Node], _ b: [Node], _ ao: CGPoint, _ bo: CGPoint, spread: CGFloat, into damage: inout CGRect) {
+    private static func compare(_ a: [Node], _ b: [Node], _ ao: CGPoint, _ bo: CGPoint, spread: CGFloat, eye: Eye, into damage: inout CGRect) {
         func add(_ node: Node, _ origin: CGPoint) {
-            damage = damage.union(Renderer.reach(of: node).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -spread, dy: -spread))
+            damage = damage.union(Renderer.reach(of: node, eye: eye.inside(origin)).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -spread, dy: -spread))
         }
         if a.count == b.count, zip(a, b).allSatisfy({ $0.id == $1.id }) {
-            for (x, y) in zip(a, b) where ao != bo || x != y { changed(x, y, ao, bo, spread: spread, into: &damage) }
+            for (x, y) in zip(a, b) where ao != bo || x != y { changed(x, y, ao, bo, spread: spread, eye: eye, into: &damage) }
             return
         }
         // Some added, some taken away, or put in another order: what moved past another changed
@@ -515,13 +517,13 @@ enum Damage {
             }
         }
         for y in after {
-            if let x = olds[y.id], ao != bo || x != y { changed(x, y, ao, bo, spread: spread, into: &damage) }
+            if let x = olds[y.id], ao != bo || x != y { changed(x, y, ao, bo, spread: spread, eye: eye, into: &damage) }
         }
         for x in a where news[x.id] == nil { add(x, ao) }
         for y in b where olds[y.id] == nil { add(y, bo) }
     }
 
-    private static func changed(_ x: Node, _ y: Node, _ ao: CGPoint, _ bo: CGPoint, spread: CGFloat, into damage: inout CGRect) {
+    private static func changed(_ x: Node, _ y: Node, _ ao: CGPoint, _ bo: CGPoint, spread: CGFloat, eye: Eye, into damage: inout CGRect) {
         // Where it is on the artboard is all that counts: its parent may have moved around it.
         if ao != bo {
             var moved = x
@@ -532,8 +534,8 @@ enum Damage {
         // A group that only changed inside: what changed inside it, carried by its shadow or blur.
         // A mask is placed in the group's own coordinates, so a masked group counts as a whole if it moved.
         // One turned in depth shows a change inside it somewhere else, so it counts as a whole.
-        if x.isGroup, y.isGroup, shell(x) == shell(y), x.mask == nil || xo == yo, Perspective(y) == nil {
-            compare(x.children, y.children, xo, yo, spread: spread + effects(y), into: &damage)
+        if x.isGroup, y.isGroup, shell(x) == shell(y), x.mask == nil || xo == yo, !Perspective.inDepth(y) {
+            compare(x.children, y.children, xo, yo, spread: spread + effects(y), eye: eye, into: &damage)
             return
         }
         if ao == bo && shell(x) == shell(y) && x.frame.origin == y.frame.origin && x.children == y.children { return }
@@ -542,8 +544,8 @@ enum Damage {
             damage = damage.union(moved.insetBy(dx: -spread - effects(y), dy: -spread - effects(y)))
             return
         }
-        damage = damage.union(Renderer.reach(of: x).offsetBy(dx: ao.x, dy: ao.y).insetBy(dx: -spread, dy: -spread))
-        damage = damage.union(Renderer.reach(of: y).offsetBy(dx: bo.x, dy: bo.y).insetBy(dx: -spread, dy: -spread))
+        damage = damage.union(Renderer.reach(of: x, eye: eye.inside(ao)).offsetBy(dx: ao.x, dy: ao.y).insetBy(dx: -spread, dy: -spread))
+        damage = damage.union(Renderer.reach(of: y, eye: eye.inside(bo)).offsetBy(dx: bo.x, dy: bo.y).insetBy(dx: -spread, dy: -spread))
     }
 
     /// Where two versions of a path differ, when only some of its points moved: around the curves
@@ -551,7 +553,7 @@ enum Damage {
     /// anywhere shows everywhere: a gradient or picture spread over its box, dashes along its length.
     private static func curvesMoved(_ x: Node, _ y: Node, _ ao: CGPoint, _ bo: CGPoint) -> CGRect? {
         guard x.kind == .path, y.kind == .path, x.path != y.path, !y.borders.contains(where: { $0.dash > 0 }),
-              Perspective(x) == nil, Perspective(y) == nil else { return nil }
+              !Perspective.inDepth(x), !Perspective.inDepth(y) else { return nil }
         if x.frame.size != y.frame.size, y.fills.contains(where: { $0.gradient != nil || $0.image != nil }) || y.borders.contains(where: \.paints) { return nil }
         func outlineless(_ n: Node) -> Node {
             var n = shell(n)
@@ -609,13 +611,14 @@ enum Damage {
 
 nonisolated extension Renderer {
     /// Where a layer may paint in its own coordinates, its frame's top left at zero, leaving out
-    /// its shadow and blur.
-    static func ink(of node: Node) -> CGRect {
+    /// its shadow and blur. `eye` is where its parent is seen from (`Eye`).
+    static func ink(of node: Node, eye: Eye? = nil) -> CGRect {
         let own = CGRect(origin: .zero, size: node.frame.size)
         switch node.kind {
         case .group:
             var r = CGRect.null
-            for child in node.children where !child.hidden { r = r.union(reach(of: child)) }
+            let within = eye?.inside(node.frame.origin)
+            for child in node.children where !child.hidden { r = r.union(reach(of: child, eye: within)) }
             return r.isNull ? own : r
         case .text:
             // Along a curve, the frame is the box round the letters, which lean out of it a little.
@@ -636,12 +639,12 @@ nonisolated extension Renderer {
     }
 
     /// Where a layer may paint in its parent's coordinates, its shadow and blur included, and
-    /// turned in depth.
-    static func reach(of node: Node) -> CGRect {
-        if let perspective = Perspective(node) {
-            return shadowed(perspective.bounds(of: reach(of: flattened(node))), by: node, spreading: false)
+    /// turned in depth, seen from `eye`, where its parent is seen from (`Eye`).
+    static func reach(of node: Node, eye: Eye? = nil) -> CGRect {
+        if let perspective = Perspective(node, eye: eye) {
+            return shadowed(perspective.bounds(of: reach(of: flattened(node), eye: eye)), by: node, spreading: false)
         }
-        var r = shadowed(ink(of: node).applying(localTransform(node)), by: node)
+        var r = shadowed(ink(of: node, eye: eye).applying(localTransform(node)), by: node)
         if let blur = node.blur, blur.on, !blur.background { r = r.insetBy(dx: -blur.radius * 3, dy: -blur.radius * 3) }
         return r
     }
@@ -678,7 +681,7 @@ nonisolated extension Renderer {
         var reach: CGFloat = 64 + node.borderWidth
         reach += node.outerShadows.lazy.map { abs($0.x) + abs($0.y) + $0.blur * 2 + max($0.grown, 0) }.max() ?? 0
         if let blur = node.blur, blur.on { reach += blur.radius * 3 }
-        let r = Geometry.bounds(of: node).offsetBy(dx: board.frame.minX + options.offset.x, dy: board.frame.minY + options.offset.y)
+        let r = Geometry.bounds(of: node, eye: options.eye).offsetBy(dx: board.frame.minX + options.offset.x, dy: board.frame.minY + options.offset.y)
         return r.insetBy(dx: -reach, dy: -reach).intersects(visible)
     }
 }

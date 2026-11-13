@@ -31,6 +31,7 @@ Start here to find how anything is done. Each part has its own document; this pa
 | Release a version (Mac, then Windows) | `CLAUDE.md` › Releases |
 | Build, run and test the Mac app | below |
 | Prove a change to shared code leaves the Mac as it was | below, Mac parity |
+| Work on 3D: the scene, its eye, pushing layers in depth | below, 3D |
 | Build, test and ship Bezzle for Windows; work in the VM | `Windows/README.md` |
 | Change the website, the download page, the admin area | `~/Sites/bezzle-web/README.md` |
 | Deploy or test the sharing relay | `Relay/README.md` |
@@ -121,6 +122,37 @@ along one artboard's film. Its keys are changes from the design and never the de
   pose, play and press. Their clock starts when the hook does, well after launch: photograph late.
 - **Its words** are in the catalog in all four languages; `AnimateWordsTests` fails when one is
   missing, so a new property, pace or move brings its words along.
+
+### 3D
+
+An artboard is one 3D scene. Everything on it that is turned, brought nearer or pushed away is
+seen from one eye in front of the artboard's middle, as far above it as Animate's camera rests
+(`Eye.stage`, twice the larger side and never under 600 points). So layers share one vanishing
+point, a layer brought nearer grows and comes out from the middle, and what is nearer covers what
+is further whatever the layers list says (layers as near as each other keep the list's order). A
+group is one card in the scene and orders what it holds inside itself. Off any artboard a layer is
+seen from in front of its own middle, as before. The artboard's own sheet is the scene's backdrop:
+what is pushed behind the page still shows on it, as CSS paints a parent's background first.
+Animate's camera at rest sees what the design shows; tilted or swung, it sees how high each layer
+stands, and the sheet still lies under everything.
+
+- **Where:** all shared with Windows and the browser. `Bezzle/Model/Perspective.swift` has `Eye`,
+  the homography seen from it, and `BezzleDocument.eye(inside:)` and `eye(forParentOf:)`, where any
+  layer is seen from. `DepthOrder.swift` is nearer over further, `DepthPushing.swift` the push
+  while dragging, `DepthTurning.swift` the knob and turning from a side. The renderer finds the eye
+  itself, from `Options.board` and `offset` (`Renderer.Options.eye`).
+- **The rule for new code:** whatever asks where a layer in depth shows (`Perspective`,
+  `Geometry.bounds`, `Geometry.contains`, `Renderer.reach`, `Prototype.chain`) is given the eye of
+  the layer's parent. Without one it sees the layer from its own middle, which is only right off
+  artboards.
+- **On the canvas:** Control held while moving layers pushes them away or pulls them nearer, up
+  nearer by a point for a point, catching at the page and at the heights of the layers around,
+  Shift in tens; pressed or let go during the drag, nothing jumps. The knob takes Control as it
+  takes Option. A layer only held at a height and facing the eye has no knob, so a drag on its
+  middle moves it. In Animate, Control while moving keys Lift. On Windows the key is Alt, pressed
+  once the drag is under way (Alt at the press duplicates).
+- **Its tests** are `DepthSceneTests` and `DepthTests`, with `MotionLensTests` for the film.
+- **Driving a copy:** `BEZZLE_CLICKS` takes `^x,y>x,y` for a drag with Control held.
 
 ### Mac parity
 

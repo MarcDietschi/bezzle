@@ -21,7 +21,7 @@ extension MCPTools {
                 image = Renderer.image(of: node, scale: scale, assets: store.assets)
             } else {
                 guard let item = ExportItem(layer: id, in: doc) else { throw MCPError("\(node.name) is hidden, so there is nothing to draw.") }
-                let reach = Renderer.reach(of: node)
+                let reach = Renderer.reach(of: node, eye: doc.eye(forParentOf: id))
                 scale = min(wanted, longest / max(reach.width, reach.height, 1))
                 image = item.picture(scale: scale, opaque: false, assets: store.assets)?.image
             }

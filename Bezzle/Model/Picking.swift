@@ -47,8 +47,10 @@ struct Picking {
                 let inside = node.frame.contains(p)
                 guard inside || !node.clips else { continue }
                 let local = p - node.frame.origin
-                for child in node.seenLayers(fronts: fronts).reversed() where !child.hidden && !child.locked {
-                    if Geometry.contains(child, local, tolerance: tolerance) { return child.id }
+                // Nearer before further, as they are drawn (`DepthOrder`), each seen from the artboard's eye.
+                let eye = Eye.stage(node.frame.size)
+                for child in DepthOrder.stacked(node.seenLayers(fronts: fronts)).reversed() where !child.hidden && !child.locked {
+                    if Geometry.contains(child, local, tolerance: tolerance, eye: eye) { return child.id }
                 }
                 if inside { return nil }
             } else if !node.locked, Geometry.contains(node, p, tolerance: tolerance) {
@@ -77,23 +79,25 @@ struct Picking {
 
     func hit(_ p: CGPoint, in group: Node) -> UUID? {
         guard let inner = doc.placed(p, inside: group.id) else { return nil }
+        let eye = doc.eye(inside: group.id)
         if let holder = group.holder {
             guard Mask.inside(holder, inner, tolerance: tolerance) else { return nil }
             let takes = !holder.locked && !holder.hidden
             let edge = Renderer.heldOutline(of: holder).copy(strokingWithWidth: 12 / zoom, lineCap: .round, lineJoin: .round, miterLimit: 4)
             if takes, edge.contains(inner) { return holder.id }
-            return group.children.dropFirst().reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance) }?.id
+            return DepthOrder.stacked(group.children.dropFirst()).reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance, eye: eye) }?.id
                 ?? (takes ? holder.id : nil)
         }
-        return group.children.reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance) }?.id
+        return DepthOrder.stacked(group.children).reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance, eye: eye) }?.id
     }
 
     /// Something picked inside a mask, where its ghost shows past the mask's shape.
     func pickedGhost(at p: CGPoint) -> UUID? {
         guard let mask = enteredGroup, let holder = mask.holder, let inner = doc.placed(p, inside: mask.id),
               !Mask.inside(holder, inner, tolerance: 0) else { return nil }
-        return mask.children.dropFirst().reversed().first { child in
-            selection.contains(child.id) && !child.hidden && !child.locked && Geometry.contains(child, inner, tolerance: tolerance)
+        let eye = doc.eye(inside: mask.id)
+        return DepthOrder.stacked(mask.children.dropFirst()).reversed().first { child in
+            selection.contains(child.id) && !child.hidden && !child.locked && Geometry.contains(child, inner, tolerance: tolerance, eye: eye)
         }?.id
     }
 
@@ -142,7 +146,8 @@ struct Picking {
     func marquee(_ rect: CGRect, inside: UUID?) -> [UUID] {
         if let inside, let board = doc.node(inside) {
             let local = rect.offsetBy(dx: -board.frame.minX, dy: -board.frame.minY)
-            return board.seenLayers(fronts: fronts).filter { !$0.hidden && !$0.locked && Geometry.bounds(of: $0).intersects(local) }.map(\.id)
+            let eye = Eye.stage(board.frame.size)
+            return board.seenLayers(fronts: fronts).filter { !$0.hidden && !$0.locked && Geometry.bounds(of: $0, eye: eye).intersects(local) }.map(\.id)
         }
         return doc.nodes.filter { n in !n.hidden && !n.locked && (n.isArtboard ? rect.contains(n.frame) : Geometry.bounds(of: n).intersects(rect)) }.map(\.id)
     }

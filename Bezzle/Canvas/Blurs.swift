@@ -53,7 +53,7 @@ nonisolated extension Renderer {
         let scale = pixelScale(ctx), made = min(scale, shadowPixels / max(shadow.blur, 0.001))
         // Only into pixels: a PDF's shadows are left to Core Graphics.
         guard !options.castingShadow, made < scale * 0.75, ctx.width > 0 else { return false }
-        let drawn = casting(node, shadow)
+        let drawn = casting(node, shadow, eye: options.eye)
         let falls = drawn.offsetBy(dx: shadow.x, dy: shadow.y).insetBy(dx: -shadow.blur * 2, dy: -shadow.blur * 2).integral
         // Only what is drawn of it, and a few pixels round that for the stretching, in whole pixels
         // counted from its corner: every tile makes the same pixels of it, and they meet without a seam.
@@ -90,7 +90,7 @@ nonisolated extension Renderer {
     /// faded and mixed as the layer is. The layer is then drawn over it without it.
     static func drawShadowAlone(_ node: Node, _ shadow: Shadow, in ctx: CGContext, options: Options) {
         if drawShadowApart(node, shadow, in: ctx, options: options) { return }
-        let drawn = casting(node, shadow)
+        let drawn = casting(node, shadow, eye: options.eye)
         let falls = drawn.offsetBy(dx: shadow.x, dy: shadow.y).insetBy(dx: -shadow.blur * 2 - 1, dy: -shadow.blur * 2 - 1)
         guard !falls.isNull, falls.width > 0, falls.height > 0 else { return }
         let away = (falls.maxX - drawn.minX + shadow.blur * 2 + 8).rounded(.up)
@@ -115,16 +115,17 @@ nonisolated extension Renderer {
 
     /// Where what casts a shadow lies, in the layer's parent's coordinates: the layer as it is
     /// drawn, turned in depth with it, or its outline as the spread grows it.
-    static func casting(_ node: Node, _ shadow: Shadow) -> CGRect {
-        let drawn = Perspective(node).map { $0.bounds(of: reach(of: flattened(node))) } ?? ink(of: node).applying(localTransform(node))
-        return spreads(node, shadow) && Perspective(node) == nil ? drawn.insetBy(dx: -max(shadow.grown, 0), dy: -max(shadow.grown, 0)) : drawn
+    static func casting(_ node: Node, _ shadow: Shadow, eye: Eye?) -> CGRect {
+        let perspective = Perspective(node, eye: eye)
+        let drawn = perspective.map { $0.bounds(of: reach(of: flattened(node), eye: eye)) } ?? ink(of: node, eye: eye).applying(localTransform(node))
+        return spreads(node, shadow) && perspective == nil ? drawn.insetBy(dx: -max(shadow.grown, 0), dy: -max(shadow.grown, 0)) : drawn
     }
 
     /// Draws what casts one of a layer's shadows, the shadow set: the layer as it is drawn, at full
     /// strength and holding no other shadow under it, or the outline its spread grows, filled.
     /// `options` cast as Core Graphics casts, not apart.
     static func drawCaster(of node: Node, casting shadow: Shadow, in ctx: CGContext, options: Options) {
-        if spreads(node, shadow), Perspective(node) == nil, let grown = spreadOutline(of: node, by: shadow.grown) {
+        if spreads(node, shadow), !Perspective.inDepth(node), let grown = spreadOutline(of: node, by: shadow.grown) {
             ctx.saveGState()
             setShadow(shadow, in: ctx)
             ctx.concatenate(localTransform(node))
@@ -393,6 +394,8 @@ nonisolated final class BlurCache: @unchecked Sendable {
     private struct Entry {
         let node: Node
         let board: Node?
+        /// Where a layer turned in depth was seen from when its picture was made.
+        var eye: Eye? = nil
         let scale: CGFloat
         let region: CGRect
         let image: CGImage
@@ -437,19 +440,19 @@ nonisolated final class BlurCache: @unchecked Sendable {
     }
 
     /// A layer turned in depth: as it shows, or, `casting`, as it is drawn to cast its shadow at fewer pixels.
-    func depth(_ node: Node, scale: CGFloat, region: CGRect, casting: Bool) -> (image: CGImage, at: CGPoint)? {
+    func depth(_ node: Node, scale: CGFloat, region: CGRect, casting: Bool, eye: Eye?) -> (image: CGImage, at: CGPoint)? {
         lock.lock()
         defer { lock.unlock() }
         let key = (casting ? "c" : "d") + "\(node.id)"
-        guard let e = entries[key], e.scale == scale, e.region == region, e.node == node else { return nil }
+        guard let e = entries[key], e.scale == scale, e.region == region, e.node == node, e.eye == eye else { return nil }
         touch(key)
         return (e.image, e.at)
     }
 
-    func keep(depth node: Node, scale: CGFloat, region: CGRect, casting: Bool, image: CGImage, at: CGPoint) {
+    func keep(depth node: Node, scale: CGFloat, region: CGRect, casting: Bool, eye: Eye?, image: CGImage, at: CGPoint) {
         lock.lock()
         defer { lock.unlock() }
-        store((casting ? "c" : "d") + "\(node.id)", Entry(node: node, board: nil, scale: scale, region: region, image: image, at: at))
+        store((casting ? "c" : "d") + "\(node.id)", Entry(node: node, board: nil, eye: eye, scale: scale, region: region, image: image, at: at))
     }
 
     func keep(object node: Node, scale: CGFloat, region: CGRect, image: CGImage) {

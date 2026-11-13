@@ -14,7 +14,7 @@ nonisolated enum Inspect {
         guard let n = doc.node(id) else { return nil }
         if n.isArtboard { return n.frame }
         let o = doc.parentOrigin(of: id)
-        return Geometry.bounds(of: n).offsetBy(dx: o.x, dy: o.y)
+        return Geometry.bounds(of: n, eye: doc.eye(forParentOf: id)).offsetBy(dx: o.x, dy: o.y)
     }
 
     /// How far each side of a box lies inside another's; less than nothing where it sticks out.
@@ -258,6 +258,11 @@ nonisolated enum Inspect {
         return out
     }
 
+    /// Whether anything a layer holds, however deep, is turned or lifted in depth.
+    private static func holdsDepth(_ n: Node) -> Bool {
+        n.children.contains { Perspective.inDepth($0) || holdsDepth($0) }
+    }
+
     /// What a layer's own rule declares.
     private static func declarations(_ n: Node, tokens: Tokens) -> [String] {
         var lines: [String] = []
@@ -289,7 +294,27 @@ nonisolated enum Inspect {
             let (a, b) = n.lineEnds
             turn += atan2(b.y - a.y, b.x - a.x) * 180 / .pi
         }
-        if abs(turn.truncatingRemainder(dividingBy: 360)) > 0.01 { put("transform", "rotate(\(DesignTokens.number(turn, 2))deg)") }
+        let turned = abs(turn.truncatingRemainder(dividingBy: 360)) > 0.01
+        if let t = n.transform3D, Perspective.inDepth(n), !t.pinned {
+            // Lifted and turned in the artboard's one scene, which the artboard's perspective sees:
+            // last of all brought nearer, before that tipped, swung, and first turned in the page.
+            var steps: [String] = []
+            if t.z != 0 { steps.append("translateZ(\(px(t.z)))") }
+            if t.x != 0 { steps.append("rotateX(\(DesignTokens.number(t.x, 2))deg)") }
+            if t.y != 0 { steps.append("rotateY(\(DesignTokens.number(t.y, 2))deg)") }
+            if turned { steps.append("rotate(\(DesignTokens.number(turn, 2))deg)") }
+            put("transform", steps.joined(separator: " "), "in the artboard's perspective")
+        } else if turned {
+            put("transform", "rotate(\(DesignTokens.number(turn, 2))deg)")
+        }
+        // An artboard holding anything in depth is its scene: seen from in front of its middle.
+        // A group lying flat in it passes the scene on to what it holds.
+        if n.isArtboard, Self.holdsDepth(n) {
+            put("perspective", px(CGFloat(FilmLens.distance(for: n.frame.size))))
+            put("perspective-origin", "center")
+        } else if n.isGroup, !Perspective.inDepth(n), Self.holdsDepth(n) {
+            put("transform-style", "preserve-3d")
+        }
 
         // What paints it
         let fills = n.fills

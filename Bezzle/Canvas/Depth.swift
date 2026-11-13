@@ -9,7 +9,8 @@ import CoreImage
 nonisolated extension Renderer {
     static func drawInDepth(_ node: Node, _ perspective: Perspective, in ctx: CGContext, options: Options) {
         let plain = flattened(node)
-        var region = reach(of: plain).insetBy(dx: -1, dy: -1).integral
+        let eye = options.eye
+        var region = reach(of: plain, eye: eye).insetBy(dx: -1, dy: -1).integral
         // Sharp where it comes nearest: made as big as it shows there, within reason.
         let corners = [CGPoint(x: region.minX, y: region.minY), CGPoint(x: region.maxX, y: region.minY),
                        CGPoint(x: region.maxX, y: region.maxY), CGPoint(x: region.minX, y: region.maxY)]
@@ -37,12 +38,12 @@ nonisolated extension Renderer {
         var key = plain
         key.transform3D = node.transform3D
         let made: (image: CGImage, at: CGPoint)?
-        if keeps, let kept = BlurCache.shared.depth(key, scale: scale, region: region, casting: options.castingShadow) {
+        if keeps, let kept = BlurCache.shared.depth(key, scale: scale, region: region, casting: options.castingShadow, eye: eye) {
             made = kept
         } else {
             made = offscreen(region, scale: scale) { drawNode(plain, in: $0, options: options) }
                 .flatMap { bent($0, from: region.origin, scale: scale, by: perspective) }
-            if keeps, let made { BlurCache.shared.keep(depth: key, scale: scale, region: region, casting: options.castingShadow, image: made.image, at: made.at) }
+            if keeps, let made { BlurCache.shared.keep(depth: key, scale: scale, region: region, casting: options.castingShadow, eye: eye, image: made.image, at: made.at) }
         }
         guard let made else { return }
         ctx.saveGState()
@@ -106,7 +107,7 @@ nonisolated extension Renderer {
     static func depthPicture(of node: Node, scale: CGFloat, options: Options) -> (image: CGImage, region: CGRect)? {
         var alone = node
         alone.blend = nil
-        let region = reach(of: node).integral
+        let region = reach(of: node, eye: options.eye).integral
         guard !region.isNull, region.width > 0, region.height > 0,
               let image = offscreen(region, scale: scale, { drawNode(alone, in: $0, options: options) }) else { return nil }
         return (image, region)

@@ -108,7 +108,8 @@ nonisolated enum FilmPictures {
         let whole = CGRect(origin: .zero, size: subject.board.frame.size)
         guard subject.kind != .ground else { return whole }
         var r = CGRect.null
-        for n in subject.layers { r = r.union(Renderer.reach(of: n)) }
+        let eye = Eye.stage(subject.board.frame.size).inside(subject.origin)
+        for n in subject.layers { r = r.union(Renderer.reach(of: n, eye: eye)) }
         guard !r.isNull else { return .zero }
         r = r.offsetBy(dx: subject.origin.x, dy: subject.origin.y).insetBy(dx: -1, dy: -1).integral
         return subject.clipped ? r.intersection(whole) : r
@@ -200,7 +201,7 @@ nonisolated enum FilmPictures {
             o.board = subject.board
             o.offset = subject.origin
             ctx.translateBy(x: subject.origin.x, y: subject.origin.y)
-            for n in subject.layers { Renderer.drawNode(n, in: ctx, options: o) }
+            for n in DepthOrder.stacked(subject.layers) { Renderer.drawNode(n, in: ctx, options: o) }
         }
         return ctx.makeImage().map { Picture(image: $0, rect: r) }
     }

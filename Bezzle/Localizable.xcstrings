@@ -29408,6 +29408,28 @@
         }
       }
     },
+    "Move in Depth" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In der Tiefe verschieben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacer en profondeur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta in profondità"
+          }
+        }
+      }
+    },
     "Move “%@” to “%@”?" : {
       "localizations" : {
         "de" : {
@@ -31609,24 +31631,24 @@
         }
       }
     },
-    "On the canvas, drag the knob in its middle to aim it, with Option to bring it nearer. Just outside a side, a drag turns anything in depth." : {
+    "On the canvas, drag the knob in its middle to aim it. Hold Control while you move a layer to bring it nearer or push it away. Just outside a side, a drag turns anything in depth." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ziehe auf der Arbeitsfläche den Knopf in der Mitte der Ebene, um sie auszurichten; mit der Wahltaste holst du sie näher heran. Knapp außerhalb einer Seite dreht Ziehen alles in der Tiefe."
+            "value" : "Ziehe auf der Arbeitsfläche den Knopf in der Mitte der Ebene, um sie auszurichten. Hältst du beim Verschieben einer Ebene die Control-Taste gedrückt, holst du sie näher heran oder schiebst sie weiter weg. Knapp außerhalb einer Seite dreht Ziehen alles in der Tiefe."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sur la zone de travail, faites glisser la poignée centrale pour l’orienter, avec Option pour le rapprocher. Juste à l’extérieur d’un côté, un glissement fait pivoter n’importe quel élément en profondeur."
+            "value" : "Sur la zone de travail, faites glisser la poignée centrale pour l’orienter. En maintenant la touche Contrôle pendant que vous déplacez un calque, vous le rapprochez ou l’éloignez. Juste à l’extérieur d’un côté, un glissement fait pivoter n’importe quel élément en profondeur."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sull’area di lavoro, trascina la manopola al centro per orientarlo e, con Opzione, per avvicinarlo. Appena fuori da un lato, trascinando ruoti qualsiasi livello in profondità."
+            "value" : "Sull’area di lavoro, trascina la manopola al centro per orientarlo. Tenendo premuto Ctrl mentre sposti un livello, lo avvicini o lo allontani. Appena fuori da un lato, trascinando ruoti qualsiasi livello in profondità."
           }
         }
       }

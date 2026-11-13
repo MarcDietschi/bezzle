@@ -256,12 +256,13 @@ final class LiveMarks {
     private func outline(of id: UUID, in doc: BezzleDocument, _ vp: Viewport) -> [CGPoint]? {
         guard let node = doc.node(id) else { return nil }
         let points: [CGPoint]
+        let eye = doc.eye(forParentOf: id)
         if node.kind == .line {
             let (a, b) = node.lineEnds
             let c = CGPoint(x: node.frame.midX, y: node.frame.midY)
-            points = [a, b].map { Perspective.shown(Geometry.rotated($0, about: c, by: node.rotation), of: node) }
+            points = [a, b].map { Perspective.shown(Geometry.rotated($0, about: c, by: node.rotation), of: node, eye: eye) }
         } else {
-            points = Perspective.corners(of: node)
+            points = Perspective.corners(of: node, eye: eye)
         }
         return points.map { vp.toView(doc.shown($0, inParentOf: id)) }
     }

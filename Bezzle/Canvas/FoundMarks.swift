@@ -83,10 +83,11 @@ extension CanvasView {
         laid.manager.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
                                              in: laid.container) { rect, _ in rects.append(rect) }
         let center = CGPoint(x: node.frame.midX, y: node.frame.midY)
+        let eye = doc.eye(forParentOf: id)
         return rects.map { r in
             let box = r.offsetBy(dx: node.frame.minX, dy: node.frame.minY + down).insetBy(dx: -1, dy: 0)
             return [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY), CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)]
-                .map { doc.shown(Perspective.shown(Geometry.rotated($0, about: center, by: node.rotation), of: node), inParentOf: id) }
+                .map { doc.shown(Perspective.shown(Geometry.rotated($0, about: center, by: node.rotation), of: node, eye: eye), inParentOf: id) }
         }
     }
 }

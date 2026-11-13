@@ -42,6 +42,10 @@ nonisolated enum Renderer {
         /// The moment of an Animate film being drawn, in seconds from its start: a shader is drawn
         /// as it is then. As the design shows it when nil.
         var time: Double?
+
+        /// Where the layers being drawn are seen from in depth, in what holds them: in front of
+        /// their artboard's middle (`Eye.stage`). Off any artboard, nil: each from its own middle.
+        var eye: Eye? { board.map { Eye.stage($0.frame.size).inside(offset) } }
     }
 
     static func draw(_ doc: BezzleDocument, in ctx: CGContext, options: Options = Options()) {
@@ -91,7 +95,8 @@ nonisolated enum Renderer {
         var inner = options
         inner.board = board
         inner.offset = .zero
-        for child in board.children where !child.hidden && inSight(child, inner) {
+        // Nearer over further (`DepthOrder`).
+        for child in DepthOrder.stacked(board.children) where !child.hidden && inSight(child, inner) {
             drawNode(child, in: ctx, options: inner)
         }
         ctx.restoreGState()
@@ -192,7 +197,7 @@ nonisolated enum Renderer {
             if halt.reached { return }
         }
         guard !options.skipping.contains(node.id), node.opacity > 0 else { return }
-        if let perspective = Perspective(node) {
+        if let perspective = Perspective(node, eye: options.eye) {
             drawInDepth(node, perspective, in: ctx, options: options)
             return
         }
@@ -225,7 +230,7 @@ nonisolated enum Renderer {
         // and its shadow is blurred all over that. A shadow inside is cast from around the
         // layer, so that much room is kept round it.
         let around = inner.map(innerReach).max() ?? 0
-        if grouped { ctx.beginTransparencyLayer(in: ink(of: node).insetBy(dx: -1 - around, dy: -1 - around), auxiliaryInfo: nil) }
+        if grouped { ctx.beginTransparencyLayer(in: ink(of: node, eye: options.eye).insetBy(dx: -1 - around, dy: -1 - around), auxiliaryInfo: nil) }
 
         switch node.kind {
         case .text:
@@ -300,7 +305,7 @@ nonisolated enum Renderer {
             drawHeld(by: holder, group.children.dropFirst(), in: ctx, options: inner)
             return
         }
-        for child in group.children where !child.hidden && inSight(child, inner) {
+        for child in DepthOrder.stacked(group.children) where !child.hidden && inSight(child, inner) {
             drawNode(child, in: ctx, options: inner)
         }
     }
@@ -319,7 +324,7 @@ nonisolated enum Renderer {
         ctx.saveGState()
         ctx.addPath(heldOutline(of: holder))
         ctx.clip(using: holder.evenOdd == true ? .evenOdd : .winding)
-        for child in held where !child.hidden && inSight(child, options) {
+        for child in DepthOrder.stacked(held) where !child.hidden && inSight(child, options) {
             drawNode(child, in: ctx, options: options)
         }
         ctx.restoreGState()
@@ -623,7 +628,7 @@ nonisolated enum Renderer {
         // Stopped partway through, there is not the whole of it to cut out.
         if options.halt?.reached == true { return }
         let reach = innerReach(shadow)
-        let box = ink(of: node).insetBy(dx: -reach, dy: -reach)
+        let box = ink(of: node, eye: options.eye).insetBy(dx: -reach, dy: -reach)
         ctx.saveGState()
         defer { ctx.restoreGState() }
         ctx.setBlendMode(.sourceAtop)

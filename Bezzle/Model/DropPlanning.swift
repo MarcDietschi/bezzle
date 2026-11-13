@@ -170,7 +170,7 @@ extension BezzleDocument {
         var found: UUID?
         func look(_ nodes: [Node]) {
             for n in nodes where !n.hidden {
-                if n.screen == true, !n.locked, let local = placed(p, inParentOf: n.id), Geometry.contains(n, local, tolerance: 0) {
+                if n.screen == true, !n.locked, let local = placed(p, inParentOf: n.id), Geometry.contains(n, local, tolerance: 0, eye: eye(forParentOf: n.id)) {
                     found = n.id
                 }
                 if !n.children.isEmpty { look(n.children) }

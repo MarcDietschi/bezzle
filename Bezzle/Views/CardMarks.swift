@@ -115,7 +115,7 @@ struct CardMarks: View {
                 ctx.stroke(around, with: .color(pencil), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             case .export:
                 // What goes into the file: the artboard, or all the layer paints, shadow and all.
-                let reach = node.isArtboard ? box : Renderer.reach(of: node).offsetBy(dx: o.x, dy: o.y)
+                let reach = node.isArtboard ? box : Renderer.reach(of: node, eye: doc.eye(forParentOf: id)).offsetBy(dx: o.x, dy: o.y)
                 let corner = vp.toView(reach.origin)
                 let cut = Path(CGRect(x: corner.x, y: corner.y, width: reach.width * vp.zoom, height: reach.height * vp.zoom))
                 ctx.fill(cut, with: .color(pencil.opacity(0.06)))

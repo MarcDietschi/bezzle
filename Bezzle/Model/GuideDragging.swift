@@ -378,7 +378,7 @@ final class GuideDragging {
         var out: [CGFloat] = [0, length / 2, length]
         if board.isCarousel { for s in board.slideRects { out += vertical ? [s.minX, s.midX, s.maxX] : [s.minY, s.midY, s.maxY] } }
         for child in host.seenLayers(of: board) where !child.hidden {
-            let b = Geometry.bounds(of: child)
+            let b = Geometry.bounds(of: child, eye: Eye.stage(board.frame.size))
             out += vertical ? [b.minX, b.midX, b.maxX] : [b.minY, b.midY, b.maxY]
         }
         if host.gridsShown, let grid = board.layout {

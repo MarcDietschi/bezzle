@@ -127,7 +127,8 @@ struct DepthTests {
         doc.nodes = [board]
         let item = try #require(ExportItem(layer: c.id, in: doc))
         let rect = item.bounds(assets: nil)
-        #expect(rect.width < 60 && rect.height > 100, "\(rect)")
+        // Seen from the artboard's middle, down and to the right of it: about half as wide.
+        #expect(rect.width < 64 && rect.height > 100, "\(rect)")
         let whole = ExportItem(artboard: board)
         let svg = SVGWriter.document(for: whole, bounds: whole.bounds(assets: nil), assets: nil)
         let parser = XMLParser(data: Data(svg.utf8))

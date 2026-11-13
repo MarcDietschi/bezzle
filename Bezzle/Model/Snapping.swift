@@ -41,8 +41,9 @@ struct SnapTargets {
         var onto: Node?
         if let parent, let box = doc.absoluteFrame(of: parent.id) {
             boxes.append(box)
+            let eye = doc.eye(inside: parent.id)
             for child in parent.children where !ids.contains(child.id) && !child.hidden {
-                neighbours.append(Geometry.bounds(of: child).offsetBy(dx: box.minX, dy: box.minY))
+                neighbours.append(Geometry.bounds(of: child, eye: eye).offsetBy(dx: box.minX, dy: box.minY))
             }
             onto = first.flatMap { doc.artboard(of: $0) }
             // Inside a group, the artboard around it counts too.
@@ -52,7 +53,7 @@ struct SnapTargets {
             // artboard is under its own middle, and what is on it moves with it.
             if let id = first, doc.node(id)?.isArtboard == false, let frame = doc.absoluteFrame(of: id), let board = doc.artboard(at: frame.center) {
                 for child in board.children where !ids.contains(child.id) && !child.hidden {
-                    neighbours.append(Geometry.bounds(of: child).offsetBy(dx: board.frame.minX, dy: board.frame.minY))
+                    neighbours.append(Geometry.bounds(of: child, eye: Eye.stage(board.frame.size)).offsetBy(dx: board.frame.minX, dy: board.frame.minY))
                 }
                 onto = board
             }

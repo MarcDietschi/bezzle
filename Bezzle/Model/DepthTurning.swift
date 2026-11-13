@@ -68,10 +68,13 @@ final class DepthTurning {
         host.selection.compactMap { host.doc.node($0) }.filter { !$0.isArtboard && !$0.locked }
     }
 
-    /// The one selected layer turned in depth, when the select tool is free to work on it.
+    /// The one selected layer turned in depth, when the select tool is free to work on it. One
+    /// only held nearer or further, facing the eye, has no knob: its middle is for moving it, as
+    /// anything's is, and it is turned from just outside a side.
     private var single: (node: Node, turn: Transform3D)? {
         guard host.turnsFreely, host.selection.count == 1, let n = host.doc.node(host.selection[0]), !n.locked,
               !n.isArtboard, let turn = n.transform3D else { return nil }
+        if turn.x == 0, turn.y == 0, turn.z != 0, !turn.pinned { return nil }
         return (n, turn)
     }
 
@@ -79,7 +82,7 @@ final class DepthTurning {
     /// layer too small on screen to hold a knob clear of its handles.
     func knob() -> (center: CGPoint, knob: CGPoint)? {
         guard let (n, turn) = single else { return nil }
-        let shown = Geometry.bounds(of: n)
+        let shown = Geometry.bounds(of: n, eye: host.doc.eye(forParentOf: n.id))
         guard max(shown.width, shown.height) * host.zoom >= 40 else { return nil }
         let c = host.toView(host.doc.shown(CGPoint(x: n.frame.midX, y: n.frame.midY), inParentOf: n.id))
         let f = DepthAim.facing(turn)
@@ -124,8 +127,12 @@ final class DepthTurning {
         case .aim(let id, let center, let grip, let original, let start):
             var next = original
             if option {
-                // Up is nearer, as far as the pointer goes.
-                next.z = (original.z + (start.y - v.y) / host.zoom).rounded()
+                // Up is nearer, as far as the pointer goes, caught on the page and with Shift in
+                // tens, as when it is pushed while it is moved (`DepthPushing`).
+                var push = DepthPushing()
+                push.pointer(at: CGPoint(x: 0, y: start.y / host.zoom), holding: true)
+                push.pointer(at: CGPoint(x: 0, y: v.y / host.zoom), holding: true)
+                next.z = push.height(from: original.z, reach: 4 / host.zoom, steps: shift)
             } else {
                 let at = CGPoint(x: v.x + grip.x - center.x, y: v.y + grip.y - center.y)
                 let (x, y) = DepthAim.turn(facing: CGPoint(x: at.x / Self.reach, y: at.y / Self.reach))
@@ -162,8 +169,7 @@ final class DepthTurning {
     /// How far it is turned, beside it, while it turns.
     private func show(_ turn: Transform3D?, of ids: [UUID], depth: Bool) {
         let doc = host.doc
-        let box = ids.compactMap { id in doc.node(id).map { Geometry.bounds(of: $0).offsetBy(dx: doc.parentOrigin(of: id).x, dy: doc.parentOrigin(of: id).y) } }
-            .reduce(nil as CGRect?) { $0?.union($1) ?? $1 } ?? .zero
+        let box = doc.bounds(of: ids) ?? .zero
         guard let turn else { host.measure(.turning(ids.count), box); return }
         host.measure(depth ? .nearness(turn.z) : .angles(x: turn.x, y: turn.y), box)
     }

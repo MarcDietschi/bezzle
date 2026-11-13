@@ -432,7 +432,7 @@ struct MotionLensTests {
         #expect(b.filmPieces(loose: [UUID()]) == b.filmPieces())
     }
 
-    @Test func aLayerTurnedInDepthByTheDesignIsDrawnFlatOnlyWhenItsKeysTurnItToo() {
+    @Test func aLayerTurnedInDepthByTheDesignStandsInTheSceneWhereTheDesignHasIt() {
         var depth = Transform3D()
         depth.x = 30
         depth.z = 12
@@ -448,18 +448,27 @@ struct MotionLensTests {
         pinned.setKey(.tilt, [20], at: 0)
         var level = card("Level")
         level.setKey(.swing, [20], at: 0)
-        let b = board([tipping, sliding, pinned, level])
+        var still = card("Still")
+        still.transform3D = depth
+        let b = board([tipping, sliding, pinned, level, still])
         let pieces = b.filmPieces()
-        #expect(pieces.dropFirst().map(\.flat) == [true, false, false, false])
-        #expect(pieces[1].key.hasSuffix("/flat") && !pieces[2].key.hasSuffix("/flat"))
+        // Turned or lifted by the design, keys or none, a layer is drawn flat for the film to turn
+        // and lift in the scene, as the design sees it (`Eye.stage`). A screen pinned into a photo
+        // keeps the look it has; with nothing of the design to turn, there is nothing to leave out.
+        #expect(pieces.dropFirst().map(\.flat) == [true, true, false, false, true])
+        #expect(pieces[1].key.hasSuffix("/flat") && pieces[2].key.hasSuffix("/flat") && !pieces[3].key.hasSuffix("/flat"))
         // Drawn flat, the film turns it by the design's turn and its keys' together, and it lies as
         // high as both lift it.
         let placed = b.placement(of: pieces[1], at: 0, camera: .rest)
         #expect(placed.height == 20)
         #expect(placed.map == FilmLens.layer(center: tipping.center, rotation: 0, depth: depth, pose: tipping.pose(at: 0), camera: .rest, size: size))
-        // Drawn as the design turns it, only its keys place it.
+        // Its keys only move it: it stands as high as the design holds it, turned as the design turns it.
         let slid = b.placement(of: pieces[2], at: 0, camera: .rest)
-        #expect(slid.height == 0 && slid.map.isFlat)
+        #expect(slid.height == 12)
+        #expect(slid.map == FilmLens.layer(center: sliding.center, rotation: 0, depth: depth, pose: sliding.pose(at: 0), camera: .rest, size: size))
+        // No keys at all: a piece of its own all the same, where the design has it.
+        let stood = b.placement(of: pieces[5], at: 0, camera: .rest)
+        #expect(stood.height == 12 && !stood.map.isFlat)
     }
 
     @Test func aPieceIsPlacedFadedBlurredAndLiftedAsItsLayerIsPosed() {
@@ -505,11 +514,11 @@ struct MotionLensTests {
         func order(at t: Double) -> [Int] { b.filmOrder(pieces, pieces.map { b.placement(of: $0, at: t, camera: .rest) }) }
         // With nothing lifted, as they lie.
         #expect(order(at: 0) == Array(0..<8))
-        // Lifted, the lowest first: what is sunk under the page lies under the page itself, what
-        // lies on it stays in its order, and the highest is drawn last, over everything.
-        #expect(order(at: 1) == [5, 0, 1, 3, 6, 7, 4, 2])
+        // Lifted, the lowest first: the page itself is the backdrop, under all, what is sunk under
+        // the page next, what lies on it stays in its order, and the highest is drawn last.
+        #expect(order(at: 1) == [0, 5, 1, 3, 6, 7, 4, 2])
         // Half way they are already in that order.
-        #expect(order(at: 0.5) == [5, 0, 1, 3, 6, 7, 4, 2])
+        #expect(order(at: 0.5) == [0, 5, 1, 3, 6, 7, 4, 2])
         // Two as high as each other keep the order they lie in.
         let twins = board([lifting("First", to: 40), lifting("Second", to: 40)])
         let twinPieces = twins.filmPieces()

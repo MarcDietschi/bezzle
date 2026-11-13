@@ -1,64 +1,116 @@
 import Foundation
 import CoreGraphics
 
+/// Where a scene is seen from: in front of a point of the page, `distance` points above it, in the
+/// coordinates of what is seen. An artboard is a stage, seen from in front of its middle, as far
+/// above it as its film's camera rests (`stage`), so everything held up off it shares one eye: a
+/// layer brought nearer comes out from the middle as well as growing, layers turned alike lean
+/// to one vanishing point, and what is nearer covers what is further (`DepthOrder`).
+nonisolated struct Eye: Equatable, Hashable, Sendable {
+    var at: CGPoint
+    var distance: CGFloat
+
+    /// The eye of an artboard of this size, in its own points.
+    static func stage(_ size: CGSize) -> Eye {
+        Eye(at: CGPoint(x: size.width / 2, y: size.height / 2), distance: CGFloat(FilmLens.distance(for: size)))
+    }
+
+    /// The same eye, in the coordinates of something whose own begin at `origin` in these.
+    func inside(_ origin: CGPoint) -> Eye {
+        Eye(at: CGPoint(x: at.x - origin.x, y: at.y - origin.y), distance: distance)
+    }
+}
+
 /// A layer turned in depth, as if it were a card held up off the page: where each point of it,
-/// drawn flat, shows. It is seen from straight in front of its own middle, as CSS's
-/// `perspective()` sees a layer, so its middle stays where it is, and it looks the same wherever
-/// it lies. Turned and brought nearer, a layer is still flat, so the whole of it moves alike: a
-/// homography of its plane, which this is. A layer pinned by its corners, as a mockup's screen is
-/// laid onto a photo, is one too, made from where the corners go, and is turned after.
+/// drawn flat, shows. On an artboard it is seen from the artboard's eye (`Eye`), as every layer
+/// on it is; off any artboard, from straight in front of its own middle, as CSS's
+/// `perspective()` sees a layer, so its middle stays where it is. Turned and brought nearer, a
+/// layer is still flat, so the whole of it moves alike: a homography of its plane, which this is.
+/// A layer pinned by its corners, as a mockup's screen is laid onto a photo, is one too, made
+/// from where the corners go, and is turned after.
 nonisolated struct Perspective {
-    /// Where it is seen around, in the layer's parent: the middle of its frame.
+    /// What it turns about, in the layer's parent: the middle of its frame.
     let center: CGPoint
-    /// From a point drawn flat, measured from the middle, to where it shows, as homogeneous
-    /// coordinates: rows of three.
+    /// Where it is seen from, in the layer's parent.
+    let eye: CGPoint
+    /// From a point drawn flat, measured from its middle, to where it shows, measured from the
+    /// eye, as homogeneous coordinates: rows of three.
     private let m: (CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)
     let distance: CGFloat
     /// How near the eye anything of it may come, as the third homogeneous coordinate.
     private let nearest: CGFloat
-    /// Pinned by its corners, which changes how big it shows from place to place.
-    private let pinned: Bool
+    /// Pinned by its corners, or seen from off its middle, either of which changes how big it
+    /// shows from place to place.
+    private let uneven: Bool
 
-    /// How far in front of a layer it is seen from: twice as far as it is big, as a card is held
-    /// to look at, so a small one shows as much depth as a large one, and no turn ever brings part
-    /// of it up to the eye; never nearer than 600 points, so a small thing is not distorted.
+    /// How far in front of a layer it is seen from, off any artboard: twice as far as it is big,
+    /// as a card is held to look at, so a small one shows as much depth as a large one, and no
+    /// turn ever brings part of it up to the eye; never nearer than 600 points, so a small thing
+    /// is not distorted.
     static func viewingDistance(for node: Node) -> CGFloat {
         max(600, max(node.frame.width, node.frame.height) * 2)
     }
 
-    /// Nil for a layer that lies flat in the page, which is drawn as it always was. Artboards are the page.
-    init?(_ node: Node, distance: CGFloat? = nil) {
-        guard let t = node.transform3D, !node.isArtboard, t.x != 0 || t.y != 0 || t.z != 0 || t.pinned else { return nil }
-        self.init(t, frame: node.frame, distance: distance ?? Self.viewingDistance(for: node))
+    /// Whether a layer leaves the page: turned, brought nearer, pushed away or pinned by its
+    /// corners. Artboards are the page.
+    static func inDepth(_ node: Node) -> Bool {
+        guard let t = node.transform3D, !node.isArtboard else { return false }
+        return t.x != 0 || t.y != 0 || t.z != 0 || t.pinned
+    }
+
+    /// Nil for a layer that lies flat in the page, which is drawn as it always was. `eye` is where
+    /// its parent is seen from (`BezzleDocument.eye`); nil sees it from in front of its middle.
+    init?(_ node: Node, eye: Eye? = nil) {
+        guard Self.inDepth(node), let t = node.transform3D else { return nil }
+        self.init(t, frame: node.frame, eye: eye ?? Eye(at: node.frame.center, distance: Self.viewingDistance(for: node)))
     }
 
     init(_ t: Transform3D, center: CGPoint, distance d: CGFloat) {
-        self.center = center
-        self.distance = d
-        m = Self.turn(t, distance: d)
-        nearest = d * 0.02
-        pinned = false
+        self.init(t, center: center, eye: Eye(at: center, distance: d))
     }
 
-    /// A layer pinned by its corners into `frame`, then turned.
+    /// Turned about `center`, and seen from `eye`.
+    init(_ t: Transform3D, center: CGPoint, eye: Eye) {
+        self.center = center
+        self.eye = eye.at
+        distance = eye.distance
+        m = Self.turn(t, distance: eye.distance, off: CGPoint(x: center.x - eye.at.x, y: center.y - eye.at.y))
+        nearest = eye.distance * 0.02
+        uneven = Self.off(center, eye)
+    }
+
+    /// A layer pinned by its corners into `frame`, then turned, seen from in front of its middle.
     init(_ t: Transform3D, frame: CGRect, distance d: CGFloat) {
+        self.init(t, frame: frame, eye: Eye(at: frame.center, distance: d))
+    }
+
+    /// A layer pinned by its corners into `frame`, then turned, seen from `eye`.
+    init(_ t: Transform3D, frame: CGRect, eye: Eye) {
         guard t.pinned, let corners = t.corners, let pin = Self.pin(corners, size: frame.size) else {
-            self = Perspective(t, center: frame.center, distance: d)
+            self = Perspective(t, center: frame.center, eye: eye)
             return
         }
+        let d = eye.distance
         center = frame.center
+        self.eye = eye.at
         distance = d
-        let turned = Self.multiply(Self.turn(t, distance: d), pin)
+        let turned = Self.multiply(Self.turn(t, distance: d, off: CGPoint(x: frame.midX - eye.at.x, y: frame.midY - eye.at.y)), pin)
         // Its middle in front of the eye, whichever way round the corners were given.
         m = turned.8 < 0 ? Self.scaled(turned, -1) : turned
         nearest = abs(m.8) * 0.02 * d / max(d - min(t.z, d * 0.4), 1)
-        pinned = true
+        uneven = true
+    }
+
+    /// Whether the eye is anywhere but in front of the middle.
+    private static func off(_ center: CGPoint, _ eye: Eye) -> Bool {
+        abs(center.x - eye.at.x) > 1e-9 || abs(center.y - eye.at.y) > 1e-9
     }
 
     private typealias Matrix = (CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)
 
-    /// Turned about the vertical axis, then the horizontal one, and brought nearer.
-    private static func turn(_ t: Transform3D, distance d: CGFloat) -> Matrix {
+    /// Turned about the vertical axis, then the horizontal one, and brought nearer, its middle
+    /// lying `off` from in front of the eye.
+    private static func turn(_ t: Transform3D, distance d: CGFloat, off k: CGPoint = .zero) -> Matrix {
         let a = CGFloat(t.x * .pi / 180), b = CGFloat(t.y * .pi / 180)
         let ca = cos(a), sa = sin(a), cb = cos(b), sb = sin(b)
         // The rows of that turn, of which a point in the page (its depth nothing) needs the
@@ -68,7 +120,8 @@ nonisolated struct Perspective {
         let r31 = -ca * sb, r32 = sa
         // Never so near that the layer reaches the eye.
         let z = min(t.z, d * 0.4)
-        return (d * r11, d * r12, 0, d * r21, d * r22, 0, -r31, -r32, d - z)
+        // Across and down grow with nearness from where the eye is, not from the layer's middle.
+        return (d * r11, d * r12, d * k.x, d * r21, d * r22, d * k.y, -r31, -r32, d - z)
     }
 
     /// From a point of a layer of `size`, measured from its middle, to where its corners are
@@ -113,13 +166,13 @@ nonisolated struct Perspective {
         let x = m.0 * u + m.1 * v + m.2, y = m.3 * u + m.4 * v + m.5
         // Never behind the eye: what would be is pressed against it.
         let w = max(m.6 * u + m.7 * v + m.8, nearest)
-        return CGPoint(x: center.x + x / w, y: center.y + y / w)
+        return CGPoint(x: eye.x + x / w, y: eye.y + y / w)
     }
 
     /// Where on the layer drawn flat a point that shows lies: what is under the pointer. Nil
     /// where nothing of its plane shows, past its horizon.
     func flat(_ p: CGPoint) -> CGPoint? {
-        let sx = p.x - center.x, sy = p.y - center.y
+        let sx = p.x - eye.x, sy = p.y - eye.y
         // shown = (row 1, row 2) / row 3, two equations in the two unknowns.
         let a = m.0 - sx * m.6, b = m.1 - sx * m.7, e = sx * m.8 - m.2
         let c = m.3 - sy * m.6, d = m.4 - sy * m.7, f = sy * m.8 - m.5
@@ -135,7 +188,7 @@ nonisolated struct Perspective {
     func magnification(at p: CGPoint) -> CGFloat {
         let u = p.x - center.x, v = p.y - center.y
         let w = max(m.6 * u + m.7 * v + m.8, nearest)
-        guard pinned else { return distance / w }
+        guard uneven else { return distance / w }
         // How far a step along the layer goes where it shows, the longer of the two ways.
         let x = m.0 * u + m.1 * v + m.2, y = m.3 * u + m.4 * v + m.5
         let xu = (m.0 * w - x * m.6) / (w * w), xv = (m.1 * w - x * m.7) / (w * w)
@@ -192,38 +245,76 @@ nonisolated struct Perspective {
         return out
     }
 
-    /// Where a point drawn flat in a layer's parent shows, the layer turned in depth or not.
-    static func shown(_ p: CGPoint, of node: Node) -> CGPoint {
-        Perspective(node)?.shown(p) ?? p
+    /// Where a point drawn flat in a layer's parent shows, the layer turned in depth or not;
+    /// `eye` is where its parent is seen from.
+    static func shown(_ p: CGPoint, of node: Node, eye: Eye? = nil) -> CGPoint {
+        Perspective(node, eye: eye)?.shown(p) ?? p
     }
 
-    static func flat(_ p: CGPoint, of node: Node) -> CGPoint? {
-        guard let perspective = Perspective(node) else { return p }
+    static func flat(_ p: CGPoint, of node: Node, eye: Eye? = nil) -> CGPoint? {
+        guard let perspective = Perspective(node, eye: eye) else { return p }
         return perspective.flat(p)
     }
 
     /// A layer's four corners as it shows, in its parent: turned in the page, then in depth.
-    static func corners(of node: Node) -> [CGPoint] {
+    static func corners(of node: Node, eye: Eye? = nil) -> [CGPoint] {
         let flat = Geometry.corners(of: node.frame, rotation: node.rotation)
-        guard let perspective = Perspective(node) else { return flat }
+        guard let perspective = Perspective(node, eye: eye) else { return flat }
         return flat.map(perspective.shown)
     }
 }
 
 nonisolated extension BezzleDocument {
+    /// Where what `id` holds is seen from, in its own coordinates: in front of its artboard's
+    /// middle (`Eye.stage`), however deep in groups. Nil for what lies on no artboard, which is
+    /// seen layer by layer from in front of each one's middle.
+    func eye(inside id: UUID) -> Eye? {
+        guard let container = node(id) else { return nil }
+        if container.isArtboard { return Eye.stage(container.frame.size) }
+        let chain = ancestors(of: id)
+        guard let top = chain.first, top.isArtboard else { return nil }
+        let origin = (chain.dropFirst() + [container]).reduce(CGPoint.zero) { $0 + $1.frame.origin }
+        return Eye.stage(top.frame.size).inside(origin)
+    }
+
+    /// Where a layer's parent is seen from, in the parent's coordinates, in which the layer's
+    /// frame is given.
+    func eye(forParentOf id: UUID) -> Eye? {
+        parent(of: id).flatMap { eye(inside: $0.id) }
+    }
+
+    /// Where each of a run of layers from the canvas down, each holding the next, is seen from
+    /// in what holds it: the first, on the canvas itself, from in front of its own middle; the
+    /// rest from their artboard's eye, if they are on one.
+    static func eyes(along chain: [Node]) -> [Eye?] {
+        guard let top = chain.first else { return [] }
+        guard top.isArtboard else { return Array(repeating: nil, count: chain.count) }
+        var out: [Eye?] = [nil]
+        var eye = Eye.stage(top.frame.size)
+        for c in chain.dropFirst() {
+            out.append(eye)
+            eye = eye.inside(c.frame.origin)
+        }
+        return out
+    }
+
     /// Where a point given in what `id` holds shows on the canvas: moved by its frame and by
     /// each artboard's and group's above it, and turned in depth with any that is.
     func shown(_ p: CGPoint, inside id: UUID) -> CGPoint {
         guard let container = node(id) else { return p }
-        return (ancestors(of: id) + [container]).reversed().reduce(p) { q, c in Perspective.shown(q + c.frame.origin, of: c) }
+        let chain = ancestors(of: id) + [container]
+        let eyes = Self.eyes(along: chain)
+        return chain.indices.reversed().reduce(p) { q, i in Perspective.shown(q + chain[i].frame.origin, of: chain[i], eye: eyes[i]) }
     }
 
     /// The other way: a point of the canvas in what `id` holds. Nil where that is seen edge on.
     func placed(_ p: CGPoint, inside id: UUID) -> CGPoint? {
         guard let container = node(id) else { return p }
+        let chain = ancestors(of: id) + [container]
+        let eyes = Self.eyes(along: chain)
         var q = p
-        for c in ancestors(of: id) + [container] {
-            guard let flat = Perspective.flat(q, of: c) else { return nil }
+        for (c, eye) in zip(chain, eyes) {
+            guard let flat = Perspective.flat(q, of: c, eye: eye) else { return nil }
             q = flat - c.frame.origin
         }
         return q
@@ -238,8 +329,13 @@ nonisolated extension BezzleDocument {
         parent(of: id).map { placed(p, inside: $0.id) } ?? p
     }
 
+    /// Where a layer shows, as `Perspective` has it for where it lies: seen from its artboard's eye.
+    func perspective(of node: Node) -> Perspective? {
+        Perspective(node, eye: eye(forParentOf: node.id))
+    }
+
     /// Whether anything a layer lies in is turned in depth, so that it shows somewhere other than its frame says.
     func liesInDepth(_ id: UUID) -> Bool {
-        ancestors(of: id).contains { Perspective($0) != nil }
+        ancestors(of: id).contains { Perspective.inDepth($0) }
     }
 }

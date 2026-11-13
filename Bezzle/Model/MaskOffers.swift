@@ -9,7 +9,7 @@ extension BezzleDocument {
     func canvasBounds(of id: UUID) -> CGRect? {
         guard let n = node(id) else { return nil }
         let o = parentOrigin(of: id)
-        return Geometry.bounds(of: n).offsetBy(dx: o.x, dy: o.y)
+        return Geometry.bounds(of: n, eye: eye(forParentOf: id)).offsetBy(dx: o.x, dy: o.y)
     }
 
     /// Masking `ids` in the shape `over`, when that would cut something of them off that shows.

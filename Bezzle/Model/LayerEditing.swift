@@ -125,7 +125,7 @@ extension BezzleDocument {
         for id in ids {
             guard let n = node(id) else { continue }
             let o = parentOrigin(of: id)
-            let r = Geometry.bounds(of: n).offsetBy(dx: o.x, dy: o.y)
+            let r = Geometry.bounds(of: n, eye: eye(forParentOf: id)).offsetBy(dx: o.x, dy: o.y)
             bounds = bounds?.union(r) ?? r
         }
         return bounds
@@ -137,14 +137,15 @@ extension BezzleDocument {
     func shownCorners(of id: UUID, turnedBox: @MainActor (Node) -> (frame: CGRect, rotation: Double) = BezzleDocument.turnedBox) -> [CGPoint]? {
         guard let node = node(id) else { return nil }
         let points: [CGPoint]
+        let eye = eye(forParentOf: id)
         if node.kind == .line {
             let (a, b) = node.lineEnds
             let c = CGPoint(x: node.frame.midX, y: node.frame.midY)
-            points = [a, b].map { Perspective.shown(Geometry.rotated($0, about: c, by: node.rotation), of: node) }
+            points = [a, b].map { Perspective.shown(Geometry.rotated($0, about: c, by: node.rotation), of: node, eye: eye) }
         } else if node.isGroup, case let (box, turn) = turnedBox(node), turn != 0 {
-            points = Geometry.corners(of: box, rotation: turn).map { Perspective.shown($0, of: node) }
+            points = Geometry.corners(of: box, rotation: turn).map { Perspective.shown($0, of: node, eye: eye) }
         } else {
-            points = Perspective.corners(of: node)
+            points = Perspective.corners(of: node, eye: eye)
         }
         return points.map { shown($0, inParentOf: id) }
     }
@@ -192,13 +193,14 @@ extension BezzleDocument {
     /// holds it turned in depth or not.
     func shownOnCanvas(_ p: CGPoint, of node: Node) -> CGPoint {
         let o = parentOrigin(of: node.id)
-        return shown(Perspective.shown(p - o, of: node), inParentOf: node.id)
+        return shown(Perspective.shown(p - o, of: node, eye: eye(forParentOf: node.id)), inParentOf: node.id)
     }
 
     /// The other way: where on the layer, lying flat, a point of the canvas is. Nil past its horizon.
     func flatOnCanvas(_ p: CGPoint, of node: Node) -> CGPoint? {
         let o = parentOrigin(of: node.id)
-        return placed(p, inParentOf: node.id).flatMap { Perspective.flat($0, of: node) }.map { $0 + o }
+        let eye = eye(forParentOf: node.id)
+        return placed(p, inParentOf: node.id).flatMap { Perspective.flat($0, of: node, eye: eye) }.map { $0 + o }
     }
 }
 

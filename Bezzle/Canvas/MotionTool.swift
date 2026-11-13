@@ -269,6 +269,8 @@ final class MotionTool {
     }
 
     private var drag: Drag = .none
+    /// A move with Control held lifts what is dragged instead (`DepthPushing`), in view points.
+    private var pushing = DepthPushing()
     /// The tracks there were when the drag began, to tell afterwards whether it made a first key.
     private var tracksBefore: [UUID: Set<MotionProperty>] = [:]
 
@@ -372,6 +374,7 @@ final class MotionTool {
                 from[picked] = (pose.move, pose.lift)
             }
             drag = .move(start: v, from: from, started: false)
+            pushing = DepthPushing()
         }
         hot = .none
         redraw()
@@ -425,10 +428,29 @@ final class MotionTool {
                 started = true
                 begin(Array(from.keys), scene)
                 drag = .move(start: start, from: from, started: true)
+                // Held from the press, it is lifted from where the press was.
+                pushing.pointer(at: start, holding: flags.contains(.control))
             }
+            // With Control held, up lifts it nearer and down lowers it, and it stays where it is
+            // across; let go, it moves across again from there (`DepthPushing`, shared).
+            pushing.pointer(at: v, holding: flags.contains(.control))
+            let k = Double(scene.zoom * CGFloat(max(scene.camera.zoom, 0.01)))
+            if pushing.pushing {
+                store.pose(.lift, of: Array(from.keys)) { node in
+                    guard let was = from[node.id] else { return node.value(of: .lift, at: scene.time) }
+                    let h = was.lift + Double(pushing.depth) / k
+                    // Caught at the artboard, or in tens with Shift.
+                    if shift { return [(h / 10).rounded() * 10] }
+                    return [!free && abs(h) * k <= 5 ? 0 : h.rounded()]
+                }
+            }
+            let across = pushing.across(from: start, to: v)
+            // Only lifted: no key across that says it stayed where it was.
+            guard !pushing.pushed || hypot(across.x, across.y) > 0.5 || from.keys.contains(where: { tracksBefore[$0]?.contains(.move) == true }) else { break }
+            let to = CGPoint(x: start.x + across.x, y: start.y + across.y)
             store.pose(.move, of: Array(from.keys)) { node in
                 guard let was = from[node.id] else { return node.value(of: .move, at: scene.time) }
-                var d = travel(from: start, to: v, height: was.lift, in: scene)
+                var d = travel(from: start, to: to, height: was.lift, in: scene)
                 // Shift keeps it to the way it has mostly gone.
                 if shift { if abs(d.x) >= abs(d.y) { d.y = 0 } else { d.x = 0 } }
                 var x = Double(was.move.x + d.x), y = Double(was.move.y + d.y)
@@ -562,9 +584,11 @@ final class MotionTool {
         switch was {
         case .none, .marquee:
             return
-        case .move(_, _, let started):
+        case .move(let start, _, let started):
             guard started else { return }
-            finish(MotionProperty.move.action)
+            // Only lifted, it is named for that.
+            let across = pushing.across(from: start, to: v)
+            finish(pushing.pushed && hypot(across.x, across.y) <= 0.5 ? MotionProperty.lift.action : MotionProperty.move.action)
         case .look(_, _, let started, let under):
             guard started else {
                 // A click on a layer while the camera is in hand picks the layer instead.

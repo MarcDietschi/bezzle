@@ -437,7 +437,10 @@ extension SelectionInspector {
     func depthCard(live: Bool) -> some View {
         let turn = nodes.first?.transform3D ?? Transform3D()
         let summary = common { $0.transform3D }.map { t -> String in
-            let turned = "\(Int((t?.x ?? 0).rounded()))°, \(Int((t?.y ?? 0).rounded()))°"
+            // How far it is turned, and how near it is held; only held near, only that.
+            let near = (t?.z ?? 0) == 0 ? nil : "Z \(CanvasView.number(t?.z ?? 0))"
+            if let near, (t?.x ?? 0) == 0, (t?.y ?? 0) == 0, t?.pinned != true { return near }
+            let turned = "\(Int((t?.x ?? 0).rounded()))°, \(Int((t?.y ?? 0).rounded()))°" + (near.map { ", \($0)" } ?? "")
             // A screen laid onto a photo: pinned by its corners, and perhaps turned besides.
             guard let t, t.pinned else { return turned }
             return t.x == 0 && t.y == 0 ? String(localized: "Corners pinned") : String(localized: "Corners pinned, \(turned)")
@@ -460,7 +463,7 @@ extension SelectionInspector {
                 layerField("Z", range: -10_000...10_000, scrub: 1, action: "Turn in Depth",
                            get: { Double($0.transform3D?.z ?? 0) }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.z = CGFloat(v) })
             }
-            Caption("On the canvas, drag the knob in its middle to aim it, with Option to bring it nearer. Just outside a side, a drag turns anything in depth.")
+            Caption("On the canvas, drag the knob in its middle to aim it. Hold Control while you move a layer to bring it nearer or push it away. Just outside a side, a drag turns anything in depth.")
         }
     }
 

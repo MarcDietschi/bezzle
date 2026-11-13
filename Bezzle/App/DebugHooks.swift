@@ -53,7 +53,7 @@ import SwiftUI
 ///   BEZZLE_CLICKS=seconds:step;…   use the pointer on the canvas, a few tenths of a second a step, at canvas
 ///                                  points: "x,y" clicks, "x,y>x,y" drags, "~x,y" only moves there,
 ///                                  "!x,y" is the second click of a double click, "+x,y>x,y" drags and keeps
-///                                  the button down
+///                                  the button down, "^x,y>x,y" drags with Control held (in depth)
 enum DebugHooks {
     private static var ran = false
     private static let env = ProcessInfo.processInfo.environment
@@ -347,14 +347,15 @@ enum DebugHooks {
     private static func pointer(_ step: String, on store: DocumentStore) {
         guard let canvas = store.canvas else { return }
         var text = Substring(step)
-        var kind = "click", clicks = 1, hold = false
+        var kind = "click", clicks = 1, hold = false, flags: NSEvent.ModifierFlags = []
         if text.hasPrefix("~") { kind = "move"; text = text.dropFirst() }
         if text.hasPrefix("+") { hold = true; text = text.dropFirst() }
+        if text.hasPrefix("^") { flags = .control; text = text.dropFirst() }
         if text.hasPrefix("!") { clicks = 2; text = text.dropFirst() }
         let ends = text.split(separator: ">").map { $0.split(separator: ",").compactMap { Double($0) } }.filter { $0.count == 2 }
         guard let from = ends.first.map({ CGPoint(x: $0[0], y: $0[1]) }) else { return }
         func event(_ type: NSEvent.EventType, _ p: CGPoint) -> NSEvent? {
-            NSEvent.mouseEvent(with: type, location: canvas.convert(store.viewport.toView(p), to: nil), modifierFlags: [],
+            NSEvent.mouseEvent(with: type, location: canvas.convert(store.viewport.toView(p), to: nil), modifierFlags: flags,
                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: canvas.window?.windowNumber ?? 0,
                                context: nil, eventNumber: 0, clickCount: type == .mouseMoved ? 0 : clicks, pressure: 1)
         }

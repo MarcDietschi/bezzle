@@ -325,20 +325,24 @@ nonisolated enum Prototype {
     // MARK: Finding what was tapped
 
     /// The layers under a point of an artboard (in its own coordinates), the topmost first, each
-    /// with what holds it after it: the layer itself, then its group, and so on up.
-    @MainActor static func chain(at p: CGPoint, in board: Node, tolerance: CGFloat = 0) -> [Node] {
-        func look(_ nodes: [Node], _ p: CGPoint, _ above: [Node]) -> [Node]? {
-            for n in nodes.reversed() where !n.hidden {
-                guard Geometry.contains(n, p, tolerance: tolerance) else { continue }
+    /// with what holds it after it: the layer itself, then its group, and so on up. Nearer before
+    /// further (`DepthOrder`), seen from `eye`, by default the artboard's own (`Eye.stage`); what holds
+    /// layers lying loose on the canvas has no size, and no eye.
+    @MainActor static func chain(at p: CGPoint, in board: Node, tolerance: CGFloat = 0, eye: Eye? = nil) -> [Node] {
+        func look(_ nodes: [Node], _ p: CGPoint, _ eye: Eye?, _ above: [Node]) -> [Node]? {
+            for n in DepthOrder.stacked(nodes).reversed() where !n.hidden {
+                guard Geometry.contains(n, p, tolerance: tolerance, eye: eye) else { continue }
                 if n.isGroup {
-                    let inner = CGPoint(x: p.x - n.frame.minX, y: p.y - n.frame.minY)
-                    if let deeper = look(n.children, inner, [n] + above) { return deeper }
+                    // Where the point lies on the group drawn flat, if it is turned in depth.
+                    let flat = Perspective(n, eye: eye).map { $0.flat(p) } ?? p
+                    if let flat, let deeper = look(n.children, flat - n.frame.origin, eye?.inside(n.frame.origin), [n] + above) { return deeper }
                 }
                 return [n] + above
             }
             return nil
         }
-        return look(board.children, p, []) ?? []
+        let seen = eye ?? (board.isArtboard && board.frame.width > 0 && board.frame.height > 0 ? Eye.stage(board.frame.size) : nil)
+        return look(board.children, p, seen, []) ?? []
     }
 
     /// Where a layer lies on its artboard, however deep in groups.

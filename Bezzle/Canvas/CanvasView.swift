@@ -32,6 +32,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// Even gaps while something is moved, and the widths of those beside it last time.
     private let gapMarks = GapMarks()
     private var gapsCaught: Set<Int> = []
+    /// A move with Control held pushes what is dragged away or pulls it nearer (`DepthPushing`):
+    /// how far, and each layer's height, and the heights around it, when the drag began.
+    private var pushing = DepthPushing()
+    private var pushedFrom: [UUID: Transform3D?] = [:]
+    private var pushLevels: [UUID: [CGFloat]] = [:]
+    /// The heights the push has given them, kept as they were when Control was let go.
+    private var pushedTo: [UUID: CGFloat] = [:]
+    /// Where the move had taken them across, caught and all, which a push in depth keeps.
+    private var movedAcross = CGPoint.zero
     /// Whether the pointer is on the selected layer's shadow, so its outline shows.
     private var onShadow = false
     private var lastViewPoint: CGPoint = .zero
@@ -810,7 +819,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             corners[k] = fraction(q)
         } else {
             let sides: [Handle: (Int, Int)] = [.top: (0, 1), .right: (1, 2), .bottom: (2, 3), .left: (3, 0)]
-            guard let (a, b) = sides[handle], let shown = Perspective(original) else { return false }
+            guard let (a, b) = sides[handle], let shown = Perspective(original, eye: store.doc.eye(forParentOf: id)) else { return false }
             let u = handle.unit, was = shown.shown(CGPoint(x: f.minX + u.x * f.width, y: f.minY + u.y * f.height))
             let d = CGPoint(x: (q.x - was.x) / f.width, y: (q.y - was.y) / f.height)
             for k in [a, b] { corners[k] = CGPoint(x: corners[k].x + d.x, y: corners[k].y + d.y) }
@@ -1477,6 +1486,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         for id in ids { originals[id] = store.doc.absoluteFrame(of: id) }
         interaction = .move(start: p, originals: originals, bounds: bounds, targets: SnapTargets(doc: store.seenDoc, moving: Set(ids)),
                             started: false, duplicate: duplicate)
+        pushing = DepthPushing()
+        pushedFrom = [:]
+        pushLevels = [:]
+        pushedTo = [:]
+        movedAcross = .zero
     }
 
     private func startHandleDrag(_ hit: HandleHit, at p: CGPoint) {
@@ -1602,6 +1616,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 // A copy catches on the layers it was made from, which stay where they were.
                 let targets = duplicate ? SnapTargets(doc: store.seenDoc, moving: Set(originals.keys)) : targets
                 interaction = .move(start: start, originals: originals, bounds: bounds, targets: targets, started: true, duplicate: duplicate)
+                // How high each is held, and those around it, to push them in depth from.
+                let layers = originals.keys.filter { store.node($0)?.isArtboard == false }
+                pushedFrom = Dictionary(uniqueKeysWithValues: layers.map { ($0, store.node($0)?.transform3D) })
+                pushLevels = store.doc.levels(around: layers)
+                // Held from the press, it is pushed from where the press was.
+                pushing.pointer(at: start, holding: flags.contains(.control) && !pushedFrom.isEmpty)
                 NSCursor.arrow.set()
                 drag(to: v, flags: flags)
                 return
@@ -1620,17 +1640,42 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             case .normal:
                 break
             }
+            // With Control held, up brings it nearer and down sends it further, and it stays where
+            // it is across; let go, it moves across again from there (`DepthPushing`, shared).
+            let wasPushing = pushing.pushing
+            pushing.pointer(at: p, holding: flags.contains(.control) && !pushedFrom.isEmpty)
+            if pushing.pushing != wasPushing { (pushing.pushing ? NSCursor.resizeUpDown : NSCursor.arrow).set() }
             // Caught on what is around it, Shift keeping to an axis (`SnapTargets.move`, shared).
-            let (moved, guides) = targets.move(bounds, by: CGPoint(x: p.x - start.x, y: p.y - start.y), constrain: shift,
-                                               snapping: snapping, threshold: threshold)
+            // Pushed in depth, it stays across where the move had it, caught as it was.
+            let (moved, guides) = pushing.pushing ? (movedAcross, [])
+                : targets.move(bounds, by: pushing.across(from: start, to: p), constrain: shift, snapping: snapping, threshold: threshold)
+            movedAcross = moved
             // Even gaps caught are felt as well as seen, once each time they catch.
             let caught = Set(guides.filter(\.mine).map { Int(hypot($0.to.x - $0.from.x, $0.to.y - $0.from.y).rounded()) })
             if caught != gapsCaught {
                 if !caught.isEmpty { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
                 gapsCaught = caught
             }
-            let place = { (doc: inout BezzleDocument) in doc.place(originals, movedBy: moved) }
+            if pushing.pushing {
+                for (id, from) in pushedFrom {
+                    pushedTo[id] = pushing.height(from: from?.z ?? 0, level: pushLevels[id] ?? [], reach: 4 / store.viewport.zoom, steps: shift)
+                }
+            }
+            let turns = pushedTo.map { id, height in (id, DepthPushing.turn(pushedFrom[id] ?? nil, at: height)) }
+            let place = { (doc: inout BezzleDocument) in
+                doc.place(originals, movedBy: moved)
+                for (id, turn) in turns { doc.update(id) { $0.transform3D = turn } }
+            }
             store.edit("Move", place)
+            if pushing.pushing, let box = store.selectionBounds {
+                // How high it is held, or for several held apart, how far they all went.
+                let all = Set(pushedTo.values)
+                let said = all.count == 1 ? CanvasView.number(all.first ?? 0)
+                    : (pushing.depth >= 0 ? "+" : "") + CanvasView.number(pushing.depth.rounded())
+                store.measurement = ("Z \(said)", box)
+            } else if pushing.pushed {
+                store.measurement = nil
+            }
             // Held over a shape a moment, it goes into it; a shape it went into and was dragged off
             // lets it go again. Either way it is placed once more, as it now lies.
             if curveTool.claims { maskTool.cancel() } else if maskTool.moving(Array(originals.keys), at: v) { store.edit("Move", place) }
@@ -1857,7 +1902,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 let rode = curveTool.released()
                 let masked = maskTool.released()
                 store.edit("Move") { doc in store.settle(ids, in: &doc) }
-                store.endGesture(rode ?? masked ?? (duplicate ? "Duplicate" : "Move"))
+                // Only pushed in depth, and not moved across, it is named for what it did.
+                let deepOnly = pushing.pushed && ids.allSatisfy { store.doc.absoluteFrame(of: $0)?.origin == originals[$0]?.origin }
+                store.endGesture(rode ?? masked ?? (duplicate ? "Duplicate" : deepOnly ? "Move in Depth" : "Move"))
             }
         case .resize:
             store.endGesture("Resize")
@@ -2239,6 +2286,12 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if pictureTool.dragging { pictureTool.drag(to: lastViewPoint, flags: event.modifierFlags); return }
         if shapeBuilder.dragging || outlineTool.dragging || knifeTool.dragging || depthTool.dragging || gridTool.dragging
             || guideTool.dragging || layoutTool.dragging {
+            drag(to: lastViewPoint, flags: event.modifierFlags)
+            updateCursor(lastViewPoint, flags: event.modifierFlags)
+            return
+        }
+        // Control lifts what Animate moves at once, without waiting for the pointer to move.
+        if store.animating, motionTool.dragging {
             drag(to: lastViewPoint, flags: event.modifierFlags)
             updateCursor(lastViewPoint, flags: event.modifierFlags)
             return

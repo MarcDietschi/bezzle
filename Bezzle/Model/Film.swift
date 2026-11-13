@@ -264,13 +264,14 @@ nonisolated extension Node {
                 // A shader that moves is drawn again at every moment, as a layer whose insides move.
                 let own = n.isAnimated || loose.contains(n.id) || n.shaderMoves
                 let inside = n.holdsMotion || holdsLoose(n) || n.children.contains(where: \.holdsMovingShader)
-                if own {
+                // Held up off the artboard by the design, it stands in the scene where the design
+                // has it, so the camera sees how high it is: drawn flat, for the film to turn and
+                // lift in its own space, which sees it from where the design does (`Eye.stage`).
+                // A screen pinned into a photo keeps the look it has.
+                let deep = Perspective.inDepth(n) && n.transform3D?.pinned != true
+                if own || deep {
                     flush()
-                    // Turned in depth by the design, and by its keys too: drawn flat, for the
-                    // film to turn in its own space. With no such keys it keeps the look it has.
-                    let turns = n.motionProperties.contains { $0 == .lift || $0 == .tilt || $0 == .swing }
-                    let flat = turns && (n.transform3D.map { !$0.pinned } ?? false)
-                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion || n.holdsMovingShader, flat: flat))
+                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion || n.holdsMovingShader, flat: deep))
                 } else if inside, n.comesApart {
                     flush()
                     walk(n.children, origin: CGPoint(x: origin.x + n.frame.minX, y: origin.y + n.frame.minY), holders: holders + [n.id])
@@ -331,11 +332,15 @@ nonisolated extension Node {
     }
 
     /// Artboards: the order its pieces are drawn in at a moment. As they lie, until something is
-    /// lifted: then what is higher above the artboard covers what is lower.
+    /// lifted: then what is higher above the artboard covers what is lower. The artboard's own
+    /// sheet is the scene's backdrop and lies under everything, what is sunk below it too, as the
+    /// design draws it (`DepthOrder`): so the camera at rest sees what the design shows.
     func filmOrder(_ pieces: [FilmPiece], _ placements: [FilmPlacement]) -> [Int] {
         guard placements.contains(where: { $0.height != 0 }) else { return Array(pieces.indices) }
         return pieces.indices.sorted { a, b in
-            placements[a].height != placements[b].height ? placements[a].height < placements[b].height : a < b
+            let ga = pieces[a].kind == .ground, gb = pieces[b].kind == .ground
+            if ga != gb { return ga }
+            return placements[a].height != placements[b].height ? placements[a].height < placements[b].height : a < b
         }
     }
 
@@ -423,7 +428,7 @@ extension Node {
             }
             // The reach, in the points of the piece's drawing, which shows this many times bigger here.
             let reach = tolerance / CGFloat(max(map.stretch(at: q), 1e-6))
-            let chain = Prototype.chain(at: inner, in: holder, tolerance: reach)
+            let chain = Prototype.chain(at: inner, in: holder, tolerance: reach, eye: Eye.stage(frame.size).inside(piece.origin))
             guard !chain.isEmpty else { continue }
             let above = piece.holders.compactMap { descendant($0) }.reversed()
             // The layers as the design has them, not as they are posed.
@@ -458,9 +463,10 @@ extension Node {
         let turn = BezzleDocument.turnedBox(of: layer)
         let box = layer.isGroup ? turn.frame.offsetBy(dx: origin.x, dy: origin.y) : frame
         var corners = Geometry.corners(of: box, rotation: turn.rotation)
-        // Turned in depth by the design and drawn so: its corners are where that puts them.
-        if !flat, let perspective = Perspective(layer) {
-            let placed = Perspective(layer.transform3D ?? Transform3D(), frame: frame, distance: perspective.distance)
+        // Turned in depth by the design and drawn so: its corners are where that puts them, seen
+        // from the artboard's eye.
+        if !flat, Perspective.inDepth(layer), let t = layer.transform3D {
+            let placed = Perspective(t, frame: frame, eye: Eye.stage(self.frame.size))
             corners = corners.map(placed.shown)
         }
         return corners.map { map($0) }

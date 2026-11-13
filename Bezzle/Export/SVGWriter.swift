@@ -56,7 +56,7 @@ nonisolated struct SVGWriter {
         var options = Renderer.Options(deviceScale: pictureScale, assets: assets)
         options.board = board
         options.visible = part
-        let inside = board.children.filter { Renderer.inSight($0, options) }.map { layer($0, options) }.joined(separator: "\n")
+        let inside = DepthOrder.stacked(board.children).filter { Renderer.inSight($0, options) }.map { layer($0, options) }.joined(separator: "\n")
         if board.clips {
             let clip = newID("clip")
             defs.append("<clipPath id=\"\(clip)\"><rect width=\"\(n(size.width))\" height=\"\(n(size.height))\"/></clipPath>")
@@ -70,7 +70,7 @@ nonisolated struct SVGWriter {
     /// A layer in its parent's coordinates. `options` says where it lies on its artboard.
     private mutating func layer(_ node: Node, _ options: Renderer.Options) -> String {
         guard !node.hidden, node.opacity > 0 else { return "" }
-        if Perspective(node) != nil { return inDepth(node, options) }
+        if Perspective.inDepth(node) { return inDepth(node, options) }
         if let blur = node.blur, blur.on, !blur.background, blur.radius > 0, let ramp = blur.ramp { return growing(node, blur, ramp, options) }
         var attrs = ["id=\"\(id(for: node.name))\""]
         if node.opacity < 1 { attrs.append("opacity=\"\(n(node.opacity))\"") }
@@ -113,7 +113,7 @@ nonisolated struct SVGWriter {
         let clip = newID("clip")
         let rule = holder.evenOdd == true ? " clip-rule=\"evenodd\"" : ""
         defs.append("<clipPath id=\"\(clip)\"><path d=\"\(PathData.string(Renderer.heldOutline(of: holder)))\"\(rule)/></clipPath>")
-        out += "<g clip-path=\"url(#\(clip))\">\(held.map { layer($0, options) }.joined())</g>"
+        out += "<g clip-path=\"url(#\(clip))\">\(DepthOrder.stacked(held).map { layer($0, options) }.joined())</g>"
         guard !holder.borders.isEmpty || !holder.innerShadows.isEmpty else { return out }
         var over = holder
         over.fills = []
@@ -130,7 +130,7 @@ nonisolated struct SVGWriter {
             var inner = options
             inner.offset = CGPoint(x: options.offset.x + node.frame.minX, y: options.offset.y + node.frame.minY)
             if let holder = node.holder, node.children.count > 1 { return held(by: holder, node.children.dropFirst(), inner) }
-            var out = node.children.map { layer($0, inner) }.joined()
+            var out = DepthOrder.stacked(node.children).map { layer($0, inner) }.joined()
             if let mask = node.mask?.first {
                 let clip = newID("clip")
                 defs.append("<clipPath id=\"\(clip)\"><path d=\"\(PathData.string(Renderer.placedOutline(of: mask)))\"/></clipPath>")
@@ -309,7 +309,7 @@ nonisolated struct SVGWriter {
         let t = Renderer.localTransform(node)
         func at(_ u: CGPoint) -> CGPoint { CGPoint(x: u.x * node.frame.width, y: u.y * node.frame.height).applying(t) }
         let a = at(ramp.start), b = at(ramp.end)
-        let r = Renderer.reach(of: node).insetBy(dx: -blur.radius * 3 - 4, dy: -blur.radius * 3 - 4)
+        let r = Renderer.reach(of: node, eye: options.eye).insetBy(dx: -blur.radius * 3 - 4, dy: -blur.radius * 3 - 4)
         let gradient = newID("gradient"), mask = newID("mask")
         defs.append("<linearGradient id=\"\(gradient)\" gradientUnits=\"userSpaceOnUse\" x1=\"\(n(a.x))\" y1=\"\(n(a.y))\" x2=\"\(n(b.x))\" y2=\"\(n(b.y))\"><stop offset=\"0\" stop-color=\"#000000\"/><stop offset=\"1\" stop-color=\"#FFFFFF\"/></linearGradient>")
         defs.append("<mask id=\"\(mask)\" maskUnits=\"userSpaceOnUse\" x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\"><rect x=\"\(n(r.minX))\" y=\"\(n(r.minY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\" fill=\"url(#\(gradient))\"/></mask>")

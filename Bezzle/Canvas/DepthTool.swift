@@ -27,7 +27,8 @@ final class DepthTool {
     func down(at v: CGPoint, event: NSEvent) -> Bool { turning.down(at: v, clicks: event.clickCount) }
     func startTurn(at v: CGPoint) { turning.startTurn(at: v) }
     func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
-        turning.drag(to: v, shift: flags.contains(.shift), option: flags.contains(.option))
+        // Option, or Control as when moving it (`DepthPushing`), brings it nearer.
+        turning.drag(to: v, shift: flags.contains(.shift), option: flags.contains(.option) || flags.contains(.control))
     }
     func up(at v: CGPoint, adding: Bool) { turning.up(at: v, adding: adding) }
     func cancel() { turning.cancel() }

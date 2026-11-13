@@ -20,7 +20,7 @@ extension BezzleDocument {
 
     /// Whether a layer shows anywhere but where its frame says, turned in depth or in a group that is.
     func inDepth(_ node: Node) -> Bool {
-        Perspective(node) != nil || liesInDepth(node.id)
+        Perspective.inDepth(node) || liesInDepth(node.id)
     }
 
     /// The shadow the canvas moves: the one whose card is open (`open`) when it falls outside the

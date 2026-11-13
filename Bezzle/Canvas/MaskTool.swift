@@ -380,7 +380,8 @@ final class MaskTool {
         let o = doc.parentOrigin(of: first)
         let layers = mask.children.dropFirst().filter { g.ids.contains($0.id) && !$0.hidden }
         var reach = CGRect.null
-        for n in layers { reach = reach.union(Renderer.reach(of: n).offsetBy(dx: o.x, dy: o.y)) }
+        let eye = doc.eye(inside: mask.id)
+        for n in layers { reach = reach.union(Renderer.reach(of: n, eye: eye).offsetBy(dx: o.x, dy: o.y)) }
         guard !reach.isNull else { return }
         let vp = store.viewport
         ctx.saveGState()

@@ -223,7 +223,7 @@ extension BezzleDocument {
     mutating func align(_ ids: [UUID], _ how: Align) {
         let ids = ids.filter { node($0)?.locked == false }
         guard !ids.isEmpty else { return }
-        let frames = ids.compactMap { id in node(id).map { (id, Geometry.bounds(of: $0).offsetBy(dx: parentOrigin(of: id).x, dy: parentOrigin(of: id).y)) } }
+        let frames = ids.compactMap { id in node(id).map { (id, Geometry.bounds(of: $0, eye: eye(forParentOf: id)).offsetBy(dx: parentOrigin(of: id).x, dy: parentOrigin(of: id).y)) } }
         guard let first = frames.first else { return }
         let reference: CGRect
         if ids.count == 1 {
@@ -250,7 +250,7 @@ extension BezzleDocument {
     mutating func distribute(_ ids: [UUID], horizontally: Bool) {
         let ids = ids.filter { node($0)?.locked == false }
         guard ids.count >= 3 else { return }
-        var items = ids.compactMap { id in node(id).map { (id, Geometry.bounds(of: $0).offsetBy(dx: parentOrigin(of: id).x, dy: parentOrigin(of: id).y)) } }
+        var items = ids.compactMap { id in node(id).map { (id, Geometry.bounds(of: $0, eye: eye(forParentOf: id)).offsetBy(dx: parentOrigin(of: id).x, dy: parentOrigin(of: id).y)) } }
         items.sort { horizontally ? $0.1.minX < $1.1.minX : $0.1.minY < $1.1.minY }
         let total = items.reduce(CGFloat(0)) { $0 + (horizontally ? $1.1.width : $1.1.height) }
         let start = horizontally ? items.first!.1.minX : items.first!.1.minY

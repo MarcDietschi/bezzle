@@ -57,10 +57,11 @@ nonisolated enum Geometry {
             .map { point($0, of: frame, rotation: rotation) }
     }
 
-    /// The upright rectangle around a layer as it is drawn, turned and all, in the page and in depth.
-    static func bounds(of node: Node) -> CGRect {
-        guard Perspective(node) != nil else { return bounds(of: node.frame, rotation: node.rotation) }
-        let pts = Perspective.corners(of: node)
+    /// The upright rectangle around a layer as it is drawn, turned and all, in the page and in
+    /// depth; `eye` is where its parent is seen from (`BezzleDocument.eye`).
+    static func bounds(of node: Node, eye: Eye? = nil) -> CGRect {
+        guard Perspective.inDepth(node) else { return bounds(of: node.frame, rotation: node.rotation) }
+        let pts = Perspective.corners(of: node, eye: eye)
         let xs = pts.map(\.x), ys = pts.map(\.y)
         return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
     }
@@ -77,15 +78,16 @@ nonisolated enum Geometry {
         rotate(CGPoint(x: p.x - frame.midX, y: p.y - frame.midY), by: -rotation)
     }
 
-    /// Whether a point of the parent falls on the layer; `tolerance` widens thin things.
+    /// Whether a point of the parent falls on the layer; `tolerance` widens thin things. `eye` is
+    /// where its parent is seen from (`BezzleDocument.eye`).
     @MainActor
-    static func contains(_ node: Node, _ p: CGPoint, tolerance: CGFloat) -> Bool {
+    static func contains(_ node: Node, _ p: CGPoint, tolerance: CGFloat, eye: Eye? = nil) -> Bool {
         // Turned in depth: wherever the point lies on the layer drawn flat.
-        if Perspective(node) != nil {
-            guard let flat = Perspective.flat(p, of: node) else { return false }
+        if let perspective = Perspective(node, eye: eye) {
+            guard let flat = perspective.flat(p) else { return false }
             var plain = node
             plain.transform3D = nil
-            return contains(plain, flat, tolerance: tolerance)
+            return contains(plain, flat, tolerance: tolerance, eye: eye)
         }
         if node.isGroup {
             // A group is where what it holds is drawn, and only inside its mask.
@@ -93,7 +95,8 @@ nonisolated enum Geometry {
             if let mask = node.mask?.first, !contains(mask, inner, tolerance: tolerance) { return false }
             // A mask is all its shape, wherever what it holds shows or not.
             if let holder = node.holder { return Mask.inside(holder, inner, tolerance: tolerance) }
-            return node.children.contains { !$0.hidden && contains($0, inner, tolerance: tolerance) }
+            let within = eye?.inside(node.frame.origin)
+            return node.children.contains { !$0.hidden && contains($0, inner, tolerance: tolerance, eye: within) }
         }
         if node.kind == .line {
             let (a, b) = node.lineEnds
