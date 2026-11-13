@@ -4,9 +4,11 @@ import UWP
 import WinSDK
 import BezzleCore
 
-/// Bringing a web page in as a design, as the Mac's (Views/WebImportSheet.swift): the address,
-/// the widths to read it at, whether cookie banners go, and the import running. Kept apart from
-/// the sheet so the Bezzle menu, a dropped link or home can open it.
+/// Bringing a web page in, as the Mac's (Views/WebImportSheet.swift): the address, the widths to
+/// read it at, whether cookie banners go, into the design open or as a new one, and the import
+/// running; or the page opened in Bezzle's browser first (`WebBrowser`, BrowserWindow.swift), to
+/// sign in and click through to the screen wanted. Kept apart from the sheet so the Bezzle menu, a
+/// dropped link or home can open it.
 @MainActor
 final class WebImporting {
     static let shared = WebImporting()
@@ -18,6 +20,11 @@ final class WebImporting {
     var custom = false
     var customWidth: Double = 1280
     var hideBanners = true
+    /// The design in front when the sheet opened, which the page can go into beside its artboards.
+    private(set) weak var openDesign: WindowsCore.Slot?
+    private(set) var openName: String?
+    /// Whether the page goes into that design rather than a new one.
+    var intoOpen = false
     private(set) var stage: String?
     private(set) var progress: Double?
     private(set) var failure: String?
@@ -29,6 +36,8 @@ final class WebImporting {
     var folder: () -> URL = { FileManager.default.temporaryDirectory }
     /// What the window does with a design brought in: opens it, saying what came across.
     var opened: ((URL, WindowsCore.ImportSummary) -> Void)?
+    /// What it does with pages brought into an open design: shows them there, selected.
+    var broughtIn: ((WindowsCore.Slot, [UUID], WindowsCore.ImportSummary) -> Void)?
 
     private lazy var sheet = WebImportSheet(model: self)
 
@@ -59,6 +68,14 @@ final class WebImporting {
     }
 
     var canStart: Bool { !running && WindowsCore.webAddress(address) != nil && !sizes.isEmpty }
+    var canBrowse: Bool { !running && WindowsCore.webAddress(address) != nil }
+
+    /// Where the page goes: the design open, while it still is and may be changed.
+    private var destination: WindowsCore.Slot? {
+        guard intoOpen, let slot = openDesign, slot.isOpen, Tabs.shared.tab(of: slot) != nil,
+              !WindowsCore.using(slot, { WindowsCore.isReadOnly }) else { return nil }
+        return slot
+    }
 
     /// Opens the sheet, with an address to bring in or the one copied.
     func present(_ address: String? = nil) {
@@ -68,9 +85,23 @@ final class WebImporting {
                   copied.lowercased().hasPrefix("http"), WindowsCore.webAddress(copied) != nil {
             self.address = copied
         }
-        if !running { failure = nil }
+        if !running {
+            failure = nil
+            let front = Tabs.shared.selected?.slot
+            openDesign = front.flatMap { slot in WindowsCore.using(slot) { WindowsCore.isReadOnly } ? nil : slot }
+            openName = openDesign.flatMap { slot in Tabs.shared.tab(of: slot)?.name }
+            intoOpen = openDesign != nil
+        }
         guard let grid = host?() else { return }
         sheet.show(in: grid)
+    }
+
+    /// Opens the page in Bezzle's browser, at the widest size chosen, its pages to come into the
+    /// design chosen here.
+    func browse() {
+        guard canBrowse, let url = WindowsCore.webAddress(address) else { return }
+        sheet.hide()
+        WebBrowser.shared.show(url, width: sizes.first ?? .desktop, into: destination)
     }
 
     func close() {
@@ -90,15 +121,24 @@ final class WebImporting {
         stage = Words.t("Loading the page…")
         progress = 0.01
         sheet.refresh()
-        let sizes = sizes, hide = hideBanners, folder = folder()
+        let sizes = sizes, hide = hideBanners, folder = folder(), into = destination
         task = Task { @MainActor [weak self] in
+            let say: (String, Double) -> Void = { what, done in
+                guard let self, !self.cancelled else { return }
+                self.stage = what
+                self.progress = max(self.progress ?? 0, done)
+                self.sheet.refresh()
+            }
             do {
-                let (design, summary) = try await WindowsCore.importWebsite(url, widths: sizes, hideBanners: hide, into: folder) { what, done in
+                if let into {
+                    let (ids, summary) = try await WindowsCore.importWebsite(url, widths: sizes, hideBanners: hide, into: into, progress: say)
                     guard let self, !self.cancelled else { return }
-                    self.stage = what
-                    self.progress = max(self.progress ?? 0, done)
-                    self.sheet.refresh()
+                    self.done(nil)
+                    self.sheet.hide()
+                    self.broughtIn?(into, ids, summary)
+                    return
                 }
+                let (design, summary) = try await WindowsCore.importWebsite(url, widths: sizes, hideBanners: hide, into: folder, progress: say)
                 guard let self, !self.cancelled else { return }
                 self.done(nil)
                 self.sheet.hide()
@@ -147,6 +187,10 @@ final class WebImportSheet {
     private let running = Grid()
     private let stageText = Theme.text("", size: 12, ink: 3)
     private var choices: [UIElement] = []
+    private var intoSection: StackPanel?
+    /// The Into tiles: how each paints itself, its words, and whether they are the open design's name.
+    private var intoTiles: [(paint: () -> Void, words: TextBlock, named: Bool)] = []
+    private var browseButton: FrameworkElement?
 
     init(model: WebImporting) {
         self.model = model
@@ -321,6 +365,32 @@ final class WebImportSheet {
         stack.children.append(sizes)
         choices = [tilesRow, another]
 
+        // Into the design open, or a new one, when a design was in front.
+        let into = section("Into")
+        let intoRow = Grid()
+        for _ in 0..<2 {
+            let column = ColumnDefinition()
+            column.width = GridLength(value: 1, gridUnitType: .star)
+            intoRow.columnDefinitions.append(column)
+        }
+        intoRow.columnSpacing = 8
+        let openTile = intoTile(named: true, glyph: Glyphs.stack(size: 12), on: { [unowned self] in self.model.intoOpen }) { [unowned self] in
+            self.model.intoOpen = true
+            self.refresh()
+        }
+        let newTile = intoTile(named: false, glyph: Glyphs.plus(size: 12), on: { [unowned self] in !self.model.intoOpen }) { [unowned self] in
+            self.model.intoOpen = false
+            self.refresh()
+        }
+        newTile.words.text = Words.t("New Design")
+        try? Grid.setColumn(newTile.tile, 1)
+        intoRow.children.append(openTile.tile)
+        intoRow.children.append(newTile.tile)
+        into.children.append(intoRow)
+        stack.children.append(into)
+        intoSection = into
+        choices.append(into)
+
         // Whether cookie banners go.
         let banners = StackPanel()
         banners.orientation = .horizontal
@@ -354,7 +424,55 @@ final class WebImportSheet {
         running.children.append(stageText)
         running.children.append(cancel)
         foot.children.append(running)
+        // Or the page in Bezzle's browser first, to sign in or click through to the screen wanted.
+        let browse = Controls.cardButton(Words.t("Open the Page…"), glyph: Glyphs.compass(size: 12), height: 28) { [weak self] in
+            guard let self, self.model.canBrowse else { return }
+            self.model.browse()
+        }
+        try? ToolTipService.setToolTip(browse, Words.t("Sign in or click through to the screen you want, then import it as it is."))
+        browseButton = browse
+        foot.children.append(browse)
         stack.children.append(foot)
+    }
+
+    /// Where the page goes, the design open or a new one, as the Mac's IntoChoice: its symbol and
+    /// name, pencil round it when chosen.
+    private func intoTile(named: Bool, glyph: [Glyphs.Part], on: @escaping () -> Bool,
+                          _ choose: @escaping @MainActor () -> Void) -> (tile: Border, words: TextBlock) {
+        let tile = Border()
+        tile.cornerRadius = Theme.corners(7)
+        tile.height = 34
+        let row = StackPanel()
+        row.orientation = .horizontal
+        row.spacing = 7
+        row.margin = Theme.inset(10, 0, 10, 0)
+        row.verticalAlignment = .center
+        let picture = Glyphs.view(glyph, size: 12, brush: Theme.ink(3))
+        picture.verticalAlignment = .center
+        row.children.append(picture)
+        let words = Theme.text("", size: 12.5, weight: 500)
+        words.textTrimming = .characterEllipsis
+        row.children.append(words)
+        tile.child = row
+        var hovering = false
+        // The tile and its symbol held here: WinUI keeps what they are, not these wrappers of them.
+        let paint = {
+            let isOn = on()
+            tile.background = isOn ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.brush(Theme.ink, hovering ? 0.07 : 0.04)
+            tile.borderBrush = isOn ? Theme.brush(Theme.pencil, 0.8) : Theme.hairline
+            tile.borderThickness = Theme.inset(isOn ? 1.2 : 0.5)
+            Glyphs.paint(picture, isOn ? Theme.brush(Theme.pencil) : Theme.ink(3))
+        }
+        tile.pointerEntered.addHandler { _, _ in hovering = true; paint() }
+        tile.pointerExited.addHandler { _, _ in hovering = false; paint() }
+        tile.pointerPressed.addHandler { _, args in args?.handled = true }
+        tile.tapped.addHandler { _, args in
+            args?.handled = true
+            DispatchQueue.main.async { MainActor.assumeIsolated { choose() } }
+        }
+        intoTiles.append((paint, words, named))
+        paint()
+        return (tile, words)
     }
 
     private func section(_ title: String) -> StackPanel {
@@ -526,11 +644,19 @@ final class WebImportSheet {
         }
         stageText.text = model.stage ?? ""
         running.visibility = model.running ? .visible : .collapsed
+        intoSection?.visibility = model.openName == nil ? .collapsed : .visible
+        for tile in intoTiles {
+            if tile.named { tile.words.text = model.openName ?? "" }
+            tile.paint()
+        }
+        browseButton?.visibility = model.running ? .collapsed : .visible
+        browseButton?.opacity = model.canBrowse ? 1 : 0.45
         refreshButton()
     }
 
     private func refreshButton() {
         let enabled = model.canStart
+        browseButton?.opacity = model.canBrowse ? 1 : 0.45
         primaryBack.background = Theme.brush(Theme.ink, enabled ? 1 : 0.22)
         primaryLabel.text = Words.t(model.running ? "Importing…" : "Import")
         primaryLabel.foreground = Theme.brush(Theme.paper, enabled ? 1 : 0.8)

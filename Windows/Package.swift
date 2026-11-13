@@ -120,9 +120,11 @@ let package = Package(
             // Shader fills are drawn as on the Mac, not left to their pictures as in the browser.
             exclude: ["Platform/WebHost.swift", "Platform/ImageIO.swift", "Shared/Model/Kits/Icons.deflate", "Shared/Model/DesignTokens.swift",
                       "Web/WebShaderPainting.swift"],
-            // The Mac's web page reader and what runs before a page's scripts (Bezzle/Import), in
-            // the core itself, for the app and the command-line tools alike.
-            resources: [.embedInCode("Import/WebPageReader.js"), .embedInCode("Import/WebPageAwake.js")],
+            // The Mac's web page reader, what runs before a page's scripts, the recorder of its
+            // WebGL and the browser's hands (Bezzle/Import), in the core itself, for the app and the
+            // command-line tools alike.
+            resources: [.embedInCode("Import/WebPageReader.js"), .embedInCode("Import/WebPageAwake.js"),
+                        .embedInCode("Import/WebPageGL.js"), .embedInCode("Import/WebPageHands.js")],
             swiftSettings: [.defaultIsolation(MainActor.self), .unsafeFlags(["-Xfrontend", "-disable-availability-checking"])]
         ),
         .executableTarget(

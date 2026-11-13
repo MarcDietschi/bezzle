@@ -225,6 +225,16 @@ final class BezzleApp: SwiftApplication {
             web.host = { [weak self] in self?.presented?.root }
             web.folder = { Self.designsFolder }
             web.opened = { made, summary in Tabs.shared.open(made, report: summary) }
+            web.broughtIn = { slot, ids, summary in Self.showBrought(ids, in: slot, summary, inView: true) }
+            // Bezzle's browser (BrowserWindow.swift): a design it makes opens in a tab behind it,
+            // and pages it brings into an open design show there, selected.
+            BrowserWindow.shared.connect(opened: { made, summary in
+                Tabs.shared.open(made, report: summary)
+                return Tabs.shared.tab(showing: made)?.slot
+            }, broughtIn: { slot, ids, summary in
+                Self.showBrought(ids, in: slot, summary, inView: false)
+            }, designsFolder: { Self.designsFolder })
+            WindowsCore.webImportLog = { Trace.say($0) }
             // About Bezzle, over the page in front too.
             AboutSheet.shared.host = { [weak self] in self?.presented?.root }
             Trace.time("first view made")
@@ -244,6 +254,21 @@ final class BezzleApp: SwiftApplication {
         }
         // A copy installed from bezzle.ch looks for a new version once it is on screen (Updates.swift).
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { Updates.start() } }
+    }
+
+    /// Pages brought into an open design from the web: drawn and saved, selected, and what came
+    /// across said at the canvas's foot, as the Mac's store shows them; `inView`, the design's tab
+    /// to the front and the canvas turned to them, as the Mac's sheet does.
+    @MainActor static func showBrought(_ ids: [UUID], in slot: WindowsCore.Slot, _ summary: WindowsCore.ImportSummary, inView: Bool) {
+        let tabs = Tabs.shared
+        guard let tab = tabs.tab(of: slot), let view = tab.view else { return }
+        if inView { tabs.select(tab) }
+        WindowsCore.using(slot) {
+            view.session.edited(board: nil)
+            view.session.select(ids, on: ids.first.flatMap(WindowsCore.board(of:)) ?? view.session.board)
+        }
+        if !summary.lines.isEmpty { view.showImportReport(summary) }
+        if inView, !ids.isEmpty { view.canvas.fitSelection() }
     }
 
     // MARK: The command line
@@ -442,6 +467,7 @@ final class BezzleApp: SwiftApplication {
     @MainActor private func finishQuitting() {
         Tabs.shared.closeAll()
         MCPServer.shared.stop()
+        WebBrowser.shared.quitting()
         Updates.stop()
         // A subject matte cut short by quitting is no matte that took Bezzle down.
         SubjectModel.shared.quitting()

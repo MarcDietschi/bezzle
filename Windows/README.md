@@ -172,7 +172,8 @@ SDK fetched by `winrt.ps1` into `Packages\webview2`), by the Mac's own page read
 converter (`WebImporter.swift`, `WebPage.swift`, `CSSValues.swift`, linked); `Import/WebCapture.swift`
 is the Mac's WebCapture with WebKit's calls asked of the DevTools protocol instead. As on the Mac,
 home's From a Website… button, the Bezzle menu's Import from a Website… (Ctrl+Alt+Shift+I), a
-link dropped on home and the AI tool `import_website` bring one in (`WebImportSheet.swift`).
+link dropped on home and the AI tool `import_website` bring one in (`WebImportSheet.swift`), into
+a new design or, with Into, beside the artboards of the design in front.
 `BEZZLE_LIBRARY` gives a test copy a designs folder of its own.
 
 Shader fills, a website's WebGL kept live, draw as on the Mac: at any size, in tiles, at the
@@ -187,6 +188,34 @@ it: Direct3D and its compiler, d3dcompiler_47, come with Windows. The two platfo
 frames to within a level or two (`Packages/Shaders/README.md` › Agreement;
 `VM/shader-agreement.sh` compares them), and `swift test -j 2` in `Packages\Shaders` runs the Mac's
 engine tests here. The VM has no graphics card, so it has only ever drawn them with WARP.
+
+Every web view keeps what pages store in Bezzle's own WebView2 profile, `%LOCALAPPDATA%\Bezzle\Web
+Pages`, apart from Edge's, as the Mac keeps a data store of its own: a sign-in made in Bezzle's
+browser holds for the pages imported after it and from one launch to the next, and the pictures
+fetched for a page go with its cookies (`Network.getAllCookies`). `BEZZLE_WEB_PROFILE` gives a test
+copy a profile of its own. Bezzle's browser is the Mac's (`Import/WebBrowser.swift`, after the Mac's
+of the same name; the window is `Sources/Bezzle/BrowserWindow.swift`, with the Mac's bar): the
+sheet's Open the Page… shows it, to sign in and click through to the screen wanted, Import brings
+the page in as it shows it, and Pages lists the site's pages to bring several in together. WebView2
+wants a view in a window to live on that window's thread, so the browser's one web view lives on
+the app's own (`bz_web_host_here`, `bz_web_open_shown` in `CBezzleHost/webview.cpp`), asked from
+other threads as page reads are. It is laid over the browser's window under the bar in a window of
+its own that the browser's owns, moved with it, or, while a page is read at its full size or an
+assistant browses, kept out of sight in a cloaked window (`bz_web_place`). Not a child window of
+the browser's: WinUI sends a child window in its window none of the pointer or keys, though it
+shows (measured 2026-11-13 with a page that notes its events). Nothing in the window can lie over
+the page, so while the list of pages is open the page waits out of sight and a picture of it holds
+its place. Its hands (`WebPageHands.js`) and the recorder of a page's WebGL (`WebPageGL.js`) are
+the Mac's, built into the core, and every page read gets the recorder too; what it works out
+without asking a browser (the pages offered, what new artboards are called and where they go, which
+cookies go with a picture) is the Mac's own `Bezzle/Import/WebPages.swift`, linked. The AI server's
+`browse` drives it, and `import_website` takes `shown`, `urls`, `design` and `name` as on the Mac. A
+WebGL canvas comes in with what it draws kept as the layer's shader fill (`WebGLScene.swift`, linked),
+its picture as the poster, when the Mac's `ShaderPainting.builds` says Windows can draw it again.
+
+To try the browser, sign in on a page of your own, never with a real site's password: a local page
+with a form that sets a cookie, served in the VM (any small server on 127.0.0.1), run in the
+signed-in session, as WebView2 refuses SSH's session 0.
 
 Remove Background is the Mac's (`Host/CutoutMaker.swift`, `CutoutHand.swift`, `Cutouts.swift`,
 `SubjectMatte.swift`, `MatteWays.swift`, copies of the Mac's CutoutMaker, CutoutTool, CutoutOperations,

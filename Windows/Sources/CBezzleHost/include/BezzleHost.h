@@ -265,12 +265,35 @@ int32_t bz_hmac_sha256(const uint8_t *key, int32_t keyCount, const uint8_t *data
 // MARK: Web pages (webview.cpp)
 //
 // Each a WebView2 of its own, out of sight, on a thread of its own: every call waits there for
-// WebView2, so none is made on a thread that must keep answering (the window's). Text is UTF-8.
+// WebView2, so none is made on a thread that must keep answering (the window's). Bezzle's browser,
+// which a person sees and uses, lives on the app's own thread instead (bz_web_host_here), and is
+// asked from others all the same. Every page keeps its cookies and storage in Bezzle's own
+// profile, so a sign-in lasts from one page and one launch to the next. Text is UTF-8.
 
 /// Opens a web view laid out `width` by `height` CSS pixels, at `scale` device pixels each (0 for
 /// the screen's), telling pages it is `agent` (empty for WebView2's own), with `awake` run in
 /// every page before its own scripts. Returns its number, 0 when it could not be (bz_web_error).
 int32_t bz_web_open(int32_t width, int32_t height, double scale, const char *agent, const char *awake);
+/// Makes the calling thread, whose message loop keeps running (the app's main thread), the one
+/// the browser's web view lives on. 0 when it is.
+int32_t bz_web_host_here(void);
+/// Opens the browser's web view on that thread, from another: as bz_web_open's, out of sight
+/// until placed, a page asking to open a window of its own opening in it, and what a page asks
+/// of a person (alerts, questions) asked of them while it is in a window. 0 when it could not be.
+int32_t bz_web_open_shown(int32_t width, int32_t height, double scale, const char *agent, const char *scripts);
+/// Lays the browser's view over `window` (a window of the app's thread) at `x`, `y` in it, laid
+/// out `width` by `height` CSS pixels, `scale` device pixels each, in a window of its own that
+/// `window` owns; with no window, out of sight at that size, where a page is read. Asked again when
+/// `window` moves. 0 when done.
+int32_t bz_web_place(int32_t view, void *window, double x, double y, int32_t width, int32_t height, double scale);
+/// Back (1), forward (2), again (3), stop (4), or the keyboard to the page (5). 0 when done.
+int32_t bz_web_go(int32_t view, int32_t what);
+/// The browser's page as it is now, as JSON: its url, title, whether it can go back and forward,
+/// and whether it is loading. Let go with bz_web_free.
+char *bz_web_page(int32_t view);
+/// Is told, on the app's thread, each time what bz_web_page says may have changed.
+typedef void (*bz_web_watcher)(int32_t view);
+void bz_web_watch(int32_t view, bz_web_watcher watcher);
 /// Lays it out at another size, telling pages it is `agent` from the next one loaded. 0 when done.
 int32_t bz_web_resize(int32_t view, int32_t width, int32_t height, const char *agent);
 /// Starts loading the page at the address `text`, or `text` itself as a page with `isHTML`. 0 when begun.
