@@ -279,11 +279,14 @@ nonisolated enum Prototype {
     /// Whether a layer lies and looks on one screen as it does on the other, but for its id.
     static func same(_ a: Node, _ b: Node) -> Bool { plain(a) == plain(b) }
 
-    /// A layer with every id in it the same blank one, and going nowhere, to be compared by look.
+    /// A layer with every id in it the same blank one, going nowhere and as designed, whatever
+    /// its film has it do, to be compared by look.
     private static func plain(_ n: Node) -> Node {
         var m = n
         m.id = blank
         m.flow = nil
+        m.motion = nil
+        m.film = nil
         m.children = n.children.map(plain)
         m.mask = n.mask?.map(plain)
         return m

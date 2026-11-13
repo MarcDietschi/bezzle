@@ -90,6 +90,27 @@ nonisolated struct LayerField: @unchecked Sendable {
             value: { node, k in node[keyPath: key]?[k].flatMap { try? FieldValue(encoding: $0) } ?? .null })
     }
 
+    /// For a property that is a few settings kept together, such as an artboard's film: each
+    /// setting is an entry, shared and undone on its own as a dictionary's are, so two people
+    /// setting different ones at once both keep theirs. `T` is written as an object of its
+    /// settings, each left out when it is not set; with none set, there is no value at all.
+    init<T: Codable & Equatable>(_ name: String, settings key: WritableKeyPath<Node, T?>) {
+        self.init(name, key)
+        func set(_ node: Node) -> [String: FieldValue] {
+            guard let value = node[keyPath: key], case .object(let settings)? = try? FieldValue(encoding: value) else { return [:] }
+            return settings.filter { $0.value != .null }
+        }
+        entries = Entries(
+            keys: { Set(set($0).keys) },
+            same: { a, b, k in a[keyPath: key] == b[keyPath: key] || set(a)[k] == set(b)[k] },
+            copy: { node, other, k in
+                var all = set(node)
+                all[k] = set(other)[k]
+                node[keyPath: key] = all.isEmpty ? nil : try? FieldValue.object(all).decoded(as: T.self)
+            },
+            value: { node, k in set(node)[k] ?? .null })
+    }
+
     /// The name an entry is shared under.
     func entryName(_ key: String) -> String { "\(name)/\(key)" }
 
@@ -113,7 +134,7 @@ nonisolated struct LayerField: @unchecked Sendable {
         LayerField("instance", \.instance), LayerField("master", \.master),
         LayerField("curve", \.curve), LayerField("curvePath", \.curvePath),
         LayerField("flow", \.flow), LayerField("starts", \.starts),
-        LayerField("motion", entries: \.motion), LayerField("film", \.film),
+        LayerField("motion", entries: \.motion), LayerField("film", settings: \.film),
     ]
 
     /// Each property of a layer, without what it holds, read all at once.

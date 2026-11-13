@@ -295,7 +295,8 @@ nonisolated extension Node {
         let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
                        CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.midX, y: rect.midY)]
         var most = 1.0
-        let steps = max(8, min(96, Int(length * 8)))
+        // Counted before it is made a whole number: a film of absurd length, as a file could say, has no more steps.
+        let steps = Int(max(8, min(96, (length * 8).rounded(.down))))
         for k in 0...steps {
             let t = length * Double(k) / Double(steps)
             let map = placement(of: piece, at: t, camera: camera(at: t)).map

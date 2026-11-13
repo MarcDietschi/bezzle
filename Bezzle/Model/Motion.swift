@@ -217,6 +217,13 @@ nonisolated struct MotionTrack: Codable, Hashable, Sendable {
         self.keys = keys.sorted { $0.t < $1.t }
     }
 
+    /// Read from a file, they are put in the order of their times, which everything here counts
+    /// on, however the file has them.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(try c.decode([MotionKey].self, forKey: .keys))
+    }
+
     var start: Double? { keys.first?.t }
     var end: Double? { keys.last?.t }
 
@@ -264,7 +271,8 @@ nonisolated struct MotionTrack: Codable, Hashable, Sendable {
     /// and between two, on the way from one to the other.
     func value(at t: Double, rest: [Double]) -> [Double] {
         guard let first = keys.first, let last = keys.last else { return rest }
-        if t <= first.t { return first.v }
+        // Not past the first key, as a moment that is no number never is: what the first says.
+        if !(t > first.t) { return first.v }
         if t >= last.t { return last.v }
         var i = 0
         while i < keys.count - 2, keys[i + 1].t <= t { i += 1 }
@@ -294,7 +302,8 @@ nonisolated struct MotionTrack: Codable, Hashable, Sendable {
         let n = min(a.v.count, b.v.count)
         // The speed through a key: from the key before it to the one after, over the time between.
         func speed(_ k: Int, _ c: Int) -> Double {
-            guard flows(through: k) else { return (b.v[c] - a.v[c]) / span }
+            // A key with fewer numbers than its neighbours, as a file could have, has no speed to give.
+            guard flows(through: k), c < keys[k - 1].v.count, c < keys[k + 1].v.count else { return (b.v[c] - a.v[c]) / span }
             return (keys[k + 1].v[c] - keys[k - 1].v[c]) / (keys[k + 1].t - keys[k - 1].t)
         }
         let p2 = p * p, p3 = p2 * p
@@ -307,8 +316,9 @@ nonisolated struct MotionTrack: Codable, Hashable, Sendable {
 
 /// Times and values as Animate keeps and compares them.
 nonisolated enum MotionTiming {
-    /// A time as it is kept: to the thousandth of a second, never before the start.
-    static func time(_ t: Double) -> Double { (max(t, 0) * 1000).rounded() / 1000 }
+    /// A time as it is kept: to the thousandth of a second, never before the start. One that is
+    /// no number is the start: it could not be written to a design's file, and the design with it.
+    static func time(_ t: Double) -> Double { t.isFinite ? (max(t, 0) * 1000).rounded() / 1000 : 0 }
 
     /// Whether two times are the same moment: within a quarter of a frame at 60 a second.
     static func same(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 0.0042 }
@@ -386,7 +396,8 @@ nonisolated extension Node {
         guard var track = self[track: property] else {
             guard !MotionTiming.alike(v, property.rest) else { return }
             if t < 0.0042 {
-                self[track: property] = MotionTrack([MotionKey(t: 0, v: v), MotionKey(t: max(home, 0.05), v: property.rest, given: true)])
+                let home = home.isFinite ? max(home, 0.05) : MotionTiming.beat
+                self[track: property] = MotionTrack([MotionKey(t: 0, v: v), MotionKey(t: home, v: property.rest, given: true)])
             } else {
                 self[track: property] = MotionTrack([MotionKey(t: 0, v: property.rest, given: true), MotionKey(t: t, v: v)])
             }
@@ -424,7 +435,10 @@ nonisolated extension Node {
     mutating func removeKeys(at time: Double, of properties: [MotionProperty]) {
         for p in properties {
             guard var track = self[track: p] else { continue }
+            let before = track.keys.count
             track.keys.removeAll { MotionTiming.same($0.t, time) }
+            // Only where a key went: a lone key set to hold the design at another moment stays.
+            guard track.keys.count != before else { continue }
             if track.keys.count == 1, MotionTiming.alike(track.keys[0].v, p.rest) { track.keys = [] }
             self[track: p] = track
         }
@@ -457,11 +471,13 @@ nonisolated extension Node {
         }
     }
 
-    /// Every key of these properties later by `delta` seconds, none before the start.
+    /// Every key of these properties later by `delta` seconds, none before the start: earlier
+    /// than that allows, they all go as early as the first of them can, so the motion stays whole.
     mutating func shiftKeys(by delta: Double, of properties: [MotionProperty] = MotionProperty.allCases) {
+        guard delta.isFinite, let first = properties.compactMap({ self[track: $0]?.start }).min() else { return }
+        let shift = max(delta, -first)
         for p in properties {
             guard var track = self[track: p] else { continue }
-            let shift = max(delta, -(track.start ?? 0))
             for i in track.keys.indices { track.keys[i].t = MotionTiming.time(track.keys[i].t + shift) }
             self[track: p] = track
         }
@@ -593,7 +609,7 @@ nonisolated struct Film: Codable, Hashable, Sendable {
 nonisolated extension Node {
     /// Artboards: how many seconds the film runs.
     var filmLength: Double {
-        if let length = film?.length, length > 0 { return length }
+        if let length = film?.length, length > 0, length.isFinite { return length }
         // To the next half second past the last key.
         return max(MotionTiming.shortest, (lastKey * 2).rounded(.up) / 2)
     }
@@ -679,7 +695,9 @@ nonisolated extension Node {
     /// Gives the layer a move at a moment: coming on from away to the design, or going, from the
     /// design to away. Keys of the same properties in the time it takes give way to it.
     mutating func apply(_ move: MotionMove, at time: Double, going: Bool = false, frame: CGRect, board: CGSize) {
-        let t0 = MotionTiming.time(time), t1 = MotionTiming.time(time + move.time)
+        // Its end is its own time after its start as that is kept: begun before the start of the
+        // film, it still takes its time.
+        let t0 = MotionTiming.time(time), t1 = MotionTiming.time(t0 + move.time)
         for (p, away) in move.away(frame, on: board) {
             var track = self[track: p] ?? MotionTrack()
             track.keys.removeAll { $0.t > t0 - 0.0042 && $0.t < t1 + 0.0042 }
