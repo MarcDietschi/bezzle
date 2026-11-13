@@ -146,6 +146,13 @@ final class DocumentStore {
             if editingPath != nil { editingPicture = nil }
         }
     }
+    /// Whether a layer's points can be edited: a path's; in Animate, where moving them poses its
+    /// Shape, any layer whose outline is points (`Node.canReshape`).
+    func canEditPoints(of node: Node?) -> Bool {
+        guard let node else { return false }
+        return animating ? node.canReshape : node.kind == .path
+    }
+
     /// The layer whose picture is being moved and resized inside it, shown whole on the canvas.
     var editingPicture: UUID?
     /// Layers whose picture is having its background taken away just now, and how far it has got.
@@ -383,7 +390,7 @@ final class DocumentStore {
             for id in Self.decks(changedFrom: before.doc, to: after) { store.fronts[id] = before.fronts[id] }
             store.selection = before.selection.filter { store.doc.path(of: $0) != nil }
             store.editingText = nil
-            if let id = store.editingPath, store.node(id)?.kind != .path { store.editingPath = nil }
+            if let id = store.editingPath, !store.canEditPoints(of: store.node(id)) { store.editingPath = nil }
             store.record(now, action)
             store.scheduleSave()
         }
@@ -825,7 +832,7 @@ final class DocumentStore {
         if !gone.isEmpty { selection.removeAll { gone.contains($0) } }
         if let id = hovered, next.path(of: id) == nil { hovered = nil }
         if let id = editingPicture, next.node(id) == nil { editingPicture = nil }
-        if let id = editingPath, next.node(id)?.kind != .path { editingPath = nil }
+        if let id = editingPath, !canEditPoints(of: next.node(id)) { editingPath = nil }
         if !selectedPoints.isEmpty, let id = editingPath, old.node(id)?.path != next.node(id)?.path { selectedPoints = [] }
         canvas?.syncEditor()
         scheduleSave()

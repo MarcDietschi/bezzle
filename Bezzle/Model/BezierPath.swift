@@ -516,10 +516,13 @@ nonisolated extension BezzleDocument {
         let box = placed.cgPath.boundingBoxOfPath
         guard !box.isNull, box.width.isFinite, box.height.isFinite else { return }
         let centre = CGPoint(x: box.midX, y: box.midY).applying(n.placement)
+        // Its Shape keys go with its points: each with the point it was made for.
+        let before = n[track: .shape] != nil ? self.points(of: id)?.anchorPoints : nil
         update(id) { node in
             node.frame = CGRect(center: centre, size: box.size)
             node.path = data
             node.pathBox = box
+            if let before, let keys = node[track: .shape] { node[track: .shape] = keys.realigned(from: before, to: points.anchorPoints) }
         }
     }
 }

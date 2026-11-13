@@ -7499,6 +7499,35 @@
         }
       }
     },
+    "animate.draw" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Strich"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Draw"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tracé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tratto"
+          }
+        }
+      }
+    },
     "animate.fade" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -7611,6 +7640,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scala"
+          }
+        }
+      }
+    },
+    "animate.shape" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Form"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Shape"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forme"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forma"
           }
         }
       }
@@ -29800,6 +29858,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sposta l’inizio"
+          }
+        }
+      }
+    },
+    "Move its points on the canvas to give it another shape at the playhead" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verschiebe seine Punkte auf der Arbeitsfläche, um ihm an der Abspielposition eine andere Form zu geben"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Déplacez ses points sur la zone de travail pour lui donner une autre forme à la tête de lecture"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sposta i suoi punti nell’area di lavoro per dargli un’altra forma alla testina di riproduzione"
           }
         }
       }
@@ -53159,6 +53239,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sposta fotogramma chiave"
+          }
+        }
+      }
+    },
+    "move.draw" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeichnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Draw"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dessin"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disegno"
           }
         }
       }

@@ -25,6 +25,13 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
     case swing
     /// Points of blur, added to its own.
     case blur
+    /// Shapes only: how much of its outline is drawn, from where to where along it, each 0 (its
+    /// start) to 1 (its end), as a pen draws it: one run after another. All of it as designed.
+    case draw
+    /// Shapes only: where its points and their handles are, each moved from where the design has
+    /// it, in the layer's own points: six numbers to a point (it, the handle in, the handle out,
+    /// each across and down), in the outline's order (`BezierPath.changed(by:)`).
+    case shape
     /// Where the camera looks, in points from the artboard's middle.
     case cameraMove
     /// How many times closer than seeing the whole artboard.
@@ -36,34 +43,40 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
     /// Degrees the scene is swung round under it, its right side going away.
     case cameraSwing
 
-    static let layer: [MotionProperty] = [.move, .scale, .turn, .fade, .lift, .tilt, .swing, .blur]
+    static let layer: [MotionProperty] = [.move, .scale, .turn, .fade, .lift, .tilt, .swing, .blur, .draw, .shape]
     static let camera: [MotionProperty] = [.cameraMove, .cameraZoom, .cameraRoll, .cameraTilt, .cameraSwing]
 
     var isCamera: Bool { Self.camera.contains(self) }
 
     /// The value that changes nothing: the layer as designed, the camera on the whole artboard.
+    /// A shape's has as many numbers as it has points (`Node.rest(of:)`), and none here.
     var rest: [Double] {
         switch self {
         case .move, .cameraMove: [0, 0]
         case .scale: [1, 1]
         case .fade, .cameraZoom: [1]
+        case .draw: [0, 1]
+        case .shape: []
         case .turn, .lift, .tilt, .swing, .blur, .cameraRoll, .cameraTilt, .cameraSwing: [0]
         }
     }
 
     /// A value as it may be kept: as many numbers as the property has, each within what shows.
+    /// A shape keeps every number it is given, as far as any point can be from its place.
     func clamped(_ v: [Double]) -> [Double] {
+        if self == .shape { return v.map { $0.isFinite ? min(max($0, -100_000), 100_000) : 0 } }
         var out = rest
         for i in out.indices where i < v.count && v[i].isFinite { out[i] = v[i] }
         switch self {
         case .scale: out = out.map { min(max($0, 0.001), 100) }
         case .fade: out[0] = min(max(out[0], 0), 1)
         case .blur: out[0] = min(max(out[0], 0), 200)
+        case .draw: out = out.map { min(max($0, 0), 1) }
         case .lift: out[0] = min(max(out[0], -4000), 4000)
         case .tilt, .swing: out[0] = min(max(out[0], -360), 360)
         case .cameraZoom: out[0] = min(max(out[0], 0.1), 16)
         case .cameraTilt, .cameraSwing: out[0] = min(max(out[0], -80), 80)
-        case .move, .turn, .cameraMove, .cameraRoll: break
+        case .move, .turn, .cameraMove, .cameraRoll, .shape: break
         }
         return out
     }
@@ -78,6 +91,8 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
         case .tilt: String(localized: "animate.tilt", defaultValue: "Tilt")
         case .swing: String(localized: "animate.swing", defaultValue: "Swing")
         case .blur: String(localized: "animate.blur", defaultValue: "Blur")
+        case .draw: String(localized: "animate.draw", defaultValue: "Draw")
+        case .shape: String(localized: "animate.shape", defaultValue: "Shape")
         case .cameraMove: String(localized: "animate.camera.move", defaultValue: "Look At")
         case .cameraZoom: String(localized: "animate.camera.zoom", defaultValue: "Zoom")
         case .cameraRoll: String(localized: "animate.camera.roll", defaultValue: "Roll")
@@ -404,6 +419,7 @@ nonisolated extension Node {
 
     /// What a track's value is where the design has it: a property's rest, or no change to an input.
     func rest(of track: String) -> [Double] {
+        if track == MotionProperty.shape.rawValue { return shapeRest }
         if let p = MotionProperty(rawValue: track) { return p.rest }
         let count = self[track: track]?.keys.first?.v.count ?? ShaderFill.input(of: track).flatMap { shaderInput($0)?.count } ?? 1
         return Array(repeating: 0, count: count)
@@ -417,8 +433,9 @@ nonisolated extension Node {
 
     /// A property's value at a time: on its way between its keys, or as designed.
     func value(of property: MotionProperty, at t: Double) -> [Double] {
-        guard let track = self[track: property] else { return property.rest }
-        return property.clamped(track.value(at: t, rest: property.rest))
+        let rest = property == .shape ? shapeRest : property.rest
+        guard let track = self[track: property] else { return rest }
+        return property.clamped(track.value(at: t, rest: rest))
     }
 
     /// Every moment the layer has a key at, for any of these properties, in order.
@@ -451,14 +468,16 @@ nonisolated extension Node {
     /// leaves the design at the start and is there by then. After that, each pose is one more key.
     /// Posing a property that has no keys as designed does nothing.
     mutating func pose(_ property: MotionProperty, _ value: [Double], at time: Double, home: Double = MotionTiming.beat) {
+        guard takes(property, value) else { return }
         let t = MotionTiming.time(time), v = property.clamped(value)
+        let rest = rest(of: property.rawValue)
         guard var track = self[track: property] else {
-            guard !MotionTiming.alike(v, property.rest) else { return }
+            guard !MotionTiming.alike(v, rest) else { return }
             if t < 0.0042 {
                 let home = home.isFinite ? max(home, 0.05) : MotionTiming.beat
-                self[track: property] = MotionTrack([MotionKey(t: 0, v: v), MotionKey(t: home, v: property.rest, given: true)])
+                self[track: property] = MotionTrack([MotionKey(t: 0, v: v), MotionKey(t: home, v: rest, given: true)])
             } else {
-                self[track: property] = MotionTrack([MotionKey(t: 0, v: property.rest, given: true), MotionKey(t: t, v: v)])
+                self[track: property] = MotionTrack([MotionKey(t: 0, v: rest, given: true), MotionKey(t: t, v: v)])
             }
             return
         }
@@ -474,8 +493,19 @@ nonisolated extension Node {
         self[track: property] = track
     }
 
+    /// Whether a property can be posed so: a shape's outline only on a layer that has one, and its
+    /// points with a change for every one of them.
+    func takes(_ property: MotionProperty, _ value: [Double]) -> Bool {
+        switch property {
+        case .shape: canReshape && value.count == shapeRest.count && !value.isEmpty
+        case .draw: canReshape
+        default: true
+        }
+    }
+
     /// Sets a key and nothing else: where one is wanted exactly, as the timeline and an assistant ask.
     mutating func setKey(_ property: MotionProperty, _ value: [Double], at time: Double, ease: MotionEase? = nil) {
+        guard takes(property, value) else { return }
         let t = MotionTiming.time(time)
         var track = self[track: property] ?? MotionTrack()
         if let i = track.index(at: t) {
@@ -571,6 +601,9 @@ nonisolated struct MotionPose: Equatable, Sendable {
     var tilt = 0.0
     var swing = 0.0
     var blur = 0.0
+    /// How much of its outline is drawn, from where to where along it.
+    var drawFrom = 0.0
+    var drawTo = 1.0
 
     static let rest = MotionPose()
 
@@ -589,6 +622,7 @@ nonisolated struct MotionPose: Equatable, Sendable {
             case .tilt: [tilt]
             case .swing: [swing]
             case .blur: [blur]
+            case .draw: [drawFrom, drawTo]
             default: property.rest
             }
         }
@@ -603,6 +637,7 @@ nonisolated struct MotionPose: Equatable, Sendable {
             case .tilt: tilt = v[0]
             case .swing: swing = v[0]
             case .blur: blur = v[0]
+            case .draw: drawFrom = v[0]; drawTo = v[1]
             default: break
             }
         }
@@ -655,7 +690,7 @@ nonisolated extension Node {
     func pose(at t: Double) -> MotionPose {
         guard motion != nil else { return .rest }
         var pose = MotionPose()
-        for p in motionProperties where !p.isCamera { pose[p] = value(of: p, at: t) }
+        for p in motionProperties where !p.isCamera && p != .shape { pose[p] = value(of: p, at: t) }
         return pose
     }
 
@@ -706,7 +741,7 @@ nonisolated extension Node {
 /// A motion a layer is given in one go, as its keys: how it comes on, or the same backwards, how
 /// it goes. Nothing more than keys, so each can be changed afterwards like any posed by hand.
 nonisolated enum MotionMove: String, CaseIterable, Codable, Hashable, Sendable {
-    case fade, rise, drop, slide, pop, zoom, flip, focus
+    case fade, rise, drop, slide, pop, zoom, flip, focus, draw
 
     var title: String {
         switch self {
@@ -718,6 +753,7 @@ nonisolated enum MotionMove: String, CaseIterable, Codable, Hashable, Sendable {
         case .zoom: String(localized: "move.zoom", defaultValue: "Zoom")
         case .flip: String(localized: "move.flip", defaultValue: "Flip")
         case .focus: String(localized: "move.focus", defaultValue: "Focus")
+        case .draw: String(localized: "move.draw", defaultValue: "Draw")
         }
     }
 
@@ -727,6 +763,7 @@ nonisolated enum MotionMove: String, CaseIterable, Codable, Hashable, Sendable {
         case .fade: 0.4
         case .rise, .slide, .zoom, .focus: 0.5
         case .drop, .pop, .flip: 0.6
+        case .draw: 0.9
         }
     }
 
@@ -752,6 +789,9 @@ nonisolated enum MotionMove: String, CaseIterable, Codable, Hashable, Sendable {
             return [.tilt: [-80], .fade: [0]]
         case .focus:
             return [.blur: [18], .fade: [0]]
+        case .draw:
+            // Nothing of its line drawn yet. A layer with no outline to draw fades instead (`apply`).
+            return [.draw: [0, 0]]
         }
     }
 
@@ -761,6 +801,8 @@ nonisolated enum MotionMove: String, CaseIterable, Codable, Hashable, Sendable {
         case .pop: .spring(0.42)
         case .drop: .spring(0.3)
         case .flip: .spring(0.18)
+        // A line is drawn at a hand's pace: gathering speed, and slowing to its end.
+        case .draw: .smooth
         default: .easeOut
         }
     }
@@ -773,7 +815,8 @@ nonisolated extension Node {
         // Its end is its own time after its start as that is kept: begun before the start of the
         // film, it still takes its time.
         let t0 = MotionTiming.time(time), t1 = MotionTiming.time(t0 + move.time)
-        for (p, away) in move.away(frame, on: board) {
+        let away = move == .draw && !canReshape ? MotionMove.fade.away(frame, on: board) : move.away(frame, on: board)
+        for (p, away) in away {
             var track = self[track: p] ?? MotionTrack()
             track.keys.removeAll { $0.t > t0 - 0.0042 && $0.t < t1 + 0.0042 }
             if going {

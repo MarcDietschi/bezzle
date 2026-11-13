@@ -271,14 +271,16 @@ nonisolated extension Node {
                 let deep = Perspective.inDepth(n) && n.transform3D?.pinned != true
                 if own || deep {
                     flush()
-                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion || n.holdsMovingShader, flat: deep))
+                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders,
+                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes, flat: deep))
                 } else if inside, n.comesApart {
                     flush()
                     walk(n.children, origin: CGPoint(x: origin.x + n.frame.minX, y: origin.y + n.frame.minY), holders: holders + [n.id])
                 } else if inside {
                     // Masked, faded or the like as a whole: drawn again as what it holds moves.
                     flush()
-                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders, changes: n.holdsMotion || n.holdsMovingShader))
+                    out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders,
+                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes))
                 } else {
                     run.append(n.id)
                 }
@@ -321,7 +323,13 @@ nonisolated struct FilmPlacement: Equatable, Sendable {
 nonisolated extension Node {
     /// Artboards: where a piece shows at a moment, through this camera.
     func placement(of piece: FilmPiece, at t: Double, camera: FilmCamera) -> FilmPlacement {
-        guard piece.kind == .layer, let id = piece.layers.first, let layer = descendant(id) else {
+        placement(of: piece, layer: piece.kind == .layer ? piece.layers.first.flatMap { descendant($0) } : nil, at: t, camera: camera)
+    }
+
+    /// The same, for a piece whose layer has been found already (`filmLayers`): what is placed
+    /// frame after frame is not looked for through the whole artboard each time.
+    func placement(of piece: FilmPiece, layer: Node?, at t: Double, camera: FilmCamera) -> FilmPlacement {
+        guard piece.kind == .layer, let layer else {
             return FilmPlacement(map: FilmLens.ground(camera, size: frame.size))
         }
         let pose = layer.pose(at: t)
@@ -329,6 +337,29 @@ nonisolated extension Node {
         let depth = piece.flat ? layer.transform3D : nil
         let map = FilmLens.layer(center: center, rotation: layer.isGroup ? 0 : layer.rotation, depth: depth, pose: pose, camera: camera, size: frame.size)
         return FilmPlacement(map: map, opacity: pose.fade, blur: pose.blur, height: pose.lift + Double(depth?.z ?? 0))
+    }
+
+    /// Artboards: the layer each piece places, found in one walk through it: nil for the ground,
+    /// and for a piece whose layer is not on it.
+    func filmLayers(of pieces: [FilmPiece]) -> [Node?] {
+        var wanted: [UUID: [Int]] = [:]
+        for (i, piece) in pieces.enumerated() where piece.kind == .layer {
+            if let id = piece.layers.first { wanted[id, default: []].append(i) }
+        }
+        var out = [Node?](repeating: nil, count: pieces.count)
+        var left = wanted.count
+        func walk(_ nodes: [Node]) {
+            for n in nodes {
+                guard left > 0 else { return }
+                if let at = wanted.removeValue(forKey: n.id) {
+                    for i in at { out[i] = n }
+                    left -= 1
+                }
+                if !n.children.isEmpty { walk(n.children) }
+            }
+        }
+        walk(children)
+        return out
     }
 
     /// Artboards: the order its pieces are drawn in at a moment. As they lie, until something is
@@ -353,9 +384,10 @@ nonisolated extension Node {
         var most = 1.0
         // Counted before it is made a whole number: a film of absurd length, as a file could say, has no more steps.
         let steps = Int(max(8, min(96, (length * 8).rounded(.down))))
+        let layer = piece.kind == .layer ? piece.layers.first.flatMap { descendant($0) } : nil
         for k in 0...steps {
             let t = length * Double(k) / Double(steps)
-            let map = placement(of: piece, at: t, camera: camera(at: t)).map
+            let map = placement(of: piece, layer: layer, at: t, camera: camera(at: t)).map
             for p in corners where map.depth(at: p) > 1e-3 { most = max(most, map.stretch(at: p)) }
         }
         return most
@@ -369,22 +401,32 @@ extension Node {
     /// say, and everything in it likewise. `own` leaves its own pose out, for a piece of the film,
     /// which is placed by it; what it holds is posed all the same.
     func posed(at t: Double, own: Bool = true) -> Node {
-        // Its shader's inputs are inside it, and posed with what it holds, own or not.
+        // Its shader's inputs are inside it, and posed with what it holds, own or not; so is
+        // its outline, where its points are and how much of it is drawn.
         var n = inputTracks.isEmpty ? self : withInputs(at: t)
+        if reshapes { n = n.reshaped(at: t) }
         if !children.isEmpty, holdsMotion { n.children = children.map { $0.posed(at: t) } }
         guard own, isAnimated else { return n }
         let pose = pose(at: t)
+        // What it grows and turns about: the design's middle, wherever its outline has gone.
+        let pivot = frame.center
         if pose.scale != CGPoint(x: 1, y: 1) {
             let f = n.frame
-            let grown = CGRect(x: f.midX - f.width * pose.scale.x / 2, y: f.midY - f.height * pose.scale.y / 2,
+            var grown = CGRect(x: f.midX - f.width * pose.scale.x / 2, y: f.midY - f.height * pose.scale.y / 2,
                                width: f.width * pose.scale.x, height: f.height * pose.scale.y)
+            if reshapes, f.center != pivot {
+                // Its middle away from the design's, grown along its own sides with the rest of it.
+                let d = Geometry.rotated(f.center, about: pivot, by: -rotation) - pivot
+                let middle = Geometry.rotated(CGPoint(x: pivot.x + d.x * pose.scale.x, y: pivot.y + d.y * pose.scale.y), about: pivot, by: rotation)
+                grown = CGRect(center: middle, size: grown.size)
+            }
             if n.isGroup {
                 n.children = BezzleDocument.scaled(n.children, from: f.size, to: grown.size)
                 n.mask = n.mask.map { BezzleDocument.scaled($0, from: f.size, to: grown.size) }
             }
             n.frame = grown
         }
-        if pose.turn != 0 { n = BezzleDocument.turned(n, by: pose.turn, about: n.frame.center) }
+        if pose.turn != 0 { n = BezzleDocument.turned(n, by: pose.turn, about: reshapes ? pivot : n.frame.center) }
         n.frame = n.frame.offsetBy(dx: pose.move.x, dy: pose.move.y)
         n.opacity = min(max(n.opacity * pose.fade, 0), 1)
         if pose.inDepth {
@@ -412,7 +454,7 @@ extension Node {
     /// the frame's own points: grown many times, or with the camera close, it reaches no further.
     func filmChain(at point: CGPoint, time t: Double, pieces: [FilmPiece], tolerance: CGFloat) -> [Node] {
         let camera = camera(at: t)
-        let placements = pieces.map { placement(of: $0, at: t, camera: camera) }
+        let placements = zip(pieces, filmLayers(of: pieces)).map { placement(of: $0, layer: $1, at: t, camera: camera) }
         for i in filmOrder(pieces, placements).reversed() where pieces[i].kind != .ground {
             let piece = pieces[i], map = placements[i].map
             guard placements[i].opacity > 0.01, let q = map.back(point) else { continue }
@@ -454,7 +496,9 @@ extension Node {
             }
             if posed.count == way.count - top { way.replaceSubrange(top..., with: posed) }
         }
-        guard let layer = way.last else { return nil }
+        guard var layer = way.last else { return nil }
+        // Drawn in a piece of its own, its outline is where its keys have it, in a frame grown to hold it.
+        if layer.reshapes, piece.layers.first == id { layer = layer.reshaped(at: t) }
         let holders = way.dropLast()
         let origin = holders.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.frame.minX, y: $0.y + $1.frame.minY) }
         let map = placement(of: piece, at: t, camera: camera(at: t)).map
@@ -470,5 +514,46 @@ extension Node {
             corners = corners.map(placed.shown)
         }
         return corners.map { map($0) }
+    }
+
+    /// Artboards: where a layer's own upright points show in the film's frame at a moment: its
+    /// frame's top left at zero, before it is turned, as the design has it. Through its place
+    /// and turn, its pose and the camera: what its outline's points are shown at and dragged by
+    /// in Animate. A point is moved there by the way back (`FilmMap.back`). Nil for a layer not on it.
+    func filmPointMap(of id: UUID, at t: Double, pieces: [FilmPiece]) -> FilmMap? {
+        guard var way = way(to: id), let design = way.last else { return nil }
+        let ids = Set(way.map(\.id))
+        guard let piece = pieces.last(where: { p in p.layers.contains { ids.contains($0) } }) else { return nil }
+        // Its own points as its parent has them: as the design places it, its pose then being the
+        // piece's to place; or, drawn inside a piece that changes as what holds it moves, as it
+        // and they are posed in the drawing, its outline left as designed.
+        var own = design.placement
+        if piece.changes, let top = way.firstIndex(where: { piece.layers.contains($0.id) }), top < way.count - 1 {
+            func plain(_ n: Node) -> Node {
+                var n = n
+                if n.id == id {
+                    n[track: .shape] = nil
+                    n[track: .draw] = nil
+                } else if n.children.contains(where: { ids.contains($0.id) }) {
+                    n.children = n.children.map { ids.contains($0.id) ? plain($0) : $0 }
+                }
+                return n
+            }
+            var posed = [plain(way[top]).posed(at: t, own: false)]
+            for next in way[(top + 1)...] {
+                guard let child = posed[posed.count - 1].children.first(where: { $0.id == next.id }) else { break }
+                posed.append(child)
+            }
+            guard posed.count == way.count - top, let layer = posed.last else { return nil }
+            way.replaceSubrange(top..., with: posed)
+            let grown = CGAffineTransform(scaleX: design.frame.width > 0 ? layer.frame.width / design.frame.width : 1,
+                                          y: design.frame.height > 0 ? layer.frame.height / design.frame.height : 1)
+            own = grown.concatenating(layer.placement)
+        }
+        let origin = way.dropLast().reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.frame.minX, y: $0.y + $1.frame.minY) }
+        let placed = own.concatenating(CGAffineTransform(translationX: origin.x, y: origin.y))
+        let map = placement(of: piece, at: t, camera: camera(at: t)).map
+        return map.after(FilmMap(a: Double(placed.a), b: Double(placed.c), c: Double(placed.tx),
+                                 d: Double(placed.b), e: Double(placed.d), f: Double(placed.ty)))
     }
 }

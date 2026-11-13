@@ -83,7 +83,7 @@ enum Filmed {
         var n = Node(kind: .rectangle, name: name, frame: CGRect(x: 10, y: 10, width: 50, height: 50))
         for (i, p) in MotionProperty.layer.enumerated() {
             for (j, kind) in MotionEase.Kind.allCases.enumerated() {
-                let value = p.rest.map { $0 + Double(j + 1) * (p == .fade ? -0.1 : 0.3) }
+                let value = n.rest(of: p.rawValue).map { $0 + Double(j + 1) * (p == .fade ? -0.1 : 0.3) }
                 n.setKey(p, value, at: Double(j) * 0.5 + Double(i) * 0.01, ease: MotionEase(kind: kind, bounce: kind == .spring ? 0.4 : nil))
             }
         }
@@ -286,7 +286,7 @@ struct MotionDesignTests {
             for p in MotionProperty.allCases {
                 for t in moments {
                     let v = n.value(of: p, at: t)
-                    #expect(v.count == p.rest.count && v.allSatisfy(\.isFinite) && v == p.clamped(v), "\(what): \(p) at \(t) is \(v)")
+                    #expect(v.count == n.rest(of: p.rawValue).count && v.allSatisfy(\.isFinite) && v == p.clamped(v), "\(what): \(p) at \(t) is \(v)")
                 }
             }
             for t in moments where t.isFinite {

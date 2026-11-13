@@ -411,7 +411,8 @@ struct MotionKeysTests {
             let frame = CGRect(x: 100, y: 80, width: 120, height: 60)
             let away = move.away(frame, on: size)
             #expect(!away.isEmpty && away.keys.allSatisfy { !$0.isCamera }, "\(move)")
-            #expect(move.time >= 0.4 && move.time <= 0.6 && !move.title.isEmpty, "\(move)")
+            // A line is drawn at a hand's pace, a little longer than the rest take.
+            #expect(move.time >= 0.4 && move.time <= (move == .draw ? 1 : 0.6) && !move.title.isEmpty, "\(move)")
 
             var coming = card()
             coming.apply(move, at: 1, frame: frame, board: size)

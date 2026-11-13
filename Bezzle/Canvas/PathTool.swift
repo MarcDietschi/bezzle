@@ -13,9 +13,10 @@ final class PathTool {
     }
     private var deviceScale: CGFloat = 2
 
-    init(store: DocumentStore) {
+    /// `host` is what the pen works on: the design, or in Animate the film (`FilmPoints`).
+    init(store: DocumentStore, host: PenHost? = nil) {
         self.store = store
-        pen = PenTool(host: store)
+        pen = PenTool(host: host ?? store)
     }
 
     var dragging: Bool { pen.dragging }

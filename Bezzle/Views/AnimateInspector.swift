@@ -216,6 +216,20 @@ private struct MoveGlyph: View {
                 case .focus:
                     ctx.addFilter(.blur(radius: 3.2 * max(a, 0)))
                     opacity = 1 - 0.75 * (1 - faded)
+                case .draw:
+                    // A line drawn on as a pen draws it, over where it belongs.
+                    var line = Path()
+                    line.move(to: CGPoint(x: home.minX - 3, y: home.midY + 3))
+                    line.addCurve(to: CGPoint(x: home.midX, y: home.midY), control1: CGPoint(x: home.minX + 2, y: home.minY - 4),
+                                  control2: CGPoint(x: home.midX - 4, y: home.minY - 2))
+                    line.addCurve(to: CGPoint(x: home.maxX + 3, y: home.midY - 3), control1: CGPoint(x: home.midX + 4, y: home.maxY + 2),
+                                  control2: CGPoint(x: home.maxX - 2, y: home.maxY + 4))
+                    let drawn = min(max(1 - away, 0), 1)
+                    if drawn > 0.001 {
+                        ctx.stroke(line.trimmedPath(from: 0, to: drawn), with: .color(Theme.ink.opacity(0.82)),
+                                   style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                    }
+                    return
                 }
                 ctx.clip(to: Path(CGRect(origin: .zero, size: s)))
                 ctx.fill(Path(roundedRect: r, cornerRadius: 2.5), with: .color(Theme.ink.opacity(0.82 * opacity)))
@@ -336,6 +350,21 @@ private struct PoseCard: View {
             PropertyRow(store: store, property: .swing) {
                 field(.swing, 0, unit: "°", range: -360...360)
             }
+            // Shapes, whose outline is points: how much of it is drawn, and where its points are.
+            if layers.allSatisfy({ board.descendant($0)?.canReshape == true }) {
+                Hairline()
+                    .padding(.vertical, 2)
+                PropertyRow(store: store, property: .draw) {
+                    field(.draw, 0, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 62)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Theme.ink3)
+                    field(.draw, 1, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 62)
+                }
+                PropertyRow(store: store, property: .shape) {
+                    PointsChip(store: store, layers: layers)
+                }
+            }
         }
     }
 
@@ -347,6 +376,43 @@ private struct PoseCard: View {
             store.pose(property, number: index, to: shown / times, of: layers)
         }
         .frame(width: width)
+    }
+}
+
+/// Takes the picked shape's points in hand on the canvas, or puts them down: moved there, they
+/// give it another shape at the playhead, a key of its Shape.
+private struct PointsChip: View {
+    let store: DocumentStore
+    let layers: [UUID]
+    @State private var hovering = false
+
+    var body: some View {
+        let editing = store.editingPath != nil && layers == [store.editingPath!]
+        let one = layers.count == 1
+        Button {
+            if editing {
+                store.editingPath = nil
+            } else if let id = layers.first, one {
+                store.pauseFilm()
+                store.editingPath = id
+            }
+        } label: {
+            Text(editing ? "Done" : "Edit Points")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(editing ? Theme.pencil : hovering && one ? Theme.ink : Theme.ink2)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(height: 22)
+                .background(Capsule().fill(Theme.ink.opacity(hovering && one ? 0.08 : 0.045)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(Pressable())
+        .opacity(one ? 1 : 0.4)
+        .allowsHitTesting(one)
+        .onHover { hovering = $0 }
+        .animation(Theme.quick, value: hovering)
+        .animation(Theme.quick, value: editing)
+        .help("Move its points on the canvas to give it another shape at the playhead")
     }
 }
 

@@ -49,6 +49,13 @@ nonisolated enum PenKey: Sendable { case escape, enter, delete, left, right, up,
     func deleteSelectedPoints()
     func nudgePoints(dx: CGFloat, dy: CGFloat)
     func editPoints()
+    /// Whether the edited path keeps the points it has, which are only moved: in Animate, where
+    /// moving them poses its Shape, and points are added and taken away in the design.
+    var pointsFixed: Bool { get }
+}
+
+extension PenHost {
+    var pointsFixed: Bool { false }
 }
 
 /// The pen, and the points of a path: drawing a path a point at a time, and moving, adding and
@@ -440,7 +447,7 @@ final class PenTool {
             drag = .handle(id: id, base: points, at: h, moved: false)
             return true
         }
-        if let s = segment(at: v, in: points) {
+        if !store.pointsFixed, let s = segment(at: v, in: points) {
             store.beginGesture()
             var next = points
             let q = next.insert(s.subpath, segment: s.segment, t: s.t)
@@ -671,7 +678,7 @@ final class PenTool {
         }
         if store.selecting, let (_, points) = store.editedPoints {
             if anchor(at: v, in: points) != nil || handle(at: v, in: points) != nil { mark = .point; return }
-            if let s = segment(at: v, in: points) { mark = .add; spot = s.point }
+            if !store.pointsFixed, let s = segment(at: v, in: points) { mark = .add; spot = s.point }
         }
     }
 

@@ -21,10 +21,23 @@ final class MotionTool {
         self.store = store
     }
 
+    /// A shape's points moved at the playhead, with the pen's hands: each move poses its Shape
+    /// there (`FilmPoints`). A double click on a shape, or Edit Points in the panel, takes them in hand.
+    private(set) lazy var points: PathTool = {
+        let tool = PathTool(store: store, host: FilmPoints(store: store) { [weak self] in
+            guard let scene = self?.scene else { return nil }
+            return (scene.board, scene.pieces)
+        })
+        tool.redraw = { [weak self] in self?.redraw() }
+        return tool
+    }()
+
     func modeChanged(_ on: Bool) {
         // Whatever was in hand as the mode changed is put back: half a pose is no pose, and a
         // gesture left open would keep every later change out of the history.
         cancel()
+        // Points in hand are the film's: the design's own are taken in hand there anew.
+        store.editingPath = nil
         hot = .none
         redraw()
     }
@@ -216,6 +229,7 @@ final class MotionTool {
     }
 
     func hover(_ v: CGPoint?) {
+        if store.editingPath != nil { points.hover(v, flags: []) }
         guard case .none = drag else { return }
         let next = v.map(find) ?? .none
         if next != hot {
@@ -225,6 +239,7 @@ final class MotionTool {
     }
 
     func cursor(at v: CGPoint) -> NSCursor {
+        if store.editingPath != nil, let cursor = points.cursor { return cursor }
         guard let scene else { return .arrow }
         let found = dragging ? held : find(v)
         switch found {
@@ -274,7 +289,10 @@ final class MotionTool {
     /// The tracks there were when the drag began, to tell afterwards whether it made a first key.
     private var tracksBefore: [UUID: Set<MotionProperty>] = [:]
 
-    var dragging: Bool { if case .none = drag { return false } else { return true } }
+    var dragging: Bool {
+        if points.dragging { return true }
+        if case .none = drag { return false } else { return true }
+    }
 
     private func begin(_ ids: [UUID], _ scene: Scene) {
         tracksBefore = [:]
@@ -307,6 +325,23 @@ final class MotionTool {
             store.focusFilm()
             redraw()
             return
+        }
+        // A shape's points in hand: pressed on, they move; off them, a loop round some, or out of
+        // editing to whatever was pressed. A double click off them puts them down.
+        if store.editingPath != nil {
+            if points.editDown(at: v, event: event) {
+                redraw()
+                return
+            }
+            let other = pick(chain(at: v, in: scene), in: scene, deep: flags.contains(.command))
+            if other == nil || other == store.editingPath {
+                if event.clickCount >= 2 { store.editingPath = nil } else {
+                    points.startMarquee(at: v, adding: flags.contains(.shift), offPath: other == nil)
+                }
+                redraw()
+                return
+            }
+            store.editingPath = nil
         }
         held = find(v)
         switch held {
@@ -345,7 +380,15 @@ final class MotionTool {
         case .layer, .none:
             let chain = chain(at: v, in: scene)
             var id = pick(chain, in: scene, deep: flags.contains(.command))
-            // A second click on what is picked goes one layer further in.
+            // A second click on a shape picked alone takes its points in hand; on anything else
+            // picked, it goes one layer further in.
+            if event.clickCount == 2, let picked = id, store.selection == [picked], chain.first?.id == picked,
+               let node = scene.board.descendant(picked), node.canReshape, !node.locked {
+                store.editingPath = picked
+                hot = .none
+                redraw()
+                return
+            }
             if event.clickCount == 2, let picked = id, let i = chain.firstIndex(where: { $0.id == picked }), i > 0 { id = chain[i - 1].id }
             guard let id else {
                 // The bare artboard, or the table: a loop pulled round layers picks them.
@@ -417,6 +460,10 @@ final class MotionTool {
     }
 
     func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
+        if points.dragging {
+            points.drag(to: v, flags: flags)
+            return
+        }
         guard let scene else { return }
         let shift = flags.contains(.shift), free = flags.contains(.command)
         switch drag {
@@ -575,6 +622,11 @@ final class MotionTool {
     }
 
     func up(at v: CGPoint, flags: NSEvent.ModifierFlags) {
+        if points.dragging {
+            points.up(at: v, flags: flags)
+            redraw()
+            return
+        }
         let was = drag
         drag = .none
         defer {
@@ -724,10 +776,17 @@ final class MotionTool {
         // With a drag or two fingers in hand only Escape does anything: it puts them back. Any
         // other key would play the film under the hand, or move the playhead and have the rest of
         // one drag pose at another moment.
+        if points.dragging {
+            _ = points.key(event)
+            return true
+        }
         if dragging || !fingers.isEmpty {
             if event.keyCode == 53 { cancel() }
             return true
         }
+        // A shape's points in hand: the arrows move the picked ones, Return and Escape put them
+        // down. Return on a shape not in hand plays the film, as it does on anything here.
+        if store.editingPath != nil, event.keyCode != 49, points.key(event) { return true }
         switch event.keyCode {
         case 49:
             return false
@@ -898,12 +957,16 @@ final class MotionTool {
         }
         ctx.setStrokeColor(CanvasInk.pencil.cgColor)
         ctx.setLineWidth(1)
-        for id in picked {
+        // A shape whose points are in hand shows them in place of its frame.
+        let editing = store.editingPath
+        for id in picked where id != editing {
             guard let q = scene.corners(of: id) else { continue }
             ctx.addPath(outline(q))
             ctx.strokePath()
         }
-        if let id = handled(scene), let q = scene.corners(of: id) {
+        if editing != nil {
+            points.draw(ctx, scale: scale)
+        } else if let id = handled(scene), let q = scene.corners(of: id) {
             let moving: Bool = { if case .move(_, _, true) = drag { return true } else { return false } }()
             if !moving {
                 let lengths = (0..<4).map { Self.distance(q[$0], q[($0 + 1) % 4]) }

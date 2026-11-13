@@ -61,7 +61,8 @@ struct AnimateStressTests {
                 for (i, key) in track.keys.enumerated() {
                     if !(key.t >= 0 && key.t.isFinite) || key.t != MotionTiming.time(key.t) { out.append("\(n.name).\(raw): a key at \(key.t)") }
                     if i > 0, key.t - track.keys[i - 1].t < 0.0042 { out.append("\(n.name).\(raw): keys at \(track.keys[i - 1].t) and \(key.t)") }
-                    if key.v.count != p.rest.count || key.v != p.clamped(key.v) { out.append("\(n.name).\(raw): a key of \(key.v)") }
+                    let count = p == .shape ? n.shapeRest.count : p.rest.count
+                    if key.v.count != count || key.v != p.clamped(key.v) { out.append("\(n.name).\(raw): a key of \(key.v)") }
                     if key.ease?.kind == .auto { out.append("\(n.name).\(raw): no pace kept as a pace") }
                     if let bounce = key.ease?.bounce, !bounce.isFinite { out.append("\(n.name).\(raw): a spring of \(bounce)") }
                 }
@@ -200,11 +201,19 @@ struct AnimateStressTests {
                 did("pick camera")
                 store.pickCamera()
             case 4, 5:
-                let p = one(MotionProperty.layer), v = value(of: p)
+                let p = one(MotionProperty.layer)
+                if p == .shape {
+                    // A shape's points, each moved its own way: as many changes as each layer has points.
+                    let far = one([1.0, 40, 300])
+                    did("pose shape by up to \(far)")
+                    bench.step { store.pose(.shape, of: store.posedLayers) { n in n.shapeRest.map { _ in chance(0.3) ? 0 : number(-far...far) } } }
+                    break
+                }
+                let v = value(of: p)
                 did("pose \(p.rawValue) \(v)")
                 bench.step { store.pose(p, of: store.posedLayers) { _ in v } }
             case 6:
-                let p = one(MotionProperty.layer), i = whole(0...1), v = value(of: p)[0]
+                let p = one(MotionProperty.layer.filter { $0 != .shape }), i = whole(0...1), v = value(of: p)[0]
                 did("pose \(p.rawValue)[\(i)] \(v)")
                 bench.step { store.pose(p, number: i, to: v, of: store.posedLayers) }
             case 7, 8:

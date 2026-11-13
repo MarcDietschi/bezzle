@@ -96,6 +96,41 @@ struct MotionMCPTests {
         #expect(read["backdrop"] == nil && read["camera"] == nil && read["note"] == nil)
     }
 
+    @Test func aShapeIsKeyedByItsOutlineAndItsLineByHowMuchIsDrawn() async throws {
+        // The card's outline in its own points is its rectangle; at one second its top right corner is pulled out.
+        let pulled = "M 0 0 L 160 -20 L 140 80 L 0 80 Z"
+        let set = await call("animate", ["keys": [
+            ["layer": "Card", "property": "shape", "time": 0, "path": "M 0 0 L 140 0 L 140 80 L 0 80 Z"],
+            ["layer": "Card", "property": "shape", "time": 1, "path": pulled],
+            ["layer": "Title", "property": "draw", "time": 0, "value": 0],
+            ["layer": "Title", "property": "draw", "time": 0.8, "value": [0, 1]],
+        ] as [[String: Any]]])
+        #expect(!set.failed, "\(set.text)")
+        let card = try #require(bench.node("Card"))
+        let outline = try #require(card.outline(at: 1))
+        #expect(outline.anchorPoints == [CGPoint(x: 0, y: 0), CGPoint(x: 160, y: -20), CGPoint(x: 140, y: 80), CGPoint(x: 0, y: 80)])
+        #expect(card.outline(at: 0) == card.ownOutline)
+        #expect(bench.node("Title")?[track: .draw]?.keys.map(\.v) == [[0, 0], [0, 1]])
+
+        // Read back as outlines, the design's beside them.
+        let read = json(await call("get_animation", ["artboard": "A"]).text)
+        let shape = keys("shape", of: "Card", in: read)
+        #expect(shape.map { $0["time"] as? Double } == [0, 1])
+        #expect(shape.allSatisfy { $0["value"] == nil })
+        let back = BezierPath(try #require(shape.last?["path"] as? String))
+        #expect(back.anchorPoints == outline.anchorPoints)
+        let layer = (read["layers"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "Card" }
+        #expect(BezierPath(try #require(layer?["outline"] as? String)) == card.ownOutline)
+        #expect(keys("draw", of: "Title", in: read).map { $0["value"] as? [Double] } == [[0, 0], [0, 1]])
+
+        // Another number of points is no shape key: the answer gives the outline to start from.
+        let wrong = await call("animate", ["keys": [["layer": "Second", "property": "shape", "time": 1, "path": "M 0 0 L 10 0 L 5 8 Z"]]])
+        #expect(wrong.failed && wrong.text.contains("4 points") && wrong.text.contains("M"))
+        #expect(bench.node("Second")?.motion == nil)
+        let raw = await call("animate", ["keys": [["layer": "Second", "property": "shape", "time": 1, "value": [1, 2]]]])
+        #expect(raw.failed && raw.text.contains("path"))
+    }
+
     @Test func anArtboardWithNoFilmSaysSo() async {
         let read = json(await call("get_animation", ["artboard": "Card"]).text)
         // A layer on the artboard names it too.

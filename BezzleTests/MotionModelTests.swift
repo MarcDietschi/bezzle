@@ -42,12 +42,16 @@ struct MotionModelTests {
     // MARK: What moves
 
     @Test func everyPropertyRestsOnAsManyNumbersAsItHasAndChangesNothingThere() {
-        let pairs: Set<MotionProperty> = [.move, .scale, .cameraMove]
+        let pairs: Set<MotionProperty> = [.move, .scale, .cameraMove, .draw]
         let times: Set<MotionProperty> = [.scale, .fade, .cameraZoom]
+        // A shape has as many numbers as its outline has points, none of them anything but nothing.
+        #expect(MotionProperty.shape.rest.isEmpty)
+        // All of a line is drawn, from its start to its end.
+        #expect(MotionProperty.draw.rest == [0, 1])
         for p in MotionProperty.allCases {
-            #expect(p.rest.count == (pairs.contains(p) ? 2 : 1), "\(p)")
+            if p != .shape { #expect(p.rest.count == (pairs.contains(p) ? 2 : 1), "\(p)") }
             // What a layer is multiplied by rests at one, what is added to it at nothing.
-            #expect(p.rest.allSatisfy { $0 == (times.contains(p) ? 1 : 0) }, "\(p)")
+            if p != .draw { #expect(p.rest.allSatisfy { $0 == (times.contains(p) ? 1 : 0) }, "\(p)") }
             #expect(p.clamped(p.rest) == p.rest, "\(p)")
             #expect(p.isCamera == p.rawValue.hasPrefix("camera"), "\(p)")
             #expect(MotionProperty(rawValue: p.rawValue) == p, "\(p)")
@@ -119,7 +123,8 @@ struct MotionModelTests {
     @Test func whatIsNotANumberIsAsDesigned() {
         for p in MotionProperty.allCases {
             for bad in [Double.nan, .infinity, -.infinity, .signalingNaN] {
-                #expect(p.clamped(Array(repeating: bad, count: 3)) == p.rest, "\(p) given \(bad)")
+                // A shape's every number is a point's, kept where it is.
+                #expect(p.clamped(Array(repeating: bad, count: 3)) == (p == .shape ? [0, 0, 0] : p.rest), "\(p) given \(bad)")
             }
         }
         #expect(MotionProperty.move.clamped([.nan, 3]) == [0, 3])
@@ -201,7 +206,8 @@ struct MotionModelTests {
         #expect(track.start == 1 && track.end == 1)
         // On a layer, a property with no keys is as designed at any moment.
         let n = card()
-        for p in MotionProperty.allCases { #expect(n.value(of: p, at: 2) == p.rest, "\(p)") }
+        for p in MotionProperty.allCases { #expect(n.value(of: p, at: 2) == n.rest(of: p.rawValue), "\(p)") }
+        #expect(n.value(of: .shape, at: 2) == Array(repeating: 0, count: 4 * BezierPath.numbersPerAnchor))
         #expect(n.pose(at: 2) == .rest && n.camera(at: 2) == .rest)
     }
 
@@ -395,7 +401,7 @@ struct MotionModelTests {
         let kinds: [MotionEase.Kind?] = [nil, nil, nil, nil, .auto, .smooth, .easeIn, .easeOut, .linear, .spring, .hold]
         var trouble: String?
         for round in 0..<600 where trouble == nil {
-            let p = dice.pick(MotionProperty.allCases), rest = p.rest
+            let p = dice.pick(MotionProperty.allCases), rest = p == .shape ? Array(repeating: 0, count: 12) : p.rest
             var keys: [MotionKey] = []
             var t = dice.chance(0.5) ? 0 : dice.number(0...2)
             var v = rest.map { $0 + dice.number(-200...200) }

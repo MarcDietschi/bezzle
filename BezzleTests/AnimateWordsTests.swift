@@ -35,6 +35,7 @@ struct AnimateWordsTests {
         "Fly the Camera Here", "The camera looks at what is picked from the playhead on, and flies there from where it was before",
         "See the Whole Artboard", "Turn the Scene", "Look Straight Down",
         "Drag to tip the scene back and swing it round under the camera. Double click to look straight down.",
+        "Edit Points", "Done", "Move its points on the canvas to give it another shape at the playhead",
     ]
 
     /// The values a string takes, in order: `%@`, `%lld` and the like.

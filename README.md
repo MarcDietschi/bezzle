@@ -113,6 +113,17 @@ along one artboard's film. Its keys are changes from the design and never the de
   `part`, drawn ahead while the film plays). Nothing but the sheet ends at the artboard's edge:
   a shadow or a layer that reaches past it shows once the camera sees past it. A picture covers
   the artboard and some way round it (`FilmPictures.core`), the rest is drawn as parts when seen.
+- **Shapes** (paths, and rectangles, ellipses and lines, whose outline is points too) have two
+  properties more: Draw, how much of the outline is drawn as a pen draws it, one run after
+  another, and Shape, its points and handles each moved from the design's, six numbers to a point
+  in the layer's own upright points (`Bezzle/Model/PathMotion.swift`). A film draws a shape whose
+  keys change it as a path (`Node.reshaped`), its frame grown to hold points that go past it, and
+  turns and grows it about the design's middle still. Shape keys go with their points when the
+  design's points are added, taken away or dragged (`MotionTrack.realigned`, from
+  `BezzleDocument.setPoints`); keys made for an outline with other points change nothing. Its
+  points are moved in the film with the shared pen (`PenTool`) through `FilmPoints`, its host in
+  Animate, which shows them where `Node.filmPointMap` puts them and poses the Shape at the
+  playhead; there points are only moved (`PenHost.pointsFixed`). Its tests are `MotionPathTests`.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
   `/given` for a key the app placed itself), so two people keying one layer both keep theirs
