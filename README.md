@@ -78,6 +78,30 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
 - **Speed:** Debug builds mislead. Build with `SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule`
   and run `BEZZLE_STRESS` (see DebugHooks); the display is 120 Hz, so a frame has 8.3 ms.
 
+### Animate
+
+The fourth way of seeing a design, beside Design, Prototype and Inspect: layers and a camera posed
+along one artboard's film. Its keys are changes from the design and never the design.
+
+- **Where:** the data is `Bezzle/Model/Motion.swift` and `Film.swift` (shared, so Windows and the
+  browser keep a film they cannot show yet); everything the panel, the timeline and the menus do is
+  a function of the store, `Bezzle/Store/AnimateOperations.swift`; the pointer's part is
+  `Bezzle/Canvas/MotionTool.swift` on the canvas and `Bezzle/Views/FilmHand.swift` on the timeline,
+  both plain classes so that tests can press and drag; `FilmStage.swift` draws, `FilmExport.swift`
+  saves a movie, `MCPAnimate.swift` is the AI server's part.
+- **Its tests** are the suites named `Motion…`, `Animate…` and `Film…`. Run them after any change
+  to it, each named with `-only-testing:BezzleTests/<Suite>`.
+- **Runs at random:** `AnimateStressTests` plays seeded sessions of several hundred steps, with
+  undo and redo among them, and checks the film after every step. Put
+  `TEST_RUNNER_ANIMATE_RUNS=800` before `xcodebuild test` for 800 more seeds (about 3 minutes),
+  `TEST_RUNNER_ANIMATE_RUN=<seed>` to follow one, and `TEST_RUNNER_ANIMATE_DEEP=<every>,<from>` to
+  undo and redo the whole session every so many steps. A switch for tests never begins with
+  `BEZZLE_`: the tests run inside the app, where such a name sets off DebugHooks.
+- **Driving a copy:** `BEZZLE_ANIMATE` and `BEZZLE_FILM` (`Bezzle/App/AnimateHooks.swift`) pick,
+  pose, play and press. Their clock starts when the hook does, well after launch: photograph late.
+- **Its words** are in the catalog in all four languages; `AnimateWordsTests` fails when one is
+  missing, so a new property, pace or move brings its words along.
+
 ### Mac parity
 
 `Bezzle/Model` is compiled into the Mac app, the Windows app and the browser viewer, so a change made
