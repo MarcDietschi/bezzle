@@ -285,7 +285,7 @@ final class WebBrowser {
         begin()
         defer { end() }
         var (read, held) = try await readShown { [weak self] what, done in self?.say(what, done) }
-        read.name = Self.given(name) ?? Self.boardName(of: read.page, size: size, among: (store ?? destination)?.doc.nodes ?? [])
+        read.name = Self.given(name) ?? WebImport.boardName(of: read.page, size: size, among: (store ?? destination)?.doc.nodes ?? [])
         return try bring([read], held: held, into: store)
     }
 
@@ -308,7 +308,7 @@ final class WebBrowser {
         defer { capture.close() }
         var reads: [WebRead] = [], held: [String: Data] = [:], missed: [URL] = []
         var named = (store ?? destination)?.doc.nodes ?? []
-        let here = url.map(Self.plain)
+        let here = url.map(Page.plain)
         for (i, page) in chosen.enumerated() {
             try Task.checkCancellation()
             reading = page.id
@@ -318,13 +318,13 @@ final class WebBrowser {
             }
             do {
                 var (read, pictures): (WebRead, [String: Data])
-                if Self.plain(page.url) == here {
+                if Page.plain(page.url) == here {
                     (read, pictures) = try await readShown(tell)
                 } else {
                     capture.progress = tell
                     (read, pictures) = try await capture.read(page.url, size: size)
                 }
-                read.name = Self.boardName(of: read.page, size: size, among: named)
+                read.name = WebImport.boardName(of: read.page, size: size, among: named)
                 named.append(Node(kind: .artboard, name: read.name, frame: .zero))
                 reads.append(read)
                 held.merge(pictures) { a, _ in a }
@@ -406,14 +406,9 @@ final class WebBrowser {
 
     // MARK: Pages
 
-    /// A page that can be brought in: the one open, one visited before, or one it links to.
-    struct Page: Identifiable, Hashable {
-        enum Kind { case open, visited, linked }
-        var url: URL
-        var name: String
-        var kind: Kind
-        var id: String { WebBrowser.plain(url).absoluteString }
-    }
+    /// A page that can be brought in: the one open, one visited before, or one it links to
+    /// (shared with Windows, Import/WebPages.swift).
+    typealias Page = WebSitePage
 
     /// The pages offered, the one open first, then those visited, then those it links to.
     private(set) var pages: [Page] = []
@@ -423,43 +418,15 @@ final class WebBrowser {
     private(set) var reading: String?
     private(set) var done: Set<String> = []
 
-    /// An address without the part after #, which names a place on a page and not a page.
-    nonisolated static func plain(_ url: URL) -> URL {
-        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
-        parts.fragment = nil
-        return parts.url ?? url
-    }
-
-    /// What signs a person out or does something rather than show a page, as the hands tell it
-    /// (WebPageHands.js), so a page visited before is offered only when loading it again is safe.
-    nonisolated static func doesSomething(_ url: URL) -> Bool {
-        let path = url.path + (url.query.map { "?" + $0 } ?? "")
-        let pattern = #"(^|[/_.-])(log-?out|sign-?out|signoff|abmelden|ausloggen|deconnexion|disconnetti|esci|delete|remove|unsubscribe)([/_.?-]|$)|/api/|/auth/"#
-        return path.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
     /// Finds the pages to offer: the one open, those visited in the browser, newest first, and
     /// those the page links to, each once. Only the open page is chosen at first.
     @discardableResult
     func findPages() async -> [Page] {
         guard let web, let here = web.url else { pages = []; return [] }
-        var found = [Page(url: Self.plain(here), name: title.isEmpty ? (here.host ?? here.absoluteString) : title, kind: .open)]
-        var seen: Set<String> = [found[0].id]
         let list = web.backForwardList
-        for item in (list.backList.reversed() + list.forwardList) {
-            let page = Page(url: Self.plain(item.url), name: item.title?.isEmpty == false ? item.title! : item.url.path, kind: .visited)
-            guard item.url.host == here.host, item.url.scheme == here.scheme, !Self.doesSomething(item.url), seen.insert(page.id).inserted else { continue }
-            found.append(page)
-        }
-        if let json = try? await hands("return __bezzleHands.pages(opts)", ["opts": ["limit": 200]]) as? String,
-           let links = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]] {
-            for link in links {
-                guard let address = link["url"] as? String, let to = URL(string: address) else { continue }
-                let page = Page(url: Self.plain(to), name: link["name"] as? String ?? to.path, kind: .linked)
-                guard seen.insert(page.id).inserted else { continue }
-                found.append(page)
-            }
-        }
+        let visited = (list.backList.reversed() + list.forwardList).map { (url: $0.url, title: $0.title) }
+        let links = try? await hands("return __bezzleHands.pages(opts)", ["opts": ["limit": 200]]) as? String
+        let found = Page.offered(open: here, title: title, visited: visited, links: links)
         pages = found
         chosen = chosen.intersection(found.map(\.id))
         if chosen.isEmpty { chosen = [found[0].id] }
@@ -476,21 +443,6 @@ final class WebBrowser {
     /// Stops pages being brought in; those read so far are not brought in.
     func cancelWork() {
         work?.cancel()
-    }
-
-    /// What a page's artboard is called: the page's title, or its address's path, with its
-    /// size when that is not a desktop's; numbered when the design has that name already.
-    static func boardName(of page: WebPage, size: WebCapture.Size, among nodes: [Node]) -> String {
-        var name = page.title.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines).joined(separator: " ")
-        if name.isEmpty { name = URL(string: page.url)?.path ?? "" }
-        if name.isEmpty || name == "/" { name = URL(string: page.url)?.host ?? String(localized: "Web Page") }
-        if name.count > 60 { name = String(name.prefix(60)).trimmingCharacters(in: .whitespaces) + "…" }
-        if size.width != WebCapture.Size.desktop.width { name += " (\(size.name))" }
-        let taken = Set(nodes.filter(\.isArtboard).map(\.name))
-        guard taken.contains(name) else { return name }
-        var n = 2
-        while taken.contains("\(name) \(n)") { n += 1 }
-        return "\(name) \(n)"
     }
 
     private func imported() {

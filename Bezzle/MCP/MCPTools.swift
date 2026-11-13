@@ -309,9 +309,9 @@ final class MCPTools {
         if try args.bool("shown") == true {
             let browser = WebBrowser.shared
             guard let here = browser.url else { throw MCPError("Bezzle's browser has no page open: browse with action open and a url first.") }
-            var pages = [WebBrowser.Page(url: WebBrowser.plain(here), name: browser.title, kind: .open)]
-            for url in urls where !pages.contains(where: { $0.id == WebBrowser.plain(url).absoluteString }) {
-                pages.append(WebBrowser.Page(url: WebBrowser.plain(url), name: url.path, kind: .linked))
+            var pages = [WebBrowser.Page(url: WebSitePage.plain(here), name: browser.title, kind: .open)]
+            for url in urls where !pages.contains(where: { $0.id == WebSitePage.plain(url).absoluteString }) {
+                pages.append(WebBrowser.Page(url: WebSitePage.plain(url), name: url.path, kind: .linked))
             }
             let done: WebBrowser.Brought
             do { done = try await browser.importPages(pages, into: into) } catch {
@@ -337,7 +337,7 @@ final class MCPTools {
             do {
                 let (some, pictures) = try await WebImport.read(url, sizes: sizes, hideBanners: hide)
                 for (i, var read) in some.enumerated() {
-                    read.name = WebBrowser.boardName(of: read.page, size: sizes[i], among: named)
+                    read.name = WebImport.boardName(of: read.page, size: sizes[i], among: named)
                     named.append(Node(kind: .artboard, name: read.name, frame: .zero))
                     reads.append(read)
                 }

@@ -102,9 +102,32 @@ struct WebBrowserTests {
     @Test func namesPagesByTitleSizeAndWhatIsTaken() throws {
         let page = try WebTest.page(WebTest.html())
         let taken = [Node(kind: .artboard, name: "Test page", frame: .zero), Node(kind: .artboard, name: "Test page 2", frame: .zero)]
-        #expect(WebBrowser.boardName(of: page, size: .desktop, among: []) == "Test page")
-        #expect(WebBrowser.boardName(of: page, size: .desktop, among: taken) == "Test page 3")
-        #expect(WebBrowser.boardName(of: page, size: .mobile, among: taken) == "Test page (\(WebCapture.Size.mobile.name))")
+        #expect(WebImport.boardName(of: page, size: .desktop, among: []) == "Test page")
+        #expect(WebImport.boardName(of: page, size: .desktop, among: taken) == "Test page 3")
+        #expect(WebImport.boardName(of: page, size: .mobile, among: taken) == "Test page (\(WebCapture.Size.mobile.name))")
+    }
+
+    /// The list of pages as the Mac and Windows make it from what their browsers say: the page
+    /// open first, then those visited on its site that are safe to load again, then its links,
+    /// each once, the part after # left off.
+    @Test func offersPagesFromWhatTheBrowserSays() {
+        let here = URL(string: "https://app.example.ch/search#results")!
+        let visited: [(url: URL, title: String?)] = [
+            (URL(string: "https://app.example.ch/account")!, "Account"),
+            (URL(string: "https://app.example.ch/search")!, "Search again"),
+            (URL(string: "https://app.example.ch/logout")!, "Signed out"),
+            (URL(string: "https://elsewhere.ch/")!, "Elsewhere"),
+            (URL(string: "https://app.example.ch/saved")!, ""),
+        ]
+        let links = #"[{"url":"https://app.example.ch/account#top","name":"Account again"},{"url":"https://app.example.ch/help","name":"Help"},{"url":"https://app.example.ch/news"}]"#
+        let pages = WebSitePage.offered(open: here, title: "Search", visited: visited, links: links)
+        #expect(pages.map(\.url.absoluteString) == ["https://app.example.ch/search", "https://app.example.ch/account", "https://app.example.ch/saved",
+                                                    "https://app.example.ch/help", "https://app.example.ch/news"])
+        #expect(pages.map(\.kind) == [.open, .visited, .visited, .linked, .linked])
+        #expect(pages.map(\.name) == ["Search", "Account", "/saved", "Help", "/news"])
+        // A page with no title is named for its host; links that cannot be read are no pages.
+        let bare = WebSitePage.offered(open: URL(string: "https://app.example.ch/")!, title: "", visited: [], links: "not JSON")
+        #expect(bare.map(\.name) == ["app.example.ch"] && bare.map(\.kind) == [.open])
     }
 
     @Test(.timeLimit(.minutes(5))) func bringsAPageIntoADesignAsOneStep() async throws {
@@ -222,9 +245,9 @@ struct WebBrowserTests {
         browser.back()
         try await browser.settle()
         #expect(await browser.findPages().map(\.kind) == [.open, .visited, .linked])
-        #expect(WebBrowser.doesSomething(URL(string: "https://search.weblaw.ch/signout")!))
-        #expect(WebBrowser.doesSomething(URL(string: "https://a.ch/de/abmelden?x=1")!))
-        #expect(!WebBrowser.doesSomething(URL(string: "https://a.ch/account/searches")!))
+        #expect(WebSitePage.doesSomething(URL(string: "https://search.weblaw.ch/signout")!))
+        #expect(WebSitePage.doesSomething(URL(string: "https://a.ch/de/abmelden?x=1")!))
+        #expect(!WebSitePage.doesSomething(URL(string: "https://a.ch/account/searches")!))
     }
 
     @Test(.timeLimit(.minutes(5))) func bringsSeveralPagesInTogetherAsOneStep() async throws {

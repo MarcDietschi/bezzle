@@ -55,22 +55,3 @@ enum WebBringing: LocalizedError {
         }
     }
 }
-
-extension WebImport {
-    /// Where pages brought into a design go: the row of them as it was made, moved so that it
-    /// begins 400 points to the right of everything already on the canvas, its top level with
-    /// the highest artboard there; on an empty canvas, where it was made.
-    static func placed(_ boards: [Node], beside nodes: [Node]) -> [Node] {
-        guard let first = boards.first else { return [] }
-        let start = boards.map(\.frame).reduce(first.frame) { $0.union($1) }
-        let right = nodes.map(\.frame.maxX).max()
-        let top = nodes.filter(\.isArtboard).map(\.frame.minY).min() ?? nodes.map(\.frame.minY).min()
-        let dx = right.map { ($0 + 400 - start.minX).rounded() } ?? 0
-        let dy = top.map { ($0 - start.minY).rounded() } ?? 0
-        return boards.map { board in
-            var b = board
-            b.frame = b.frame.offsetBy(dx: dx, dy: dy)
-            return b
-        }
-    }
-}

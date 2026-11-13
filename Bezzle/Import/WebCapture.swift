@@ -417,26 +417,6 @@ final class WebCapture: NSObject, WKNavigationDelegate {
         return data
     }
 
-    /// The cookies a browser sends along to `url`: those of its host or of a domain it is in, on
-    /// a path it is on, not yet gone, and only over HTTPS when they say so.
-    nonisolated static func cookies(for url: URL, among all: [HTTPCookie], now: Date = Date()) -> [HTTPCookie] {
-        guard let host = url.host?.lowercased() else { return [] }
-        let path = url.path.isEmpty ? "/" : url.path
-        let secure = url.scheme?.lowercased() == "https"
-        return all.filter { c in
-            var domain = c.domain.lowercased()
-            let wide = domain.hasPrefix(".")
-            if wide { domain.removeFirst() }
-            // A cookie a site set for its domain says so with a dot, and holds for the hosts in it.
-            guard host == domain || (wide && host.hasSuffix("." + domain)) else { return false }
-            let cp = c.path.isEmpty ? "/" : c.path
-            guard path == cp || path.hasPrefix(cp.hasSuffix("/") ? cp : cp + "/") else { return false }
-            if c.isSecure && !secure { return false }
-            if let expires = c.expiresDate, expires < now { return false }
-            return true
-        }
-    }
-
     /// What a data: URL holds.
     nonisolated static func dataURL(_ s: String) -> Data? {
         guard let comma = s.firstIndex(of: ",") else { return nil }
@@ -716,7 +696,7 @@ enum WebImport {
         for i in reads.indices {
             let size = sizes.isEmpty ? WebCapture.Size.desktop : sizes[i]
             let given = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            reads[i].name = !given.isEmpty && reads.count == 1 ? given : WebBrowser.boardName(of: reads[i].page, size: size, among: named)
+            reads[i].name = !given.isEmpty && reads.count == 1 ? given : WebImport.boardName(of: reads[i].page, size: size, among: named)
             named.append(Node(kind: .artboard, name: reads[i].name, frame: .zero))
         }
         return try store.bringIn(reads, held: held, source: source(of: url))
