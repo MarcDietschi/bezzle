@@ -257,6 +257,28 @@ other pixels (stretched, or cut by a turned ellipse) its outlines move by hundre
 The engine's own tests run here too: a package of `Sources/Vectorizer` and `Tests` alone (its
 `vectorize-cli` needs Image I/O), `swift test`.
 
+Animate, the fourth mode (the bar's switch, Alt+A), is the Mac's (`README.md` › Animate). The film
+is in the design and shared already (`Bezzle/Model/Motion.swift`, `Film.swift`); what the timeline
+reads of it and where the camera looks to show layers are shared too (`Model/FilmKeys.swift`). The
+Mac's store functions are ported in `Host/Animating.swift` (`WindowsCore.FilmDesk`, one for each
+design's `DesignSession.film`), its canvas tool in `Host/MotionHand.swift` and its timeline's hand in
+`Host/FilmHand.swift`, their marks and menus as data for `Sources/Bezzle/FilmView.swift`,
+`FilmTimelineView.swift` and `AnimatePanel.swift`. Where the Mac makes two changes in one gesture
+(the camera flown somewhere, the scene turned on its pad) they are one change here, since a gesture
+on Windows makes each change again from where it began. The film is drawn as the Mac draws it:
+each piece is a picture the Mac's own `FilmPictures` (linked into `Sources/BezzleCore/Film/`) draws
+once, laid into the frame through the camera's 3×3 map by Skia (`bz_film_frame` in host.cpp) where
+the Mac's graphics card does it, and only for what shows of the artboard; a part is drawn sharper
+where the camera is close once the film rests (`Host/FilmStage.swift`). Save as Movie and the AI
+server's `export` with format mp4 write H.264 in an .mp4 through Media Foundation's sink writer
+(`Host/FilmMovie.swift`, FilmExport's reel ported, and `CBezzleHost/movie.cpp`): High profile, a
+key frame every second, BT.709 and sRGB said, what says how it is read put before the pictures
+once the file is whole; Windows' encoder takes no more than 120 frames a second. The AI server's
+`get_animation` and `animate` are the Mac's (`MCP/MCPAnimate.swift`), `render` takes `time` and
+`frames`, and its `animate` prompt is there. `bezzle-render` draws a design's films at moments and
+saves them as movies, headless: `BEZZLE_FILM_AT=0;0.5;1.5` (seconds) and
+`BEZZLE_FILM_MOVIE=2,60` (scale, frames a second), into the out folder.
+
 Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O
 and Core Text); home's Bring In… button, the Bezzle menu, files dropped on home and a file given
