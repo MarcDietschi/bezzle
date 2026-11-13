@@ -37,7 +37,14 @@ extension WindowsCore {
         /// How many seconds apart several layers are given a move, one after another.
         public var apart = 0.06 { didSet { if apart != oldValue { changed() } } }
         /// How far saving the film as a movie has come, 0 to 1, while it is being saved.
-        public internal(set) var exporting: Double? { didSet { if exporting != oldValue { savingChanged() } } }
+        public internal(set) var exporting: Double? {
+            didSet {
+                guard exporting != oldValue else { return }
+                savingChanged()
+                // Begun or ended, the panel shows it; how far it has come it follows by itself.
+                if (exporting == nil) != (oldValue == nil) { changed() }
+            }
+        }
 
         struct Pass {
             var began: Double
@@ -320,6 +327,20 @@ extension WindowsCore {
                     doc.update(id) { n in
                         guard !n.locked else { return }
                         n.pose(property, value(n), at: t)
+                    }
+                }
+            }
+        }
+
+        /// Poses several properties of layers at the playhead in one change, each layer's values
+        /// worked out from what it is.
+        func pose(of ids: [UUID], _ values: (Node) -> [(MotionProperty, [Double])]) {
+            let t = filmTime
+            edit { doc in
+                for id in ids {
+                    doc.update(id) { n in
+                        guard !n.locked else { return }
+                        for (property, value) in values(n) where !property.isCamera { n.pose(property, value, at: t) }
                     }
                 }
             }

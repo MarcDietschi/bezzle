@@ -231,6 +231,9 @@ extension WindowsCore {
         }
 
         private var drag: Drag = .none
+        /// A move with Alt held lifts what is dragged instead (the shared `DepthPushing`), in view
+        /// points, as Control does on the Mac.
+        private var pushing = DepthPushing()
         private var tracksBefore: [UUID: Set<MotionProperty>] = [:]
 
         public var dragging: Bool { if case .none = drag { return false } else { return true } }
@@ -327,6 +330,7 @@ extension WindowsCore {
                     from[picked] = (pose.move, pose.lift)
                 }
                 drag = .move(start: v, from: from, started: false)
+                pushing = DepthPushing()
             }
             hot = .none
             redraw()
@@ -361,8 +365,10 @@ extension WindowsCore {
             return abs(whole - straight) <= 2 ? straight : whole
         }
 
-        /// The press moved on. `free` (Ctrl) lets go of everything a pose catches on.
-        public func drag(to v: CGPoint, shift: Bool, free: Bool) {
+        /// The press moved on. `free` (Ctrl) lets go of everything a pose catches on; `push` (Alt)
+        /// held while a layer is moved lifts it nearer as the pointer goes up, and lowers it as it
+        /// goes down, leaving it where it is across.
+        public func drag(to v: CGPoint, shift: Bool, free: Bool, push: Bool = false) {
             guard let scene else { return }
             switch drag {
             case .none:
@@ -373,18 +379,36 @@ extension WindowsCore {
                     started = true
                     begin(Array(from.keys), scene)
                     drag = .move(start: start, from: from, started: true)
+                    // Held from the press, it is lifted from where the press was.
+                    pushing.pointer(at: start, holding: push)
                 }
-                desk.pose(.move, of: Array(from.keys)) { node in
-                    guard let was = from[node.id] else { return node.value(of: .move, at: scene.time) }
-                    var d = travel(from: start, to: v, height: was.lift, in: scene)
+                pushing.pointer(at: v, holding: push)
+                let k = Double(scene.zoom * CGFloat(max(scene.camera.zoom, 0.01)))
+                let pushed = pushing, across = pushing.across(from: start, to: v)
+                // Only lifted: no key across that says it stayed where it was.
+                let moves = !pushed.pushed || hypot(across.x, across.y) > 0.5 || from.keys.contains { tracksBefore[$0]?.contains(.move) == true }
+                let to = CGPoint(x: start.x + across.x, y: start.y + across.y)
+                // One change for both: inside the gesture each change is made again from where it
+                // began, so the height stays posed once Alt is let go.
+                desk.pose(of: Array(from.keys)) { node in
+                    guard let was = from[node.id] else { return [] }
+                    var out: [(MotionProperty, [Double])] = []
+                    if pushed.pushed {
+                        let h = was.lift + Double(pushed.depth) / k
+                        // Caught at the artboard, or in tens with Shift.
+                        out.append((.lift, [shift ? (h / 10).rounded() * 10 : (!free && abs(h) * k <= 5 ? 0 : h.rounded())]))
+                    }
+                    guard moves else { return out }
+                    var d = travel(from: start, to: to, height: was.lift, in: scene)
                     if shift { if abs(d.x) >= abs(d.y) { d.y = 0 } else { d.x = 0 } }
                     var x = Double(was.move.x + d.x), y = Double(was.move.y + d.y)
                     if !free {
-                        let reach = 5 / Double(scene.zoom * CGFloat(max(scene.camera.zoom, 0.01)))
+                        let reach = 5 / k
                         x = Self.caught(x, at: 0, within: reach)
                         y = Self.caught(y, at: 0, within: reach)
                     }
-                    return [(x * 2).rounded() / 2, (y * 2).rounded() / 2]
+                    out.append((.move, [(x * 2).rounded() / 2, (y * 2).rounded() / 2]))
+                    return out
                 }
             case .scale(let id, let center, let start, let from, let side):
                 var k: Double

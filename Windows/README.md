@@ -265,7 +265,8 @@ design's `DesignSession.film`), its canvas tool in `Host/MotionHand.swift` and i
 `Host/FilmHand.swift`, their marks and menus as data for `Sources/Bezzle/FilmView.swift`,
 `FilmTimelineView.swift` and `AnimatePanel.swift`. Where the Mac makes two changes in one gesture
 (the camera flown somewhere, the scene turned on its pad) they are one change here, since a gesture
-on Windows makes each change again from where it began. The film is drawn as the Mac draws it:
+on Windows makes each change again from where it began. Alt held while a layer is moved lifts it
+nearer or lowers it (the shared DepthPushing, Control on the Mac). The film is drawn as the Mac draws it:
 each piece is a picture the Mac's own `FilmPictures` (linked into `Sources/BezzleCore/Film/`) draws
 once, laid into the frame through the camera's 3×3 map by Skia (`bz_film_frame` in host.cpp) where
 the Mac's graphics card does it, and only for what shows of the artboard; a part is drawn sharper

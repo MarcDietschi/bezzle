@@ -3862,7 +3862,7 @@ final class DesignCanvas {
         }
         if case .motion? = drag?.grab {
             syncMotion()
-            motion.drag(to: p, shift: shift, free: control)
+            motion.drag(to: p, shift: shift, free: control, push: option)
             drag?.moved = true
             updatePointer(at: p)
             return
