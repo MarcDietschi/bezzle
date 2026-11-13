@@ -35,7 +35,7 @@ struct VectorCard: View {
                 store.setVector(id) { $0.colors = count }
             }), options: [(nil, "Auto")] + VectorSettings.colorCounts.map { (Optional($0), .verbatim("\($0)")) })
                 .help("How many colours the shapes have at most")
-            SegmentedWell(selection: Binding(get: { nearest(settings.smoothing) }, set: { smoothing in
+            SegmentedWell(selection: Binding(get: { settings.nearestSmoothing }, set: { smoothing in
                 store.setVector(id) { $0.smoothing = smoothing }
             }), options: VectorSettings.smoothings.map { ($0.value, $0.title) })
                 .help("How closely the outlines follow every turn of the picture")
@@ -47,11 +47,6 @@ struct VectorCard: View {
                 CompareButton(help: "Hold to see the picture", label: "Picture") { store.showVectorPicture(id, $0) }
             }
         }
-    }
-
-    /// The choice of outlines nearest to how they are.
-    private func nearest(_ smoothing: Double) -> Double {
-        VectorSettings.smoothings.map(\.value).min { abs($0 - smoothing) < abs($1 - smoothing) } ?? 0.5
     }
 }
 

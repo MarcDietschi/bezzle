@@ -7,28 +7,6 @@ struct VectorWork {
     let began = CACurrentMediaTime()
 }
 
-/// A picture vectorized while the design is open: what it was, to have it traced another way,
-/// or to have the picture back. Kept with the open design, not in its file.
-struct VectorSource {
-    /// The layer as it was.
-    let picture: Node
-    /// As it showed, in pixels.
-    let pixels: VectorMaker.Source
-    /// Each way it was traced, the last made last.
-    var versions: [Version] = []
-
-    struct Version {
-        /// The group's layers as made: its first, and how many.
-        let first: UUID
-        let count: Int
-        let settings: VectorSettings
-        /// Where the group lay, fitted round its layers, as it was made.
-        let frame: CGRect
-        let shapes: Int
-        let colors: [RGBA]
-    }
-}
-
 /// A picture just vectorized, for the canvas to show it turning into shapes.
 struct VectorReveal {
     /// Where the picture lay on the canvas, and how it was turned.
@@ -64,15 +42,8 @@ extension DocumentStore {
     static let vectorizing = LocalizedStringResource("undo.vectorize", defaultValue: "Vectorize", comment: "Menu command and undo name: a picture is traced into shapes")
     private static let vectorPreview = "vector"
 
-    /// Whether a layer shows a picture that can become shapes: not one whose place something
-    /// else counts on, as the shape of a mask, a copy of a component, a repeat grid's cell or a
-    /// deck's post.
-    func vectorizable(_ id: UUID) -> Bool {
-        guard let n = node(id), !n.isArtboard, !n.locked, [.rectangle, .ellipse, .path].contains(n.kind), n.fill.on, n.fill.image != nil,
-              n.frame.width > 0, n.frame.height > 0 else { return false }
-        guard doc.parent(of: id)?.holder?.id != id else { return false }
-        return !doc.inCopy(id) && !doc.ancestors(of: id).contains(where: \.isRepeatGrid) && doc.artboard(of: id)?.isDeck != true
-    }
+    /// Whether a layer shows a picture that can become shapes (`BezzleDocument.vectorizable`).
+    func vectorizable(_ id: UUID) -> Bool { doc.vectorizable(id) }
 
     var canVectorize: Bool { !isReadOnly && vectorizing.isEmpty && selection.contains(where: vectorizable) }
 
@@ -124,8 +95,7 @@ extension DocumentStore {
         for (picture, pixels, result) in made {
             guard let group = node(picture.id), group.kind == .group, let first = group.children.first else { continue }
             var source = traced[picture.id].flatMap { $0.picture == picture ? $0 : nil } ?? VectorSource(picture: picture, pixels: pixels)
-            source.versions.append(.init(first: first.id, count: group.children.count, settings: settings, frame: group.frame,
-                                         shapes: result.shapes, colors: result.colors))
+            source.remember(group, settings, shapes: result.shapes, colors: result.colors)
             traced[picture.id] = source
             vectorReveals[picture.id] = reveals[picture.id]
             shown.append(picture.id)
@@ -161,8 +131,7 @@ extension DocumentStore {
     /// The picture a group of layers was vectorized from, and how, while it is still the layers
     /// that were made of it: moved, resized and looking as it likes, but holding what it held.
     func vector(of id: UUID) -> (source: VectorSource, version: VectorSource.Version)? {
-        guard let source = traced[id], let group = node(id), group.kind == .group, let first = group.children.first,
-              let version = source.versions.last(where: { $0.first == first.id && $0.count == group.children.count }) else { return nil }
+        guard let source = traced[id], let group = node(id), let version = source.version(of: group) else { return nil }
         return (source, version)
     }
 
@@ -180,13 +149,7 @@ extension DocumentStore {
     /// The picture layer as it would lie now, where its vector lies and as large, and moving in
     /// its film as its vector does now: keys set since it became shapes are not the picture's to lose.
     private func lying(_ source: VectorSource, _ version: VectorSource.Version, as group: Node) -> Node {
-        var picture = source.picture
-        picture.motion = group.motion
-        let was = version.frame, now = group.frame
-        let fx = was.width > 0 ? now.width / was.width : 1, fy = was.height > 0 ? now.height / was.height : 1
-        picture.frame = CGRect(x: now.minX + (picture.frame.minX - was.minX) * fx, y: now.minY + (picture.frame.minY - was.minY) * fy,
-                               width: picture.frame.width * fx, height: picture.frame.height * fy)
-        return picture
+        source.lying(version, as: group)
     }
 
     /// Changes how a vector is traced, and traces its picture again. During a drag the canvas
@@ -196,9 +159,7 @@ extension DocumentStore {
         guard !isReadOnly, let (_, version) = vector(of: id) else { return }
         var wanted = vectorWanted[id] ?? version.settings
         change(&wanted)
-        wanted.detail = min(max(wanted.detail, 0), 1)
-        wanted.smoothing = min(max(wanted.smoothing, 0), 1)
-        wanted.colors = wanted.colors.map { min(max($0, 2), 64) }
+        wanted = wanted.held
         guard wanted != (vectorWanted[id] ?? version.settings) else { return }
         vectorWanted[id] = wanted
         guard !retracing.contains(id) else { return }
@@ -240,11 +201,7 @@ extension DocumentStore {
             editApart("Change Vector") { doc in
                 if let at = doc.path(of: id) { doc[at] = next }
             }
-            if let now = node(id), let first = now.children.first, traced[id] != nil {
-                traced[id]?.versions.append(.init(first: first.id, count: now.children.count, settings: wanted, frame: now.frame,
-                                                  shapes: made.shapes, colors: made.colors))
-                if let count = traced[id]?.versions.count, count > 24 { traced[id]?.versions.removeFirst(count - 24) }
-            }
+            if let now = node(id), traced[id] != nil { traced[id]?.remember(now, wanted, shapes: made.shapes, colors: made.colors) }
             if vectorWanted[id] == wanted { break }
         }
     }
