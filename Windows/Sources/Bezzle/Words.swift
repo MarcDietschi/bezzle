@@ -75,6 +75,7 @@ enum Words {
         "Goes To": "flow.card", "Screen": "screen.card", "States": "states.card",
         "Put Text on Path": "undo.text-on-path", "Straighten Text": "undo.straighten-text", "Take Text off Path": "undo.take-text-off-path",
         "Release Mask": "undo.release-mask", "Take Out of Mask": "undo.take-out-of-mask",
+        "Vectorize": "undo.vectorize", "Exact": "vector.outlines.exact", "Balanced": "vector.outlines.balanced",
     ]
 
     /// One of Bezzle's words, as it reads in the language.

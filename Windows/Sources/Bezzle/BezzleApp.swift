@@ -141,6 +141,20 @@ final class BezzleApp: SwiftApplication {
             if edited { view.session.edited(board: nil) } else { view.session.changed() }
             if view.session.isFront { view.canvas.drawCutouts() }
         }
+        // A picture vectorized or traced again, here or by the AI, the same way: the pencil's
+        // pass on the canvas, quick tracings while a dial turns, and the design once it changes.
+        WindowsCore.vectorsChanged = { slot, change in
+            let tabs = Tabs.shared
+            guard let view = (slot.flatMap { tabs.tab(of: $0) } ?? tabs.activeTab)?.view else { return }
+            switch change {
+            case .edited: view.session.edited(board: nil)
+            case .shown:
+                view.session.previewed(board: nil)
+                view.session.changed()
+            case .work: view.session.changed()
+            }
+            if view.session.isFront { view.canvas.drawVectors() }
+        }
         SubjectModel.log = { Trace.say($0) }
         // A way of making the subject matte that took Bezzle down is passed over by this version,
         // and tried again by the next.

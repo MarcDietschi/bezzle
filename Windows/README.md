@@ -104,7 +104,7 @@ is a template with a placeholder, not the password.
 - **Sources:** `VM/sync.sh` puts the working tree's build inputs into `C:\src\Bezzle`. Packages are
   built once there (`winrt.ps1`, `skia.ps1`, `avif.ps1`, `onnx.ps1`) and kept. A second working copy
   (a parallel agent's, the release's `C:\src\bezzle-release`) is a folder of its own with a junction
-  to `C:\src\Bezzle\Windows\Packages`.
+  to `C:\src\Bezzle\Windows\Packages`, which `VM/sync.sh 'C:\src\<folder>'` syncs into.
 - **Building:** `.\build.ps1` lays out `.build\Bezzle`, which the launchers in `C:\bezzle\*.cmd` run;
   a bare `swift build` does not update it. With several builds at once the VM (8 cores, 12 GB) runs
   out of breath: build with `-j 2` (`swift build -j 2`, `build.ps1 -Jobs 2`).
@@ -184,6 +184,32 @@ model and the matte took (`BEZZLE_MATTE_MODEL`, `BEZZLE_MATTE_DEVICE=cpu` or `gp
 `BEZZLE_MATTE_RAW` for the matte's floats). Which way a PC takes, what it remembers of the ways
 and what cutouts are called ask Windows nothing (`Host/MatteWays.swift`, `CutoutCells.swift`), so
 their tests run on a Mac too: `swift test --package-path Windows/Tests`.
+
+Vectorize is the Mac's: its engine is the Mac's own package, `Packages/Vectorizer` (Foundation alone,
+always built optimized, a dependency of the core here, which `VM/sync.sh` and the release send into
+the VM beside `Windows`), and the group made of a tracing is the shared model's
+(`Bezzle/Model/Vectorizing.swift`: the settings, which layers may be traced, how a layer is read, the
+group in the picture's place with its id, the picture remembered while the design is open and
+given back where the group lies). `Host/Vectors.swift` is the Mac's VectorOperations on the core's
+statics, `Host/VectorHand.swift` its VectorTool (the pencil across a picture that takes a while,
+then its pass with the outlines behind it), `Sources/Bezzle/VectorCard.swift` its Vector card (the
+dial is Detail; colours, outlines, Detail, Picture held to see the picture, × back to the
+picture). What differs is only how the layer is read: Skia draws it where the Mac's Core Graphics
+does, and the reveal draws the layer again each frame where the Mac keeps its picture. A dial's
+drag shows quick tracings as previews (`preview`, not part of the drag: `endGesture` sets them
+aside, `aroundVectorPreview`) and changes the design once, after it is let go. Vectorize is in the
+canvas's right-click menu (and Back to Picture), a chip in the inspector, and the AI tool
+`vectorize`. `bezzle-render <fonts> vectorize <out>` traces the pictures `BEZZLE_PICTURES` names
+as they are, an SVG each to compare with the Mac's `vectorize-cli trace`, and as a layer Bezzle
+reads and makes a group of, listed in `<name>-layers.txt` as the Mac's ParityTests (`vectorizing`)
+lists it (`BEZZLE_VECTOR_FRAME=w,h`, `BEZZLE_VECTOR_TURN` for a turned ellipse, `BEZZLE_DETAIL`,
+`BEZZLE_COLORS`, `BEZZLE_SMOOTHING`). Measured so on 2026-11-13: from the same pixels the engine
+writes the Mac's SVG byte for byte (the engine's eight samples and VectorTests' two pictures; a
+JPEG differs as Windows decodes it otherwise); Skia reads a layer at its picture's own pixels as
+Core Graphics does, so its group is the Mac's layer for layer, and where the picture is drawn to
+other pixels (stretched, or cut by a turned ellipse) its outlines move by hundredths of a point.
+The engine's own tests run here too: a package of `Sources/Vectorizer` and `Tests` alone (its
+`vectorize-cli` needs Image I/O), `swift test`.
 
 Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O

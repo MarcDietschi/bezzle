@@ -266,6 +266,8 @@ final class Inspector {
             cards.children.append(cell)
         }
         if let mask = maskCard(ids, board: board) { cards.children.append(mask) }
+        // A picture made shapes, while the design remembers the picture.
+        if let vector = vectorCard(ids, board: board) { cards.children.append(vector) }
         if kinds == ["path"] { cards.children.append(pathCard(layers, board: board)) }
         for look in lookCards(ids, board: board, kinds: kinds) { cards.children.append(look) }
     }

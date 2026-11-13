@@ -87,6 +87,14 @@ extension WindowsCore {
         // Its pictures being cut out, and why one could not be.
         v.visit(&cuttingOut)
         v.visit(&cutoutTrouble)
+        // Its pictures being vectorized, and those it has made shapes and remembers (Vectors.swift).
+        v.visit(&vectorizing)
+        v.visit(&traced)
+        v.visit(&vectorWanted)
+        v.visit(&vectorPreviewed)
+        v.visit(&vectorReveals)
+        v.visit(&retracing)
+        v.visit(&vectorShowing)
         visitHolding(&v)
     }
 

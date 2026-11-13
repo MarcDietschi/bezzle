@@ -166,6 +166,27 @@ import Foundation
         return try await WindowsCore.cutOut(ids, picks: picks)
     }
 
+    /// From Store/VectorOperations.swift: pictures traced into shapes by the core, in this design
+    /// (its window shows the pencil pass, as the Mac's canvas does for the assistant).
+    typealias VectorTrouble = WindowsCore.VectorTrouble
+    func vectorizable(_ id: UUID) -> Bool { lent(false) { WindowsCore.vectorizable(id) } }
+    func vector(of id: UUID) -> (source: VectorSource, version: VectorSource.Version)? { lent(nil) { WindowsCore.vector(of: id) } }
+    func isRetracing(_ id: UUID) -> Bool { lent(false) { WindowsCore.isRetracing(id) } }
+    func setVector(_ id: UUID, _ change: (inout VectorSettings) -> Void) {
+        guard slot.isOpen else { return }
+        WindowsCore.using(slot) { WindowsCore.setVector(id, change) }
+    }
+    func backToPicture(_ id: UUID) {
+        guard slot.isOpen else { return }
+        WindowsCore.using(slot) { WindowsCore.backToPicture(id) }
+        MCPHost.shared.edited()
+    }
+    func vectorize(_ ids: [UUID], settings: VectorSettings) async throws -> [UUID] {
+        guard slot.isOpen else { throw VectorTrouble.noPictures }
+        activate()
+        return try await WindowsCore.vectorize(ids, settings: settings)
+    }
+
     /// Where a part, icon or library component would go, as the Mac's store works it out.
     func placing(_ resource: Resource, at point: CGPoint?, on target: UUID? = nil,
                  into boardID: UUID? = nil, dark: Bool? = nil, width: CGFloat? = nil) -> ResourcePlacing? {

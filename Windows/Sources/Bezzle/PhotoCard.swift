@@ -225,6 +225,14 @@ extension Inspector {
 
     /// Hold to see the photo as it was taken, as the Mac's compare button.
     private func compareButton(_ ids: [UUID], board: Int) -> FrameworkElement {
+        compareButton(help: "Hold to see the original") { [self] on in
+            WindowsCore.previewPhotoOriginal(ids, on)
+            session.previewed(board: board)
+        }
+    }
+
+    /// The Mac's CompareButton: held, something shows as it was (`show(true)` until let go).
+    func compareButton(help: String, _ shows: @escaping @MainActor (Bool) -> Void) -> FrameworkElement {
         let box = Border()
         box.width = 30
         box.height = 28
@@ -240,8 +248,7 @@ extension Inspector {
             held = on
             box.background = on ? Theme.brush(Theme.pencil, Theme.pencilWash) : Theme.clear
             Glyphs.paint(glyph, on ? Theme.brush(Theme.pencil) : Theme.ink(2))
-            WindowsCore.previewPhotoOriginal(ids, on)
-            session.previewed(board: board)
+            shows(on)
         }
         box.pointerEntered.addHandler { _, _ in if !held { box.background = Theme.brush(Theme.ink, 0.05) } }
         box.pointerExited.addHandler { _, _ in if !held { box.background = Theme.clear } }
@@ -255,7 +262,7 @@ extension Inspector {
             show(false)
         }
         box.pointerCaptureLost.addHandler { _, _ in show(false) }
-        try? ToolTipService.setToolTip(box, Words.t("Hold to see the original"))
+        try? ToolTipService.setToolTip(box, Words.t(help))
         return box
     }
 

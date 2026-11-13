@@ -268,12 +268,17 @@ extension WindowsCore {
 
     public static func endGesture() {
         if let t = typing { typingGestureEnds(t); return }
-        if let doc = design { design = Editing.end(doc) }
+        // A quick tracing a vector's dial showed is no part of the drag: it shows on until the
+        // full tracing comes, which is a step of its own (Vectors.swift).
+        aroundVectorPreview {
+            if let doc = design { design = Editing.end(doc) }
+        }
     }
 
     /// The gesture taken back: the design as it was when it began, and no step made.
     public static func cancelGesture() {
         if let t = typing { typingGestureCancelled(t); return }
+        endVectorPreviews()
         Editing.gestureBase = nil
         guard let start = Editing.gestureStart else { return }
         design = start

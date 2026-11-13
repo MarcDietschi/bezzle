@@ -180,6 +180,13 @@ final class DesignCanvas {
     private var cutoutBitmap: WriteableBitmap?
     private var cutoutTicking: EventCleanup?
     private var drawingCutouts = false
+    /// Pictures being vectorized, and the pencil passing over one just made shapes (the Mac's
+    /// VectorTool, ported): one picture over the stage, under the marks, as the cutouts' is.
+    let vectors = WindowsCore.VectorHand()
+    private let vectorImage = Image()
+    private var vectorBitmap: WriteableBitmap?
+    private var vectorTicking: EventCleanup?
+    private var drawingVectors = false
     /// Pictures on their way in sight, by the artboard they are on, as the live room last showed
     /// them, and the grain's frame they were drawn at (`drawDeveloping`).
     private var developingShown: [Int: [WindowsCore.LiveDeveloping]] = [:]
@@ -1425,6 +1432,7 @@ final class DesignCanvas {
         placeCopyOffer()
         drawComponents()
         drawCutouts()
+        drawVectors()
         drawPictures()
         // Something picked inside a mask: the mask's outline, and the ghost of what it cuts off.
         maskMarks.update()
@@ -1483,6 +1491,56 @@ final class DesignCanvas {
             cutoutImage.visibility = .collapsed
         }
         tickCutouts()
+    }
+
+    // MARK: Vectorizing
+
+    /// Pictures being vectorized, and the pencil passing over one just made shapes, as the Mac's
+    /// VectorTool draws them over the canvas: one picture over the stage (under the marks), drawn
+    /// frame by frame while anything moves in it.
+    func drawVectors() {
+        if !holds(overlay, vectorImage) {
+            vectorImage.isHitTestVisible = false
+            vectorImage.stretch = .fill
+            vectorImage.visibility = .collapsed
+            try? overlay.children.insertAt(0, vectorImage)
+        }
+        guard !drawingVectors else { return }
+        drawingVectors = true
+        defer { drawingVectors = false }
+        vectors.zoom = CGFloat(zoom)
+        vectors.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+        var bitmap = vectorBitmap
+        let covered = vectors.draw(scale: pixelScale, stage: CGSize(width: stage.actualWidth, height: stage.actualHeight)) { width, height in
+            if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
+                bitmap = WriteableBitmap(Int32(width), Int32(height))
+            }
+            return (try? bitmap?.pixelBuffer.buffer).flatMap { $0.map(UnsafeMutableRawPointer.init) }
+        }
+        if let covered {
+            try? bitmap?.invalidate()
+            if vectorBitmap !== bitmap { vectorImage.source = bitmap }
+            vectorBitmap = bitmap
+            try? Canvas.setLeft(vectorImage, Double(covered.minX))
+            try? Canvas.setTop(vectorImage, Double(covered.minY))
+            vectorImage.width = Double(covered.width)
+            vectorImage.height = Double(covered.height)
+            vectorImage.visibility = .visible
+        } else {
+            vectorImage.visibility = .collapsed
+        }
+        guard vectorTicking == nil, vectors.animating else { return }
+        vectorTicking = CompositionTarget.rendering.addHandler { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.drawVectors()
+                if !self.vectors.animating {
+                    self.vectorTicking?.dispose()
+                    self.vectorTicking = nil
+                    self.drawVectors()
+                }
+            }
+        }
     }
 
     /// Frame by frame while a picture is being cut out, or what was cut off drops away.
@@ -5212,10 +5270,16 @@ final class DesignCanvas {
             // The picture's background taken away, or given back, as on the Mac.
             let ids = session.selection
             let remove = WindowsCore.canRemoveBackground(ids), restore = WindowsCore.canRestoreBackground(ids)
-            if remove || restore {
+            let vectorize = WindowsCore.canVectorize(ids)
+            if remove || restore || vectorize {
                 if !WindowsCore.PictureHand.canPlace(ids) { entries.append(.separator) }
                 if remove { entries.append(.item("Remove Background") { [weak self] in self?.session.removeBackground() }) }
                 if restore { entries.append(.item("Restore Background") { [weak self] in self?.session.restoreBackground() }) }
+                if vectorize { entries.append(.item("Vectorize") { [weak self] in self?.session.vectorize() }) }
+            }
+            // A group made of a picture, while it remembers it: the picture back in its place.
+            if ids.count == 1, WindowsCore.isVector(ids[0]) {
+                entries += [.separator, .item("Back to Picture") { [weak self] in self?.session.backToPicture() }]
             }
         } else {
             entries += [

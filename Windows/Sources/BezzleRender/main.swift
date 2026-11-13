@@ -54,6 +54,14 @@ do {
         for line in try WindowsCore.drawPictures(files, sides: [256, 1024], develop: develop, into: out) { print(line) }
         exit(0)
     }
+    // "vectorize": the pictures BEZZLE_PICTURES names (separated by ;) traced by the Vectorize
+    // engine as they are (an SVG each), and as a layer Bezzle reads and makes a group of, its
+    // layers listed as the Mac's ParityTests list them (WindowsCore.tryVectors).
+    if arguments[2] == "vectorize" {
+        let files = (ProcessInfo.processInfo.environment["BEZZLE_PICTURES"] ?? "").split(separator: ";").map { URL(fileURLWithPath: String($0)) }
+        for line in WindowsCore.tryVectors(files, into: URL(fileURLWithPath: arguments[3])) { print(line) }
+        exit(0)
+    }
     if arguments[2] == "cutout" {
         SubjectModel.log = { print($0) }
         let photos = (ProcessInfo.processInfo.environment["BEZZLE_PHOTOS"] ?? "").split(separator: ";").map { URL(fileURLWithPath: String($0)) }

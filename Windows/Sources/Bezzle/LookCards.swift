@@ -96,6 +96,8 @@ extension Inspector {
         var missing: [(String, String, () -> Void)] = []
         // Straight texts can be bent, offered first.
         if kinds == ["text"], WindowsCore.canCurve(ids) { missing.append(("Curve", "Curve", { WindowsCore.bend(ids, to: 0.25) })) }
+        // Pictures traced into shapes, as the Mac's AddBar offers it next; the Vector card opens once they are.
+        if WindowsCore.offersVectorize(ids) { missing.append(("Vectorize", "Vector", { [self] in session.vectorize() })) }
         if fills && !kinds.contains("text") && looks.fillOn == false { missing.append(("Fill", "Fill", { change(.addFill) })) }
         if borders && !kinds.contains("line") && looks.borderOn == false { missing.append(("Border", "Border", { change(.addBorder) })) }
         // A shadow under the layers; once they have one, a shadow inside them as well, so that

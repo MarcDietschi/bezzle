@@ -89,6 +89,22 @@ final class DesignSession {
         edited(board: nil)
     }
 
+    /// Makes the selected layers' pictures shapes (the Mac's store.vectorize): the canvas shows the
+    /// pencil passing over each, and the group of shapes comes as a step of its own.
+    func vectorize() {
+        guard WindowsCore.canVectorize(selection) else { return }
+        if pictures.editing != nil { pictures.editing = nil }
+        WindowsCore.vectorize(selection)
+        changed()
+    }
+
+    /// Puts the picture back in the place of the selected group made of it.
+    func backToPicture() {
+        guard selection.count == 1, WindowsCore.isVector(selection[0]) else { return }
+        WindowsCore.backToPicture(selection[0])
+        edited(board: nil)
+    }
+
     /// Design, Prototype or Inspect (0, 1, 2), as the bar's switch says.
     var mode = 0 {
         didSet {

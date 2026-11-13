@@ -312,6 +312,23 @@ enum Glyphs {
         return [Part(data: p.d, mode: .stroke, width: 1.3)]
     }
 
+    /// A picture made shapes, as the Mac's VectorGlyph: a curve between two square points, the
+    /// handle of one drawn out. At the Mac's 14 points, in the middle of `s`.
+    static func vector(size s: Double = 16) -> [Part] {
+        let o = (s - 14) / 2
+        let a = (x: o + 2.2, y: o + 14 - 2.6), b = (x: o + 14 - 2.2, y: o + 3.2), handle = (x: o + 14 * 0.36, y: o + 1.6)
+        var curve = PathData()
+        curve.move(a.x, a.y)
+        curve.cubic(a.x + 0.5, o + 14 * 0.3, handle.x, handle.y, b.x, b.y)
+        var arm = PathData()
+        arm.move(b.x, b.y)
+        arm.line(handle.x, handle.y)
+        var dots = PathData()
+        dots.ellipse(handle.x - 1.3, handle.y - 1.3, 2.6, 2.6)
+        for p in [a, b] { dots.rect(p.x - 1.8, p.y - 1.8, 3.6, 3.6) }
+        return [Part(data: curve.d, mode: .stroke, width: 1.3), Part(data: arm.d, mode: .stroke, width: 0.8), Part(data: dots.d, mode: .fill)]
+    }
+
     static func plus(size s: Double = 26) -> [Part] {
         var p = PathData()
         p.move(s * 0.5, s * 0.32); p.line(s * 0.5, s * 0.68)
