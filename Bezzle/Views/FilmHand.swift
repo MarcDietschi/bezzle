@@ -181,7 +181,7 @@ final class FilmHand {
         let shift = flags.contains(.shift)
         if let ref = at.key, let row {
             pick(row, adding: shift)
-            var keys = store.film.keys
+            var keys = Set(store.pickedKeys)
             if shift {
                 if keys.contains(ref) { keys.remove(ref) } else { keys.insert(ref) }
             } else if !keys.contains(ref) {

@@ -337,23 +337,9 @@ private struct PoseCard: View {
     /// One number of a property: what the layers share, or a dash where they differ.
     private func field(_ property: MotionProperty, _ index: Int, label: String = "", unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
                        times: Double = 1, scrub: Double = 1, decimals: Int = 1, width: CGFloat = 84) -> some View {
-        let t = store.filmTime
-        let values = layers.compactMap { board.descendant($0)?.value(of: property, at: t)[index] }
-        let shared = values.first.flatMap { first in values.allSatisfy { abs($0 - first) < 1e-6 } ? first : nil }
-        return NumberField(label: .verbatim(label), value: shared.map { $0 * times }, unit: unit, range: range, scrub: scrub, decimals: decimals,
-                           action: property.action) { shown in
-            let v = shown / times
-            store.pose(property, of: layers) { n in
-                var now = n.value(of: property, at: t)
-                if property == .scale {
-                    // Grown as a whole: its height keeps to its width.
-                    let k = v / max(now[0], 0.001)
-                    now = [v, now[1] * k]
-                } else {
-                    now[index] = v
-                }
-                return now
-            }
+        NumberField(label: .verbatim(label), value: store.sharedValue(property, index, of: layers).map { $0 * times }, unit: unit, range: range,
+                    scrub: scrub, decimals: decimals, action: property.action) { shown in
+            store.pose(property, number: index, to: shown / times, of: layers)
         }
         .frame(width: width)
     }
@@ -453,12 +439,9 @@ private struct CameraCard: View {
 
     private func field(_ property: MotionProperty, _ index: Int, label: String = "", unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
                        scrub: Double = 1, decimals: Int = 1, width: CGFloat = 84) -> some View {
-        let t = store.filmTime
-        return NumberField(label: .verbatim(label), value: board.value(of: property, at: t)[index], unit: unit, range: range,
-                           step: decimals >= 2 ? 0.1 : 1, scrub: scrub, decimals: decimals, action: property.action) { v in
-            var now = store.filmBoard?.value(of: property, at: t) ?? property.rest
-            now[index] = v
-            store.poseCamera(property, now)
+        NumberField(label: .verbatim(label), value: board.value(of: property, at: store.filmTime)[index], unit: unit, range: range,
+                    step: decimals >= 2 ? 0.1 : 1, scrub: scrub, decimals: decimals, action: property.action) { v in
+            store.poseCamera(property, number: index, to: v)
         }
         .frame(width: width)
     }

@@ -47,6 +47,7 @@ final class DocumentStore {
             version += 1
             if !doc.hasSameLayers(as: oldValue) { layersVersion += 1 }
             versions.presentChanged()
+            if animating { filmDesignChanged() }
         }
     }
     /// Counts the changes that added, took away or moved layers among the others.

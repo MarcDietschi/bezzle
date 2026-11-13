@@ -109,19 +109,35 @@ extension DocumentStore {
     /// Turns the desk to the artboard the selection is on; with nothing picked it stays, and
     /// before any was, takes the one most in sight.
     func focusFilm() {
+        // Only an artboard that shows has a film to work on.
+        func film(of id: UUID?) -> UUID? {
+            guard let id, let board = doc.node(id), board.isArtboard, !board.hidden else { return nil }
+            return id
+        }
         var id: UUID?
-        if let first = selection.first { id = doc.node(first)?.isArtboard == true ? first : doc.artboard(of: first)?.id }
-        if id == nil, let kept = film.board, doc.node(kept)?.isArtboard == true { id = kept }
-        if id == nil { id = focusedArtboard?.id ?? doc.artboards.first { !$0.hidden }?.id }
-        guard film.board != id else { return }
+        if let first = selection.first { id = film(of: doc.node(first)?.isArtboard == true ? first : doc.artboard(of: first)?.id) }
+        if id == nil { id = film(of: self.film.board) }
+        if id == nil { id = film(of: focusedArtboard?.id) ?? doc.artboards.first { !$0.hidden }?.id }
+        guard self.film.board != id else { return }
         pauseFilm()
-        film.board = id
-        film.keys = []
-        film.camera = false
-        film.time = 0
-        film.live = 0
-        film.head = 0
+        self.film.board = id
+        self.film.keys = []
+        self.film.camera = false
+        self.film.time = 0
+        self.film.live = 0
+        self.film.head = 0
         if animating { frameFilm() }
+    }
+
+    /// The design changed with a film on the desk. One whose artboard is gone or hidden, by an
+    /// undo or by someone working along, gives way to another's; and a playhead left past the
+    /// end of a film that got shorter comes back to its end, where poses go.
+    func filmDesignChanged() {
+        if let id = film.board, let board = doc.node(id), board.isArtboard, !board.hidden {
+            if !film.playing, let length = filmBoard?.filmLength, max(film.time, film.live) > length + 1e-9 { seek(length) }
+        } else {
+            focusFilm()
+        }
     }
 
     /// Glides the view so the film's artboard lies whole above the timeline: it is what is worked
@@ -168,7 +184,8 @@ extension DocumentStore {
     func seek(_ t: Double) {
         film.playing = false
         film.pass = nil
-        let to = MotionTiming.time(min(max(t, 0), filmBoard?.filmLength ?? 0))
+        // Never past the end, even by the fraction that rounding to a thousandth can add.
+        let to = min(MotionTiming.time(max(t, 0)), filmBoard?.filmLength ?? 0)
         if film.time != to { film.time = to }
         if film.live != to { film.live = to }
         film.head = to
@@ -280,6 +297,8 @@ extension DocumentStore {
 
     /// Poses a property of layers at the playhead, each at the value worked out from what it is.
     func pose(_ property: MotionProperty, of ids: [UUID], _ value: (Node) -> [Double]) {
+        // The camera's are posed on its artboard, by `poseCamera`.
+        guard !property.isCamera else { return }
         let t = filmTime
         edit(property.action) { doc in
             for id in ids {
@@ -299,6 +318,42 @@ extension DocumentStore {
         edit(property.action) { doc in
             doc.update(board.id) { $0.pose(property, value, at: t, home: home) }
         }
+    }
+
+    /// The number layers share of a property at the playhead, as the panel shows it; nil where
+    /// they differ, or there are none.
+    func sharedValue(_ property: MotionProperty, _ index: Int, of ids: [UUID]) -> Double? {
+        guard let board = filmBoard, index < property.rest.count else { return nil }
+        let t = filmTime
+        let values = ids.compactMap { board.descendant($0)?.value(of: property, at: t)[index] }
+        guard let first = values.first, values.allSatisfy({ abs($0 - first) < 1e-6 }) else { return nil }
+        return first
+    }
+
+    /// Sets one number of a property of layers at the playhead, as the panel's fields do: the
+    /// others keep what each layer has. A scale's width set grows the layer as a whole, its
+    /// height keeping to its width.
+    func pose(_ property: MotionProperty, number index: Int, to v: Double, of ids: [UUID]) {
+        guard index < property.rest.count, v.isFinite else { return }
+        let t = filmTime
+        pose(property, of: ids) { n in
+            var now = n.value(of: property, at: t)
+            if property == .scale, index == 0 {
+                let k = v / max(now[0], 0.001)
+                now = [v, now[1] * k]
+            } else {
+                now[index] = v
+            }
+            return now
+        }
+    }
+
+    /// The same for the camera.
+    func poseCamera(_ property: MotionProperty, number index: Int, to v: Double) {
+        guard let board = filmBoard, property.isCamera, index < property.rest.count, v.isFinite else { return }
+        var now = board.value(of: property, at: filmTime)
+        now[index] = v
+        poseCamera(property, now)
     }
 
     /// What poses and keys go to: the camera's artboard when the camera is picked, or the layers.
@@ -383,10 +438,21 @@ extension DocumentStore {
         return ref.layer == film.board ? MotionProperty.camera : MotionProperty.layer
     }
 
+    /// The keys picked in the timeline that are still there. An undo, the AI or someone working
+    /// along can take a picked key away, and what is done to the picked keys must then fall to
+    /// those at the playhead again, not to nothing.
+    var pickedKeys: [FilmKeyRef] {
+        guard !film.keys.isEmpty, let board = filmBoard else { return [] }
+        return film.keys.filter { ref in
+            guard let node = ref.layer == board.id ? board : board.descendant(ref.layer) else { return false }
+            return properties(of: ref).contains { node[track: $0]?.index(at: ref.time) != nil }
+        }
+    }
+
     /// Whether Delete has keys to take away: some picked in the timeline, or some at the playhead
     /// of what is picked.
     var hasKeysToRemove: Bool {
-        if !film.keys.isEmpty { return true }
+        if !pickedKeys.isEmpty { return true }
         guard let board = filmBoard else { return false }
         let t = filmTime
         return keyTargets.contains { id in
@@ -398,21 +464,21 @@ extension DocumentStore {
     /// what is picked. Never a layer.
     func removeFilmKeys() {
         let t = filmTime
-        var refs = Array(film.keys)
+        var refs = pickedKeys
         if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
+        if !film.keys.isEmpty { film.keys = [] }
         guard !refs.isEmpty else { return }
         edit("Remove Key") { doc in
             for ref in refs {
                 doc.update(ref.layer) { $0.removeKeys(at: ref.time, of: properties(of: ref)) }
             }
         }
-        film.keys = []
     }
 
     /// Sets how the picked keys are come to; with none picked, those at the playhead.
     func setEase(_ ease: MotionEase) {
         let t = filmTime
-        var refs = Array(film.keys)
+        var refs = pickedKeys
         if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
         guard !refs.isEmpty else { return }
         edit("Change Pace") { doc in
@@ -426,7 +492,7 @@ extension DocumentStore {
     var sharedEase: MotionEase? {
         guard let board = filmBoard else { return nil }
         let t = filmTime
-        var refs = Array(film.keys)
+        var refs = pickedKeys
         if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
         var found: MotionEase?
         var any = false
@@ -473,22 +539,30 @@ extension DocumentStore {
         let t = filmTime
         var whole = CGRect.null
         for id in ids {
-            guard let node = board.descendant(id), let frame = seenDoc.absoluteFrame(of: id) else { continue }
-            // Where it is at that moment: its place in the design, moved and grown as it is posed.
+            guard let way = board.way(to: id), let node = way.last, let frame = seenDoc.absoluteFrame(of: id) else { continue }
+            // Where it is at that moment: its place in the design, grown as it is posed, and moved
+            // as it and everything that holds it are.
             let pose = node.pose(at: t)
-            var r = frame.offsetBy(dx: -board.frame.minX + pose.move.x, dy: -board.frame.minY + pose.move.y)
+            var r = frame.offsetBy(dx: -board.frame.minX, dy: -board.frame.minY)
+            for holder in way {
+                let move = holder.pose(at: t).move
+                r = r.offsetBy(dx: move.x, dy: move.y)
+            }
             r = r.insetBy(dx: r.width * (1 - pose.scale.x) / 2, dy: r.height * (1 - pose.scale.y) / 2)
             whole = whole.union(r)
         }
-        guard !whole.isNull, whole.width > 0, whole.height > 0 else { return }
+        guard !whole.isNull else { return }
         let size = board.frame.size
-        let zoom = min(max(min(size.width / (whole.width * 1.35), size.height / (whole.height * 1.35)), 1), 8)
+        // A line has no height to fill the picture with, and is looked at by its length alone.
+        let zoom = min(max(min(size.width / (max(whole.width, 1) * 1.35), size.height / (max(whole.height, 1) * 1.35)), 1), 8)
         let before = board.keyTimes(MotionProperty.camera).last { $0 < t - 0.0042 } ?? 0
+        let was = board.motion
         beginGesture()
         poseCamera(.cameraMove, [Double(whole.midX - size.width / 2), Double(whole.midY - size.height / 2)])
         poseCamera(.cameraZoom, [Double(zoom)])
         endGesture("Fly the Camera Here")
-        if t > before + 0.05 { showFilm(from: before, to: t, back: t) }
+        // Already looking there, there is no flight to show.
+        if filmBoard?.motion != was, t > before + 0.05 { showFilm(from: before, to: t, back: t) }
     }
 
     /// Has the camera see the whole artboard, straight on, from the playhead on.
@@ -541,6 +615,9 @@ extension DocumentStore {
             doc.update(board.id) { n in
                 var film = n.film ?? Film()
                 change(&film)
+                // A length is kept like a key's moment, to the thousandth of a second; one that
+                // is none lets the film follow its keys.
+                film.length = film.length.flatMap { $0.isFinite && MotionTiming.time($0) > 0 ? MotionTiming.time($0) : nil }
                 n.film = film == Film() ? nil : film
             }
         }
