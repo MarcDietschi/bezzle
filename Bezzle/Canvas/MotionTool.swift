@@ -163,10 +163,10 @@ final class MotionTool {
     /// The layers under a view point, the topmost first, each with what holds it after it.
     private func chain(at v: CGPoint, in scene: Scene) -> [Node] {
         guard scene.rect.contains(v) else { return [] }
-        // Within three points of the screen, however close the view is, or the camera: looked for
-        // in the artboard's own points, a camera eight times closer would else find a layer from
-        // twenty-four points off, and the bare sheet beside it could not be pressed.
-        let tolerance = 3 / (scene.zoom * CGFloat(max(scene.camera.zoom, 0.01)))
+        // Within three points of the screen, however close the view is: the film counts in what
+        // the camera and a layer's own growing add, or a camera eight times closer would find a
+        // layer from twenty-four points off, and the bare sheet beside it could not be pressed.
+        let tolerance = 3 / scene.zoom
         return scene.board.filmChain(at: scene.toFrame(v), time: scene.time, pieces: scene.pieces, tolerance: tolerance)
     }
 

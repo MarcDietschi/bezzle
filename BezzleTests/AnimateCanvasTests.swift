@@ -619,8 +619,7 @@ struct AnimateCanvasTests {
         #expect(!f.undo.canUndo)
     }
 
-    @Test(.disabled("Film.swift filmCorners (line 379) and filmChain (line 364) leave out the pose of a layer lying in a group that has a motion of its own: its outline, its handles and where it is picked stay at the design's place while it is drawn posed. Reported, not changed"))
-    func aLayerPosedInAGroupThatMovesShowsAndIsPickedWhereItIs() {
+    @Test func aLayerPosedInAGroupThatMovesShowsAndIsPickedWhereItIs() {
         let f = FilmBench([FilmBench.row])
         f.store.seek(1)
         var at = f.middle("Dot")

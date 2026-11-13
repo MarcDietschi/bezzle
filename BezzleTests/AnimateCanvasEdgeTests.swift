@@ -122,7 +122,7 @@ extension AnimateCanvasTests {
         #expect(f.store.viewport.zoom > 1.2)
     }
 
-    @Test func theFilmsArtboardTakenAwayByUndoLeavesAPressToBringAnotherToTheDesk() {
+    @Test func theFilmsArtboardTakenAwayByUndoTurnsTheDeskToAnotherThatIsThere() {
         let f = FilmBench(animated: false)
         f.edit { $0.nodes.append(Node(kind: .artboard, name: "C", frame: CGRect(x: 100, y: 450, width: 400, height: 300))) }
         f.animate()
@@ -138,34 +138,38 @@ extension AnimateCanvasTests {
         // The look is undone, and then the artboard itself.
         f.undo.undo()
         f.undo.undo()
+        f.store.glide.stop()
         #expect(f.bench.node("C") == nil)
-        // No film shows, and nothing trips over the one that went.
-        #expect(f.store.filmBoard == nil && f.tool.scene == nil)
+        // The desk turns to an artboard that is there, with nothing of the old in hand, and
+        // nothing trips over the one that went.
+        #expect(f.store.film.board == a && f.tool.scene?.board.id == a)
+        #expect(f.store.filmBoard?.id == a && !f.store.film.camera && f.store.film.keys.isEmpty && f.store.filmTime == 0)
         f.hover(f.table(300, 600))
         f.draw()
-        f.key(36, "\r")
         f.key(51)
-        f.key(40, "k")
-        f.arrow(124)
         f.arrow(124, flags: .option)
-        #expect(!f.store.film.playing)
-        #expect(f.rightClick(f.table(300, 250)) == nil)
-        // A press anywhere turns the desk to an artboard that is there, with nothing of the old in hand.
-        f.click(f.table(300, 600))
-        #expect(f.store.film.board == a)
-        #expect(f.store.filmBoard?.id == a && !f.store.film.camera && f.store.film.keys.isEmpty && f.store.filmTime == 0)
-        // And is an ordinary press from then on.
+        #expect(!f.store.film.playing && !f.undo.canUndo)
+        // A press is an ordinary press from then on.
         f.click(f.table(200, 180))
         #expect(f.store.selection == [f.id("Card")])
         #expect(!f.store.inGesture)
     }
 
-    @Test func theFilmsArtboardHiddenLeavesNoFilmAndAPressOnAnotherBringsItsOwn() {
+    @Test func theFilmsArtboardHiddenTurnsTheDeskToAnotherAndWithNoneShownThereIsNoFilm() {
         let f = FilmBench()
         let a = f.bench.a.id, b = f.bench.b.id
         f.click(f.middle("Card"))
         f.store.seek(1)
         f.edit { doc in doc.update(a) { $0.hidden = true } }
+        f.fresh()
+        f.store.glide.stop()
+        // The other artboard's film is on the desk, at its start.
+        #expect(f.store.film.board == b && f.tool.scene?.board.id == b && f.store.filmTime == 0)
+        // Where the hidden artboard lay there is only the table now.
+        f.click(f.table(200, 180))
+        #expect(f.store.selection.isEmpty && f.store.film.board == b)
+        // With that one hidden too, no film shows, and nothing trips over the ones that went.
+        f.edit { doc in doc.update(b) { $0.hidden = true } }
         f.fresh()
         let before = f.store.doc
         #expect(f.store.filmBoard == nil && f.tool.scene == nil)
@@ -176,15 +180,17 @@ extension AnimateCanvasTests {
         f.arrow(124, flags: .option)
         f.key(40, "k")
         f.key(51)
-        #expect(f.store.doc == before && !f.store.film.playing)
-        // Where the hidden artboard lay there is only the table now.
         f.click(f.table(200, 180))
-        #expect(f.store.selection.isEmpty && f.store.filmBoard == nil)
-        // The other artboard's sheet brings its film.
         f.click(f.table(800, 250))
+        #expect(f.rightClick(f.table(800, 250)) == nil)
+        #expect(f.store.doc == before && !f.store.film.playing && !f.undo.canUndo)
+        #expect(f.store.selection.isEmpty && f.store.filmBoard == nil)
+        // Shown again, it has its film back.
+        f.edit { doc in doc.update(b) { $0.hidden = false } }
         f.store.glide.stop()
-        #expect(f.store.film.board == b && f.store.filmBoard?.id == b)
-        #expect(f.store.doc == before && !f.undo.canUndo)
+        #expect(f.store.film.board == b && f.store.filmBoard?.id == b && f.tool.scene?.board.id == b)
+        f.click(f.table(800, 250))
+        #expect(f.store.film.board == b && !f.store.inGesture)
     }
 
     @Test func aLayerTakenAwayByUndoWhileItsKeysArePickedLeavesNothingBehind() {

@@ -351,26 +351,31 @@ extension Node {
 extension Node {
     /// Artboards: the layers under a point of the film's frame at a moment, the one on top first
     /// and after it what holds it, up to the layer lying on the artboard itself. Empty where only
-    /// the artboard shows, or nothing does.
+    /// the artboard shows, or nothing does. `tolerance` is how far off a layer is still found, in
+    /// the frame's own points: grown many times, or with the camera close, it reaches no further.
     func filmChain(at point: CGPoint, time t: Double, pieces: [FilmPiece], tolerance: CGFloat) -> [Node] {
         let camera = camera(at: t)
         let placements = pieces.map { placement(of: $0, at: t, camera: camera) }
         for i in filmOrder(pieces, placements).reversed() where pieces[i].kind != .ground {
-            let piece = pieces[i]
-            guard placements[i].opacity > 0.01, let q = placements[i].map.back(point) else { continue }
+            let piece = pieces[i], map = placements[i].map
+            guard placements[i].opacity > 0.01, let q = map.back(point) else { continue }
             let inner = CGPoint(x: q.x - piece.origin.x, y: q.y - piece.origin.y)
             // What holds the piece's layers, to look in.
             var holder = Node(kind: .artboard, name: "", frame: .zero)
             let from = piece.holders.last.flatMap { descendant($0) }?.children ?? children
             holder.children = from.filter { piece.layers.contains($0.id) }.map { n in
-                var n = n
+                // As the piece is drawn: what moves inside it is where its keys have it.
+                var n = piece.changes ? n.posed(at: t, own: false) : n
                 if piece.flat { n.transform3D = nil }
                 return n
             }
-            let chain = Prototype.chain(at: inner, in: holder, tolerance: tolerance)
+            // The reach, in the points of the piece's drawing, which shows this many times bigger here.
+            let reach = tolerance / CGFloat(max(map.stretch(at: q), 1e-6))
+            let chain = Prototype.chain(at: inner, in: holder, tolerance: reach)
             guard !chain.isEmpty else { continue }
             let above = piece.holders.compactMap { descendant($0) }.reversed()
-            return chain + above
+            // The layers as the design has them, not as they are posed.
+            return chain.map { descendant($0.id) ?? $0 } + above
         }
         return []
     }
@@ -378,12 +383,23 @@ extension Node {
     /// Artboards: where the four corners of a layer's frame show in the film at a moment: top
     /// left, top right, bottom right, bottom left. Nil for a layer not on it.
     func filmCorners(of id: UUID, at t: Double, pieces: [FilmPiece]) -> [CGPoint]? {
-        guard let way = way(to: id), let layer = way.last else { return nil }
-        let holders = way.dropLast()
-        let origin = holders.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.frame.minX, y: $0.y + $1.frame.minY) }
+        guard var way = way(to: id) else { return nil }
         let ids = Set(way.map(\.id))
         // The piece the layer is drawn in: its own, or the one of what holds it.
         guard let piece = pieces.last(where: { p in p.layers.contains { ids.contains($0) } }) else { return nil }
+        // In a piece drawn again as what it holds moves, a layer it holds is where its own keys
+        // have it, and those of what holds it there. The piece's own layer the piece places.
+        if piece.changes, let top = way.firstIndex(where: { piece.layers.contains($0.id) }), top < way.count - 1 {
+            var posed = [way[top].posed(at: t, own: false)]
+            for next in way[(top + 1)...] {
+                guard let child = posed[posed.count - 1].children.first(where: { $0.id == next.id }) else { break }
+                posed.append(child)
+            }
+            if posed.count == way.count - top { way.replaceSubrange(top..., with: posed) }
+        }
+        guard let layer = way.last else { return nil }
+        let holders = way.dropLast()
+        let origin = holders.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.frame.minX, y: $0.y + $1.frame.minY) }
         let map = placement(of: piece, at: t, camera: camera(at: t)).map
         let flat = piece.flat && piece.layers.first == id
         let frame = layer.frame.offsetBy(dx: origin.x, dy: origin.y)

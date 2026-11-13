@@ -388,8 +388,7 @@ extension AnimateCanvasTests {
         #expect(!f.store.inGesture && !f.tool.dragging)
     }
 
-    @Test(.disabled("Film.swift filmChain (line 369) looks for a layer within a reach counted in the layer's own points, so one grown three times is found from nine points off: reported, not changed"))
-    func aLayerGrownManyTimesIsStillFoundOnlyWhereItShows() {
+    @Test func aLayerGrownManyTimesIsStillFoundOnlyWhereItShows() {
         let f = FilmBench()
         let card = f.id("Card")
         f.edit { doc in doc.update(card) { $0.setKey(.scale, [3, 3], at: 0) } }
