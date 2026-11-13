@@ -604,6 +604,12 @@ nonisolated struct Node: Identifiable, Codable, Equatable, Sendable {
     var flow: FlowLink?
     /// Artboards only: the prototype starts here; nil is not marked.
     var starts: Bool?
+    /// How it moves in time, in Animate: each property that changes, by its name
+    /// (`MotionProperty`), with its keys; nil while it is simply as designed. Its own, as its
+    /// words are, in a copy, a grid's cell or a deck's post. On an artboard, its camera's keys.
+    var motion: [String: MotionTrack]?
+    /// Artboards only: what its film is besides the keys, such as how long it runs. See `Film`.
+    var film: Film?
 
     init(kind: Kind, name: String? = nil, frame: CGRect) {
         self.kind = kind

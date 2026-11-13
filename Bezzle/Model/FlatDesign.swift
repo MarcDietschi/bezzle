@@ -113,6 +113,7 @@ nonisolated struct LayerField: @unchecked Sendable {
         LayerField("instance", \.instance), LayerField("master", \.master),
         LayerField("curve", \.curve), LayerField("curvePath", \.curvePath),
         LayerField("flow", \.flow), LayerField("starts", \.starts),
+        LayerField("motion", entries: \.motion), LayerField("film", \.film),
     ]
 
     /// Each property of a layer, without what it holds, read all at once.

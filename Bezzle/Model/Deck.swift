@@ -43,7 +43,7 @@ nonisolated struct Deck: Codable, Hashable {
 
     /// Of a layer's properties, those a post can keep as its own: not what it holds or where it lies
     /// among the others, nor its words and pictures, which are its own anyway.
-    static let keepable: Set<String> = Set(LayerField.all.map(\.name)).subtracting(["kind", "text", "post", "own", "deck", "grid", "layout", "guides", "instance", "master", "flow", "starts"])
+    static let keepable: Set<String> = Set(LayerField.all.map(\.name)).subtracting(["kind", "text", "post", "own", "deck", "grid", "layout", "guides", "instance", "master", "flow", "starts", "motion", "film"])
 }
 
 nonisolated extension Node {
@@ -307,6 +307,7 @@ extension Deck {
             }
             n.fill.image = was.fill.image
             n.flow = was.flow
+            n.motion = was.motion
             if let own = was.own {
                 for name in own { fields[name]?.copy(&n, was) }
                 n.own = own

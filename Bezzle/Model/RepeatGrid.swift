@@ -327,6 +327,7 @@ extension RepeatGrid {
                     }
                     n.fill.image = was.fill.image
                     n.flow = was.flow
+                    n.motion = was.motion
                 }
                 if n.kind == .text, n.text != m.text || n.spans != m.spans { n.refit() }
                 return n
@@ -407,8 +408,8 @@ extension RepeatGrid {
             var changes: [(inout Node) -> Void] = []
             for field in LayerField.all where !field.same(p.node, q.node) && free(field) && !own.contains(field.name) {
                 switch field.name {
-                // Where it goes in the prototype is the cell's own, as its words are.
-                case "text", "spans", "frame", "post", "own", "flow":
+                // Where it goes in the prototype is the cell's own, as its words are, and how it moves in time.
+                case "text", "spans", "frame", "post", "own", "flow", "motion", "film":
                     continue
                 case "fill":
                     // Its picture is the cell's own.

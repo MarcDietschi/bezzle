@@ -552,8 +552,9 @@ extension Components {
                     n.spans = was.lettersCarried(from: original, was: then[m.id], keeps: Set(was.own ?? []))
                 }
                 n.fill.image = was.fill.image
-                // Where it goes in the prototype is the copy's own, as its words are.
+                // Where it goes in the prototype is the copy's own, as its words are, and how it moves in time.
                 n.flow = was.flow
+                n.motion = was.motion
                 if let own = was.own {
                     for name in own where keepable.contains(name) { Deck.fields[name]?.copy(&n, was) }
                     n.own = own
