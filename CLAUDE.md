@@ -126,7 +126,10 @@ What every session here keeps to (Erik's rules, gathered from many sessions):
 - **Builds for others:** archive, sign for distribution or notarize only when Erik asks.
 - **Erik's designs are never touched.** Test copies run with their own `BEZZLE_LIBRARY` and, while
   his Bezzle runs, a bundle id of their own; never `com.erik.Bezzle`'s sandbox container, which holds
-  his designs. On Windows, a test install is made with `-Name 'Bezzle Test'`.
+  his designs. On Windows, a test install is made with `-Name 'Bezzle Test'`. A copy of one of his
+  designs made for a test loses its `sharing` folder before a test copy opens it, and the test copy
+  runs with `BEZZLE_LIVE_RELAY=` (empty): with the folder in it, the copy joins his design's live
+  room as one more person (2026-11-13: three photo runs showed up in his window for seconds each).
 - **Never take the screen from Erik.** Launch test copies with `open -g -n`, never activate or raise
   them, photograph windows with `screencapture -l <id>`, and ask before a long run of windows.
 - **Words people read:** no dashes as punctuation and no exclamation marks, in any language; plain
