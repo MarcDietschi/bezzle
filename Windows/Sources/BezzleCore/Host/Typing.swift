@@ -380,13 +380,13 @@ extension WindowsCore {
     private static func onCanvas(_ q: CGPoint, of node: Node, in doc: BezzleDocument, id: UUID) -> CGPoint {
         let p = CGPoint(x: node.frame.minX + q.x, y: node.frame.minY + q.y)
         let center = CGPoint(x: node.frame.midX, y: node.frame.midY)
-        return doc.shown(Perspective.shown(Geometry.rotated(p, about: center, by: node.rotation), of: node), inParentOf: id)
+        return doc.shown(Perspective.shown(Geometry.rotated(p, about: center, by: node.rotation), of: node, eye: doc.eye(forParentOf: id)), inParentOf: id)
     }
 
     /// A point of the canvas in a text's own coordinates, from its frame's top left; nil where
     /// it is seen edge on.
     private static func inText(_ p: CGPoint, of node: Node, in doc: BezzleDocument, id: UUID) -> CGPoint? {
-        guard let parent = doc.placed(p, inParentOf: id), let flat = Perspective.flat(parent, of: node) else { return nil }
+        guard let parent = doc.placed(p, inParentOf: id), let flat = Perspective.flat(parent, of: node, eye: doc.eye(forParentOf: id)) else { return nil }
         let l = Geometry.local(flat, in: node.frame, rotation: node.rotation)
         return CGPoint(x: l.x + node.frame.width / 2, y: l.y + node.frame.height / 2)
     }

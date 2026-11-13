@@ -160,6 +160,9 @@ final class DesignCanvas {
         case picture
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
+    /// Whether Alt, which at the press makes copies, has been let go since: pressed again during
+    /// the move, it pushes what is dragged in depth (the Mac's Control).
+    private var altLetGo = false
     /// The text a press with the Text tool began on: a click types into it, a drag draws a new
     /// one over it, as on the Mac.
     private var textUnderPress: UUID?
@@ -3949,7 +3952,9 @@ final class DesignCanvas {
             if first {
                 let moving = WindowsCore.beginMove(session.selection, duplicate: duplicate)
                 if duplicate { session.select(moving, on: session.board) }
+                altLetGo = !duplicate
             }
+            if !option { altLetGo = true }
             syncCurve()
             if case .handled = curveHand.moving(session.selection, from: inDesign(d.from), at: p) {
                 if dip?.opened == nil, dip != nil {
@@ -3960,7 +3965,10 @@ final class DesignCanvas {
                 session.edited(board: nil)
                 return
             }
-            showGuides(WindowsCore.move(by: CGPoint(x: dx, y: dy), constrain: shift, snapping: !control, zoom: zoom))
+            // Alt pressed once it is under way brings it nearer going up and sends it further going
+            // down, staying where it is across (`DepthPushing`, shared).
+            showGuides(WindowsCore.move(by: CGPoint(x: dx, y: dy), deep: option && altLetGo, constrain: shift, snapping: !control, zoom: zoom))
+            showPointer(WindowsCore.pushingInDepth ? .upDown : .arrow)
             if curveHand.claims {
                 if dip?.opened == nil, dip != nil {
                     dip = nil

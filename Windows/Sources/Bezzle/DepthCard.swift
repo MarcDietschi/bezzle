@@ -28,7 +28,7 @@ extension Inspector {
             fields.children.append(field("Y", d.ys, unit: "°", range: -180...180, scrub: 0.5, width: w) { change(.depthY($0)) })
             fields.children.append(field("Z", d.zs, range: -10_000...10_000, scrub: 1, width: w) { change(.depthZ($0)) })
             return [aimPad(x: d.x, y: d.y, change: change), fields,
-                    Controls.caption("On the canvas, drag the knob in its middle to aim it, with Alt to bring it nearer. Just outside a side, a drag turns anything in depth.")]
+                    Controls.caption("On the canvas, drag the knob in its middle to aim it. Hold Alt once a layer is moving to bring it nearer or push it away. Just outside a side, a drag turns anything in depth.")]
         })
     }
 

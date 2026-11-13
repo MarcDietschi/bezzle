@@ -125,9 +125,13 @@ extension WindowsCore {
         let t = nodes.first?.transform3D ?? Transform3D()
         let summary: String
         if let shared = alike(nodes, { $0.transform3D }) {
-            let turned = "\(Int((shared?.x ?? 0).rounded()))°, \(Int((shared?.y ?? 0).rounded()))°"
+            // How far it is turned, and how near it is held; only held near, only that.
+            let near = (shared?.z ?? 0) == 0 ? nil : "Z \(depthNumber(shared?.z ?? 0))"
+            let turned = "\(Int((shared?.x ?? 0).rounded()))°, \(Int((shared?.y ?? 0).rounded()))°" + (near.map { ", \($0)" } ?? "")
             // A screen laid onto a photo: pinned by its corners, and perhaps turned besides.
-            if let shared, shared.pinned {
+            if let near, (shared?.x ?? 0) == 0, (shared?.y ?? 0) == 0, shared?.pinned != true {
+                summary = near
+            } else if let shared, shared.pinned {
                 summary = shared.x == 0 && shared.y == 0 ? "Corners pinned" : "Corners pinned, \(turned)"
             } else {
                 summary = turned

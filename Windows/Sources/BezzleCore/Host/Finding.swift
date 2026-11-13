@@ -181,6 +181,7 @@ extension WindowsCore {
             }
             let down = TextLayout.offset(node)
             let center = CGPoint(x: node.frame.midX, y: node.frame.midY)
+            let eye = doc.eye(forParentOf: id)
             return (0..<min(count, 64)).compactMap { k in
                 let line = Int(boxes[k * 3])
                 guard laid.lines.indices.contains(line) else { return nil }
@@ -188,7 +189,7 @@ extension WindowsCore {
                 let r = CGRect(x: boxes[k * 3 + 1], y: Double(l.top), width: boxes[k * 3 + 2] - boxes[k * 3 + 1], height: Double(l.height))
                 let box = r.offsetBy(dx: node.frame.minX, dy: node.frame.minY + down).insetBy(dx: -1, dy: 0)
                 return [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY), CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)]
-                    .map { doc.shown(Perspective.shown(Geometry.rotated($0, about: center, by: node.rotation), of: node), inParentOf: id) }
+                    .map { doc.shown(Perspective.shown(Geometry.rotated($0, about: center, by: node.rotation), of: node, eye: eye), inParentOf: id) }
             }
         }
     }

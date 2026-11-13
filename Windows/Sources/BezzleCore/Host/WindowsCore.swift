@@ -26,7 +26,8 @@ public enum WindowsCore {
     static func drawn(_ n: Node) -> CGRect {
         guard n.isArtboard, !n.clips else { return n.frame }
         var r = n.frame
-        for c in n.children where !c.hidden { r = r.union(Renderer.reach(of: c).offsetBy(dx: n.frame.minX, dy: n.frame.minY)) }
+        let eye = Eye.stage(n.frame.size)
+        for c in n.children where !c.hidden { r = r.union(Renderer.reach(of: c, eye: eye).offsetBy(dx: n.frame.minX, dy: n.frame.minY)) }
         return r.integral
     }
 

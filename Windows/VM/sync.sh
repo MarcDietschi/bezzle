@@ -7,6 +7,9 @@ set -euo pipefail
 here=${0:A:h}
 dest=${1:-'C:\src\Bezzle'}
 cd ${here:h:h}
+# The shared files the web core makes with a line changed (Web/prepare.sh), made anew: the VM keeps
+# what was sent before, so without this a Windows build compiles them as they were.
+Web/prepare.sh
 # The Mac's pointers, as cursors for the Windows build to put into Bezzle.exe.
 $here/../Resources/make-cursors.sh
 # The Mac's words in German, French and Italian, for the Windows build to put beside Bezzle.exe.

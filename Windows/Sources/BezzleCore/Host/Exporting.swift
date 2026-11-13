@@ -25,7 +25,7 @@ extension ExportItem {
         }
         // The layer's own top left falls on a whole pixel, so its edges come out sharp.
         let frame = node.frame.offsetBy(dx: origin.x, dy: origin.y)
-        let reach = Renderer.reach(of: node).offsetBy(dx: origin.x, dy: origin.y)
+        let reach = Renderer.reach(of: node, eye: options(scale: scale, assets: assets).eye).offsetBy(dx: origin.x, dy: origin.y)
         let minX = frame.minX + ((reach.minX - frame.minX) * scale).rounded(.down) / scale
         let minY = frame.minY + ((reach.minY - frame.minY) * scale).rounded(.down) / scale
         let w = Int(((reach.maxX - minX) * scale).rounded(.up)), h = Int(((reach.maxY - minY) * scale).rounded(.up))

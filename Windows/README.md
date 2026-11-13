@@ -101,7 +101,8 @@ is a template with a placeholder, not the password.
   program's output over SSH arrives only when it exits. Send a file with non-ASCII text as base64 and
   write it with `[IO.File]::WriteAllBytes` (the console's code page mangles it otherwise), then compare
   `Get-FileHash` with `md5` here. `scp` with `VM/win`'s options fetches results.
-- **Sources:** `VM/sync.sh` puts the working tree's build inputs into `C:\src\Bezzle`. Packages are
+- **Sources:** `VM/sync.sh` puts the working tree's build inputs into `C:\src\Bezzle`, making the files
+  the web core changes a line of first (`Web/prepare.sh`), since the VM keeps what was sent before. Packages are
   built once there (`winrt.ps1`, `skia.ps1`, `avif.ps1`, `onnx.ps1`) and kept. A second working copy
   (a parallel agent's, the release's `C:\src\bezzle-release`) is a folder of its own with a junction
   to `C:\src\Bezzle\Windows\Packages`, which `VM/sync.sh 'C:\src\<folder>'` syncs into.

@@ -674,7 +674,7 @@ extension WindowsCore {
             let key = "\(a.key)>\(b.key)"
             for (i, p) in pieces.enumerated() {
                 var entry: (a: Int?, b: Int?, ra: CGRect?, rb: CGRect?) = (nil, nil, nil, nil)
-                if let n = p.from, let r = PlayerPictures.layerRect(n, origin: p.fromOrigin) {
+                if let n = p.from, let r = PlayerPictures.layerRect(n, origin: p.fromOrigin, board: a.board) {
                     let board = a.board, origin = p.fromOrigin
                     entry.a = sprites.count
                     entry.ra = r
@@ -682,7 +682,7 @@ extension WindowsCore {
                         WindowsCore.picture({ PlayerPictures.layer(n, origin: origin, board: board, scale: CGFloat(scale)) }, into: fill)
                     })
                 }
-                if let n = p.to, let r = PlayerPictures.layerRect(n, origin: p.toOrigin) {
+                if let n = p.to, let r = PlayerPictures.layerRect(n, origin: p.toOrigin, board: b.board) {
                     let board = b.board, origin = p.toOrigin
                     entry.b = sprites.count
                     entry.rb = r
@@ -820,9 +820,10 @@ extension WindowsCore {
         return ctx.makeImage()
     }
 
-    /// Where one layer's picture lies on its screen: all it paints, its shadow too.
-    static func layerRect(_ n: Node, origin: CGPoint) -> CGRect? {
-        let r = Renderer.reach(of: n).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -1, dy: -1).integral
+    /// Where one layer's picture lies on its screen: all it paints, its shadow too, seen from the
+    /// screen's eye as everything on it is.
+    static func layerRect(_ n: Node, origin: CGPoint, board: Node) -> CGRect? {
+        let r = Renderer.reach(of: n, eye: Eye.stage(board.frame.size).inside(origin)).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -1, dy: -1).integral
         guard r.width > 0, r.height > 0, r.width < 3000, r.height < 3000 else { return nil }
         return r
     }
@@ -830,7 +831,7 @@ extension WindowsCore {
     /// One layer alone, lying in what holds it at `origin` on its screen, with all it paints
     /// round it.
     static func layer(_ n: Node, origin: CGPoint, board: Node, scale: CGFloat) -> CGImage? {
-        guard let r = layerRect(n, origin: origin) else { return nil }
+        guard let r = layerRect(n, origin: origin, board: board) else { return nil }
         let size = CGSize(width: max(1, (r.width * scale).rounded()), height: max(1, (r.height * scale).rounded()))
         guard let ctx = Renderer.bitmap(size) else { return nil }
         ctx.translateBy(x: 0, y: size.height)

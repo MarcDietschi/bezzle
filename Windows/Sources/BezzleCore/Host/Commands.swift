@@ -90,6 +90,13 @@ extension WindowsCore {
 
     nonisolated(unsafe) static var moving: (originals: [UUID: CGRect], bounds: CGRect, targets: SnapTargets, moved: CGPoint)?
     nonisolated(unsafe) static var pulling: SnapTargets?
+    /// A move with Alt pressed once it is under way pushes what is dragged away or pulls it
+    /// nearer (`DepthPushing`, shared with the Mac, where Control does): how far, each layer's
+    /// turn in depth and the heights around it when the move began, and the heights given.
+    nonisolated(unsafe) static var pushing = DepthPushing()
+    nonisolated(unsafe) static var pushedFrom: [UUID: Transform3D?] = [:]
+    nonisolated(unsafe) static var pushLevels: [UUID: [CGFloat]] = [:]
+    nonisolated(unsafe) static var pushedTo: [UUID: CGFloat] = [:]
 
     /// Begins moving layers, as the Mac's canvas does once a drag has gone 3 points: inside the
     /// gesture, with what they catch on worked out from the rest of the design. With `duplicate`
@@ -112,16 +119,60 @@ extension WindowsCore {
         for id in ids { originals[id] = now.absoluteFrame(of: id) }
         let bounds = now.bounds(of: ids) ?? .zero
         moving = (originals, bounds, SnapTargets(doc: now, moving: Set(ids)), .zero)
+        // How high each is held, and those around it, to push them in depth from.
+        let layers = ids.filter { now.node($0)?.isArtboard == false }
+        pushing = DepthPushing()
+        pushedFrom = Dictionary(uniqueKeysWithValues: layers.map { ($0, now.node($0)?.transform3D) })
+        pushLevels = now.levels(around: layers)
+        pushedTo = [:]
         return ids
+    }
+
+    /// The move as it stands, made again in `d`: placed across, and held at the heights pushed to.
+    private static func place(_ m: (originals: [UUID: CGRect], bounds: CGRect, targets: SnapTargets, moved: CGPoint), in d: inout BezzleDocument) {
+        d.place(m.originals, movedBy: m.moved)
+        for (id, height) in pushedTo {
+            let turn = DepthPushing.turn(pushedFrom[id] ?? nil, at: height)
+            d.update(id) { $0.transform3D = turn }
+        }
+    }
+
+    /// Whether the move is pushing in depth just now, for the pointer to show it.
+    public static var pushingInDepth: Bool { moving != nil && pushing.pushing }
+
+    /// A height in depth as the canvas and the 3D card say it: to a tenth, whole without one.
+    static func depthNumber(_ v: CGFloat) -> String {
+        let r = (Double(v) * 10).rounded() / 10 + 0
+        return r == r.rounded() ? String(Int(r)) : String(format: "%.1f", r)
     }
 
     /// Moves them by `delta` from where the drag began (canvas points), caught on what is around
     /// them unless `snapping` is off, Shift (`constrain`) keeping to an axis; the guides to draw.
-    public static func move(by delta: CGPoint, constrain: Bool, snapping: Bool, zoom: Double) -> [GuideLine] {
-        guard let m = moving else { return [] }
-        let (moved, guides) = m.targets.move(m.bounds, by: delta, constrain: constrain, snapping: snapping, threshold: 5 / CGFloat(zoom))
-        moving?.moved = moved
-        edit { $0.place(m.originals, movedBy: moved) }
+    /// With `deep`, up brings them nearer and down sends them further, a point of height for a
+    /// point the pointer goes, while across they stay where the move had them; let go, they move
+    /// across again from there, so neither way jumps. Heights catch at the page and at the
+    /// layers around, Shift in tens.
+    public static func move(by delta: CGPoint, deep: Bool = false, constrain: Bool, snapping: Bool, zoom: Double) -> [GuideLine] {
+        guard var m = moving else { return [] }
+        pushing.pointer(at: delta, holding: deep && !pushedFrom.isEmpty)
+        let (moved, guides) = pushing.pushing ? (m.moved, [])
+            : m.targets.move(m.bounds, by: pushing.across(from: .zero, to: delta), constrain: constrain, snapping: snapping, threshold: 5 / CGFloat(zoom))
+        m.moved = moved
+        moving = m
+        if pushing.pushing {
+            for (id, from) in pushedFrom {
+                pushedTo[id] = pushing.height(from: from?.z ?? 0, level: pushLevels[id] ?? [], reach: 4 / CGFloat(zoom), steps: constrain)
+            }
+        }
+        edit { place(m, in: &$0) }
+        if pushing.pushing, let box = design?.bounds(of: Array(m.originals.keys)) {
+            // How high it is held, or for several held apart, how far they all went.
+            let all = Set(pushedTo.values)
+            let said = all.count == 1 ? depthNumber(all.first ?? 0) : (pushing.depth >= 0 ? "+" : "") + depthNumber(pushing.depth.rounded())
+            measure = ("Z \(said)", box)
+        } else if pushing.pushed {
+            measure = nil
+        }
         return guides.map { GuideLine(from: $0.from, to: $0.to, field: $0.field) }
     }
 
@@ -132,12 +183,14 @@ extension WindowsCore {
         if let m = moving {
             let ids = Array(m.originals.keys)
             edit { d in
-                d.place(m.originals, movedBy: m.moved)
+                place(m, in: &d)
                 if takingOut { d.takeOutOfMasks(ids) }
                 d.settle(ids)
             }
+            if pushing.pushed { measure = nil }
         }
         moving = nil
+        pushedTo = [:]
         endGesture()
     }
 
@@ -145,13 +198,14 @@ extension WindowsCore {
     /// closed under it).
     static func replayMove() {
         guard let m = moving else { return }
-        edit { $0.place(m.originals, movedBy: m.moved) }
+        edit { place(m, in: &$0) }
     }
 
     /// A move or a handle's pull taken back with Escape: the design as it was when it began, and
     /// no step made, as the Mac's canvas cancels its interaction.
     public static func cancelMove() {
         moving = nil
+        pushedTo = [:]
         pulling = nil
         adapting = [:]
         measure = nil
