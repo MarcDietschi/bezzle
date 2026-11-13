@@ -53,7 +53,7 @@ nonisolated extension BezierPath {
                 let handleIn = open && i == 0 ? CGPoint.zero : (b.handleIn ?? b.point) - (a.handleIn ?? a.point)
                 let handleOut = open && i == last ? CGPoint.zero : (b.handleOut ?? b.point) - (a.handleOut ?? a.point)
                 let point = b.point - a.point
-                out += [point.x, point.y, handleIn.x, handleIn.y, handleOut.x, handleOut.y].map(Double.init)
+                out += [point.x, point.y, handleIn.x, handleIn.y, handleOut.x, handleOut.y].map { Double($0) }
             }
         }
         return out
