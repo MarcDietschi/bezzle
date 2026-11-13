@@ -108,7 +108,8 @@ private struct MovesCard: View {
         } content: {
             SegmentedWell(selection: Binding(get: { store.film.going }, set: { store.film.going = $0 }),
                           options: [(false, "Comes On"), (true, "Goes")])
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+            // Three to a row, so that every move has its company: there are nine.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
                 ForEach(MotionMove.allCases, id: \.self) { move in
                     MoveChip(move: move, going: store.film.going) { store.applyMove(move) }
                 }
@@ -355,11 +356,11 @@ private struct PoseCard: View {
                 Hairline()
                     .padding(.vertical, 2)
                 PropertyRow(store: store, property: .draw) {
-                    field(.draw, 0, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 62)
+                    field(.draw, 0, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 70)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(Theme.ink3)
-                    field(.draw, 1, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 62)
+                    field(.draw, 1, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 70)
                 }
                 PropertyRow(store: store, property: .shape) {
                     PointsChip(store: store, layers: layers)
