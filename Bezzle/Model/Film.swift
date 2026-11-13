@@ -75,6 +75,56 @@ nonisolated struct FilmMap: Equatable, Sendable {
 
     /// Whether it keeps things flat in the page: no perspective in it.
     var isFlat: Bool { abs(g) < 1e-12 && abs(h) < 1e-12 }
+
+    /// What of a polygon lies on the side of a line where `a x + b y + c` is not below nothing.
+    static func cut(_ polygon: [CGPoint], along side: (a: Double, b: Double, c: Double)) -> [CGPoint] {
+        func over(_ p: CGPoint) -> Double { side.a * Double(p.x) + side.b * Double(p.y) + side.c }
+        var out: [CGPoint] = []
+        for (k, p) in polygon.enumerated() {
+            let q = polygon[(k + 1) % polygon.count]
+            let dp = over(p), dq = over(q)
+            if dp >= 0 { out.append(p) }
+            if (dp >= 0) != (dq >= 0) {
+                let t = dp / (dp - dq)
+                out.append(CGPoint(x: Double(p.x) + Double(q.x - p.x) * t, y: Double(p.y) + Double(q.y - p.y) * t))
+            }
+        }
+        return out
+    }
+
+    /// What of a rect of the plane shows through a window of the picture: the part of the rect
+    /// that does, and how many times bigger than it is drawn the plane shows there at most. Nil
+    /// when nothing of it shows. A film is drawn from this: only what is seen, as sharp as it is
+    /// seen, however far the camera goes in.
+    func seen(of rect: CGRect, through window: CGRect) -> (part: CGRect, stretch: Double)? {
+        guard rect.width > 0, rect.height > 0, window.width > 0, window.height > 0 else { return nil }
+        var outline = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+                       CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)]
+        let x0 = Double(window.minX), x1 = Double(window.maxX), y0 = Double(window.minY), y1 = Double(window.maxY)
+        // In front of the eye, and within the window's four sides: each a line on the plane.
+        let sides: [(a: Double, b: Double, c: Double)] = [
+            (g, h, i - 1e-3),
+            (a - x0 * g, b - x0 * h, c - x0 * i),
+            (x1 * g - a, x1 * h - b, x1 * i - c),
+            (d - y0 * g, e - y0 * h, f - y0 * i),
+            (y1 * g - d, y1 * h - e, y1 * i - f),
+        ]
+        for side in sides {
+            outline = Self.cut(outline, along: side)
+            guard outline.count >= 3 else { return nil }
+        }
+        var box = CGRect.null
+        var most = 0.0, cx = 0.0, cy = 0.0
+        for p in outline {
+            box = box.union(CGRect(origin: p, size: .zero))
+            most = max(most, stretch(at: p))
+            cx += Double(p.x); cy += Double(p.y)
+        }
+        most = max(most, stretch(at: CGPoint(x: cx / Double(outline.count), y: cy / Double(outline.count))))
+        box = box.intersection(rect)
+        guard !box.isNull, box.width > 0, box.height > 0, most.isFinite else { return nil }
+        return (box, most)
+    }
 }
 
 // MARK: - The lens

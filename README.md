@@ -96,9 +96,20 @@ along one artboard's film. Its keys are changes from the design and never the de
   `TEST_RUNNER_ANIMATE_RUNS=800` before `xcodebuild test` for 800 more seeds (about 3 minutes),
   `TEST_RUNNER_ANIMATE_RUN=<seed>` to follow one, and `TEST_RUNNER_ANIMATE_DEEP=<every>,<from>` to
   undo and redo the whole session every so many steps. `TEST_RUNNER_ANIMATE_FILM_TIMING=1` also
-  times the writing of a three second movie, into `$TMPDIR/bezzle-film-timing.txt`. A switch for
-  tests never begins with `BEZZLE_`: the tests run inside the app, where such a name sets off
-  DebugHooks.
+  times the writing of a three second movie, into `$TMPDIR/bezzle-film-timing.txt`, and
+  `TEST_RUNNER_ANIMATE_FILM_DESIGN=<a design>` plays that design's own film on the stage in real
+  time and writes what a frame costs and how sharp it shows into `$TMPDIR/bezzle-film-stage.txt`
+  (give it a copy, never one of Erik's designs). A switch for tests never begins with `BEZZLE_`:
+  the tests run inside the app, where such a name sets off DebugHooks.
+- **How the film is drawn:** each piece (the artboard's sheet, a run of layers that stand still, a
+  layer that moves) is a picture drawn once, which the graphics card then only moves
+  (`FilmPictures`, `FilmPlacement`). Two rules keep it true to the design, on the stage and in the
+  movie alike, and `FilmSharpTests` holds them. Sharp however near: where a piece shows larger
+  than its picture holds, the part of it that is seen is drawn again as sharp as it is seen and
+  laid over the picture (`FilmMap.seen`, `FilmPictures.Part`; on the stage in a layer named
+  `part`, drawn ahead while the film plays). Nothing but the sheet ends at the artboard's edge:
+  a shadow or a layer that reaches past it shows once the camera sees past it. A picture covers
+  the artboard and some way round it (`FilmPictures.core`), the rest is drawn as parts when seen.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
   `/given` for a key the app placed itself), so two people keying one layer both keep theirs

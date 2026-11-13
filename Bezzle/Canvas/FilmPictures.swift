@@ -37,7 +37,10 @@ nonisolated enum FilmPictures {
         /// The ground: the artboard with nothing on it. Else the layers, bottom first.
         var layers: [Node]
         var origin: CGPoint
-        /// Whether what reaches past the artboard's edges is cut off there, as the design shows it.
+        /// Whether it ends at the artboard's edges: the artboard's own sheet does. Its layers do
+        /// not. At rest the film's frame is the artboard, and cuts off what reaches past it as
+        /// the design does; a camera that draws back sees what lies there, a shadow that falls
+        /// past the edge or a layer waiting outside, whether or not the layer has keys.
         var clipped: Bool
         fileprivate let ground: Ground
 
@@ -92,10 +95,10 @@ nonisolated enum FilmPictures {
             if piece.flat { n.transform3D = nil }
             return n.withoutMotion
         }
-        return Subject(kind: piece.kind, layers: layers, origin: piece.origin, ground: ground, clipped: piece.kind == .run)
+        return Subject(kind: piece.kind, layers: layers, origin: piece.origin, ground: ground, clipped: false)
     }
 
-    /// The part of the artboard a subject's picture covers.
+    /// Where a subject draws, in the artboard's points, however far past its edges that reaches.
     static func rect(of subject: Subject) -> CGRect {
         let whole = CGRect(origin: .zero, size: subject.board.frame.size)
         guard subject.kind != .ground else { return whole }
@@ -106,16 +109,80 @@ nonisolated enum FilmPictures {
         return subject.clipped ? r.intersection(whole) : r
     }
 
-    /// Draws a subject, `scale` pixels to the artboard's point, or as many as its size allows.
-    static func picture(of subject: Subject, scale: CGFloat, assets: Assets?) -> Picture? {
+    /// The part of that which a subject's whole picture is made of. All of it, but for layers
+    /// that stand as they were designed (a run): there, what lies far outside the artboard is
+    /// left to be drawn when the camera finds it (`Part`), or one thing parked a long way off
+    /// would take the sharpness from everything else in its picture.
+    static func core(of subject: Subject) -> CGRect {
         let r = rect(of: subject)
-        guard r.width > 0, r.height > 0, !r.isNull else { return nil }
-        let scale = min(scale, most / max(r.width, r.height))
-        let size = CGSize(width: max(1, (r.width * scale).rounded(.up)), height: max(1, (r.height * scale).rounded(.up)))
+        guard subject.kind == .run else { return r }
+        let whole = CGRect(origin: .zero, size: subject.board.frame.size)
+        let far = min(max(whole.width, whole.height) / 4, 400)
+        let near = r.intersection(whole.insetBy(dx: -far, dy: -far))
+        // Nothing of it near the artboard: its picture is of where it is.
+        return near.isNull || near.width <= 0 || near.height <= 0 ? r : near
+    }
+
+    // MARK: Only what is seen, as sharp as it is seen
+
+    /// A part of a piece to draw sharper than its whole picture is: where, in the artboard's
+    /// points, and with how many pixels to the point.
+    struct Part: Equatable, Sendable {
+        var rect: CGRect
+        var scale: CGFloat
+    }
+
+    /// The longest side a part is drawn with, and the most pixels in all: a part is what shows
+    /// through the film's frame, so these are a large screen's own, with room to spare.
+    static let mostInPart: (side: CGFloat, pixels: CGFloat) = (8192, 24_000_000)
+
+    /// How many pixels to the point a whole picture really has, whatever was asked for: `most`
+    /// holds a large piece back.
+    static func sharpness(of picture: Picture) -> CGFloat {
+        min(CGFloat(picture.image.width) / max(picture.rect.width, 1e-6), CGFloat(picture.image.height) / max(picture.rect.height, 1e-6))
+    }
+
+    /// The part to draw of a piece that covers `whole`, for what shows of it in `seen` at `need`
+    /// pixels to the point: grown by `margin` of its size and `around` points each way, so a
+    /// little movement stays within it, kept to the piece, sharp in steps a fifth apart so that
+    /// zooming draws it again only now and then, and lying on its own whole pixels. Nil when
+    /// there is nothing of it to draw.
+    static func part(for seen: CGRect, of whole: CGRect, need: CGFloat, margin: CGFloat = 0, around: CGFloat = 0) -> Part? {
+        guard need > 0, need.isFinite else { return nil }
+        var r = seen.insetBy(dx: -(seen.width * margin + around), dy: -(seen.height * margin + around)).intersection(whole)
+        guard !r.isNull, r.width > 0, r.height > 0 else { return nil }
+        var scale = pow(2, (log2(need) * 4 - 0.01).rounded(.up) / 4)
+        scale = min(scale, mostInPart.side / max(r.width, r.height), (mostInPart.pixels / (r.width * r.height)).squareRoot())
+        guard scale > 0, scale.isFinite else { return nil }
+        let x0 = (r.minX * scale).rounded(.down) / scale, y0 = (r.minY * scale).rounded(.down) / scale
+        let x1 = (r.maxX * scale).rounded(.up) / scale, y1 = (r.maxY * scale).rounded(.up) / scale
+        r = CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+        return Part(rect: r, scale: scale)
+    }
+
+    /// Draws a subject, `scale` pixels to the artboard's point, or as many as its size allows.
+    /// With a `part`, only what of it lies there, as sharp as the part says: for a piece seen so
+    /// large that all of it drawn as sharp would be more than any screen shows.
+    static func picture(of subject: Subject, scale: CGFloat, assets: Assets?, part: Part? = nil) -> Picture? {
+        let whole = rect(of: subject)
+        guard whole.width > 0, whole.height > 0, !whole.isNull else { return nil }
+        var r = core(of: subject), scale = scale
+        var size: CGSize
+        if let part {
+            guard part.rect.intersects(whole), part.rect.width > 0, part.rect.height > 0 else { return nil }
+            r = part.rect
+            scale = part.scale
+            size = CGSize(width: max(1, (r.width * scale).rounded()), height: max(1, (r.height * scale).rounded()))
+        } else {
+            scale = min(scale, most / max(r.width, r.height))
+            size = CGSize(width: max(1, (r.width * scale).rounded(.up)), height: max(1, (r.height * scale).rounded(.up)))
+        }
         guard let ctx = Renderer.bitmap(size) else { return nil }
         ctx.translateBy(x: 0, y: size.height)
         ctx.scaleBy(x: size.width / r.width, y: -size.height / r.height)
         ctx.translateBy(x: -r.minX, y: -r.minY)
+        // A part reaches a pixel's breadth past the piece, where the piece itself is cut off.
+        if part != nil { ctx.clip(to: whole) }
         Renderer.withFlippedContext(ctx) {
             var o = Renderer.Options()
             o.deviceScale = scale

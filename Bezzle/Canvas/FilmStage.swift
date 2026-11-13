@@ -6,6 +6,11 @@ import CoreImage
 /// are drawn once, away from here, and after that the graphics card only moves them, so posing a
 /// layer, scrubbing and playing all keep to the screen's own frames however much is on the artboard.
 ///
+/// A design is shapes and letters, and stays sharp however near the camera or the view goes: a
+/// piece that shows larger than its picture holds has the part of it that is seen drawn again,
+/// as sharp as it is seen, and laid over the picture (`sharpen`). Its whole picture stays under
+/// what that part does not cover, so there is always something to show while a part is drawn.
+///
 /// It lies under the canvas, which cuts a window over the artboard to show it. So everything the
 /// canvas draws over the design, the handles and the motion's path, is drawn over the film as
 /// over any artboard, in the same frame.
@@ -19,13 +24,36 @@ final class FilmStageView: NSView {
     /// The artboard's own points, scaled to the frame.
     private let scene = CALayer()
 
-    /// A piece on the stage: its picture's layer, and what it was drawn from.
+    /// A piece on the stage: its whole picture's layer, and what it was drawn from.
     private struct Shown {
         var piece: FilmPiece
         var subject: FilmPictures.Subject
+        /// What its whole picture covers, and where it draws at all, which reaches further when
+        /// something of it lies far outside the artboard.
         var rect: CGRect
+        var reach: CGRect
         var layer: CALayer
+        /// How many pixels to the point its whole picture has.
+        var sharp: CGFloat
         var blurred = false
+        /// The part drawn sharper, in a layer of its own right over the whole picture's and
+        /// placed as that is, while one is shown; and which part.
+        var over: CALayer?
+        var part: FilmPictures.Part?
+    }
+
+    /// A part of a piece drawn sharper than its whole picture: what it shows, and its picture.
+    private struct Sharper {
+        var subject: FilmPictures.Subject
+        var part: FilmPictures.Part
+        var picture: FilmPictures.Picture
+    }
+
+    /// A part to draw.
+    private struct PartJob: Sendable {
+        var key: String
+        var subject: FilmPictures.Subject
+        var part: FilmPictures.Part
     }
 
     /// A piece to put on the stage, and what its picture has to show.
@@ -56,6 +84,10 @@ final class FilmStageView: NSView {
         var loose: Set<UUID>
         var fronts: [UUID: Int]
         var step: CGFloat
+        /// Whether how large each piece shows in the whole film was asked, which it is not while
+        /// something is dragged. So the pieces are worked out once more when the drag ends: a
+        /// camera brought closer by a drag would leave its pictures as sharp as they were before.
+        var measured: Bool
     }
 
     private var shown: [Shown] = []
@@ -72,6 +104,13 @@ final class FilmStageView: NSView {
     private var generation = 0
     private var installs = 0
     private var making = false
+    /// The parts drawn sharper, by their piece; whether some are being drawn now; and a count
+    /// that tells parts asked for before the stage was put away from those asked for since.
+    private var sharper: [String: Sharper] = [:]
+    private var sharpening = false
+    private var sharpRound = 0
+    /// While it plays, the frames since it last looked ahead for parts to draw.
+    private var sinceAhead = 0
     private var link: CADisplayLink?
     private static let queue = DispatchQueue(label: "Bezzle film pictures", qos: .userInteractive)
 
@@ -157,7 +196,8 @@ final class FilmStageView: NSView {
         // While it plays, the moment is read where the canvas does not watch it, or the whole canvas
         // would be drawn again each frame.
         let t = store.film.playing ? store.film.head : store.filmTime
-        let wanted = Signature(version: store.version, board: board.id, loose: Set(store.posedLayers), fronts: store.fronts, step: step)
+        let wanted = Signature(version: store.version, board: board.id, loose: Set(store.posedLayers), fronts: store.fronts, step: step,
+                               measured: !store.inGesture)
         if wanted != signature {
             signature = wanted
             prepare(board, at: t, pixels: step)
@@ -192,6 +232,8 @@ final class FilmStageView: NSView {
         shown = []
         order = []
         kept = [:]
+        sharper = [:]
+        sharpRound += 1
         ground = nil
         generation += 1
         making = false
@@ -229,7 +271,9 @@ final class FilmStageView: NSView {
                 continue
             }
             let subject = FilmPictures.subject(of: piece, on: board, ground: ground, at: t)
-            let rect = FilmPictures.rect(of: subject)
+            // What its whole picture is made of; the rest of it, far outside the artboard, is
+            // drawn when the camera finds it.
+            let rect = FilmPictures.core(of: subject)
             guard rect.width > 0, rect.height > 0 else { continue }
             var scale = pixels
             if measured || had == nil {
@@ -302,17 +346,26 @@ final class FilmStageView: NSView {
                 let layer = layers.removeValue(forKey: item.piece.key) ?? Self.pictureLayer()
                 if layer.contents as AnyObject? !== had.picture.image { layer.contents = had.picture.image }
                 layer.bounds = had.picture.rect
-                next.append(Shown(piece: item.piece, subject: item.subject, rect: had.picture.rect, layer: layer,
-                                  blurred: blurred.contains(item.piece.key)))
+                var piece = Shown(piece: item.piece, subject: item.subject, rect: had.picture.rect,
+                                  reach: FilmPictures.rect(of: item.subject).union(had.picture.rect), layer: layer,
+                                  sharp: FilmPictures.sharpness(of: had.picture), blurred: blurred.contains(item.piece.key))
+                // A part laid over it before stays until `place` finds out whether it still fits.
+                if let was = shown.first(where: { $0.layer === layer }) {
+                    piece.over = was.over
+                    piece.part = was.part
+                }
+                next.append(piece)
             }
-            for (_, old) in layers { old.removeFromSuperlayer() }
-            scene.sublayers = next.map(\.layer)
         }
         shown = next
         order = Array(next.indices)
+        // What is no longer among them, a piece's layer or the part over it, leaves the stage.
+        Self.still { stack() }
         shownBoard = board
-        // Pictures not on the stage for a while are let go.
+        // Pictures not on the stage for a while are let go, and the parts of pieces that left it.
         kept = kept.filter { $0.value.used >= installs - 3 }
+        let here = Set(next.map(\.piece.key))
+        sharper = sharper.filter { here.contains($0.key) }
     }
 
     private static func pictureLayer() -> CALayer {
@@ -326,10 +379,21 @@ final class FilmStageView: NSView {
         return l
     }
 
+    /// The name of a layer that shows a part of a piece, sharper, over the piece's whole picture.
+    static let partName = "part"
+
+    /// Puts the layers on the stage in the order the pieces are stacked, each part right over
+    /// its piece.
+    private func stack() {
+        scene.sublayers = order.flatMap { i in [shown[i].layer] + (shown[i].over.map { [$0] } ?? []) }
+    }
+
     // MARK: Placing
 
-    /// Places every piece where the camera shows it at a moment.
-    private func place(_ board: Node, at t: Double, pixels: CGFloat) {
+    /// Places every piece where the camera shows it at a moment, `pixels` of the screen to the
+    /// artboard's point. `playing` while the film runs: then the parts to draw sharper are found
+    /// for where it is about to be as well, since drawing one takes a few frames.
+    private func place(_ board: Node, at t: Double, pixels: CGFloat, playing: Bool = false) {
         guard !shown.isEmpty else { return }
         let camera = board.camera(at: t)
         let pieces = shown.map(\.piece)
@@ -337,8 +401,9 @@ final class FilmStageView: NSView {
         let wanted = board.filmOrder(pieces, placements)
         if wanted != order {
             order = wanted
-            scene.sublayers = wanted.map { shown[$0].layer }
+            stack()
         }
+        let window = window(of: board)
         for i in shown.indices {
             let p = placements[i], layer = shown[i].layer
             let map = p.map.after(.translation(Double(shown[i].rect.minX), Double(shown[i].rect.minY)))
@@ -349,7 +414,7 @@ final class FilmStageView: NSView {
             layer.transform = m
             layer.opacity = Float(p.opacity)
             // Wholly behind the eye, nothing of it shows, in the movie neither.
-            let r = shown[i].rect
+            let r = shown[i].reach
             let behind = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
                 .allSatisfy { p.map.depth(at: $0) <= 1e-3 }
             if layer.isHidden != behind { layer.isHidden = behind }
@@ -365,6 +430,204 @@ final class FilmStageView: NSView {
             } else if shown[i].blurred {
                 shown[i].blurred = false
                 layer.filters = nil
+            }
+            fit(i, p, hidden: behind, window: window, pixels: pixels, playing: playing)
+            // The part over it is placed as it is: the same map, from where the part begins.
+            if let over = shown[i].over, let part = shown[i].part {
+                let map = p.map.after(.translation(Double(part.rect.minX), Double(part.rect.minY)))
+                var m = CATransform3DIdentity
+                m.m11 = map.a; m.m21 = map.b; m.m41 = map.c
+                m.m12 = map.d; m.m22 = map.e; m.m42 = map.f
+                m.m14 = map.g; m.m24 = map.h; m.m44 = map.i
+                over.transform = m
+                over.opacity = Float(p.opacity)
+            }
+        }
+        sharpen(board, at: t, now: placements, window: window, pixels: pixels, playing: playing)
+    }
+
+    // MARK: Sharp however near
+
+    /// The part of the film's frame that shows in the stage, in the artboard's points: what is
+    /// scrolled out of the view needs no drawing.
+    private func window(of board: Node) -> CGRect {
+        let frame = gate.frame
+        let seen = frame.intersection(bounds)
+        guard frame.width > 0, frame.height > 0, !seen.isNull, seen.width > 0, seen.height > 0 else { return .zero }
+        let kx = board.frame.width / frame.width, ky = board.frame.height / frame.height
+        return CGRect(x: (seen.minX - frame.minX) * kx, y: (seen.minY - frame.minY) * ky, width: seen.width * kx, height: seen.height * ky)
+    }
+
+    /// What shows of a piece through the window, and how many pixels to the point that takes,
+    /// when its whole picture does not hold it: shown larger than the picture is sharp, or lying
+    /// past what the picture covers. Nil for a piece whose picture will do, one that does not
+    /// show, and one that is blurred anyway.
+    private func magnified(_ i: Int, _ p: FilmPlacement, window: CGRect, pixels: CGFloat) -> (seen: CGRect, need: Double)? {
+        guard p.blur <= 0.05, p.opacity > 0.001, let seen = p.map.seen(of: shown[i].reach, through: window) else { return nil }
+        let need = seen.stretch * Double(pixels)
+        let within = shown[i].rect.insetBy(dx: -0.01, dy: -0.01).contains(seen.part)
+        guard need > Double(shown[i].sharp) * 1.05 || !within else { return nil }
+        return (seen.part, need)
+    }
+
+    /// The part kept of a piece, while it is still of what the piece shows.
+    private func held(_ i: Int) -> Sharper? {
+        let key = shown[i].piece.key
+        guard let part = sharper[key] else { return nil }
+        guard part.subject.isDrawn(as: shown[i].subject) else {
+            sharper[key] = nil
+            return nil
+        }
+        return part
+    }
+
+    /// The part to draw for what shows of a piece. One rule for asking and for telling whether
+    /// what is kept will do, so that a part once drawn for a view is the part that view asks for.
+    private func part(_ i: Int, seen: CGRect, need: Double, playing: Bool) -> FilmPictures.Part? {
+        FilmPictures.part(for: seen, of: shown[i].reach, need: CGFloat(need), margin: playing ? 0.05 : 0.1)
+    }
+
+    /// Whether a part kept covers what shows of a piece, sharp enough and not so much sharper
+    /// that its fine lines would flicker made small. A film that plays may go a little soft
+    /// before a part is drawn again.
+    private func covers(_ kept: Sharper, _ i: Int, seen: CGRect, need: Double, playing: Bool) -> Bool {
+        guard kept.part.rect.insetBy(dx: -0.01, dy: -0.01).contains(seen), Double(kept.part.scale) <= need * 2.5 else { return false }
+        // No sharper than a part may be: one held back by its size is as sharp as it gets.
+        let most = part(i, seen: seen, need: need, playing: playing).map { Double($0.scale) } ?? need
+        return Double(kept.part.scale) >= min(need, most) * (playing ? 0.85 : 0.999)
+    }
+
+    /// Lays the part kept of a piece over its whole picture where it shows larger than that
+    /// holds, and takes it off where it does not.
+    private func fit(_ i: Int, _ p: FilmPlacement, hidden: Bool, window: CGRect, pixels: CGFloat, playing: Bool) {
+        guard !hidden, let now = magnified(i, p, window: window, pixels: pixels) else {
+            cover(i, with: nil)
+            // Nothing of it shows larger than its picture: its part is let go. Not while the
+            // film plays, when the part may have been drawn for where it is about to be.
+            if !hidden, p.blur <= 0.05, !playing { sharper[shown[i].piece.key] = nil }
+            return
+        }
+        if let kept = held(i), kept.part.rect.intersects(now.seen),
+           kept.part.scale > shown[i].sharp * 1.05 || !shown[i].rect.contains(kept.part.rect) {
+            cover(i, with: kept)
+        } else {
+            cover(i, with: nil)
+        }
+    }
+
+    /// Shows a part over a piece's whole picture, or none. The whole picture gives way under it,
+    /// or what is not solid, a shadow or a soft edge, would be laid on twice there.
+    private func cover(_ i: Int, with kept: Sharper?) {
+        guard let kept else {
+            guard shown[i].over != nil || shown[i].part != nil else { return }
+            shown[i].over?.removeFromSuperlayer()
+            shown[i].over = nil
+            shown[i].part = nil
+            shown[i].layer.mask = nil
+            return
+        }
+        let layer = shown[i].layer
+        let over = shown[i].over ?? {
+            let l = CALayer()
+            l.name = Self.partName
+            l.anchorPoint = .zero
+            l.position = .zero
+            l.contentsGravity = .resize
+            l.magnificationFilter = .linear
+            l.minificationFilter = .linear
+            scene.insertSublayer(l, above: layer)
+            shown[i].over = l
+            return l
+        }()
+        let hole = layer.mask as? CAShapeLayer
+        guard shown[i].part != kept.part || over.contents as AnyObject? !== kept.picture.image || hole?.bounds != layer.bounds else { return }
+        over.contents = kept.picture.image
+        over.bounds = kept.picture.rect
+        // But for a hair along the part's edge, where both lie, so that no seam shows between them.
+        let hair = 0.5 / kept.part.scale
+        let mask = hole ?? CAShapeLayer()
+        // In the piece's own points, which are the artboard's.
+        mask.anchorPoint = .zero
+        mask.position = layer.bounds.origin
+        mask.bounds = layer.bounds
+        mask.fillRule = .evenOdd
+        let path = CGMutablePath()
+        path.addRect(layer.bounds)
+        path.addRect(kept.picture.rect.insetBy(dx: hair, dy: hair))
+        mask.path = path
+        if layer.mask !== mask { layer.mask = mask }
+        shown[i].part = kept.part
+    }
+
+    /// The moment a film that plays shows a while after another.
+    private func moment(_ t: Double, after seconds: Double, on board: Node) -> Double {
+        let length = board.filmLength, to = t + seconds
+        guard to > length else { return to }
+        if board.film?.once == true || store.film.pass?.to != nil { return length }
+        // Round again, after its breath at the end.
+        return min(max(to - length - FilmDesk.breath, 0), length)
+    }
+
+    /// Has the parts drawn that show larger than their pieces' pictures hold and are not covered
+    /// by what is kept: all of them in one go, away from here, and nothing more is asked for
+    /// until they have come. A film that plays asks for where it will be in the next third of a
+    /// second, every few frames.
+    private func sharpen(_ board: Node, at t: Double, now: [FilmPlacement], window: CGRect, pixels: CGFloat, playing: Bool) {
+        guard !sharpening, window.width > 0 else { return }
+        var moments = [now]
+        if playing {
+            sinceAhead += 1
+            guard sinceAhead >= 4 else { return }
+            sinceAhead = 0
+            let pieces = shown.map(\.piece)
+            for seconds in [0.15, 0.3] {
+                let then = moment(t, after: seconds, on: board), camera = board.camera(at: then)
+                moments.append(pieces.map { board.placement(of: $0, at: then, camera: camera) })
+            }
+        }
+        var jobs: [PartJob] = []
+        for i in shown.indices {
+            var all = CGRect.null, most = 0.0, short = false
+            for placements in moments {
+                let p = placements[i], r = shown[i].reach
+                let behind = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+                    .allSatisfy { p.map.depth(at: $0) <= 1e-3 }
+                guard !behind, let m = magnified(i, p, window: window, pixels: pixels) else { continue }
+                all = all.union(m.seen)
+                most = max(most, m.need)
+                if let kept = held(i), covers(kept, i, seen: m.seen, need: m.need, playing: playing) { continue }
+                short = true
+            }
+            guard short, let part = part(i, seen: all, need: most, playing: playing) else { continue }
+            // A part held back by its size to no sharper than the whole picture is not worth drawing.
+            guard part.scale > shown[i].sharp * 1.05 || !shown[i].rect.insetBy(dx: -0.01, dy: -0.01).contains(all) else { continue }
+            jobs.append(PartJob(key: shown[i].piece.key, subject: shown[i].subject, part: part))
+        }
+        guard !jobs.isEmpty else { return }
+        sharpening = true
+        let assets = store.assets, round = sharpRound
+        let work = jobs
+        Self.queue.async {
+            let jobs = work
+            let made = FilmMade()
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { i in
+                made.put(jobs[i].key, FilmPictures.picture(of: jobs[i].subject, scale: jobs[i].part.scale, assets: assets, part: jobs[i].part))
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.sharpening = false
+                    #if DEBUG
+                    self.partsMade += jobs.count
+                    #endif
+                    // Asked for before the stage was put away: of another film, or none.
+                    guard round == self.sharpRound else { return }
+                    for job in jobs {
+                        guard let picture = made.all[job.key] else { continue }
+                        self.sharper[job.key] = Sharper(subject: job.subject, part: job.part, picture: picture)
+                    }
+                    // Laid over their pieces when the canvas next draws, or with the film's next frame.
+                    self.store.canvas?.needsDisplay = true
+                }
             }
         }
     }
@@ -397,7 +660,7 @@ final class FilmStageView: NSView {
         }
         let t = store.film.head
         layFromTheTop()
-        Self.still { place(board, at: t, pixels: store.viewport.zoom * (window?.backingScaleFactor ?? 2)) }
+        Self.still { place(board, at: t, pixels: store.viewport.zoom * (window?.backingScaleFactor ?? 2), playing: true) }
         // Pieces whose insides move are drawn again as it goes, as fast as they can be.
         if changing, !making, t != drawnAt, let signature {
             prepare(board, at: t, pixels: signature.step, again: signature.version == store.version)
@@ -413,10 +676,12 @@ final class FilmStageView: NSView {
     #if DEBUG
     // For the tests, which drive the stage without a window and wait for its pictures.
 
-    /// How many pictures have been drawn since the stage was made.
+    /// How many pictures have been drawn since the stage was made, and how many parts of
+    /// pieces, sharper than their pictures.
     private(set) var picturesMade = 0
+    private(set) var partsMade = 0
     /// Whether pictures are being drawn right now, away from here.
-    var isDrawing: Bool { making }
+    var isDrawing: Bool { making || sharpening }
     /// Whether the film runs: each frame of the screen moves it on.
     var isRunning: Bool { link != nil }
     #endif

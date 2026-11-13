@@ -64,7 +64,8 @@ struct FilmStageTests {
         let content = try #require(stage.layer?.sublayers?.first)
         let gate = try #require(content.sublayers?.first)
         let scene = try #require(gate.sublayers?.first)
-        return (gate, scene, scene.sublayers ?? [])
+        // The pieces' whole pictures; a part drawn sharper over one is tried in `FilmSharpTests`.
+        return (gate, scene, (scene.sublayers ?? []).filter { $0.name != FilmStageView.partName })
     }
 
     /// A piece as the film's own arithmetic has it at a moment.
@@ -79,7 +80,7 @@ struct FilmStageTests {
         let board = try #require(store.filmBoard)
         var all: [Expected] = []
         for piece in board.filmPieces(loose: Set(store.posedLayers)) {
-            let rect = FilmPictures.rect(of: FilmPictures.subject(of: piece, on: board, at: t))
+            let rect = FilmPictures.core(of: FilmPictures.subject(of: piece, on: board, at: t))
             if rect.width > 0, rect.height > 0 { all.append(Expected(piece: piece, rect: rect, placement: FilmPlacement())) }
         }
         let camera = board.camera(at: t)
@@ -1003,8 +1004,9 @@ struct FilmStageTests {
     }
 
     @Test func aLayerWhollyOutsideTheArtboard() async throws {
-        // One that lies there still is cut off with the artboard's edge, as the design shows it:
-        // there is nothing of it to draw.
+        // One that lies there still is in the film as one that moves is: the frame, which at
+        // rest is the artboard, cuts both off, and a camera that draws back finds both. (Once it
+        // was left out, and a shadow that fell past the artboard's edge with it.)
         var comes = box("Comes", CGRect(x: -200, y: 40, width: 80, height: 60), blue)
         comes.setKey(.move, [0, 0], at: 0, ease: .linear)
         comes.setKey(.move, [260, 0], at: 1, ease: .linear)
@@ -1012,16 +1014,17 @@ struct FilmStageTests {
         let store = bench.store
         try await settle(stage)
         let built = try layers(stage)
-        #expect(try expected(store, at: 0).map(\.piece.kind) == [.ground, .layer])
-        #expect(built.pictures.count == 2)
-        // One that moves is drawn whole, to come on from out there; the frame cuts it off meanwhile.
-        #expect(built.pictures[1].bounds == CGRect(x: -202, y: 38, width: 84, height: 64))
+        #expect(try expected(store, at: 0).map(\.piece.kind) == [.ground, .run, .layer])
+        #expect(built.pictures.count == 3)
+        // Each is drawn whole, where it is; the frame cuts them off meanwhile.
+        #expect(built.pictures[1].bounds == CGRect(x: 598, y: 498, width: 84, height: 64))
+        #expect(built.pictures[2].bounds == CGRect(x: -202, y: 38, width: 84, height: 64))
         #expect(built.gate.masksToBounds)
         try check(stage, store, "away")
         store.seek(1)
         _ = stage.sync(scale: 2)
         try check(stage, store, "come")
-        #expect(shown(CGPoint(x: -200, y: 40), by: built.pictures[1]) == CGPoint(x: 60, y: 40))
+        #expect(shown(CGPoint(x: -200, y: 40), by: built.pictures[2]) == CGPoint(x: 60, y: 40))
     }
 
     @Test func aLayerBehindTheEyeIsNotShown() async throws {

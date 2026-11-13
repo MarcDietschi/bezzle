@@ -71,11 +71,12 @@ nonisolated enum FilmExport {
         guard size.width >= 1, size.height >= 1, board.frame.width > 0, board.frame.height > 0 else { return nil }
         var reel = Reel(board, size: size)
         let shot = reel.shot(at: t)
-        var stills = [Still?](repeating: nil, count: reel.pieces.count)
+        var stills = [Still?](repeating: nil, count: reel.pieces.count), parts = stills
         for fresh in shot.fresh {
-            stills[fresh.piece] = FilmPictures.picture(of: fresh.subject, scale: fresh.scale, assets: assets).map(Still.init)
+            let still = FilmPictures.picture(of: fresh.subject, scale: fresh.scale, assets: assets, part: fresh.part).map(Still.init)
+            if fresh.part != nil { parts[fresh.piece] = still } else { stills[fresh.piece] = still }
         }
-        let image = composed(stills, shot, backdrop: board.filmBackdrop, board: board.frame.size, size: size)
+        let image = composed(stills, parts, shot, backdrop: board.filmBackdrop, board: board.frame.size, size: size)
         return imaging.createCGImage(image, from: CGRect(origin: .zero, size: size), format: .RGBA8, colorSpace: sRGB)
     }
 
@@ -93,7 +94,7 @@ nonisolated enum FilmExport {
         try check(board)
         let size = size(of: board, settings: settings), fps = min(max(settings.fps, 1), fastest)
         let moments = moments(of: board, fps: fps)
-        var reel = Reel(board, size: size)
+        var reel = Reel(board, size: size, fps: fps)
         // Found out now, not once the whole film has been made into frames.
         try tryPlace(url)
         let work = workFile(for: url)
@@ -158,57 +159,142 @@ nonisolated enum FilmExport {
 
     // MARK: - What a frame is made from
 
-    /// What one frame is made from: where each piece shows, in what order, and the pieces whose
-    /// pictures have to be drawn for it first.
+    /// What one frame is made from: where each piece shows, in what order, and the pictures that
+    /// have to be drawn for it first.
     private struct Shot: Sendable {
         struct Fresh: Sendable {
             var piece: Int
             var subject: FilmPictures.Subject
             var scale: CGFloat
+            /// Only a part of the piece, as sharp as this frame and those after it show it.
+            var part: FilmPictures.Part?
         }
 
         var placements: [FilmPlacement]
         var order: [Int]
         var fresh: [Fresh]
+        /// The pieces this frame shows by the part drawn of them, not by their whole picture.
+        var parts: Set<Int>
     }
 
-    /// A film being made into frames: its pieces, and what the picture kept of each was drawn from.
+    /// A film being made into frames: its pieces, and what has been drawn of each.
+    ///
+    /// A piece is drawn once, whole, as sharp as the film shows it at its largest, and after
+    /// that only placed. Where a frame shows it larger than a whole picture can hold, the camera
+    /// close in, or shows what of it lies far outside the artboard, the part of it that the
+    /// frame shows is drawn for that frame, as sharp as the frame is: a movie has every pixel of
+    /// the design in it, however near the camera goes.
     @MainActor
     private struct Reel {
         let board: Node
         let pieces: [FilmPiece]
-        /// The frame's pixels to the artboard's point.
+        /// The frame's pixels to the artboard's point, and its pixels in all.
         private let density: CGFloat
+        private let pixels: CGFloat
+        /// The frames a second of the movie being made; one, for a single frame.
+        private let fps: Int
         /// The artboard every piece is drawn on, made once for the whole film.
         private let ground: FilmPictures.Ground
-        private var drawn: [FilmPictures.Subject?]
+        /// What each piece shows, read once, and each frame for one whose insides move; and
+        /// with it where the piece draws at all, and what of that its whole picture covers.
+        private var subjects: [FilmPictures.Subject?]
+        private var rects: [(reach: CGRect, core: CGRect)]
+        /// How sharp each whole picture is asked for, and whether it has been drawn of what
+        /// the piece shows now.
         private var scales: [CGFloat?]
+        private var whole: [Bool]
+        /// The part last drawn of each piece, of what it shows now.
+        private var parts: [FilmPictures.Part?]
 
-        init(_ board: Node, size: CGSize) {
+        init(_ board: Node, size: CGSize, fps: Int = 1) {
             self.board = board
+            self.fps = max(fps, 1)
             pieces = board.filmPieces()
             ground = FilmPictures.Ground.of(board)
             density = max(size.width / max(board.frame.width, 1), size.height / max(board.frame.height, 1))
-            drawn = Array(repeating: nil, count: pieces.count)
+            pixels = size.width * size.height
+            subjects = Array(repeating: nil, count: pieces.count)
+            rects = Array(repeating: (.zero, .zero), count: pieces.count)
             scales = Array(repeating: nil, count: pieces.count)
+            whole = Array(repeating: false, count: pieces.count)
+            parts = Array(repeating: nil, count: pieces.count)
         }
 
-        /// What the frame at a moment is made from. A piece is drawn once and its picture kept;
-        /// one whose insides move is drawn again only when they have moved since.
+        /// What the frame at a moment is made from.
         mutating func shot(at t: Double) -> Shot {
-            var fresh: [Shot.Fresh] = []
-            for (i, piece) in pieces.enumerated() where drawn[i] == nil || piece.changes {
-                let subject = FilmPictures.subject(of: piece, on: board, ground: ground, at: t)
-                guard subject != drawn[i] else { continue }
-                // Sharp at its largest in the whole film.
-                let scale = scales[i] ?? density * board.filmStretch(of: piece, around: FilmPictures.rect(of: subject))
-                scales[i] = scale
-                drawn[i] = subject
-                fresh.append(Shot.Fresh(piece: i, subject: subject, scale: scale))
-            }
             let camera = board.camera(at: t)
             let placements = pieces.map { board.placement(of: $0, at: t, camera: camera) }
-            return Shot(placements: placements, order: board.filmOrder(pieces, placements), fresh: fresh)
+            let frame = CGRect(origin: .zero, size: board.frame.size)
+            var fresh: [Shot.Fresh] = []
+            var inParts: Set<Int> = []
+            for (i, piece) in pieces.enumerated() {
+                if subjects[i] == nil || piece.changes {
+                    let now = FilmPictures.subject(of: piece, on: board, ground: ground, at: t)
+                    if now != subjects[i] {
+                        // Its insides have moved: what was drawn of it is of another moment.
+                        subjects[i] = now
+                        rects[i] = (FilmPictures.rect(of: now), FilmPictures.core(of: now))
+                        whole[i] = false
+                        parts[i] = nil
+                    }
+                }
+                guard let subject = subjects[i] else { continue }
+                let (reach, core) = rects[i]
+                guard core.width > 0, core.height > 0 else { continue }
+                // A whole picture: sharp at its largest in the whole film, as far as one may be.
+                let asked = scales[i] ?? density * board.filmStretch(of: piece, around: core)
+                scales[i] = asked
+                let sharp = min(asked, FilmPictures.most / max(core.width, core.height))
+                let p = placements[i]
+                if p.blur <= 0.05, p.opacity >= 0.001, let seen = p.map.seen(of: reach, through: frame) {
+                    let need = CGFloat(seen.stretch) * density
+                    if need > sharp * 1.02 || !core.insetBy(dx: -0.01, dy: -0.01).contains(seen.part),
+                       let part = part(i, piece, reach: reach, seen: seen.part, need: need, at: t, frame: frame) {
+                        if part != parts[i] {
+                            parts[i] = part
+                            fresh.append(Shot.Fresh(piece: i, subject: subject, scale: part.scale, part: part))
+                        }
+                        inParts.insert(i)
+                        continue
+                    }
+                }
+                if !whole[i] {
+                    whole[i] = true
+                    fresh.append(Shot.Fresh(piece: i, subject: subject, scale: asked, part: nil))
+                }
+            }
+            return Shot(placements: placements, order: board.filmOrder(pieces, placements), fresh: fresh, parts: inParts)
+        }
+
+        /// The part of a piece to show a frame by: the one kept, while it covers what the frame
+        /// shows as sharp as the frame shows it, or one to draw. A new one covers what the next
+        /// half second shows too, as far as a part may hold that as sharp as it is needed, so
+        /// that a camera on its way is not drawn for frame by frame.
+        private func part(_ i: Int, _ piece: FilmPiece, reach: CGRect, seen: CGRect, need: CGFloat, at t: Double, frame: CGRect) -> FilmPictures.Part? {
+            // Two pixels round what shows, for what the picture's edge is mixed with.
+            let around = 2 / need
+            guard let alone = FilmPictures.part(for: seen, of: reach, need: need, around: around) else { return nil }
+            if let kept = parts[i], kept.rect.insetBy(dx: -0.01, dy: -0.01).contains(seen.insetBy(dx: -around, dy: -around).intersection(reach)),
+               kept.scale >= min(need, alone.scale) * 0.999 {
+                return kept
+            }
+            guard !piece.changes else { return alone }
+            var all = seen, most = need
+            let length = board.filmLength
+            let limit = min(FilmPictures.mostInPart.pixels, pixels * 4)
+            for k in stride(from: 1, through: fps / 2, by: 1) {
+                let then = t + Double(k) / Double(fps)
+                guard then <= length + 1e-9 else { break }
+                let q = board.placement(of: piece, at: then, camera: board.camera(at: then))
+                guard q.blur <= 0.05, q.opacity >= 0.001, let next = q.map.seen(of: reach, through: frame) else { continue }
+                let grown = all.union(next.part), sharper = max(most, CGFloat(next.stretch) * density)
+                // As it would be drawn: a fifth sharper at most, by the steps parts are sharp in.
+                let drawn = sharper * 1.2
+                guard max(grown.width, grown.height) * drawn <= FilmPictures.mostInPart.side, grown.width * grown.height * drawn * drawn <= limit else { break }
+                all = grown
+                most = sharper
+            }
+            return FilmPictures.part(for: all, of: reach, need: most, around: around) ?? alone
         }
     }
 
@@ -239,7 +325,7 @@ nonisolated enum FilmExport {
 
     /// A frame of `size` pixels: the backdrop, and over it each piece where the film has it, the
     /// lowest first. `board` is the artboard's size, which is the frame's in points.
-    private static func composed(_ stills: [Still?], _ shot: Shot, backdrop: RGBA, board: CGSize, size: CGSize) -> CIImage {
+    private static func composed(_ stills: [Still?], _ parts: [Still?], _ shot: Shot, backdrop: RGBA, board: CGSize, size: CGSize) -> CIImage {
         let frame = CGRect(origin: .zero, size: size)
         // The film counts points down from the top left, Core Image pixels up from the bottom left.
         let toPixels = CGAffineTransform(a: size.width / board.width, b: 0, c: 0, d: -size.height / board.height, tx: 0, ty: size.height)
@@ -247,7 +333,9 @@ nonisolated enum FilmExport {
         let ground = CIColor(red: backdrop.r * backdrop.a, green: backdrop.g * backdrop.a, blue: backdrop.b * backdrop.a)
         var out = CIImage(color: ground).cropped(to: frame)
         for i in shot.order {
-            guard let still = stills[i], let piece = placed(still, by: shot.placements[i], toPixels: toPixels, board: board) else { continue }
+            // By the part drawn of it for this frame, where its whole picture would not do.
+            guard let still = shot.parts.contains(i) ? parts[i] : stills[i],
+                  let piece = placed(still, by: shot.placements[i], toPixels: toPixels, board: board) else { continue }
             out = piece.composited(over: out)
         }
         return out.cropped(to: frame)
@@ -336,7 +424,7 @@ nonisolated enum FilmExport {
             (h * map.g - map.d, h * map.h - map.e, h * map.i - map.f),
         ]
         for side in sides {
-            outline = cut(outline, along: side)
+            outline = FilmMap.cut(outline, along: side)
             guard outline.count >= 3 else { return nil }
         }
         // Turned so that the rows run level with the eye, the nearest row lowest.
@@ -350,22 +438,6 @@ nonisolated enum FilmExport {
         guard box.width > 1e-6, box.height > 1e-6 else { return nil }
         let back = turn.inverted()
         return bent(image.transformed(by: toBoard.concatenating(turn)).cropped(to: box)) { map($0.applying(back)).applying(toPixels) }
-    }
-
-    /// What of a polygon lies on the side of a line where `a x + b y + c` is not below nothing.
-    private static func cut(_ polygon: [CGPoint], along side: (a: Double, b: Double, c: Double)) -> [CGPoint] {
-        func over(_ p: CGPoint) -> Double { side.a * Double(p.x) + side.b * Double(p.y) + side.c }
-        var out: [CGPoint] = []
-        for (k, p) in polygon.enumerated() {
-            let q = polygon[(k + 1) % polygon.count]
-            let dp = over(p), dq = over(q)
-            if dp >= 0 { out.append(p) }
-            if (dp >= 0) != (dq >= 0) {
-                let t = dp / (dp - dq)
-                out.append(CGPoint(x: Double(p.x) + Double(q.x - p.x) * t, y: Double(p.y) + Double(q.y - p.y) * t))
-            }
-        }
-        return out
     }
 
     // MARK: - The file
@@ -410,6 +482,8 @@ nonisolated enum FilmExport {
         private let fps: Int
         private let assets: Assets?
         private var stills: [Still?]
+        /// The parts of pieces drawn sharper than their whole pictures, each the last drawn of its piece.
+        private var parts: [Still?]
 
         init(url: URL, size: CGSize, board: Node, pieces: Int, fps: Int, assets: Assets?) throws {
             let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -436,6 +510,7 @@ nonisolated enum FilmExport {
             self.fps = fps
             self.assets = assets
             stills = Array(repeating: nil, count: pieces)
+            parts = Array(repeating: nil, count: pieces)
         }
 
         private var failure: Error { writer.error ?? CocoaError(.fileWriteUnknown) }
@@ -458,7 +533,7 @@ nonisolated enum FilmExport {
             var made: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
             guard let buffer = made else { throw failure }
-            let image = FilmExport.composed(stills, shot, backdrop: backdrop, board: board, size: size)
+            let image = FilmExport.composed(stills, parts, shot, backdrop: backdrop, board: board, size: size)
             let destination = CIRenderDestination(pixelBuffer: buffer)
             destination.colorSpace = FilmExport.sRGB
             try FilmExport.imaging.startTask(toRender: image, from: CGRect(origin: .zero, size: size), to: destination, at: .zero).waitUntilCompleted()
@@ -472,16 +547,19 @@ nonisolated enum FilmExport {
         /// Draws the pieces a frame needs afresh, side by side when there are several, as at the
         /// film's start.
         private func draw(_ fresh: [Shot.Fresh]) async {
+            func keep(_ item: Shot.Fresh, _ picture: FilmPictures.Picture?) {
+                if item.part != nil { parts[item.piece] = picture.map(Still.init) } else { stills[item.piece] = picture.map(Still.init) }
+            }
             guard fresh.count > 1 else {
-                for item in fresh { stills[item.piece] = FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets).map(Still.init) }
+                for item in fresh { keep(item, FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets, part: item.part)) }
                 return
             }
             let assets = assets
             await withTaskGroup(of: (Int, FilmPictures.Picture?).self) { group in
-                for item in fresh {
-                    group.addTask { (item.piece, FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets)) }
+                for (k, item) in fresh.enumerated() {
+                    group.addTask { (k, FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets, part: item.part)) }
                 }
-                for await (piece, picture) in group { stills[piece] = picture.map(Still.init) }
+                for await (k, picture) in group { keep(fresh[k], picture) }
             }
         }
 
