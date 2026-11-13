@@ -22,7 +22,9 @@ final class MotionTool {
     }
 
     func modeChanged(_ on: Bool) {
-        drag = .none
+        // Whatever was in hand as the mode changed is put back: half a pose is no pose, and a
+        // gesture left open would keep every later change out of the history.
+        cancel()
         hot = .none
         redraw()
     }
@@ -102,6 +104,8 @@ final class MotionTool {
     }
 
     private var hot: Hot = .none
+    /// What the press took hold of: the pointer goes on saying so for as long as the drag does.
+    private var held: Hot = .none
 
     private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
 
@@ -122,14 +126,25 @@ final class MotionTool {
         guard q.count == 4 else { return nil }
         let mids = (0..<4).map { i in CGPoint(x: (q[i].x + q[(i + 1) % 4].x) / 2, y: (q[i].y + q[(i + 1) % 4].y) / 2) }
         let lengths = (0..<4).map { Self.distance(q[$0], q[($0 + 1) % 4]) }
+        // Something with no size at all has nothing to grow or turn: it is only moved.
+        guard Self.hasSize(lengths) else { return nil }
         for i in 0..<4 where Self.distance(v, q[i]) <= 7 { return .corner(i) }
         if sides {
-            for i in 0..<4 where lengths[i] >= 30 && Self.distance(v, mids[i]) <= 6 { return .side(i) }
+            for i in 0..<4 where Self.carriesHandle(i, lengths) && Self.distance(v, mids[i]) <= 6 { return .side(i) }
         }
         guard !Self.inside(v, q) else { return nil }
         for i in 0..<4 where Self.distance(v, q[i]) <= 22 { return .turn(i) }
         for i in 0..<4 where lengths[i] >= 30 && Self.distance(v, mids[i]) <= 20 { return .depth(i) }
         return nil
+    }
+
+    private static func hasSize(_ lengths: [CGFloat]) -> Bool { lengths.contains { $0 >= 1 } }
+
+    /// Whether a side carries a handle in its middle: long enough for one, and far enough from
+    /// the side across that the two do not lie on each other. On a line or a hairline they would,
+    /// right where it is taken hold of to be moved, and pulled there it would not stir.
+    private static func carriesHandle(_ i: Int, _ lengths: [CGFloat]) -> Bool {
+        lengths[i] >= 30 && lengths[(i + 1) % 4] >= 16
     }
 
     /// The one layer whose handles show: the only one picked.
@@ -142,10 +157,17 @@ final class MotionTool {
         CGRect(x: scene.rect.maxX - 22, y: scene.rect.minY - 21, width: 22, height: 18)
     }
 
+    /// Whether the small camera shows at all: not over an artboard seen too small to carry it.
+    private func chipShows(_ scene: Scene) -> Bool { scene.rect.width >= 60 }
+
     /// The layers under a view point, the topmost first, each with what holds it after it.
     private func chain(at v: CGPoint, in scene: Scene) -> [Node] {
         guard scene.rect.contains(v) else { return [] }
-        return scene.board.filmChain(at: scene.toFrame(v), time: scene.time, pieces: scene.pieces, tolerance: 3 / scene.zoom)
+        // Within three points of the screen, however close the view is, or the camera: looked for
+        // in the artboard's own points, a camera eight times closer would else find a layer from
+        // twenty-four points off, and the bare sheet beside it could not be pressed.
+        let tolerance = 3 / (scene.zoom * CGFloat(max(scene.camera.zoom, 0.01)))
+        return scene.board.filmChain(at: scene.toFrame(v), time: scene.time, pieces: scene.pieces, tolerance: tolerance)
     }
 
     /// What a click on a chain of layers picks: the one lying on the artboard itself, unless the
@@ -166,14 +188,28 @@ final class MotionTool {
 
     private func find(_ v: CGPoint) -> Hot {
         guard let scene, !store.film.playing else { return .none }
-        if chipRect(scene).insetBy(dx: -3, dy: -3).contains(v) { return .cameraChip }
+        if chipShows(scene), chipRect(scene).insetBy(dx: -3, dy: -3).contains(v) { return .cameraChip }
         if store.film.camera {
             if let g = grip(at: v, on: scene.sheet, sides: false) { return .grip(g) }
             return scene.rect.contains(v) ? .look : .none
         }
         if let id = handled(scene), let q = scene.corners(of: id) {
-            if let g = grip(at: v, on: q, sides: true) { return .grip(g) }
-            for (i, bead) in beads(of: id, in: scene).enumerated() where Self.distance(v, bead.at) <= 7 { return .bead(i) }
+            // What shows is taken hold of first: the handles, then the beads of its way.
+            let g = grip(at: v, on: q, sides: true)
+            if let g {
+                switch g {
+                case .corner, .side: return .grip(g)
+                case .turn, .depth: break
+                }
+            }
+            // A bead the layer lies on is not taken hold of: there the layer itself is, to be posed
+            // at the playhead. Else a layer resting where a key left it could never be dragged on
+            // by its middle, its last key going with it instead and the playhead back to that key.
+            let here = Self.middle(q)
+            for (i, bead) in beads(of: id, in: scene).enumerated() where Self.distance(v, bead.at) <= 7 && Self.distance(bead.at, here) > 1 { return .bead(i) }
+            // The reach for turning and tipping begins beside the layer, not on it: a line is found
+            // from a little off it, and would else be all reach, with nowhere to move it by.
+            if let g, !chain(at: v, in: scene).contains(where: { $0.id == id }) { return .grip(g) }
         }
         if let id = pick(chain(at: v, in: scene), in: scene, deep: false) { return .layer(id) }
         return .none
@@ -190,7 +226,7 @@ final class MotionTool {
 
     func cursor(at v: CGPoint) -> NSCursor {
         guard let scene else { return .arrow }
-        let found: Hot = { if case .none = drag { return find(v) } else { return hot } }()
+        let found = dragging ? held : find(v)
         switch found {
         case .grip(let g):
             let q = store.film.camera ? scene.sheet : handled(scene).flatMap { scene.corners(of: $0) } ?? []
@@ -219,13 +255,15 @@ final class MotionTool {
         /// Pressed on a layer; a move once the pointer has gone a little way.
         case move(start: CGPoint, from: [UUID: (move: CGPoint, lift: Double)], started: Bool)
         case scale(id: UUID, center: CGPoint, start: CGPoint, from: CGPoint, side: Int?)
-        case turn(id: UUID, center: CGPoint, start: CGPoint, from: Double)
+        /// Turning: `last` is where the pointer was a moment ago and `round` how far it has gone
+        /// round since the press, added up move by move.
+        case turn(id: UUID, center: CGPoint, last: CGPoint, round: Double, from: Double)
         case depth(id: UUID, side: Int, start: CGPoint, tilt: Double, swing: Double)
         case bead(id: UUID, key: Int, start: CGPoint, from: CGPoint, lift: Double)
         /// The camera looking elsewhere: the point of the artboard under the pointer stays under it.
         case look(start: CGPoint, camera: FilmCamera, started: Bool, under: UUID?)
         case zoom(center: CGPoint, start: CGPoint, from: Double)
-        case roll(center: CGPoint, start: CGPoint, from: Double)
+        case roll(center: CGPoint, last: CGPoint, round: Double, from: Double)
         case tip(side: Int, start: CGPoint, tilt: Double, swing: Double)
         case marquee(start: CGPoint, now: CGPoint, base: [UUID])
     }
@@ -259,10 +297,17 @@ final class MotionTool {
             return
         }
         guard let scene else {
-            store.selection = []
+            // No film is on the desk, its artboard gone or hidden: a press on an artboard brings
+            // that one's, and a press anywhere one that is there to be worked on.
+            let p = store.viewport.toCanvas(v)
+            let under = store.seenDoc.artboards.last { !$0.hidden && $0.frame.contains(p) }
+            store.selection = under.map { [$0.id] } ?? []
+            store.focusFilm()
+            redraw()
             return
         }
-        switch find(v) {
+        held = find(v)
+        switch held {
         case .cameraChip:
             if store.film.camera { store.film.camera = false } else { store.pickCamera() }
         case .grip(let g):
@@ -271,7 +316,7 @@ final class MotionTool {
                 begin([scene.board.id], scene)
                 switch g {
                 case .corner, .side: drag = .zoom(center: center, start: v, from: scene.camera.zoom)
-                case .turn: drag = .roll(center: center, start: v, from: scene.camera.roll)
+                case .turn: drag = .roll(center: center, last: v, round: 0, from: scene.camera.roll)
                 case .depth(let i): drag = .tip(side: i, start: v, tilt: scene.camera.tilt, swing: scene.camera.swing)
                 }
             } else if let id = handled(scene), let q = scene.corners(of: id), let node = scene.board.descendant(id) {
@@ -281,7 +326,7 @@ final class MotionTool {
                 switch g {
                 case .corner: drag = .scale(id: id, center: center, start: v, from: pose.scale, side: nil)
                 case .side(let i): drag = .scale(id: id, center: center, start: v, from: pose.scale, side: i)
-                case .turn: drag = .turn(id: id, center: center, start: v, from: pose.turn)
+                case .turn: drag = .turn(id: id, center: center, last: v, round: 0, from: pose.turn)
                 case .depth(let i): drag = .depth(id: id, side: i, start: v, tilt: pose.tilt, swing: pose.swing)
                 }
             }
@@ -348,12 +393,22 @@ final class MotionTool {
         Double(atan2(p.y - c.y, p.x - c.x)) * 180 / .pi
     }
 
-    /// How far round `p` has gone about `c` since `start`, the short way.
+    /// How far round `p` has gone about `c` since `start`, the short way: for the little the
+    /// pointer goes between one move and the next.
     private static func turned(_ p: CGPoint, from start: CGPoint, about c: CGPoint) -> Double {
         var d = degrees(p, about: c) - degrees(start, about: c)
         while d > 180 { d -= 360 }
         while d < -180 { d += 360 }
         return d
+    }
+
+    /// A turn as it is kept: with Shift in steps of 15 degrees, else to the whole degree and
+    /// held straight when it comes near straight, after however many rounds; free, as it is.
+    private static func settled(_ degrees: Double, steps: Bool, free: Bool) -> Double {
+        if steps { return (degrees / 15).rounded() * 15 }
+        if free { return degrees }
+        let whole = degrees.rounded(), straight = (whole / 360).rounded() * 360
+        return abs(whole - straight) <= 2 ? straight : whole
     }
 
     func drag(to v: CGPoint, flags: NSEvent.ModifierFlags) {
@@ -406,9 +461,13 @@ final class MotionTool {
                 y = Self.caught(y, at: 1, within: 0.03)
             }
             store.pose(.scale, of: [id]) { _ in [(x * 100).rounded() / 100, (y * 100).rounded() / 100] }
-        case .turn(let id, let center, let start, let from):
-            var degrees = from + Self.turned(v, from: start, about: center)
-            if shift { degrees = (degrees / 15).rounded() * 15 } else if !free { degrees = Self.caught(degrees.rounded(), at: 0, within: 2) }
+        case .turn(let id, let center, let last, var round, let from):
+            // Round with the pointer, the way it goes: what it turns between one move and the next
+            // is added up, so a turn past half a round is that turn, and not the short way back.
+            // In a film the two are not the same motion.
+            round += Self.turned(v, from: last, about: center)
+            drag = .turn(id: id, center: center, last: v, round: round, from: from)
+            let degrees = Self.settled(from + round, steps: shift, free: free)
             store.pose(.turn, of: [id]) { _ in [degrees] }
         case .depth(let id, let side, let start, let tilt, let swing):
             let (property, value) = Self.tipped(side: side, from: start, to: v, tilt: tilt, swing: swing, steps: shift, free: free)
@@ -458,10 +517,10 @@ final class MotionTool {
             var zoom = from * Double(Self.distance(v, center) / max(Self.distance(start, center), 1))
             if !free { zoom = Self.caught(zoom, at: 1, within: 0.03) }
             store.poseCamera(.cameraZoom, [(zoom * 100).rounded() / 100])
-        case .roll(let center, let start, let from):
-            var degrees = from + Self.turned(v, from: start, about: center)
-            if shift { degrees = (degrees / 15).rounded() * 15 } else if !free { degrees = Self.caught(degrees.rounded(), at: 0, within: 2) }
-            store.poseCamera(.cameraRoll, [degrees])
+        case .roll(let center, let last, var round, let from):
+            round += Self.turned(v, from: last, about: center)
+            drag = .roll(center: center, last: v, round: round, from: from)
+            store.poseCamera(.cameraRoll, [Self.settled(from + round, steps: shift, free: free)])
         case .tip(let side, let start, let tilt, let swing):
             let (property, value) = Self.tipped(side: side, from: start, to: v, tilt: tilt, swing: swing, steps: shift, free: free)
             store.poseCamera(property == .tilt ? .cameraTilt : .cameraSwing, [value])
@@ -526,6 +585,20 @@ final class MotionTool {
     private func finish(_ action: LocalizedStringResource) {
         let before = tracksBefore
         tracksBefore = [:]
+        // Let go where the design has it, something that had no keys is given none: keys that all
+        // say "as designed" are no motion, only a row in the timeline and a step to undo.
+        if store.inGesture {
+            store.edit(action) { doc in
+                for (id, had) in before {
+                    doc.update(id) { n in
+                        for p in n.motionProperties where !had.contains(p) {
+                            guard let track = n[track: p], track.keys.allSatisfy({ MotionTiming.alike($0.v, p.rest) }) else { continue }
+                            n[track: p] = nil
+                        }
+                    }
+                }
+            }
+        }
         store.endGesture(action)
         guard let board = store.filmBoard else { return }
         let t = store.filmTime
@@ -542,9 +615,12 @@ final class MotionTool {
 
     @discardableResult
     func cancel() -> Bool {
-        guard dragging else { return false }
+        guard dragging || !fingers.isEmpty else { return false }
         if store.inGesture { store.cancelGesture() }
         drag = .none
+        // What is left of two fingers put back does nothing more.
+        spent.formUnion(fingers)
+        fingers = []
         tracksBefore = [:]
         redraw()
         return true
@@ -552,41 +628,64 @@ final class MotionTool {
 
     // MARK: Two fingers on the camera
 
-    /// Whether a pinch or a turn of two fingers at a view point is the camera's: with the camera
-    /// picked and the pointer on its film.
-    func takesGesture(at v: CGPoint) -> Bool {
-        guard store.film.camera, !store.film.playing, let scene else { return false }
+    /// The two ways two fingers move the camera.
+    private enum Fingers { case pinch, twist }
+    /// Those going on now, as the camera's. Both can at once, and are one step together.
+    private var fingers: Set<Fingers> = []
+    /// Those put back while they went on, whose every further move is swallowed until they end.
+    private var spent: Set<Fingers> = []
+
+    /// Whether two fingers put down at a view point are the camera's: with the camera picked,
+    /// nothing else in hand, and the pointer on its film.
+    private func cameraIsUnder(_ v: CGPoint) -> Bool {
+        guard store.film.camera, !store.film.playing, !dragging, let scene else { return false }
         return scene.rect.contains(v)
     }
 
-    /// A pinch: the camera comes closer or draws back.
-    func magnify(_ event: NSEvent) {
-        guard let scene else { return }
-        gesture(event, scene, MotionProperty.cameraZoom.action) {
+    /// A pinch: the camera comes closer or draws back. False where the pinch is the view's.
+    func magnify(_ event: NSEvent, at v: CGPoint) -> Bool {
+        gesture(.pinch, event, at: v, MotionProperty.cameraZoom.action) { scene in
             store.poseCamera(.cameraZoom, [scene.camera.zoom * (1 + Double(event.magnification))])
         }
     }
 
-    /// Two fingers turned: the camera rolls with them.
-    func rotate(_ event: NSEvent) {
-        guard let scene else { return }
-        gesture(event, scene, MotionProperty.cameraRoll.action) {
+    /// Two fingers turned: the camera rolls with them. False where they are not the camera's.
+    func rotate(_ event: NSEvent, at v: CGPoint) -> Bool {
+        gesture(.twist, event, at: v, MotionProperty.cameraRoll.action) { scene in
             store.poseCamera(.cameraRoll, [scene.camera.roll - Double(event.rotation)])
         }
     }
 
-    private var gesturing = false
-
-    private func gesture(_ event: NSEvent, _ scene: Scene, _ action: LocalizedStringResource, _ change: () -> Void) {
-        if event.phase.contains(.began), !gesturing {
-            gesturing = true
+    /// Two fingers are the camera's or the view's as they are put down, and stay so until they
+    /// are lifted: from first to last they pose the camera as one step. Told of them only after
+    /// they began, as when a motion was still being shown then, the camera leaves them alone.
+    private func gesture(_ kind: Fingers, _ event: NSEvent, at v: CGPoint, _ action: LocalizedStringResource, _ change: (Scene) -> Void) -> Bool {
+        let phase = event.phase
+        let begins = phase.contains(.began), ends = phase.contains(.ended) || phase.contains(.cancelled)
+        if spent.contains(kind) {
+            if begins || ends || phase.isEmpty { spent.remove(kind) }
+            if !begins && !phase.isEmpty { return true }
+        }
+        if phase.isEmpty {
+            // From something that does not say where its gestures begin and end, each is a step.
+            guard fingers.isEmpty, cameraIsUnder(v), let scene else { return false }
             begin([scene.board.id], scene)
-        }
-        change()
-        if event.phase.contains(.ended) || event.phase.contains(.cancelled), gesturing {
-            gesturing = false
+            change(scene)
             finish(action)
+            return true
         }
+        if begins, !fingers.contains(kind) {
+            guard cameraIsUnder(v), let scene else { return false }
+            if fingers.isEmpty { begin([scene.board.id], scene) }
+            fingers.insert(kind)
+        }
+        guard fingers.contains(kind) else { return false }
+        if let scene { change(scene) }
+        if ends {
+            fingers.remove(kind)
+            if fingers.isEmpty { finish(action) }
+        }
+        return true
     }
 
     // MARK: Keys
@@ -629,13 +728,16 @@ final class MotionTool {
                     return [was[0] + dx * step, was[1] + dy * step]
                 }
             } else if dx != 0 {
-                store.seek(store.filmTime + dx * (shift ? 10.0 / 60 : 1.0 / 60))
+                stepFrames(Int(dx) * (shift ? 10 : 1))
             }
         default:
-            guard flags.subtracting(.shift).isEmpty, let chars = event.charactersIgnoringModifiers?.lowercased() else { return false }
+            guard flags.subtracting(.shift).isEmpty, var chars = event.charactersIgnoringModifiers?.lowercased() else { return false }
+            // With Shift the comma and the full stop type something else, and what, each keyboard
+            // decides for itself: it is the key that counts, as it is without Shift.
+            if shift, let plain = event.characters(byApplyingModifiers: []), plain == "," || plain == "." { chars = plain }
             switch chars {
-            case ",": store.seek(store.filmTime - (shift ? 10.0 / 60 : 1.0 / 60))
-            case ".": store.seek(store.filmTime + (shift ? 10.0 / 60 : 1.0 / 60))
+            case ",": stepFrames(shift ? -10 : -1)
+            case ".": stepFrames(shift ? 10 : 1)
             case "k": store.holdHere()
             default:
                 // The drawing tools' letters do nothing here; anything else goes on as it would.
@@ -643,6 +745,15 @@ final class MotionTool {
             }
         }
         return true
+    }
+
+    /// Steps the playhead by frames of a sixtieth of a second, onto the frames themselves: a
+    /// moment is kept to the thousandth, so a sixtieth added to it each time would drift, and
+    /// sixty steps come out longer than a second.
+    private func stepFrames(_ count: Int) {
+        let frames = store.filmTime * 60
+        let from = count > 0 ? (frames + 0.05).rounded(.down) : (frames - 0.05).rounded(.up)
+        store.seek((from + Double(count)) / 60)
     }
 
     // MARK: Right click
@@ -757,10 +868,10 @@ final class MotionTool {
             let moving: Bool = { if case .move(_, _, true) = drag { return true } else { return false } }()
             if !moving {
                 let lengths = (0..<4).map { Self.distance(q[$0], q[($0 + 1) % 4]) }
-                for i in 0..<4 where lengths[i] >= 30 {
+                for i in 0..<4 where Self.carriesHandle(i, lengths) {
                     drawHandle(CGPoint(x: (q[i].x + q[(i + 1) % 4].x) / 2, y: (q[i].y + q[(i + 1) % 4].y) / 2), in: ctx, scale: scale)
                 }
-                for p in q { drawHandle(p, in: ctx, scale: scale) }
+                if Self.hasSize(lengths) { for p in q { drawHandle(p, in: ctx, scale: scale) } }
             }
         }
         if case .marquee(let start, let now, _) = drag {
@@ -861,7 +972,7 @@ final class MotionTool {
 
     /// The small camera over the artboard's top right corner: a click takes the camera in hand.
     private func drawChip(_ ctx: CGContext, _ scene: Scene) {
-        guard scene.rect.width >= 60 else { return }
+        guard chipShows(scene) else { return }
         let r = chipRect(scene)
         let on = store.film.camera
         let color = on ? CanvasInk.labelSelected : hot == .cameraChip ? CanvasInk.labelSelected.withAlphaComponent(0.8) : CanvasInk.label

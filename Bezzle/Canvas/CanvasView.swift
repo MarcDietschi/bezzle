@@ -2064,21 +2064,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func magnify(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
         // With the camera in hand, a pinch on its film brings it closer.
-        if store.animating, motionTool.takesGesture(at: v) {
-            motionTool.magnify(event)
-            return
-        }
+        if store.animating, motionTool.magnify(event, at: v) { return }
         store.viewport.zoom(to: store.viewport.zoom * (1 + event.magnification), keeping: v)
     }
 
     /// Two fingers turned on the film roll the camera, while it is in hand.
     override func rotate(with event: NSEvent) {
         let v = convert(event.locationInWindow, from: nil)
-        if store.animating, motionTool.takesGesture(at: v) {
-            motionTool.rotate(event)
-        } else {
-            super.rotate(with: event)
-        }
+        if store.animating, motionTool.rotate(event, at: v) { return }
+        super.rotate(with: event)
     }
 
     /// A double tap with two fingers: in to actual size where the pointer is, or back out to everything.
@@ -2101,6 +2095,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             default: if store.versions.travel != nil { return }
             }
         }
+        // Animated, a key is the film's before any tool of the design has it: Return plays, where
+        // on a picture, a mask or a path it would open them.
+        if store.animating, motionTool.key(event) { return }
         // A picture first: Return on one places it, where on a path it would open the points.
         if pictureTool.key(event) { return }
         // Return on a mask picks what it holds.
@@ -2120,7 +2117,6 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if event.keyCode == 53, developTool.cancel() { return }
         if event.keyCode == 53, deckTool.cancel() { return }
         if pathTool.key(event) { return }
-        if store.animating, motionTool.key(event) { return }
         if store.inspecting, inspectTool.key(event) { return }
         if store.prototyping, prototypeKey(event) { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
