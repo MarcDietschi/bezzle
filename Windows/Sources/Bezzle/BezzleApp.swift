@@ -516,6 +516,9 @@ final class BezzleApp: SwiftApplication {
         host.focusedBoard = { view?.session.board }
         host.endEditing = { view?.canvas.finishTyping() }
         host.broughtIn = { report in view?.showImportReport(report) }
+        host.film = { view?.session.film }
+        host.mode = { view?.session.mode ?? 0 }
+        host.setMode = { mode in view?.session.mode = mode }
         MCPServer.shared.failed = { why in Trace.say("AI server: \(why)") }
         if AIControl.allowed { MCPServer.shared.start() }
         Trace.time("AI server at \(MCPServer.shared.address)")

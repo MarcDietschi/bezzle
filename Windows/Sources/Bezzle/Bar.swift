@@ -31,6 +31,7 @@ final class Bar {
     var onPlay: (() -> Void)?
     private let action = Border()
     private var actionMode = -1
+    private var actionPlaying = false
     /// Bezzle's own menus, and what the zoom menu holds.
     var menus: MenuHost?
     var zoomEntries: (() -> [MenuHost.Entry])?
@@ -70,12 +71,17 @@ final class Bar {
         root.children.append(right)
 
         session.listen { [weak self] in self?.show() }
+        // Animated, the button plays the film or stops it, and says which.
+        session.listenToFilm { [weak self] in
+            guard let self, self.session.mode == 3, self.actionPlaying != self.session.film.playing else { return }
+            self.paintAction()
+        }
         show()
     }
 
     private func show() {
         zoomLabel.text = "\(Int((session.zoom * 100).rounded()))%"
-        if actionMode != session.mode { paintAction() }
+        if actionMode != session.mode || (session.mode == 3 && actionPlaying != session.film.playing) { paintAction() }
         paintModes()
     }
 
@@ -88,7 +94,7 @@ final class Bar {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if self.session.mode == 1 { self.onPlay?() } else { self.onExport?() }
+                    if self.session.mode == 3 { self.session.film.toggle() } else if self.session.mode == 1 { self.onPlay?() } else { self.onExport?() }
                 }
             }
         }
@@ -98,7 +104,9 @@ final class Bar {
 
     private func paintAction() {
         actionMode = session.mode
-        let play = session.mode == 1
+        actionPlaying = session.film.playing
+        let play = session.mode == 1 || session.mode == 3
+        let running = session.mode == 3 && session.film.playing
         action.background = Theme.brush(play ? Theme.pencil : Theme.card)
         action.borderBrush = play ? Theme.clear : Theme.hairline
         action.borderThickness = Theme.inset(play ? 0 : 0.5)
@@ -107,12 +115,13 @@ final class Bar {
         row.spacing = 6
         row.margin = Theme.inset(play ? 11 : 14, 0, play ? 13 : 14, 0)
         row.verticalAlignment = .center
-        if play { row.children.append(Glyphs.view(Glyphs.play(size: 12), size: 12, brush: Theme.brush(Theme.onInk))) }
-        let title = Theme.text(Words.t(play ? "Play" : "Export…"), size: play ? 12.5 : 12, weight: play ? 600 : 500)
+        if play { row.children.append(Glyphs.view(running ? Glyphs.pause(size: 12) : Glyphs.play(size: 12), size: 12, brush: Theme.brush(Theme.onInk))) }
+        let title = Theme.text(Words.t(running ? "Pause" : play ? "Play" : "Export…"), size: play ? 12.5 : 12, weight: play ? 600 : 500)
         if play { title.foreground = Theme.brush(Theme.onInk) }
         row.children.append(title)
         action.child = row
-        try? ToolTipService.setToolTip(action, Words.t(play ? "Play the prototype from where it starts, or from the picked screen  Ctrl+Enter" : "Export  Ctrl+E"))
+        let tip = session.mode == 3 ? "Play the film, or stop it  Space" : play ? "Play the prototype from where it starts, or from the picked screen  Ctrl+Enter" : "Export  Ctrl+E"
+        try? ToolTipService.setToolTip(action, Words.t(tip))
     }
 
     /// Chooses another folder for designs (the app's).
@@ -238,8 +247,8 @@ final class Bar {
         return card
     }
 
-    /// Design | Prototype | Inspect: segments 24 tall in a well of radius 9, the one on a card of
-    /// radius 7.
+    /// Design | Prototype | Inspect | Animate: segments 24 tall in a well of radius 9, the one on a
+    /// card of radius 7.
     private func modeSwitch() -> UIElement {
         let well = Theme.well(radius: 9)
         well.height = 30
@@ -247,7 +256,7 @@ final class Bar {
         row.orientation = .horizontal
         row.spacing = 2
         row.margin = Theme.inset(3)
-        for (k, title) in ["Design", "Prototype", "Inspect"].map(Words.t).enumerated() {
+        for (k, title) in ["Design", "Prototype", "Inspect", "Animate"].map(Words.t).enumerated() {
             let segment = Border()
             segment.height = 24
             segment.cornerRadius = Theme.corners(7)

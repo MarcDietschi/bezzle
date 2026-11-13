@@ -54,6 +54,50 @@ enum FileDialogs {
         return URL(fileURLWithPath: String(decodingCString: name, as: UTF16.self))
     }
 
+    /// Where to save a file, asked in Windows' own Save dialog (IFileSaveDialog), as the Mac's
+    /// NSSavePanel: `name` to begin with, of the kind `filter` names (a name, and its extension
+    /// without the dot), which a name typed without it is given. Nil when it is cancelled.
+    static func chooseSaveFile(title: String, name: String, filter: (name: String, ext: String), startingIn folder: URL? = nil) -> URL? {
+        var clsid = CLSID_FileSaveDialog
+        var iid = IID_IFileSaveDialog
+        var raw: UnsafeMutableRawPointer?
+        guard CoCreateInstance(&clsid, nil, DWORD(CLSCTX_INPROC_SERVER.rawValue), &iid, &raw) >= 0, let raw else { return nil }
+        let dialog = raw.assumingMemoryBound(to: IFileSaveDialog.self)
+        let calls = dialog.pointee.lpVtbl.pointee
+        defer { _ = calls.Release(dialog) }
+        var options: FILEOPENDIALOGOPTIONS = 0
+        _ = calls.GetOptions(dialog, &options)
+        _ = calls.SetOptions(dialog, options | FILEOPENDIALOGOPTIONS(FOS_FORCEFILESYSTEM.rawValue) | FILEOPENDIALOGOPTIONS(FOS_OVERWRITEPROMPT.rawValue))
+        _ = title.withCString(encodedAs: UTF16.self) { calls.SetTitle(dialog, $0) }
+        _ = name.withCString(encodedAs: UTF16.self) { calls.SetFileName(dialog, $0) }
+        _ = filter.ext.withCString(encodedAs: UTF16.self) { calls.SetDefaultExtension(dialog, $0) }
+        let kind = Array(filter.name.utf16) + [0], pattern = Array("*.\(filter.ext)".utf16) + [0]
+        kind.withUnsafeBufferPointer { k in
+            pattern.withUnsafeBufferPointer { p in
+                var spec = COMDLG_FILTERSPEC(pszName: k.baseAddress, pszSpec: p.baseAddress)
+                _ = calls.SetFileTypes(dialog, 1, &spec)
+            }
+        }
+        if let folder {
+            var item: UnsafeMutableRawPointer?
+            var shellItem = IID_IShellItem
+            let made = folder.path.withCString(encodedAs: UTF16.self) { SHCreateItemFromParsingName($0, nil, &shellItem, &item) }
+            if made >= 0, let item {
+                let shell = item.assumingMemoryBound(to: IShellItem.self)
+                _ = calls.SetFolder(dialog, shell)
+                _ = shell.pointee.lpVtbl.pointee.Release(shell)
+            }
+        }
+        guard calls.Show(dialog, GetActiveWindow()) >= 0 else { return nil }
+        var result: UnsafeMutablePointer<IShellItem>?
+        guard calls.GetResult(dialog, &result) >= 0, let result else { return nil }
+        defer { _ = result.pointee.lpVtbl.pointee.Release(result) }
+        var path: PWSTR?
+        guard result.pointee.lpVtbl.pointee.GetDisplayName(result, SIGDN_FILESYSPATH, &path) >= 0, let path else { return nil }
+        defer { CoTaskMemFree(path) }
+        return URL(fileURLWithPath: String(decodingCString: path, as: UTF16.self))
+    }
+
     /// Files chosen in Windows' own dialog: of the kinds `filters` names (a name and patterns such
     /// as "*.png;*.jpg"), one or, with `several`, as many as are picked.
     static func chooseFiles(title: String, button: String, filters: [(name: String, patterns: String)], several: Bool) -> [URL] {

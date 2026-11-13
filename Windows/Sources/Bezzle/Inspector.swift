@@ -122,6 +122,11 @@ final class Inspector {
         }
         root.children.append(scroll)
         session.listen { [weak self] in self?.changed() }
+        // Animated, the cards follow the playhead and what of the film is picked.
+        session.listenToFilm { [weak self] in
+            guard let self, self.session.mode == 3, !self.dialing else { return }
+            self.show()
+        }
         show()
     }
 
@@ -189,6 +194,8 @@ final class Inspector {
             cardLit = false
             session.litLayers = []
         }
+        // Animated: the film, and what is picked posed in it.
+        if session.mode == 3 { showAnimate(); return }
         // Inspecting: the specs of what is picked, read and copied, never changed.
         if session.mode == 2 { showInspect(); return }
         // As a prototype: where what is picked goes.
@@ -834,8 +841,11 @@ final class Inspector {
     /// value, `scrub` a point of travel, in pencil, Shift in whole tens; a click types, and Enter
     /// or leaving sets what was typed, Esc puts it back; the arrow keys step it, Shift by ten.
     func field(_ label: String, _ value: Double?, unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
-               scrub: Double = 1, width: Double = Inspector.column, each: ((Double) -> Void)? = nil,
+               scrub: Double = 1, width: Double = Inspector.column, decimals: Int? = nil, each: ((Double) -> Void)? = nil,
                set: @escaping (Double) -> Void) -> FrameworkElement {
+        // With `decimals`, its number is shown and scrubbed to that many places, as the Mac's
+        // NumberField; without, to one place shown and whole numbers scrubbed.
+        let number: (Double) -> String = { v in decimals.map { Inspector.number(v, places: $0) } ?? self.number(v) }
         let well = Theme.well(radius: 7)
         well.width = width
         well.height = 28
@@ -921,7 +931,7 @@ final class Inspector {
                 return
             }
             let now = Double(box.text.replacingOccurrences(of: ",", with: ".")) ?? value ?? 0
-            let v = clamp(now + by)
+            let v = clamp(now + by * (decimals.map { $0 >= 2 ? 0.1 : 1 } ?? 1))
             box.text = number(v)
             done = true
             set(v)
@@ -982,9 +992,14 @@ final class Inspector {
                 look(true)
             }
             var v = s.value + dx * scrub
-            v = GetKeyState(Int32(VK_SHIFT)) < 0 ? (v / 10).rounded() * 10 : v.rounded()
+            if let decimals {
+                let step = pow(10, -Double(decimals))
+                v = GetKeyState(Int32(VK_SHIFT)) < 0 ? (v / (step * 10)).rounded() * step * 10 : (v / step).rounded() * step
+            } else {
+                v = GetKeyState(Int32(VK_SHIFT)) < 0 ? (v / 10).rounded() * 10 : v.rounded()
+            }
             v = clamp(v)
-            box.text = self.number(v)
+            box.text = number(v)
             // Several values: each moved by as far as the drag has gone since the last step.
             if value == nil, let each {
                 each(v - scrubbed)
@@ -1147,5 +1162,15 @@ final class Inspector {
     func number(_ v: Double) -> String {
         let r = (v * 10).rounded() / 10
         return r == r.rounded() ? String(Int(r)) : String(format: "%.1f", r)
+    }
+
+    /// A number to as many places as it has, at most `places`.
+    static func number(_ v: Double, places: Int) -> String {
+        var s = String(format: "%.\(max(places, 0))f", v)
+        if s.contains(".") {
+            while s.hasSuffix("0") { s.removeLast() }
+            if s.hasSuffix(".") { s.removeLast() }
+        }
+        return s == "-0" ? "0" : s
     }
 }

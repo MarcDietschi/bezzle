@@ -24,6 +24,8 @@ final class DesignWindow {
     private var playing: PlayerView?
     /// The ruler of time, at the foot of the canvas while it is out.
     private lazy var ruler = TimeRulerView(session: session)
+    /// The film's timeline, at the foot of the canvas while the design is animated.
+    private lazy var timeline = FilmTimelineView(session: session)
     /// Ready-made parts and icons, in the layers list's place while it is out.
     private lazy var resources = ResourcesPanel(session: session)
     /// What changed in other designs since this one took from them, at the top of the canvas.
@@ -110,6 +112,10 @@ final class DesignWindow {
         // The ruler of time, floating at the canvas's foot.
         try? Grid.setColumn(ruler.root, 2)
         body.children.append(ruler.root)
+        // The film's timeline, there too while the design is animated.
+        try? Grid.setColumn(timeline.root, 2)
+        body.children.append(timeline.root)
+        canvas.film.frameShown = { [weak self] in self?.timeline.movePlayhead() }
         // News from other designs, floating at the canvas's top.
         try? Grid.setColumn(news.root, 2)
         body.children.append(news.root)
@@ -176,6 +182,8 @@ final class DesignWindow {
         root.children.append(menus.layer)
         canvas.menus = menus
         inspector.menus = menus
+        timeline.menus = menus
+        session.tell = { [weak self] title, text in self?.questions.tell(title, text) }
         find.menus = menus
         bar.menus = menus
         bar.zoomEntries = { [weak self] in self?.zoomEntries() ?? [] }
@@ -215,10 +223,15 @@ final class DesignWindow {
                 playing.key(args)
                 return
             }
-            // Ctrl+Enter plays the prototype, as ⌘↩ does on the Mac.
+            // Ctrl+Enter plays the prototype, as ⌘↩ does on the Mac; animated, the film from its start.
             if args.key == .enter, GetKeyState(Int32(VK_CONTROL)) < 0, self.session.mode == 1 {
                 args.handled = true
                 self.play(from: nil)
+                return
+            }
+            if args.key == .enter, GetKeyState(Int32(VK_CONTROL)) < 0, self.session.mode == 3 {
+                args.handled = true
+                self.session.film.play(fromStart: true)
                 return
             }
             if self.export.isOpen {
@@ -239,7 +252,8 @@ final class DesignWindow {
                 return
             }
             // The Mac's Control keys are Alt here: Alt+R, Alt+comma and Alt+G the rulers, guides and
-            // layout grids, Alt+P and Alt+I the prototype and inspect modes; Alt+Y the layers (⌘Y).
+            // layout grids, Alt+P, Alt+I and Alt+A the prototype, inspect and animate modes; Alt+Y
+            // the layers (⌘Y).
             if GetKeyState(Int32(VK_MENU)) < 0, GetKeyState(Int32(VK_CONTROL)) >= 0, GetKeyState(Int32(VK_SHIFT)) >= 0,
                let action = self.altKey(args.key) {
                 args.handled = true
@@ -445,6 +459,7 @@ final class DesignWindow {
         case .g: return { WindowsCore.showsGrids.toggle(); aids() }
         case .p: return { session.mode = session.mode == 1 ? 0 : 1 }
         case .i: return { session.mode = session.mode == 2 ? 0 : 2 }
+        case .a: return { session.mode = session.mode == 3 ? 0 : 3 }
         case .y:
             return {
                 if session.showsResources { session.showsResources = false; session.showsLayers = true } else { session.showsLayers.toggle() }

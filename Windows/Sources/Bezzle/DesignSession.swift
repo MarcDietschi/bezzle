@@ -59,6 +59,14 @@ final class DesignSession {
     /// A picture being placed inside the layer it fills (the Mac's PictureTool and
     /// store.editingPicture): the canvas works it, the Fill card says how.
     let pictures = WindowsCore.PictureHand()
+    /// The design animated (the Mac's store.film and its AnimateOperations): the film on the
+    /// desk, its playhead and what of it is picked; the canvas's hand and the timeline's.
+    let film = WindowsCore.FilmDesk()
+    private(set) lazy var motion = WindowsCore.MotionHand(desk: film)
+    private(set) lazy var filmHand = WindowsCore.FilmHand(desk: film)
+    /// What follows the film on the desk: its playhead, what of it is picked, the camera.
+    private var filmListeners: [() -> Void] = []
+    func listenToFilm(_ f: @escaping () -> Void) { filmListeners.append(f) }
 
     /// Starts placing the one selected layer's picture inside it (the Mac's editPicture).
     func placePicture() {
@@ -105,16 +113,20 @@ final class DesignSession {
         edited(board: nil)
     }
 
-    /// Design, Prototype or Inspect (0, 1, 2), as the bar's switch says.
+    /// Design, Prototype, Inspect or Animate (0, 1, 2, 3), as the bar's switch says.
     var mode = 0 {
         didSet {
             guard mode != oldValue else { return }
             inspect.on = mode == 2
             flow.on = mode == 1
             if mode != 0 { develop.on = false }
+            film.modeChanged(mode == 3)
+            motion.modeChanged()
             changed()
         }
     }
+    /// Says something went wrong, with OK to put it away (the window's questions).
+    var tell: ((String, String) -> Void)?
     /// Plays the prototype from a screen, or from where it starts (the window's player).
     var play: ((UUID?) -> Void)?
     /// A layer brought into sight on the canvas, when it is out of it.
@@ -191,6 +203,29 @@ final class DesignSession {
             MainActor.assumeIsolated { self?.lookAtShare() }
         }
         if WindowsCore.designHasPreview { previewed = WindowsCore.designChanges }
+        film.select = { [weak self] ids in
+            guard let self else { return }
+            let board = ids.first.flatMap { WindowsCore.board(of: $0) ?? WindowsCore.boardIndex(of: $0) } ?? self.board
+            self.select(ids, on: board)
+        }
+        film.changed = { [weak self] in self?.filmChanged() }
+        film.edited = { [weak self] in self?.filmEdited() }
+        // The design changed under the film, by an undo or by others: its desk follows.
+        listenToEdits { [weak self] _ in self?.film.designChanged() }
+    }
+
+    /// The desk changed: what follows the film shows it again.
+    private func filmChanged() {
+        guard isFront else { stale = true; return }
+        for f in filmListeners { f() }
+    }
+
+    /// The film changed in the design: its keys or its settings. What follows the film shows it
+    /// again and the design is saved a moment later; the artboards' own sheets are not drawn again,
+    /// as a key changes nothing of how a layer looks where the design has it.
+    private func filmEdited() {
+        if isFront { for f in filmListeners { f() } } else { stale = true }
+        scheduleSave()
     }
 
     deinit {
@@ -274,6 +309,7 @@ final class DesignSession {
         if let editing = pen.editingPath, ids != [editing] { pen.editingPath = nil }
         if let placing = pictures.editing, ids != [placing] { pictures.editing = nil }
         self.board = board
+        film.selectionChanged(ids)
         changed()
     }
 

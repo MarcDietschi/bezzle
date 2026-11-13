@@ -720,6 +720,9 @@ extension WindowsCore {
 
         // MARK: Moves made in one go
 
+        /// A property's name as Bezzle says it ("move" is Move), in the language Windows is in.
+        public static func title(_ name: String) -> String { MotionProperty(rawValue: name)?.title ?? name }
+
         /// The moves, by name, with their titles.
         public static var moves: [(name: String, title: String)] {
             MotionMove.allCases.map { ($0.rawValue, $0.title) }
@@ -820,6 +823,59 @@ extension WindowsCore {
         public func setBackdrop(hex: String, alpha: Double) {
             guard let c = WindowsCore.colourOf(hex, alpha) else { return }
             setFilm { $0.backdrop = c }
+        }
+
+        /// The backdrop as the colour panel takes it.
+        public var backdropColour: WindowsCore.Colour? { filmBoard.map { WindowsCore.Colour($0.filmBackdrop) } }
+
+        public func setBackdrop(_ c: WindowsCore.Colour) {
+            setFilm { $0.backdrop = RGBA(r: c.r, g: c.g, b: c.b, a: c.a) }
+        }
+
+        /// A shader input that reads as a colour, as the Mac's ShaderInputsCard tells one: named
+        /// as one, three or four numbers.
+        public func inputIsColour(_ name: String) -> Bool {
+            let count = inputCount(name)
+            return (count == 3 || count == 4) && name.range(of: "colou?r|tint|hue|ink|paint", options: [.regularExpression, .caseInsensitive]) != nil
+        }
+
+        /// An input's colour at the playhead, shared by the picked layers; nil where they differ.
+        public func inputColour(_ name: String) -> WindowsCore.Colour? {
+            let count = inputCount(name)
+            let values = (0..<count).map { sharedInput(name, $0) }
+            guard values.allSatisfy({ $0 != nil }), count >= 3 else { return nil }
+            let v = values.map { min(max($0!, 0), 1) }
+            return WindowsCore.Colour(r: v[0], g: v[1], b: v[2], a: count == 4 ? v[3] : 1)
+        }
+
+        public func poseInput(_ name: String, colour c: WindowsCore.Colour) {
+            poseInput(name, colour: inputCount(name) == 4 ? [c.r, c.g, c.b, c.a] : [c.r, c.g, c.b])
+        }
+
+        /// The camera's pad: the film's frame fitted in a pad `size` big with room round it, and
+        /// the artboard's sheet as the camera sees it there, ruled in thirds; nil corners for a
+        /// sheet that reaches behind the eye.
+        public func pad(size: CGSize) -> (frame: CGRect, sheet: [CGPoint]?, rules: [(CGPoint, CGPoint)])? {
+            guard let board = filmBoard else { return nil }
+            let s = board.frame.size
+            guard s.width > 0, s.height > 0 else { return nil }
+            let fit = min((size.width - 36) / s.width, (size.height - 26) / s.height)
+            let frame = CGRect(x: (size.width - s.width * fit) / 2, y: (size.height - s.height * fit) / 2, width: s.width * fit, height: s.height * fit)
+            let map = FilmLens.ground(board.camera(at: filmTime), size: s)
+            func seen(_ x: CGFloat, _ y: CGFloat) -> CGPoint? {
+                let at = CGPoint(x: x, y: y)
+                guard map.depth(at: at) > 1e-3 else { return nil }
+                let p = map(at)
+                return CGPoint(x: frame.minX + p.x * fit, y: frame.minY + p.y * fit)
+            }
+            let corners = [seen(0, 0), seen(s.width, 0), seen(s.width, s.height), seen(0, s.height)].compactMap { $0 }
+            var rules: [(CGPoint, CGPoint)] = []
+            for i in 1..<3 {
+                let k = CGFloat(i) / 3
+                if let a = seen(s.width * k, 0), let b = seen(s.width * k, s.height) { rules.append((a, b)) }
+                if let a = seen(0, s.height * k), let b = seen(s.width, s.height * k) { rules.append((a, b)) }
+            }
+            return (frame, corners.count == 4 ? corners : nil, rules)
         }
     }
 

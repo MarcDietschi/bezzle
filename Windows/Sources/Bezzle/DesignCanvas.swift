@@ -158,6 +158,8 @@ final class DesignCanvas {
         case deck
         /// A picture being placed inside its layer: moved, or sized by a corner.
         case picture
+        /// Animated: a layer or the camera posed, a bead of a layer's way moved, a loop pulled.
+        case motion
     }
     private var drag: (from: CGPoint, board: Int, moved: Bool, grab: Grab)?
     /// Whether Alt, which at the press makes copies, has been let go since: pressed again during
@@ -306,6 +308,15 @@ final class DesignCanvas {
     /// The design as a prototype (the Mac's FlowTool, ported): its threads and flags.
     var flow: WindowsCore.FlowHand { session.flow }
     private var prototyping: Bool { session.mode == 1 }
+    /// The design animated: its film shows, and what is picked is posed in it.
+    private var animating: Bool { session.mode == 3 }
+    /// The film on the canvas, and what is posed over it (the Mac's FilmStageView and MotionTool).
+    private(set) lazy var film = FilmView(session: session)
+    var motion: WindowsCore.MotionHand { session.motion }
+    /// Space pressed, and whether the view moved before it was let go: a tap plays the film.
+    private var spaceTap: (at: Double, moved: Bool)?
+    /// The artboard whose sheet the film covers.
+    private var filmCovers: UUID?
     private let flowMarks = Canvas()
     /// What looking back through the versions marks on the canvas: what differs from now.
     private let timeMarks = Canvas()
@@ -510,6 +521,13 @@ final class DesignCanvas {
         flow.writeNote = { [weak self] id, at in self?.beginNote(on: id, at: at) }
         flow.play = { [weak self] id in self?.session.play?(id) }
         inspect.titleHit = { [weak self] p in self?.titleHit(p) }
+        motion.titleHit = { [weak self] p in self?.titleHit(p) }
+        motion.redraw = { [weak self] in self?.drawMotion() }
+        film.resync = { [weak self] in self?.placeFilm() }
+        session.film.run = { [weak self] in self?.film.run() }
+        session.film.inSight = { [weak self] in self?.artboardInSight() }
+        session.film.frame = { [weak self] id in self?.frameFilm(id) }
+        session.listenToFilm { [weak self] in self?.placeFilm() }
         curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
         curveHand.fly = { [weak self] id, p in self?.letters.fly(id, from: p) }
         letters.watching = { [weak self] in
@@ -614,6 +632,7 @@ final class DesignCanvas {
             self?.drawPaper()
             self?.drawInspect()
             self?.drawFlow()
+            self?.placeFilm()
         }
         session.listenToHover { [weak self] in self?.placeOverlays() }
         // The fill menu opened or shut, or another of its gradient's colours chosen.
@@ -835,7 +854,7 @@ final class DesignCanvas {
         }()
         let scale = zoom * pixelScale
         var bitmap = sheet.bitmap
-        sheet.image.visibility = .visible
+        sheet.image.visibility = board.id == filmCovers ? .collapsed : .visible
         sheet.shadow.visibility = .visible
         _ = WindowsCore.render(board: board.index, scale: scale, hiding: hiding(on: board.index)) { width, height in
             if bitmap == nil || bitmap!.pixelWidth != Int32(width) || bitmap!.pixelHeight != Int32(height) {
@@ -950,8 +969,78 @@ final class DesignCanvas {
         }
         letters.draw()
         placeOverlays()
+        placeFilm()
         // The others' marks move with the canvas.
         liveCanvas.changed()
+    }
+
+    // MARK: The film
+
+    /// The canvas hand sees the canvas as it is now.
+    private func syncMotion() {
+        motion.zoom = CGFloat(zoom)
+        motion.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+    }
+
+    /// The film laid out at the playhead where the artboard is, over its sheet, and what is posed
+    /// drawn over it; out of Animate, the sheet shows again.
+    func placeFilm() {
+        guard animating, session.isFront else {
+            if film.shown != nil || film.image.visibility == .visible || filmCovers != nil {
+                film.hide()
+                coverSheet(nil)
+            }
+            return
+        }
+        if !holds(stage, film.image) { stage.children.append(film.image) }
+        if !holds(overlay, film.marks) { overlay.children.append(film.marks) }
+        syncMotion()
+        film.sync(zoom: zoom, pan: CGPoint(x: Double(pan.x), y: Double(pan.y)), size: CGSize(width: stage.actualWidth, height: stage.actualHeight), pixelScale: pixelScale)
+        coverSheet(film.shown)
+        drawMotion()
+    }
+
+    /// The sheet of the film's artboard put away under the film, and any other shown again.
+    private func coverSheet(_ id: UUID?) {
+        guard filmCovers != id || id != nil else { return }
+        filmCovers = id
+        for (k, board) in boards.enumerated() {
+            sheets[k]?.image.visibility = board.id == id ? .collapsed : .visible
+        }
+    }
+
+    /// What is posed over the film, as the canvas hand has it now.
+    private func drawMotion() {
+        guard animating else { film.marks.children.clear(); return }
+        syncMotion()
+        film.drawMarks(motion.marks(), pixelScale: pixelScale)
+    }
+
+    /// The artboard most in sight, for the film's desk to take when nothing is picked.
+    private func artboardInSight() -> UUID? {
+        let seen = visibleOnCanvas
+        let shown = WindowsCore.boards().filter { !$0.hidden }
+        func area(_ r: CGRect) -> Double { r.isNull ? 0 : Double(r.width * r.height) }
+        guard let best = shown.max(by: { area($0.frame.intersection(seen)) < area($1.frame.intersection(seen)) }),
+              best.frame.intersects(seen) else { return nil }
+        return best.id
+    }
+
+    /// The view glided so the film's artboard lies whole above the timeline, as the Mac's
+    /// frameFilm; one that shows whole there already is left where it is.
+    private func frameFilm(_ id: UUID) {
+        guard root.isLoaded, let board = WindowsCore.boards().first(where: { $0.id == id }) else { return }
+        let w = root.actualWidth, h = root.actualHeight - FilmTimelineView.foot
+        guard w > 0, h > 160 else { return }
+        let f = board.frame
+        let a = onStage(f.origin)
+        let shown = CGRect(x: Double(a.x), y: Double(a.y), width: Double(f.width) * zoom, height: Double(f.height) * zoom)
+        guard !CGRect(x: 12, y: 12, width: w - 24, height: h - 24).contains(shown) else { return }
+        let z = max(0.02, min(max(1, min(zoom, 2)), (w - 80) / Double(f.width), (h - 80) / Double(f.height)))
+        flyingZoom = nil
+        session.zoom = z
+        pan = CGPoint(x: (w - Double(f.width) * z) / 2 - Double(f.minX) * z, y: (h - Double(f.height) * z) / 2 - Double(f.minY) * z)
+        drawAll()
     }
 
     /// While a layer of a post is moved, resized or typed into, the same layer in every other
@@ -3438,6 +3527,18 @@ final class DesignCanvas {
             drag = (p, -1, false, .deck)
             return
         }
+        // Animated: what is picked is posed, the camera taken in hand, a loop pulled round layers.
+        if animating {
+            syncMotion()
+            motion.down(at: p, clicks: lastPress?.clicks ?? 1, shift: shift, deep: control)
+            if motion.dragging {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, -1, false, .motion)
+            }
+            drawMotion()
+            updatePointer(at: p)
+            return
+        }
         // The design as a prototype: threads, flags and screens take the press.
         if prototyping {
             syncFlow()
@@ -3755,7 +3856,22 @@ final class DesignCanvas {
         }
         if case .pan(let start)? = drag?.grab, let from = drag?.from {
             pan = CGPoint(x: Double(start.x) + Double(p.x) - Double(from.x), y: Double(start.y) + Double(p.y) - Double(from.y))
+            spaceTap?.moved = true
             place()
+            return
+        }
+        if case .motion? = drag?.grab {
+            syncMotion()
+            motion.drag(to: p, shift: shift, free: control)
+            drag?.moved = true
+            updatePointer(at: p)
+            return
+        }
+        // Animated, the pointer finds what is posed and what poses it.
+        if animating, drag == nil {
+            syncMotion()
+            motion.hover(p)
+            updatePointer(at: p)
             return
         }
         if case .inspect(let start, _)? = drag?.grab, let from = drag?.from {
@@ -3985,7 +4101,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note, .deck, .picture:
+        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note, .deck, .picture, .motion:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -4120,6 +4236,11 @@ final class DesignCanvas {
             flow.up(at: point(args))
             session.edited(board: nil)
             updatePointer(at: point(args))
+        case .motion:
+            syncMotion()
+            motion.up(at: point(args))
+            drawMotion()
+            updatePointer(at: point(args))
         case .deck:
             decks.up(at: point(args))
         case .picture:
@@ -4187,6 +4308,9 @@ final class DesignCanvas {
         guard let args, args.key == .space, spaceDown else { return }
         args.handled = true
         spaceDown = false
+        // Pressed and let go without moving the view: the film plays, or stops.
+        if animating, let tap = spaceTap, !tap.moved, WindowsCore.now - tap.at < 0.4, drag == nil { session.film.toggle() }
+        spaceTap = nil
         if let p = lastPoint { updatePointer(at: p) }
     }
 
@@ -4206,6 +4330,18 @@ final class DesignCanvas {
     private func pointer(at p: CGPoint) -> Pointer {
         if case .pan? = drag?.grab { return .grab }
         if spaceDown { return .grab }
+        if animating {
+            syncMotion()
+            switch motion.pointer(at: p) {
+            case .arrow: return .arrow
+            case .resize(let a): return .resize(a)
+            case .rotate(let a): return .rotate(a)
+            case .turn: return .turn
+            case .cross: return .cross
+            case .pointingHand: return .pointingHand
+            case .grab, .grabbing: return .grab
+            }
+        }
         // Over the words typed into, the I-beam that puts the caret.
         if editing != nil, typingPress != nil || WindowsCore.typingCovers(inDesign(p), slack: 4 / zoom) { return .iBeam }
         syncGuides()
@@ -4341,6 +4477,8 @@ final class DesignCanvas {
         case .picture:
             pictures.cancelDrag()
             placeHolds()
+        case .motion:
+            motion.cancel()
         }
         showGuides([])
         session.edited(board: nil)
@@ -5094,6 +5232,15 @@ final class DesignCanvas {
             menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), entries: entries)
             return
         }
+        // Animated: a key here, how keys are come to, and the motion taken away, as the Mac's
+        // MotionTool menu.
+        if animating {
+            syncMotion()
+            guard let made = motion.menu(at: p), !made.isEmpty else { return }
+            menus.show(at: CGPoint(x: Double(w.x), y: Double(w.y)), width: 220, entries: FilmTimelineView.entries(made))
+            drawMotion()
+            return
+        }
         // As a prototype: where what is under the pointer goes, as the Mac's FlowTool menu.
         if prototyping {
             syncFlow()
@@ -5321,6 +5468,43 @@ final class DesignCanvas {
             if margin.notes.draftID != nil { margin.notes.dropDraft() } else { margin.notes.openThread = nil }
             return
         }
+        // Animated, a key is the film's before any tool of the design has it: Enter plays from the
+        // start, Delete takes keys away, never layers, the arrows nudge what is picked or step
+        // through time; Cut and Paste rest, and the tools' letters with them.
+        if animating, args.key != .space {
+            let raw = args.key.rawValue
+            var name: String?
+            switch args.key {
+            case .enter: name = "enter"
+            case .delete: name = "delete"
+            case .back: name = "backspace"
+            case .escape: name = "escape"
+            case .home: name = "home"
+            case .end: name = "end"
+            case .left: name = "left"
+            case .right: name = "right"
+            case .up: name = "up"
+            case .down: name = "down"
+            case .k: name = "k"
+            default: if raw == 188 { name = "," } else if raw == 190 { name = "." }
+            }
+            if let name {
+                syncMotion()
+                if motion.key(name, shift: shift, alt: option, ctrl: control) {
+                    args.handled = true
+                    drawMotion()
+                    return
+                }
+            }
+            switch args.key {
+            case .x, .v:
+                if control { args.handled = true; return }
+            case .a, .r, .e, .l, .p, .t, .n:
+                if !control, !option { args.handled = true; return }
+            default:
+                break
+            }
+        }
         // As a prototype: Delete cuts the picked layers' threads, never the layers; Escape lets go.
         if prototyping {
             switch args.key {
@@ -5370,6 +5554,7 @@ final class DesignCanvas {
             args.handled = true
             if !spaceDown {
                 spaceDown = true
+                spaceTap = (WindowsCore.now, false)
                 if let p = lastPoint { updatePointer(at: p) }
             }
             return
