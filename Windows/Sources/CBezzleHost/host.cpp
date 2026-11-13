@@ -2788,10 +2788,73 @@ extern "C" int32_t bz_picture_read(int32_t id, int32_t width, int32_t height, in
     return image->readPixels(nullptr, SkPixmap(info, pixels, size_t(width) * 4), 0, 0) ? 0 : 2;
 }
 
+namespace {
+/// The film's pictures with their mipmaps, made once each for being shown smaller than drawn.
+std::map<int, sk_sp<SkImage>> mipped;
+}
+
 extern "C" void bz_picture_forget(int32_t id) {
     std::lock_guard<std::mutex> guard(lock);
     pictures.erase(id);
     made.erase(id);
+    mipped.erase(id);
+}
+
+// MARK: A film's frame (Host/FilmStage.swift, FilmMovie.swift)
+
+extern "C" int32_t bz_film_frame(int32_t width, int32_t height, const double* backdrop, const bz_film_piece* pieces, int32_t count,
+                                 int32_t bgra, void* pixels) {
+    std::lock_guard<std::mutex> guard(lock);
+    const int w = std::max(1, width), h = std::max(1, height);
+    const SkImageInfo info = SkImageInfo::Make(w, h, bgra ? kBGRA_8888_SkColorType : kRGBA_8888_SkColorType, kPremul_SkAlphaType,
+                                               SkColorSpace::MakeSRGB());
+    auto surface = SkSurfaces::WrapPixels(info, pixels, size_t(w) * 4);
+    if (!surface) return 1;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(backdrop ? SkColor4f{float(backdrop[0]), float(backdrop[1]), float(backdrop[2]), float(backdrop[3])} : SkColors::kTransparent);
+    for (int k = 0; k < count; k++) {
+        const bz_film_piece& p = pieces[k];
+        if (p.opacity < 0.001) continue;
+        sk_sp<SkImage> image;
+        if (auto it = mipped.find(p.picture); it != mipped.end()) {
+            image = it->second;
+        } else if (auto drawn = get(p.picture)) {
+            image = drawn->withDefaultMipmaps();
+            if (!image) image = drawn;
+            mipped[p.picture] = image;
+        }
+        if (!image) continue;
+        const double* m = p.map;
+        const SkMatrix map = SkMatrix::MakeAll(float(m[0]), float(m[1]), float(m[2]), float(m[3]), float(m[4]), float(m[5]),
+                                               float(m[6]), float(m[7]), float(m[8]));
+        // What of it shows: the outline given (what lies in front of the eye), else all of it. The
+        // outline is filled with the picture, so nothing behind the eye is ever drawn.
+        SkPathBuilder outline;
+        if (p.count >= 3) {
+            outline.moveTo(float(p.outline[0]), float(p.outline[1]));
+            for (int i = 1; i < std::min(p.count, int32_t(9)); i++) outline.lineTo(float(p.outline[2 * i]), float(p.outline[2 * i + 1]));
+            outline.close();
+        } else {
+            outline.addRect(SkRect::MakeIWH(image->width(), image->height()));
+        }
+        SkPaint paint;
+        paint.setAntiAlias(true);
+        paint.setShader(image->makeShader(SkTileMode::kDecal, SkTileMode::kDecal, SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear)));
+        if (p.blur > 0.05) {
+            // Blurred as the frame shows it, spreading past its edges.
+            SkPaint layer;
+            layer.setAlphaf(float(std::min(p.opacity, 1.0)));
+            layer.setImageFilter(SkImageFilters::Blur(float(p.blur), float(p.blur), SkTileMode::kDecal, nullptr));
+            canvas->saveLayer(nullptr, &layer);
+        } else {
+            paint.setAlphaf(float(std::min(p.opacity, 1.0)));
+            canvas->save();
+        }
+        canvas->concat(map);
+        canvas->drawPath(outline.detach(), paint);
+        canvas->restore();
+    }
+    return 0;
 }
 
 // Skia's own zlib (Chromium's, its names mapped by chromeconf.h, as the library was built).

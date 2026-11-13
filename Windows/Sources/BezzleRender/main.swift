@@ -114,6 +114,20 @@ do {
         design = made
     }
     var boards = try WindowsCore.open(design)
+    // With BEZZLE_FILM_AT (moments in seconds, separated by ;), the film of each artboard that
+    // moves is drawn at each moment as Animate's stage and movie draw it (Host/FilmMovie.swift),
+    // into the out folder, at the scale given; with BEZZLE_FILM_MOVIE (scale,fps), saved there as
+    // an .mp4 too, and how long each took said.
+    if ProcessInfo.processInfo.environment["BEZZLE_FILM_AT"] != nil || ProcessInfo.processInfo.environment["BEZZLE_FILM_MOVIE"] != nil {
+        let env = ProcessInfo.processInfo.environment
+        let times = (env["BEZZLE_FILM_AT"] ?? "").split(separator: ";").compactMap { Double($0) }
+        let parts = (env["BEZZLE_FILM_MOVIE"] ?? "").split(separator: ",").compactMap { Double($0) }
+        let movie = parts.count == 2 ? (scale: parts[0], fps: Int(parts[1])) : nil
+        let out = URL(fileURLWithPath: arguments[3])
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        for line in await WindowsCore.filmCheck(times: times, movie: movie, scale: scale, into: out) { print(line) }
+        exit(0)
+    }
     // With BEZZLE_DEVELOPING (a JSON file: name, glimpse, picture, zoom, frames of since, now,
     // glimpsed and arrived), the first artboard is drawn with its picture on its way as a shared
     // design's live room shows it at each moment (Host/Developing.swift), for the Mac's to be

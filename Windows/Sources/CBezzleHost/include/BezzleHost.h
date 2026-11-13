@@ -182,6 +182,44 @@ void bz_picture_develop(int32_t id, const float *cube, int32_t size, const doubl
 /// Makes picture `id` and writes its premultiplied pixels, RGBA (or BGRA with `bgra`), rows top
 /// first, to `pixels`, which holds `width` × `height` × 4 bytes. Returns 0 when done.
 int32_t bz_picture_read(int32_t id, int32_t width, int32_t height, int32_t bgra, void *pixels);
+
+/// One piece of a film's frame (Host/FilmStage.swift): a picture the core made, placed in the
+/// frame through `map`, a 3×3 matrix row by row from the picture's pixels to the frame's.
+typedef struct bz_film_piece {
+    int32_t picture;
+    double map[9];
+    double opacity;
+    /// Its blur as the frame shows it, the sigma in the frame's pixels; 0 for none.
+    double blur;
+    /// What of it shows, in the picture's pixels: `count` points (3 to 9) of `outline`, x then y;
+    /// below 3, all of it.
+    int32_t count;
+    double outline[18];
+} bz_film_piece;
+
+/// A film's frame: `backdrop` (r, g, b, a, premultiplied; null for none) and over it `count`
+/// pieces, the lowest first, into premultiplied pixels, RGBA (or BGRA with `bgra`), rows top
+/// first, `width` × `height` × 4 bytes. Returns 0 when done. On any thread.
+int32_t bz_film_frame(int32_t width, int32_t height, const double *backdrop, const bz_film_piece *pieces, int32_t count,
+                      int32_t bgra, void *pixels);
+
+// MARK: Movies (movie.cpp)
+
+/// A movie being written: H.264 in an MPEG-4 file, through Media Foundation's sink writer.
+typedef struct bz_movie bz_movie;
+/// Begins a movie at `path` (UTF-8) of `width` × `height` pixels (even), `fps` frames a second, at
+/// about `bitrate` bits a second, its colours said to be sRGB (BT.709 primaries and matrix).
+/// Null when it cannot be begun, with why in `error` (an HRESULT).
+bz_movie *bz_movie_open(const char *path, int32_t width, int32_t height, int32_t fps, int64_t bitrate, int32_t *error);
+/// Adds frame `index`: premultiplied BGRA pixels, rows top first, solid. 0 when added, else an
+/// HRESULT. On any thread, one at a time.
+int32_t bz_movie_add(bz_movie *movie, const void *pixels, int64_t index);
+/// Ends the movie after `frames` frames and lets it go: 0 when the file is whole, else an HRESULT.
+int32_t bz_movie_finish(bz_movie *movie, int64_t frames);
+/// Gives the movie up and lets it go; what was written of it is left for the caller to remove.
+void bz_movie_cancel(bz_movie *movie);
+/// How far the last movie's work came before Windows refused a step, for saying where.
+int32_t bz_movie_failed_step(void);
 /// Forgets picture `id` and what was made of it: the core holds it no more.
 void bz_picture_forget(int32_t id);
 /// The shadow an artboard casts on the canvas: a `width` by `height` rectangle `dy` down, blurred

@@ -105,7 +105,7 @@ let package = Package(
                 return .define(parts[0], to: parts.count > 1 ? parts[1] : nil)
             } + avifCxx + webView2Settings + onnxCxx,
             linkerSettings: [.unsafeFlags(["-L" + skiaOut])] + skiaLibraries.map { .linkedLibrary($0) } + avifLinking
-                + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt", "dwmapi", "shell32", "oleaut32", "dwrite", "windowscodecs", "winhttp"].map { .linkedLibrary($0) }
+                + ["user32", "gdi32", "ole32", "advapi32", "usp10", "bcrypt", "dwmapi", "shell32", "oleaut32", "dwrite", "windowscodecs", "winhttp", "mfplat", "mfreadwrite", "mfuuid"].map { .linkedLibrary($0) }
                 + webView2Linking + onnxLinking
         ),
         .target(
