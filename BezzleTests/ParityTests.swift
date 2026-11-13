@@ -1,5 +1,6 @@
 import Testing
 import AppKit
+import ImageIO
 @testable import Bezzle
 
 /// What the canvas tools and offers moved into shared code for Windows do, written down step by
@@ -1402,6 +1403,99 @@ extension ParityTests {
         Self.log(t, "early: " + layers(waiting) + " | " + files(early, "anna"))
         waiting.close()
         DocumentStore.finishSaving()
+        #expect(FileManager.default.fileExists(atPath: Self.url.path))
+    }
+
+    // MARK: Vectorize
+
+    /// Pictures traced into shapes, as Vectorize makes them (`VectorMaker`, `vectorizable`, the
+    /// picture given back where its vector lies): what is read of each picture layer, the group
+    /// it becomes, every layer of it exactly (its outline by a hash of its path), traced again
+    /// another way, and the picture back after the group was moved and made larger.
+    @Test func vectorizing() async throws {
+        let t = "vectorize"
+        func hash(_ bytes: some Sequence<UInt8>) -> String {
+            var h: UInt64 = 0xcbf29ce484222325
+            for b in bytes { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+            return String(h, radix: 16)
+        }
+        func design(_ picture: CGImage, frame: CGRect, _ change: (inout Node) -> Void = { _ in }) throws -> (DocumentStore, UUID) {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleParity-\(UUID().uuidString).bezzle")
+            var photo = CanvasTests.rect("Photo", frame)
+            photo.fill = Fill(color: .shape, image: ImageFill(asset: "photo.png", size: CGSize(width: picture.width, height: picture.height)))
+            change(&photo)
+            var board = Node(kind: .artboard, name: "A", frame: CGRect(x: 0, y: 0, width: 300, height: 300))
+            board.children = [photo]
+            var doc = BezzleDocument()
+            doc.nodes = [board]
+            try DesignFile.write(doc, to: url)
+            let out = try #require(CGImageDestinationCreateWithURL(url.appendingPathComponent(DesignFile.imagesFolder).appendingPathComponent("photo.png") as CFURL,
+                                                                   "public.png" as CFString, 1, nil))
+            CGImageDestinationAddImage(out, picture, nil)
+            #expect(CGImageDestinationFinalize(out))
+            let store = try DocumentStore(opening: url)
+            let undo = UndoManager()
+            undo.groupsByEvent = false
+            store.undoManager = undo
+            return (store, photo.id)
+        }
+        func group(_ label: String, _ store: DocumentStore, _ id: UUID) {
+            guard let g = store.node(id) else { Self.log(t, "\(label): gone"); return }
+            let counts = store.vectorCounts(of: id)
+            Self.log(t, "\(label): \(g.kind) \(g.name) \(Self.r(g.frame)) turn \(Self.n(CGFloat(g.rotation))) opacity \(Self.n(CGFloat(g.opacity))) "
+                + "layers \(g.children.count) shapes \(counts?.shapes ?? -1) colours \(counts?.colors.map(\.hex).joined(separator: ",") ?? "-")")
+            for (i, c) in g.children.enumerated() {
+                Self.log(t, "\(label) \(i): \(c.kind) \(Self.r(c.frame)) turn \(Self.n(CGFloat(c.rotation))) \(c.fill.color.hex) corner \(Self.n(c.cornerRadius)) "
+                    + "path \(c.path.map { "\($0.count) \(hash($0.utf8))" } ?? "-") box \(Self.r(c.pathBox))")
+            }
+        }
+        let pictures: [(String, CGImage, CGRect, (inout Node) -> Void)] = [
+            ("drawing", VectorTests.drawing(), CGRect(x: 50, y: 50, width: 200, height: 150), { _ in }),
+            ("turned ellipse", VectorTests.drawing(), CGRect(x: 50, y: 50, width: 200, height: 150), { n in
+                n.kind = .ellipse
+                n.rotation = 30
+                n.opacity = 0.8
+            }),
+            ("stretched", VectorTests.drawing(), CGRect(x: 20, y: 40, width: 260, height: 90), { _ in }),
+            ("dots", VectorTests.dots(), CGRect(x: 25, y: 50, width: 250, height: 200), { _ in }),
+        ]
+        for (name, picture, frame, change) in pictures {
+            let (store, id) = try design(picture, frame: frame, change)
+            let node = try #require(store.node(id))
+            if let source = VectorMaker.source(of: node, assets: store.assets) {
+                Self.log(t, "\(name) read: \(source.bitmap.width)x\(source.bitmap.height) scale \(Self.n(source.scale)) pixels \(hash(source.bitmap.pixels))")
+            } else {
+                Self.log(t, "\(name) read: nothing")
+            }
+            Self.log(t, "\(name) vectorizable \(store.vectorizable(id)) artboard \(store.vectorizable(store.doc.nodes[0].id))")
+            let made = try await store.vectorize([id])
+            Self.log(t, "\(name) made \(made.count)")
+            group(name, store, id)
+        }
+        // Traced again: fewer colours, less detail, calmer outlines; then moved, made larger and the picture back.
+        let (store, id) = try design(VectorTests.drawing(), frame: CGRect(x: 50, y: 50, width: 200, height: 150))
+        try await store.vectorize([id])
+        for (label, change) in [("two colours", { (s: inout VectorSettings) in s.colors = 2 }),
+                                ("less detail", { (s: inout VectorSettings) in s.detail = 0.1 }),
+                                ("smooth", { (s: inout VectorSettings) in s.smoothing = 0.85 })] {
+            store.undoManager?.beginUndoGrouping()
+            store.setVector(id, change)
+            while store.retracing.contains(id) { try await Task.sleep(for: .milliseconds(10)) }
+            store.undoManager?.endUndoGrouping()
+            let s = store.vectorSettings(of: id)
+            Self.log(t, "\(label): settings detail \(s.map { Self.n(CGFloat($0.detail)) } ?? "-") colours \(s?.colors.map(String.init) ?? "auto") smoothing \(s.map { Self.n(CGFloat($0.smoothing)) } ?? "-")")
+            group(label, store, id)
+        }
+        store.undoManager?.beginUndoGrouping()
+        store.update([id], "Move") { $0.frame = CGRect(x: 70, y: 90, width: 240, height: 180) }
+        store.undoManager?.endUndoGrouping()
+        Self.log(t, "moved: still a vector \(store.vector(of: id) != nil)")
+        store.undoManager?.beginUndoGrouping()
+        store.backToPicture(id)
+        store.undoManager?.endUndoGrouping()
+        if let back = store.node(id) {
+            Self.log(t, "back: \(back.kind) \(Self.r(back.frame)) \(back.fill.image?.asset ?? "-") still a vector \(store.vector(of: id) != nil)")
+        }
         #expect(FileManager.default.fileExists(atPath: Self.url.path))
     }
 
