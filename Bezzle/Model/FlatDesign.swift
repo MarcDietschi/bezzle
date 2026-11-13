@@ -68,6 +68,10 @@ nonisolated struct LayerField: @unchecked Sendable {
         let copy: (inout Node, Node, String) -> Void
         /// The entry as it is shared; null when there is none.
         let value: (Node, String) -> FieldValue
+        /// The property as a design's file has it, made of the entries shared of it, by their
+        /// keys: an object of them, unless the property is kept another way. Entries it cannot
+        /// place, such as a later Bezzle's, it leaves out.
+        var gather: ([String: FieldValue]) -> FieldValue = { $0.isEmpty ? .null : .object($0) }
     }
 
     init<T: Codable & Equatable>(_ name: String, _ key: WritableKeyPath<Node, T>) {
@@ -111,6 +115,71 @@ nonisolated struct LayerField: @unchecked Sendable {
             value: { node, k in set(node)[k] ?? .null })
     }
 
+    /// For a layer's motion: each key of each property is an entry, shared and undone on its own,
+    /// so two people setting keys of one property at different moments both keep theirs. An entry
+    /// is named by its property and the moment its key is at (`MotionKeyPlace`) and holds the
+    /// rest of the key. Put together again, a property can have two keys at what is one moment
+    /// to the timeline; `repairMotion` leaves one of them.
+    init(_ name: String, keys path: WritableKeyPath<Node, [String: MotionTrack]?>) {
+        self.name = name
+        same = { $0[keyPath: path] == $1[keyPath: path] }
+        copy = { $0[keyPath: path] = $1[keyPath: path] }
+        // Property by property: one whose keys cannot be read, as a later Bezzle may write
+        // them, is left out, and the others are there.
+        write = { node, value in
+            guard case .object(let tracks) = value else {
+                node[keyPath: path] = try value.decoded(as: [String: MotionTrack]?.self)
+                return
+            }
+            let read = tracks.compactMapValues { try? $0.decoded(as: MotionTrack.self) }
+            node[keyPath: path] = read.isEmpty ? nil : read
+        }
+        // The key at a place, at the moment the place says.
+        func key(_ node: Node, at place: MotionKeyPlace) -> MotionKey? {
+            guard var found = node[keyPath: path]?[place.property]?.keys.last(where: place.holds) else { return nil }
+            found.t = place.time
+            return found
+        }
+        entries = Entries(
+            keys: { node in
+                var names: Set<String> = []
+                for (property, track) in node[keyPath: path] ?? [:] {
+                    for k in track.keys { names.insert(MotionKeyPlace(property, k).name) }
+                }
+                return names
+            },
+            same: { a, b, name in
+                guard let place = MotionKeyPlace(name) else { return true }
+                return key(a, at: place) == key(b, at: place)
+            },
+            copy: { node, other, name in
+                guard let place = MotionKeyPlace(name) else { return }
+                var tracks = node[keyPath: path] ?? [:]
+                var keys = tracks[place.property]?.keys ?? []
+                keys.removeAll(where: place.holds)
+                if let theirs = key(other, at: place) { keys.append(theirs) }
+                // A property with no keys left has no track.
+                tracks[place.property] = keys.isEmpty ? nil : MotionTrack(keys)
+                node[keyPath: path] = tracks.isEmpty ? nil : tracks
+            },
+            value: { node, name in MotionKeyPlace(name).flatMap { key(node, at: $0) }?.entry ?? .null },
+            gather: { entries in
+                var tracks: [String: [(place: MotionKeyPlace, key: FieldValue)]] = [:]
+                for (name, value) in entries {
+                    guard let place = MotionKeyPlace(name), case .object(var key) = value else { continue }
+                    // Its name says when it is and whether Bezzle gave it, whatever the entry holds.
+                    key["t"] = .number(place.time)
+                    key["given"] = place.given ? .bool(true) : nil
+                    tracks[place.property, default: []].append((place, .object(key)))
+                }
+                guard !tracks.isEmpty else { return .null }
+                // In the order of their times, a given key after one set at the same moment: the same on every Mac.
+                return .object(tracks.mapValues { keys in
+                    .object(["keys": .array(keys.sorted { ($0.place.ms, $0.place.given ? 1 : 0) < ($1.place.ms, $1.place.given ? 1 : 0) }.map(\.key))])
+                })
+            })
+    }
+
     /// The name an entry is shared under.
     func entryName(_ key: String) -> String { "\(name)/\(key)" }
 
@@ -134,7 +203,7 @@ nonisolated struct LayerField: @unchecked Sendable {
         LayerField("instance", \.instance), LayerField("master", \.master),
         LayerField("curve", \.curve), LayerField("curvePath", \.curvePath),
         LayerField("flow", \.flow), LayerField("starts", \.starts),
-        LayerField("motion", entries: \.motion), LayerField("film", settings: \.film),
+        LayerField("motion", keys: \.motion), LayerField("film", settings: \.film),
     ]
 
     /// Each property of a layer, without what it holds, read all at once.
@@ -153,12 +222,13 @@ nonisolated struct LayerField: @unchecked Sendable {
         var whole = values
         whole["id"] = .string(id.uuidString)
         whole["children"] = .array([])
-        // A dictionary's entries, each shared on its own, made one again.
-        for field in all where field.entries != nil {
+        // A property's entries, each shared on its own, made one again.
+        for field in all {
+            guard let entries = field.entries else { continue }
             let prefix = field.entryName("")
-            var entries: [String: FieldValue] = [:]
-            for (name, value) in values where name.hasPrefix(prefix) && value != .null { entries[String(name.dropFirst(prefix.count))] = value }
-            whole[field.name] = entries.isEmpty ? .null : .object(entries)
+            var found: [String: FieldValue] = [:]
+            for (name, value) in values where name.hasPrefix(prefix) && value != .null { found[String(name.dropFirst(prefix.count))] = value }
+            whole[field.name] = entries.gather(found)
         }
         if let node = try? FieldValue.object(whole).decoded(as: Node.self) { return node }
         let kind = values["kind"].flatMap { try? $0.decoded(as: Node.Kind.self) } ?? .rectangle
@@ -166,6 +236,57 @@ nonisolated struct LayerField: @unchecked Sendable {
         node.id = id
         for field in all { if let v = whole[field.name] { try? field.write(&node, v) } }
         return node
+    }
+}
+
+/// Where a key of a layer's motion is shared, among the layer's properties: under its property
+/// and the moment it is at in whole milliseconds, as `move/1500`. Keys have nothing else to be
+/// told apart by, and two people keying a property at different moments write different entries,
+/// so both keys stay. A key Bezzle gave to go with the first one posed (`MotionKey.given`) is
+/// `move/0/given`: under a name of its own, it never takes the place of a key somebody set at
+/// that moment, as the one who saved later would otherwise have it do.
+nonisolated struct MotionKeyPlace: Hashable, Sendable {
+    var property: String
+    var ms: Int
+    var given: Bool
+
+    init(_ property: String, _ key: MotionKey) {
+        self.property = property
+        ms = MotionTiming.milliseconds(key.t)
+        given = key.given == true
+    }
+
+    /// Read from an entry's name. Only names written as `name` writes them are places: anything
+    /// else, such as a whole property's keys shared as one before each was shared on its own, or
+    /// what a later Bezzle may add, is none, and is left alone.
+    init?(_ name: String) {
+        var parts = name.split(separator: "/", omittingEmptySubsequences: false)
+        given = parts.count > 2 && parts.last == "given"
+        if given { parts.removeLast() }
+        guard parts.count > 1, let last = parts.last, let ms = Int(last), ms >= 0, ms <= MotionTiming.lastMillisecond,
+              String(ms) == last else { return nil }
+        self.ms = ms
+        property = parts.dropLast().joined(separator: "/")
+        if property.isEmpty { return nil }
+    }
+
+    var name: String { given ? "\(property)/\(ms)/given" : "\(property)/\(ms)" }
+
+    /// The moment, in seconds.
+    var time: Double { Double(ms) / 1000 }
+
+    /// Whether a key of the property is the one here.
+    func holds(_ key: MotionKey) -> Bool { MotionTiming.milliseconds(key.t) == ms && (key.given == true) == given }
+}
+
+nonisolated extension MotionKey {
+    /// What its entry holds when it is shared: all of it but its time and whether Bezzle gave it,
+    /// which the entry's name says. Null for a key that could not be written to a file either.
+    var entry: FieldValue {
+        guard v.allSatisfy(\.isFinite) else { return .null }
+        var fields: [String: FieldValue] = ["v": .array(v.map { .number($0) })]
+        if let ease, let value = try? FieldValue(encoding: ease) { fields["ease"] = value }
+        return .object(fields)
     }
 }
 
@@ -267,6 +388,7 @@ nonisolated struct FlatDesign: Equatable {
         doc.repairMasks()
         doc.repairComponents()
         doc.repairStyles()
+        doc.repairMotion()
         doc.fitGroups()
         doc.fitCarousels()
         return doc

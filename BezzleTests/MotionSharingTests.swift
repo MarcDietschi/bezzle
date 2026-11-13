@@ -150,46 +150,204 @@ struct MotionSharingTests {
 
     // MARK: The same property
 
-    /// What should be, and is not yet: keys of one property set by two people at different
-    /// moments are both kept.
-    @Test(.disabled("A property's keys are shared as one value, so of two people keying the same property of the same layer at once, the one who saved later keeps theirs and the other's keys are gone. Keeping both needs each key shared on its own, which changes how a film is shared: a decision to take before Animate is first released."))
-    func twoPeopleKeyingOnePropertyAtDifferentMomentsBothKeepTheirKeys() {
+    /// A layer's move keyed at the start and at two seconds, for two people to key further.
+    private func keyed() -> BezzleDocument {
         var doc = design()
-        set(&doc, "One") { $0.setKey(.move, [0, 0], at: 0); $0.setKey(.move, [100, 0], at: 2) }
-        var (a, b) = pair(doc)
-        a.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1) } }
-        b.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 3) } }
-        #expect(times(settled(a, b), "One", .move) == [0, 1, 2, 3])
+        set(&doc, "One") { $0.setKey(.move, [10, 0], at: 0); $0.setKey(.move, [100, 0], at: 2) }
+        return doc
     }
 
-    @Test func twoPeopleKeyingOnePropertyAtOnceLeaveOnePersonsKeysWhole() {
+    private func key(_ doc: BezzleDocument, _ name: String, _ property: MotionProperty, at time: Double) -> MotionKey? {
+        node(doc, name)?[track: property]?.keys.first { $0.t == time }
+    }
+
+    @Test func twoPeopleKeyingOnePropertyAtDifferentMomentsBothKeepTheirKeys() {
+        // Each key is shared on its own, so it does not matter who saved later.
+        for later in ["a", "b"] {
+            var (a, b) = pair(keyed())
+            if later == "a" { a.time += 10 } else { b.time += 10 }
+            a.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1) } }
+            b.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 3, ease: MotionEase(kind: .linear)) } }
+            let both = settled(a, b)
+            #expect(times(both, "One", .move) == [0, 1, 2, 3], "\(later) later")
+            #expect(key(both, "One", .move, at: 1) == MotionKey(t: 1, v: [50, 80]))
+            #expect(key(both, "One", .move, at: 3) == MotionKey(t: 3, v: [200, 0], ease: MotionEase(kind: .linear)))
+        }
+
+        // The camera's keys the same.
+        var (c, d) = pair()
+        c.edit { set(&$0, "Board") { $0.setKey(.cameraZoom, [2], at: 1) } }
+        d.edit { set(&$0, "Board") { $0.setKey(.cameraZoom, [1.2], at: 2.5) } }
+        #expect(times(settled(c, d), "Board", .cameraZoom) == [1, 2.5])
+
+        // One sets how a key is come to, takes another away and moves a third, while the other
+        // sets one more: each of these is kept.
+        var doc = keyed()
+        set(&doc, "One") { $0.setKey(.move, [10, 10], at: 0.5); $0.setKey(.move, [20, 20], at: 1.5) }
+        var (e, f) = pair(doc)
+        e.edit { set(&$0, "One") {
+            $0.setEase(MotionEase(kind: .hold), at: 2, of: [.move])
+            $0.removeKeys(at: 0.5, of: [.move])
+            $0.moveKeys(from: 1.5, to: 1.7, of: [.move])
+        } }
+        f.time = e.time + 10
+        f.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 3) } }
+        let all = settled(e, f)
+        #expect(times(all, "One", .move) == [0, 1.7, 2, 3])
+        #expect(key(all, "One", .move, at: 2)?.ease == MotionEase(kind: .hold) && key(all, "One", .move, at: 1.7)?.v == [20, 20])
+    }
+
+    @Test func twoPeoplePosingALayerNobodyHadPosedBothKeepTheirPose() {
+        // Posing a property for the first time, Bezzle gives it the design for company: for the
+        // one who poses at the start, a key half a second on; for the one who poses later, a key
+        // at the start. A key given is shared under a name of its own, so it never takes the
+        // place of the key the other set at that moment, whoever saved later.
+        for later in ["a", "b"] {
+            var (a, b) = pair()
+            if later == "a" { a.time += 10 } else { b.time += 10 }
+            a.edit { set(&$0, "One") { $0.pose(.move, [0, 60], at: 0) } }
+            b.edit { set(&$0, "One") { $0.pose(.move, [90, 0], at: 1) } }
+            let both = settled(a, b)
+            #expect(times(both, "One", .move) == [0, 0.5, 1], "\(later) later")
+            #expect(key(both, "One", .move, at: 0) == MotionKey(t: 0, v: [0, 60]))
+            #expect(key(both, "One", .move, at: 0.5) == MotionKey(t: 0.5, v: [0, 0], given: true))
+            #expect(key(both, "One", .move, at: 1) == MotionKey(t: 1, v: [90, 0]))
+        }
+
+        // One poses at the start, the other half a second in, where the first one's company is:
+        // again both poses stand, and the two keys given are gone.
+        var (c, d) = pair()
+        c.edit { set(&$0, "One") { $0.pose(.fade, [0], at: 0) } }
+        d.time = c.time + 10
+        d.edit { set(&$0, "One") { $0.pose(.fade, [0.5], at: 0.5) } }
+        let met = settled(c, d)
+        #expect(node(met, "One")?[track: .fade]?.keys == [MotionKey(t: 0, v: [0]), MotionKey(t: 0.5, v: [0.5])])
+
+        // The key given, touched by one, is that one's: the other posing past it, which takes
+        // the given key away there, does not take it away here.
         var doc = design()
-        set(&doc, "One") { $0.setKey(.move, [0, 0], at: 0); $0.setKey(.move, [100, 0], at: 2) }
-        var (a, b) = pair(doc)
-        a.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1) } }
+        set(&doc, "One") { $0.pose(.turn, [30], at: 0) }
+        var (e, f) = pair(doc)
+        e.edit { set(&$0, "One") { $0.setKey(.turn, [10], at: 0.5) } }
+        f.time = e.time + 10
+        f.edit { set(&$0, "One") { $0.pose(.turn, [-20], at: 1) } }
+        let touched = settled(e, f)
+        #expect(node(touched, "One")?[track: .turn]?.keys == [MotionKey(t: 0, v: [30]), MotionKey(t: 0.5, v: [10]), MotionKey(t: 1, v: [-20])])
+    }
+
+    @Test func twoPeopleSettingOneKeyAtTheSameMomentLeaveTheOneSavedLater() {
+        // One property at one moment is one value still: the later saver's, whole.
+        var (a, b) = pair(keyed())
+        a.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1, ease: MotionEase(kind: .linear)) } }
         // The second saves later, by this design's clock.
         b.time = a.time + 10
-        b.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 3) } }
+        b.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 1) } }
         let both = settled(a, b)
-        // Both see the same keys, and they are the keys one of them made, never a mixture that
-        // neither saw: here the later one's, without the key the other set at one second.
-        #expect(times(both, "One", .move) == [0, 2, 3])
-        #expect(node(both, "One")?[track: .move] == node(b.doc, "One")?[track: .move])
+        #expect(times(both, "One", .move) == [0, 1, 2])
+        #expect(key(both, "One", .move, at: 1) == MotionKey(t: 1, v: [200, 0]))
 
-        // The other way round in time, the other's stand.
-        var (c, d) = pair(doc)
-        d.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 3) } }
+        // The other way round in time, the other's stands.
+        var (c, d) = pair(keyed())
+        d.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 1) } }
         c.time = d.time + 10
-        c.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1) } }
-        #expect(times(settled(c, d), "One", .move) == [0, 1, 2])
+        c.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1, ease: MotionEase(kind: .linear)) } }
+        #expect(key(settled(c, d), "One", .move, at: 1) == MotionKey(t: 1, v: [50, 80], ease: MotionEase(kind: .linear)))
 
-        // A pace set on a key by one and a key moved by the other: one property still, one of the two stands.
-        var (e, f) = pair(doc)
+        // A key that was there, given a pace by one and a value by the other: the later one's key,
+        // never a mixture that neither saw.
+        var (e, f) = pair(keyed())
         e.edit { set(&$0, "One") { $0.setEase(MotionEase(kind: .linear), at: 2, of: [.move]) } }
         f.time = e.time + 10
-        f.edit { set(&$0, "One") { $0.moveKeys(from: 2, to: 2.5, of: [.move]) } }
-        let paced = settled(e, f)
-        #expect(times(paced, "One", .move) == [0, 2.5] && node(paced, "One")?[track: .move]?.keys[1].ease == nil)
+        f.edit { set(&$0, "One") { $0.setKey(.move, [120, 0], at: 2) } }
+        #expect(key(settled(e, f), "One", .move, at: 2) == MotionKey(t: 2, v: [120, 0]))
+
+        // A key is known by its moment. Moved by one while the other changes it: saved later,
+        // the move stands, and the key is gone from where it was with what the other did to it.
+        var (g, h) = pair(keyed())
+        g.edit { set(&$0, "One") { $0.setEase(MotionEase(kind: .linear), at: 2, of: [.move]) } }
+        h.time = g.time + 10
+        h.edit { set(&$0, "One") { $0.moveKeys(from: 2, to: 2.5, of: [.move]) } }
+        let moved = settled(g, h)
+        #expect(times(moved, "One", .move) == [0, 2.5] && key(moved, "One", .move, at: 2.5)?.ease == nil)
+        // Changed after it was moved, by someone who had not seen it go: it is back where it
+        // was, as they made it, beside the one that was moved.
+        var (i, j) = pair(keyed())
+        j.edit { set(&$0, "One") { $0.moveKeys(from: 2, to: 2.5, of: [.move]) } }
+        i.time = j.time + 10
+        i.edit { set(&$0, "One") { $0.setEase(MotionEase(kind: .linear), at: 2, of: [.move]) } }
+        let back = settled(i, j)
+        #expect(times(back, "One", .move) == [0, 2, 2.5] && key(back, "One", .move, at: 2)?.ease == MotionEase(kind: .linear))
+
+        // Taken away by one while the other changes it: the same, the later of the two stands.
+        var (k, l) = pair(keyed())
+        k.edit { set(&$0, "One") { $0.setKey(.move, [120, 0], at: 2) } }
+        l.time = k.time + 10
+        l.edit { set(&$0, "One") { $0.removeKeys(at: 2, of: [.move]) } }
+        #expect(times(settled(k, l), "One", .move) == [0])
+        var (m, n) = pair(keyed())
+        n.edit { set(&$0, "One") { $0.removeKeys(at: 2, of: [.move]) } }
+        m.time = n.time + 10
+        m.edit { set(&$0, "One") { $0.setKey(.move, [120, 0], at: 2) } }
+        #expect(key(settled(m, n), "One", .move, at: 2) == MotionKey(t: 2, v: [120, 0]))
+    }
+
+    @Test func twoKeysCloserThanTheTimelineTellsApartBecomeOneOnEveryMac() {
+        // Three thousandths of a second apart, two keys are one moment to the timeline, which
+        // would show one and take hold of the first. The later of the two in the film stands,
+        // whoever saved later.
+        for later in ["a", "b"] {
+            var (a, b) = pair(keyed())
+            if later == "a" { a.time += 10 } else { b.time += 10 }
+            a.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1) } }
+            b.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 1.003) } }
+            var macs = [a, b]
+            sync(&macs)
+            #expect(macs[0].doc.nodes == macs[1].doc.nodes)
+            #expect(times(macs[0].doc, "One", .move) == [0, 1.003, 2], "\(later) later")
+            // Nothing of the one that gave way is left to come back: the key that stands taken
+            // away, there is none at that moment, on either Mac.
+            macs[0].edit { set(&$0, "One") { $0.removeKeys(at: 1.003, of: [.move]) } }
+            sync(&macs)
+            #expect(times(macs[0].doc, "One", .move) == [0, 2] && times(macs[1].doc, "One", .move) == [0, 2])
+        }
+
+        // Five thousandths apart they are two moments, and both stay.
+        var (c, d) = pair(keyed())
+        c.edit { set(&$0, "One") { $0.setKey(.move, [50, 80], at: 1) } }
+        d.edit { set(&$0, "One") { $0.setKey(.move, [200, 0], at: 1.005) } }
+        #expect(times(settled(c, d), "One", .move) == [0, 1, 1.005, 2])
+
+        // A key somebody set stands rather than one Bezzle gave for company, earlier or later.
+        for near in [0.497, 0.503] {
+            var (e, f) = pair()
+            e.edit { set(&$0, "One") { $0.pose(.move, [0, 60], at: 0) } }
+            f.edit { set(&$0, "One") { $0.setKey(.move, [30, 0], at: near) } }
+            let met = settled(e, f)
+            #expect(node(met, "One")?[track: .move]?.keys == [MotionKey(t: 0, v: [0, 60]), MotionKey(t: near, v: [30, 0])], "\(near)")
+        }
+
+        // Three in a row, each within reach of the next, set on three Macs: all three see the
+        // same keys, no two at one moment, and the last of them is among them.
+        var macs = [Mac("a", doc: keyed()), Mac("b"), Mac("c")]
+        sync(&macs)
+        for (i, t) in [1, 1.003, 1.006].enumerated() { macs[i].edit { set(&$0, "One") { $0.setKey(.move, [Double(i), 0], at: t) } } }
+        sync(&macs)
+        #expect(macs[0].doc.nodes == macs[1].doc.nodes && macs[1].doc.nodes == macs[2].doc.nodes)
+        let row = node(macs[0].doc, "One")?[track: .move] ?? MotionTrack()
+        #expect(!row.isCrowded && row.keys.contains { $0.t == 1.006 })
+
+        // The rule by itself: from the end, a key that was set before one that was given.
+        var crowded = MotionTrack([MotionKey(t: 1, v: [1]), MotionKey(t: 1.002, v: [2]), MotionKey(t: 1.004, v: [3], given: true), MotionKey(t: 2, v: [4])])
+        let went = crowded.settle()
+        #expect(went && crowded.keys.map(\.t) == [1.002, 2])
+        var apart = MotionTrack([MotionKey(t: 1, v: [1]), MotionKey(t: 1.005, v: [2])])
+        let none = apart.settle()
+        #expect(!none && apart.keys.count == 2)
+        // Keys of a property this Bezzle does not know are a later one's to put in order.
+        var later = design()
+        set(&later, "One") { $0.motion = ["wobble": MotionTrack([MotionKey(t: 1, v: [1]), MotionKey(t: 1.002, v: [2])]), "turn": MotionTrack([MotionKey(t: 1, v: [1]), MotionKey(t: 1.002, v: [2])])] }
+        later.repairMotion()
+        #expect(node(later, "One")?.motion?["wobble"]?.keys.count == 2 && times(later, "One", .turn) == [1.002])
     }
 
     // MARK: A layer moved, or gone
@@ -273,13 +431,23 @@ struct MotionSharingTests {
         let turned = settled(a, b)
         #expect(node(turned, "One")?.motionProperties == [.turn])
 
-        // Of the same property, by the one who saved later: that property is as they left it, the other still gone.
-        var (c, d) = pair(doc)
-        c.edit { doc in doc.clearMotion([node(doc, "One")!.id]) }
-        d.time = c.time + 10
-        d.edit { set(&$0, "One") { $0.moveKeys(from: 0.8, to: 1.6, of: [.move]) } }
-        let kept = settled(c, d)
-        #expect(node(kept, "One")?.motionProperties == [.move] && times(kept, "One", .move) == [0, 1.6])
+        // A key of the same property moved meanwhile, by either: the keys that were taken away
+        // are gone, and the one that was moved is where it was moved to.
+        for later in ["c", "d"] {
+            var (c, d) = pair(doc)
+            if later == "c" { c.time += 10 } else { d.time += 10 }
+            c.edit { doc in doc.clearMotion([node(doc, "One")!.id]) }
+            d.edit { set(&$0, "One") { $0.moveKeys(from: 0.8, to: 1.6, of: [.move]) } }
+            let kept = settled(c, d)
+            #expect(node(kept, "One")?.motionProperties == [.move] && times(kept, "One", .move) == [1.6], "\(later) later")
+        }
+        // A key of it changed meanwhile, by the one who saved later: that key is back as they made it.
+        var (g, h) = pair(doc)
+        g.edit { doc in doc.clearMotion([node(doc, "One")!.id]) }
+        h.time = g.time + 10
+        h.edit { set(&$0, "One") { $0.setKey(.fade, [0.4], at: 0) } }
+        let changed = settled(g, h)
+        #expect(node(changed, "One")?.motionProperties == [.fade] && node(changed, "One")?[track: .fade]?.keys == [MotionKey(t: 0, v: [0.4])])
 
         // One key of a property removed by one while the other moves a key of another property.
         var (e, f) = pair(doc)
@@ -362,15 +530,68 @@ struct MotionSharingTests {
         set(&more, "Board") { $0.film?.backdrop = dark }
         #expect(node(FlatDesign.apply(from: made, to: none, onto: more), "Board")?.film == Film(backdrop: dark))
 
-        // A key undone while someone else keyed another property of the layer, and the same one.
+        // A key undone while someone else keyed another property of the layer.
         var keyed = before
         set(&keyed, "One") { $0.pose(.move, [0, 60], at: 0) }
         var other = keyed
         set(&other, "One") { $0.pose(.fade, [0], at: 0) }
         #expect(node(FlatDesign.apply(from: keyed, to: before, onto: other), "One")?.motionProperties == [.fade])
-        var same = keyed
-        set(&same, "One") { $0.setKey(.move, [80, 0], at: 2) }
-        #expect(times(FlatDesign.apply(from: keyed, to: before, onto: same), "One", .move) == [0, 0.5, 2])
+    }
+
+    @Test func undoingAKeyLeavesTheKeysSomeoneElseSetOfTheSameProperty() {
+        // Undo takes back the keys set on this Mac, each on its own: a key someone else set
+        // since, of the same property at another moment, stays.
+        let before = keyed()
+        var mine = before
+        set(&mine, "One") { $0.setKey(.move, [50, 80], at: 1) }
+        var now = mine
+        set(&now, "One") { $0.setKey(.move, [200, 0], at: 3) }
+        let undone = FlatDesign.apply(from: mine, to: before, onto: now)
+        #expect(times(undone, "One", .move) == [0, 2, 3] && key(undone, "One", .move, at: 3)?.v == [200, 0])
+        // Done again, mine is back beside theirs.
+        let redone = FlatDesign.apply(from: before, to: mine, onto: undone)
+        #expect(times(redone, "One", .move) == [0, 1, 2, 3] && key(redone, "One", .move, at: 1)?.v == [50, 80])
+
+        // The key I set, changed by someone since: it is theirs now, and stays as they made it.
+        var theirs = mine
+        set(&theirs, "One") { $0.setKey(.move, [70, 70], at: 1) }
+        #expect(key(FlatDesign.apply(from: mine, to: before, onto: theirs), "One", .move, at: 1)?.v == [70, 70])
+
+        // A key I took away, undone, while someone set another: mine is back, theirs stays.
+        var less = before
+        set(&less, "One") { $0.removeKeys(at: 2, of: [.move]) }
+        var more = less
+        set(&more, "One") { $0.setKey(.move, [200, 0], at: 3) }
+        #expect(times(FlatDesign.apply(from: before, to: less, onto: now), "One", .move) == [0, 1, 3])
+        #expect(times(FlatDesign.apply(from: less, to: before, onto: more), "One", .move) == [0, 2, 3])
+
+        // A key I moved, undone: it is back where it was, and the one they set stays.
+        var shifted = before
+        set(&shifted, "One") { $0.moveKeys(from: 2, to: 2.5, of: [.move]) }
+        var since = shifted
+        set(&since, "One") { $0.setKey(.move, [200, 0], at: 3) }
+        #expect(times(FlatDesign.apply(from: shifted, to: before, onto: since), "One", .move) == [0, 2, 3])
+
+        // The first pose of a property, undone after someone else set a key of it: my pose and
+        // the key Bezzle gave with it go, theirs stays, alone.
+        let plain = design()
+        var posed = plain
+        set(&posed, "One") { $0.pose(.move, [0, 60], at: 0) }
+        var joined = posed
+        set(&joined, "One") { $0.setKey(.move, [80, 0], at: 2) }
+        let alone = FlatDesign.apply(from: posed, to: plain, onto: joined)
+        #expect(node(alone, "One")?[track: .move]?.keys == [MotionKey(t: 2, v: [80, 0])])
+        // With nothing of it changed since, undoing the pose leaves no track at all.
+        #expect(node(FlatDesign.apply(from: posed, to: plain, onto: posed), "One")?.motion == nil)
+        var elsewhere = posed
+        set(&elsewhere, "Two") { $0.name = "Second" }
+        #expect(node(FlatDesign.apply(from: posed, to: plain, onto: elsewhere), "One")?.motion == nil)
+
+        // My key brought back by undo right beside one set since, closer than the timeline tells
+        // apart: one moment has one key, by the same rule as when changes are put together.
+        var near = less
+        set(&near, "One") { $0.setKey(.move, [200, 0], at: 2.003) }
+        #expect(times(FlatDesign.apply(from: less, to: before, onto: near), "One", .move) == [0, 2.003])
     }
 
     // MARK: In the app
@@ -405,28 +626,33 @@ struct MotionSharingTests {
         store.save()
         other.receive(session.state)
         #expect(other.doc.nodes == store.doc.nodes)
-        // There, meanwhile: another property of the same layer, the film's backdrop, the camera.
+        // There, meanwhile: another property of the same layer and one more key of its move, the
+        // film's backdrop, the camera.
         other.time = Collaboration.now + 10
         other.edit { doc in
-            set(&doc, "R") { $0.pose(.turn, [45], at: 1) }
+            set(&doc, "R") { $0.pose(.turn, [45], at: 1); $0.setKey(.move, [5, 5], at: 3) }
             set(&doc, "A") { $0.film?.backdrop = .black; $0.setKey(.cameraZoom, [2], at: 1) }
         }
         session.receive([other.state], from: .cloud)
         #expect(bench.node("R")?.motionProperties == [.move, .turn, .fade])
+        #expect(bench.node("R")?[track: .move]?.keys.map(\.t) == [0, 0.8, 3])
         #expect(bench.a.film == Film(length: 5, backdrop: .black) && bench.a.hasCamera)
 
-        // Undo here takes back the film's length alone, then the layer's own keys alone.
+        // Undo here takes back the film's length alone, then the keys set here alone: the key
+        // of the same property set there stays.
         bench.undo.undo()
         #expect(bench.a.film == Film(backdrop: .black) && bench.a.hasCamera)
         #expect(bench.node("R")?.motionProperties == [.move, .turn, .fade])
         bench.undo.undo()
-        #expect(bench.node("R")?.motionProperties == [.turn])
+        #expect(bench.node("R")?.motionProperties == [.move, .turn])
+        #expect(bench.node("R")?[track: .move]?.keys == [MotionKey(t: 3, v: [5, 5])])
         store.save()
         other.receive(session.state)
         #expect(other.doc.nodes == store.doc.nodes)
         bench.undo.redo()
         bench.undo.redo()
         #expect(bench.node("R")?.motionProperties == [.move, .turn, .fade])
+        #expect(bench.node("R")?[track: .move]?.keys.map(\.t) == [0, 0.8, 3])
         #expect(bench.a.film == Film(length: 5, backdrop: .black) && bench.a.hasCamera)
 
         // Closed and opened again, the shared design has all of it.
@@ -448,44 +674,127 @@ struct MotionSharingTests {
         b.receive(a.state)
         let one = try #require(node(a.doc, "One")).id
         let stamp = Stamp(time: a.time + 5, by: "later")
-        // A property this Bezzle does not know, a setting of the film it does not know, and a
-        // pace it has no name for, as a later Bezzle on a third Mac would share them.
+        func said(_ json: String) throws -> FieldValue { try JSONDecoder().decode(FieldValue.self, from: Data(json.utf8)) }
+        // A property this Bezzle does not know, with something in a key it does not know either;
+        // a setting of the film it does not know; as a later Bezzle on a third Mac would share them.
         var later = a.state
-        let wobble = try FieldValue(encoding: MotionTrack([MotionKey(t: 0, v: [1]), MotionKey(t: 1, v: [0])]))
-        later.layers[one]?.fields["motion/wobble"] = Register(value: wobble, stamp: stamp)
+        let wobbles = ["motion/wobble/0": try said(#"{"v":[1]}"#), "motion/wobble/1500": try said(#"{"v":[0],"ease":{"kind":"spring","bounce":0.2},"curl":3}"#)]
+        for (name, value) in wobbles { later.layers[one]?.fields[name] = Register(value: value, stamp: stamp) }
         let board = try #require(node(a.doc, "Board")).id
         later.layers[board]?.fields["film/sound"] = Register(value: .string("waves.mp3"), stamp: stamp)
         later.layers[board]?.fields["film/length"] = Register(value: .number(7), stamp: stamp)
         b.receive(later)
-        // What it can read, it shows; the rest it leaves alone and shares on untouched.
+        // What it can read, it shows; the rest it leaves alone and shares on untouched. The
+        // property it does not know is in the design it shows, and so in the file it writes.
         #expect(node(b.doc, "One")?.motionProperties == [.move, .fade])
-        #expect(node(b.doc, "One")?.motion?["wobble"]?.keys.count == 2)
+        #expect(node(b.doc, "One")?.motion?["wobble"]?.keys == [MotionKey(t: 0, v: [1]), MotionKey(t: 1.5, v: [0], ease: .spring(0.2))])
         #expect(node(b.doc, "Board")?.film == Film(length: 7))
         b.edit { set(&$0, "One") { $0.pose(.turn, [30], at: 1) } }
         b.edit { set(&$0, "Board") { $0.film?.once = true } }
-        #expect(b.state.layers[one]?.fields["motion/wobble"]?.value == wobble)
+        for (name, value) in wobbles { #expect(b.state.layers[one]?.fields[name] == Register(value: value, stamp: stamp), "\(name)") }
         #expect(b.state.layers[board]?.fields["film/sound"]?.value == .string("waves.mp3"))
         #expect(node(b.doc, "Board")?.film == Film(length: 7, once: true))
+        #expect(node(b.doc, "One")?.motion?["wobble"]?.keys.count == 2)
 
-        // A key with a pace it cannot read: the layer opens with no motion here rather than the
-        // design failing to open, and what is shared stays as the later Bezzle wrote it.
+        // A key with a pace it cannot read: the keys of that property are not shown here, the
+        // layer's other motion is, and what is shared stays as the later Bezzle wrote it.
         var odd = b.state
-        let elastic = try JSONDecoder().decode(FieldValue.self, from: Data(#"{"keys":[{"t":0,"v":[0]},{"t":1,"v":[1],"ease":{"kind":"elastic"}}]}"#.utf8))
-        odd.layers[one]?.fields["motion/fade"] = Register(value: elastic, stamp: Stamp(time: b.time + 50, by: "later"))
+        let elastic = try said(#"{"v":[0.5],"ease":{"kind":"elastic"}}"#)
+        odd.layers[one]?.fields["motion/fade/2000"] = Register(value: elastic, stamp: Stamp(time: b.time + 50, by: "later"))
         b.receive(odd)
-        #expect(node(b.doc, "One") != nil)
-        #expect(node(b.doc, "One")?.motion == nil)
-        #expect(b.state.layers[one]?.fields["motion/fade"]?.value == elastic)
-        #expect(b.state.layers[one]?.fields["motion/move"]?.value != .null)
-        // Changing something else of that layer here writes nothing over the motion it could not read.
-        b.edit { set(&$0, "One") { $0.name = "First" } }
-        #expect(b.state.layers[one]?.fields["motion/fade"]?.value == elastic)
-        #expect(b.state.layers[one]?.fields["motion/move"]?.value != .null)
+        #expect(node(b.doc, "One")?.motionProperties == [.move, .turn])
+        #expect(node(b.doc, "One")?[track: .move] == Filmed.moves?["move"])
+        #expect(node(b.doc, "One")?.motion?["wobble"]?.keys.count == 2)
+        #expect(b.state.layers[one]?.fields["motion/fade/2000"]?.value == elastic)
+        #expect(b.state.layers[one]?.fields["motion/fade/600"]?.value == MotionKey(t: 0.6, v: [1], ease: MotionEase(kind: .easeOut)).entry)
+        // Changing something else of that layer here, or keying it, writes nothing over the keys it could not show.
+        b.edit { set(&$0, "One") { $0.name = "First"; $0.setKey(.turn, [60], at: 2) } }
+        #expect(b.state.layers[one]?.fields["motion/fade/2000"]?.value == elastic)
+        #expect(b.state.layers[one]?.fields["motion/fade/0"]?.value == MotionKey(t: 0, v: [0]).entry)
+        #expect(b.state.layers[one]?.fields["motion/fade/600"]?.value == MotionKey(t: 0.6, v: [1], ease: MotionEase(kind: .easeOut)).entry)
+        // Once the later Bezzle gives that key a pace this one knows, the property is back whole.
+        var mended = b.state
+        mended.layers[one]?.fields["motion/fade/2000"] = Register(value: try said(#"{"v":[0.5],"ease":{"kind":"linear"}}"#), stamp: Stamp(time: b.time + 90, by: "later"))
+        b.receive(mended)
+        #expect(times(b.doc, "First", .fade) == [0, 0.6, 2])
+    }
+
+    @Test func entriesThisBezzleCannotPlaceAreLeftAloneAndSharedOn() throws {
+        var (a, b) = pair()
+        a.edit { set(&$0, "One") { $0 = Filmed.moving($0) } }
+        b.receive(a.state)
+        let one = try #require(node(a.doc, "One")).id
+        let stamp = Stamp(time: a.time + 5, by: "other")
+        let whole = try FieldValue(encoding: MotionTrack([MotionKey(t: 0, v: [10]), MotionKey(t: 1, v: [90])]))
+        let key = MotionKey(t: 0, v: [45]).entry
+        // A whole property's keys under its name, as a build of Bezzle shared them before each
+        // key was shared on its own; names that say more after the moment than this Bezzle
+        // knows, or no moment it can read; and a property nobody here has heard of, with two
+        // slashes in its name, as a key's entry looks to a Bezzle from before Animate.
+        let strange: [String: FieldValue] = [
+            "motion/turn": whole, "motion/turn/1000/soft": key, "motion/turn/half": key, "motion/turn/-5": key, "motion/turn/007": key,
+            "motion/turn/1.5": key, "motion//5": key, "motion/turn/5/given/given": key, "motion/turn/250": .number(3),
+            "sound/track/1500": key, "sound/track/1500/given": key,
+        ]
+        var other = a.state
+        for (name, value) in strange { other.layers[one]?.fields[name] = Register(value: value, stamp: stamp) }
+        b.receive(other)
+        // None of it shows, nothing traps, and the layer moves as it did.
+        #expect(node(b.doc, "One")?.motion == Filmed.moves)
+        // Through changes made here, to the layer and to its keys, all of it stays as it came.
+        b.edit { set(&$0, "One") { $0.name = "First"; $0.setKey(.turn, [20], at: 1); $0.removeKeys(at: 0.6, of: [.fade]) } }
+        b.edit { doc in doc.clearMotion([one]) }
+        for (name, value) in strange { #expect(b.state.layers[one]?.fields[name] == Register(value: value, stamp: stamp), "\(name)") }
+        // Kept on disk as a shared design is, and taken in by a third Mac from this one, it is
+        // all there still: whoever can read it will find it.
+        let kept = try JSONDecoder().decode(SharedDesign.self, from: JSONEncoder().encode(b.state))
+        var c = Mac("c")
+        c.receive(kept)
+        for (name, value) in strange { #expect(c.state.layers[one]?.fields[name] == Register(value: value, stamp: stamp), "\(name)") }
+        #expect(c.doc.nodes == b.doc.nodes)
+        // And what the Mac that wrote it sends is what it wrote.
+        #expect(Set(kept.changes(by: "other", after: 0).layers[one]?.fields.keys.map { $0 } ?? []) == Set(strange.keys))
+    }
+
+    @Test func everyPartOfAKeyIsSharedInItsEntryOrItsName() throws {
+        // A key is shared as what its entry holds and what the entry's name says. Whatever a key
+        // is given to hold later must go into one of the two, or it would not reach the others.
+        let key = MotionKey(t: 1.5, v: [1, 2], ease: .spring(0.4), given: true)
+        guard case .object(let written) = try FieldValue(encoding: key), case .object(let entry) = key.entry else {
+            Issue.record("A key is written as an object")
+            return
+        }
+        #expect(Set(written.keys) == ["t", "v", "ease", "given"])
+        #expect(Set(entry.keys) == ["v", "ease"] && entry["v"] == written["v"] && entry["ease"] == written["ease"])
+        let place = MotionKeyPlace("move", key)
+        #expect(place.name == "move/1500/given" && MotionKeyPlace(place.name) == place && place.time == 1.5)
+        #expect(MotionKeyPlace("move", MotionKey(t: 0.0164, v: [0])).name == "move/16")
+        // Only names written just so are places.
+        for odd in ["move", "move/", "/5", "move/05", "move/-5", "move/+5", "move/1.5", "move/5/later", "move/given", "move/5/given/given", ""] {
+            #expect(MotionKeyPlace(odd) == nil, "\(odd)")
+        }
+        // A time no file could hold makes a name all the same, and no trap.
+        var far = MotionKey(t: 0, v: [0])
+        for t in [Double.infinity, -.infinity, .nan, 1e300, -3] {
+            far.t = t
+            #expect(MotionKeyPlace(MotionKeyPlace("move", far).name) != nil, "\(t)")
+        }
+
+        // And all of it arrives: every property, every pace, a key that was given.
+        var (a, b) = pair()
+        a.edit { doc in
+            set(&doc, "Three") { $0 = Filmed.everything("Three").with(id: $0.id).with { $0.frame = CGRect(x: 0, y: 0, width: 100, height: 100) } }
+            set(&doc, "One") { $0.pose(.move, [0, 60], at: 0) }
+        }
+        b.receive(a.state)
+        #expect(node(b.doc, "Three")?.motion == node(a.doc, "Three")?.motion && node(b.doc, "One")?.motion == node(a.doc, "One")?.motion)
+        let names = Set(b.state.layers[node(a.doc, "One")!.id]?.fields.keys.filter { $0.hasPrefix("motion") } ?? [])
+        #expect(names == ["motion/move/0", "motion/move/500/given"])
     }
 
     // MARK: Whatever is done
 
-    @Test(arguments: [11, 12, 13] as [UInt64])
+    @Test(arguments: [11, 12, 13, 14, 15, 16, 17, 18] as [UInt64])
     func whateverThreePeopleDoToAFilmTheyEndUpSeeingTheSame(seed: UInt64) {
         var dice = MotionDice(seed: seed)
         var macs = [Mac("a", doc: design()), Mac("b"), Mac("c")]
@@ -493,11 +802,15 @@ struct MotionSharingTests {
         let names = ["One", "Two", "Three", "Group"]
         for round in 0..<40 {
             for i in macs.indices where dice.chance(0.7) {
-                let name = dice.pick(names), p = dice.pick(MotionProperty.layer), t = dice.pick([0, 0.5, 1, 1.5, 2, 3] as [Double])
+                // Few layers, few properties and few moments, some of them a few thousandths of
+                // a second from another, so that people meet at one key and beside one often.
+                let name = dice.pick(names), p = dice.pick([.move, .move, .fade, .turn, .scale] as [MotionProperty])
+                let t = dice.pick([0, 0.5, 1, 1.5, 2, 3] as [Double]) + dice.pick([0, 0, 0, 0.002, 0.003, 0.006] as [Double])
                 let value = p.rest.map { $0 + dice.number(-0.5...0.5) }
                 macs[i].time += Int64.random(in: 0..<5, using: &dice)
-                switch Int.random(in: 0..<10, using: &dice) {
-                case 0...3: macs[i].edit { doc in if let id = node(doc, name)?.id { doc.update(id) { $0.pose(p, value, at: t) } } }
+                switch Int.random(in: 0..<12, using: &dice) {
+                case 0...2: macs[i].edit { doc in if let id = node(doc, name)?.id { doc.update(id) { $0.pose(p, value, at: t) } } }
+                case 3, 10, 11: macs[i].edit { doc in if let id = node(doc, name)?.id { doc.update(id) { $0.setKey(p, value, at: t, ease: dice.chance(0.3) ? .linear : nil) } } }
                 case 4: macs[i].edit { doc in if let id = node(doc, name)?.id { doc.update(id) { $0.removeKeys(at: t, of: [p]) } } }
                 case 5: macs[i].edit { doc in if let id = node(doc, name)?.id { doc.update(id) { $0.moveKeys(from: t, to: t + 0.25, of: MotionProperty.layer) } } }
                 case 6: macs[i].edit { doc in if let id = node(doc, name)?.id { doc.update(id) { $0.frame.origin.x += 7 } } }
@@ -530,6 +843,14 @@ struct MotionSharingTests {
         }
         sync(&macs)
         #expect(macs[0].doc.nodes == macs[1].doc.nodes && macs[1].doc.nodes == macs[2].doc.nodes, "seed \(seed)")
+        // What is shared has come to rest as well, the same on all three: nobody has anything
+        // left to put in order that the others have not seen.
+        #expect(macs[0].state.layers == macs[1].state.layers && macs[1].state.layers == macs[2].state.layers, "seed \(seed)")
+        // And what is shared says what they see, with nothing more in it: read by a Mac that
+        // opens the design now, it is this design, and that Mac finds nothing to put in order.
+        var fresh = Mac("d")
+        fresh.receive(macs[0].state)
+        #expect(fresh.doc.nodes == macs[0].doc.nodes && fresh.state.layers == macs[0].state.layers, "seed \(seed)")
         // What they see is a film in order: every property's keys in time, none twice at a moment.
         for n in macs[0].doc.allNodes {
             for (name, track) in n.motion ?? [:] {

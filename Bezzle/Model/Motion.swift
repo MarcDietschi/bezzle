@@ -314,11 +314,43 @@ nonisolated struct MotionTrack: Codable, Hashable, Sendable {
     }
 }
 
+nonisolated extension MotionTrack {
+    /// Whether two of its keys are at what is one moment to the timeline.
+    var isCrowded: Bool { zip(keys, keys.dropFirst()).contains { MotionTiming.same($0.t, $1.t) } }
+
+    /// Leaves one key at each moment, where there are two closer than the timeline tells apart:
+    /// a key somebody set stands rather than one Bezzle gave for company, and of two alike in
+    /// that the later one, which is what the film shows from there on. Returns whether any went.
+    mutating func settle() -> Bool {
+        guard isCrowded else { return false }
+        // From the end, so that what stands is decided once and by the keys alone.
+        var standing: [MotionKey] = []
+        for key in keys.reversed() {
+            guard let last = standing.last, MotionTiming.same(last.t, key.t) else {
+                standing.append(key)
+                continue
+            }
+            if last.given == true, key.given != true { standing[standing.count - 1] = key }
+        }
+        keys = standing.reversed()
+        return true
+    }
+}
+
 /// Times and values as Animate keeps and compares them.
 nonisolated enum MotionTiming {
     /// A time as it is kept: to the thousandth of a second, never before the start. One that is
     /// no number is the start: it could not be written to a design's file, and the design with it.
     static func time(_ t: Double) -> Double { t.isFinite ? (max(t, 0) * 1000).rounded() / 1000 : 0 }
+
+    /// A time as a whole number of milliseconds, which a time as it is kept always is: what a
+    /// key is known by where each is shared on its own (`MotionKeyPlace`). None is past
+    /// `lastMillisecond`.
+    static func milliseconds(_ t: Double) -> Int { Int(min((time(t) * 1000).rounded(), Double(lastMillisecond))) }
+
+    /// Some three weeks in: a number of milliseconds that every Bezzle can count to, the one in
+    /// a browser too, where whole numbers are smaller.
+    static let lastMillisecond = 2_000_000_000
 
     /// Whether two times are the same moment: within a quarter of a frame at 60 a second.
     static func same(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 0.0042 }
@@ -728,6 +760,34 @@ nonisolated extension BezzleDocument {
         }
         for (i, item) in ordered.enumerated() {
             update(item.0) { $0.apply(move, at: time + Double(i) * max(apart, 0), going: going, frame: item.1, board: item.2) }
+        }
+    }
+
+    /// Leaves every property one key at a moment, in a design that changes made apart by several
+    /// people were put together into. Each key is shared on its own, so two people setting one
+    /// property a few thousandths of a second apart both have their key in it, at what the
+    /// timeline shows and takes hold of as one moment: one of the two stands (`MotionTrack.settle`).
+    /// Every Mac works out the same from the same changes, whatever order they came in. Only
+    /// the properties this Bezzle knows: a later one's are that one's to put in order.
+    mutating func repairMotion() {
+        guard Self.hasCrowdedKeys(nodes) || Self.hasCrowdedKeys(masters) else { return }
+        Self.settleKeys(&nodes)
+        Self.settleKeys(&masters)
+    }
+
+    private static func crowded(_ node: Node) -> [String] {
+        guard let motion = node.motion else { return [] }
+        return motion.compactMap { MotionProperty(rawValue: $0.key) != nil && $0.value.isCrowded ? $0.key : nil }
+    }
+
+    private static func hasCrowdedKeys(_ list: [Node]) -> Bool {
+        list.contains { !crowded($0).isEmpty || (!$0.children.isEmpty && hasCrowdedKeys($0.children)) }
+    }
+
+    private static func settleKeys(_ list: inout [Node]) {
+        for i in list.indices {
+            for property in crowded(list[i]) { _ = list[i].motion?[property]?.settle() }
+            if !list[i].children.isEmpty { settleKeys(&list[i].children) }
         }
     }
 
