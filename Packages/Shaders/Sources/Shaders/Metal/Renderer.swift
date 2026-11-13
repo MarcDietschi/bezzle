@@ -44,8 +44,8 @@ public final class ShaderRenderer: @unchecked Sendable {
         let samples = sampleCount(frame)
         for draw in frame.draws {
             let program = try program(draw.vertex, draw.fragment)
-            _ = try program.pipeline(vertexLayout(draw, program).key(pixelFormat: .rgba8Unorm, samples: samples,
-                                                                  blend: draw.blend), device: device)
+            _ = try program.pipeline(pipelineKey(vertexLayout(draw, program), pixelFormat: .rgba8Unorm, samples: samples,
+                                                 blend: draw.blend), device: device)
         }
     }
 
@@ -114,21 +114,8 @@ public final class ShaderRenderer: @unchecked Sendable {
         }
     }
 
-    /// What maps the drawing buffer onto the output.
-    private struct Geometry {
-        var size: (width: Double, height: Double)        // the drawing buffer
-        var region: (x: Double, y: Double, width: Double, height: Double) // of it, top-left origin
-        var output: (width: Double, height: Double)
-    }
-
     private func encode(_ frame: ShaderFrame, into target: MTLTexture, region: CGRect?, commands: MTLCommandBuffer) throws {
-        let size = (width: Double(frame.size.width), height: Double(frame.size.height))
-        guard size.width > 0, size.height > 0 else { throw ShaderError("The drawing buffer is empty.") }
-        let area = (region ?? CGRect(x: 0, y: 0, width: size.width, height: size.height)).standardized
-        guard area.width > 0, area.height > 0 else { throw ShaderError("The region to draw is empty.") }
-        let geometry = Geometry(size: size,
-                                region: (Double(area.minX), Double(area.minY), Double(area.width), Double(area.height)),
-                                output: (Double(target.width), Double(target.height)))
+        let geometry = try Geometry(frame, region: region, output: target.width, target.height)
         let samples = sampleCount(frame)
         // Everything made first, so a program that does not build throws before anything is encoded.
         var prepared: [Prepared] = []
@@ -271,177 +258,46 @@ public final class ShaderRenderer: @unchecked Sendable {
         }
     }
 
-    /// The vertex buffers and their layout for a draw: arrays per vertex, disabled arrays and
-    /// attributes the page never set as constants (WebGL's default is 0, 0, 0, 1).
-    private struct VertexLayout {
-        var attributes: [Program.AttributeLayout] = []
-        var buffers: [(Int, [UInt8])] = []
-        /// How many vertices the arrays hold; nil without arrays.
-        var vertices: Int?
-
-        func key(pixelFormat: MTLPixelFormat, samples: Int, blend: ShaderDraw.Blend?) -> Program.PipelineKey {
-            Program.PipelineKey(attributes: attributes, pixelFormat: pixelFormat.rawValue, sampleCount: samples,
-                                blend: blend.map(Program.BlendKey.init))
-        }
-    }
-
     private func vertexLayout(_ draw: ShaderDraw, _ program: Program) -> VertexLayout {
-        var layout = VertexLayout()
-        for (i, input) in program.inputs.enumerated() {
-            let buffer = Program.firstVertexBuffer + i
-            let columns = max(1, input.columns), rows = max(1, min(4, input.rows))
-            if let attribute = draw.attributes[input.name], attribute.constant == nil, attribute.components > 0 {
-                let components = attribute.components
-                let vertices = attribute.values.count / components
-                layout.vertices = min(layout.vertices ?? vertices, vertices)
-                let width = columns > 1 ? rows : min(4, components)
-                for column in 0..<columns {
-                    layout.attributes.append(Program.AttributeLayout(
-                        location: input.location + column, format: Self.format(input.base, width).rawValue,
-                        buffer: buffer, offset: column * rows * 4, stride: components * 4, constant: false))
-                }
-                layout.buffers.append((buffer, Self.bytes(attribute.values, input.base)))
-            } else {
-                // Each column its own four numbers, defaults filling what the constant leaves out.
-                let given = draw.attributes[input.name]?.constant ?? []
-                var values: [Float] = []
-                for column in 0..<columns {
-                    var value: [Float] = [0, 0, 0, 1]
-                    let per = columns > 1 ? rows : 4
-                    for k in 0..<min(per, 4) where column * per + k < given.count { value[k] = given[column * per + k] }
-                    values += value
-                    layout.attributes.append(Program.AttributeLayout(
-                        location: input.location + column, format: Self.format(input.base, 4).rawValue,
-                        buffer: buffer, offset: column * 16, stride: 16 * columns, constant: true))
-                }
-                layout.buffers.append((buffer, Self.bytes(values, input.base)))
-            }
-        }
-        return layout
+        VertexLayout(draw, program.layout, firstBuffer: Program.firstVertexBuffer)
     }
 
-    private static func format(_ base: Program.Base, _ width: Int) -> MTLVertexFormat {
-        switch (base, width) {
-        case (.float, 1): .float
-        case (.float, 2): .float2
-        case (.float, 3): .float3
-        case (.float, _): .float4
-        case (.int, 1): .int
-        case (.int, 2): .int2
-        case (.int, 3): .int3
-        case (.int, _): .int4
-        case (.uint, 1): .uint
-        case (.uint, 2): .uint2
-        case (.uint, 3): .uint3
-        case (.uint, _): .uint4
-        }
-    }
-
-    private static func bytes(_ values: [Float], _ base: Program.Base) -> [UInt8] {
-        switch base {
-        case .float:
-            return values.withUnsafeBytes { Array($0) }
-        case .int:
-            return values.map { Int32(clamping: Int64($0.isFinite ? $0.rounded(.towardZero) : 0)) }.withUnsafeBytes { Array($0) }
-        case .uint:
-            return values.map(Self.unsigned).withUnsafeBytes { Array($0) }
-        }
-    }
-
-    static func unsigned(_ value: Float) -> UInt32 {
-        guard value.isFinite else { return 0 }
-        if value < 0 { return UInt32(bitPattern: Int32(clamping: Int64(value.rounded(.towardZero)))) }
-        return UInt32(clamping: Int64(value.rounded(.towardZero)))
+    private func pipelineKey(_ layout: VertexLayout, pixelFormat: MTLPixelFormat, samples: Int,
+                             blend: ShaderDraw.Blend?) -> Program.PipelineKey {
+        Program.PipelineKey(attributes: layout.attributes, pixelFormat: pixelFormat.rawValue, sampleCount: samples,
+                            blend: blend.map(Program.BlendKey.init))
     }
 
     private func prepare(_ draw: ShaderDraw, geometry: Geometry, pixelFormat: MTLPixelFormat,
                          samples: Int) throws -> Prepared? {
         let program = try program(draw.vertex, draw.fragment)
         let layout = vertexLayout(draw, program)
-        let pipeline = try program.pipeline(layout.key(pixelFormat: pixelFormat, samples: samples, blend: draw.blend),
+        let pipeline = try program.pipeline(pipelineKey(layout, pixelFormat: pixelFormat, samples: samples, blend: draw.blend),
                                             device: device)
-        guard draw.count > 0, draw.first >= 0 else { return nil }
+        guard let plan = DrawPlan(draw, program: program.layout, layout: layout, geometry: geometry) else { return nil }
 
-        // What WebGL would refuse to draw (reading past an array) draws nothing.
-        let primitive: MTLPrimitiveType
-        let call: Call
-        if let indices = draw.indices {
-            guard draw.first + draw.count <= indices.count else { return nil }
-            let used = indices[draw.first..<(draw.first + draw.count)]
-            if let vertices = layout.vertices, let top = used.lazy.filter({ $0 != .max }).max(), Int(top) >= vertices {
-                return nil
-            }
-        } else if let vertices = layout.vertices, draw.first + draw.count > vertices {
-            return nil
+        let primitive: MTLPrimitiveType = switch plan.primitive {
+        case .triangle: .triangle
+        case .triangleStrip: .triangleStrip
+        case .line: .line
+        case .lineStrip: .lineStrip
+        case .point: .point
         }
-        func indexBuffer(_ indices: [UInt32]) throws -> MTLBuffer {
+        let call: Call
+        switch plan.call {
+        case .arrays(let start, let count):
+            call = .arrays(start: start, count: count)
+        case .indexed(let indices, let first, let count):
             guard !indices.isEmpty,
                   let buffer = device.makeBuffer(bytes: indices, length: indices.count * 4, options: .storageModeShared)
             else { throw ShaderError("Metal: no index buffer.") }
-            return buffer
+            call = .indexed(buffer, offset: first * 4, count: count)
         }
-        /// The vertices drawn, in order: for fans and loops, which Metal does not draw.
-        var vertexList: [UInt32] {
-            if let indices = draw.indices { return Array(indices[draw.first..<(draw.first + draw.count)]) }
-            return (0..<draw.count).map { UInt32(draw.first + $0) }
-        }
-        switch draw.mode {
-        case .triangleFan:
-            let vertexList = vertexList
-            guard vertexList.count >= 3 else { return nil }
-            var fan: [UInt32] = []
-            fan.reserveCapacity((vertexList.count - 2) * 3)
-            for i in 1..<(vertexList.count - 1) { fan += [vertexList[0], vertexList[i], vertexList[i + 1]] }
-            primitive = .triangle
-            call = .indexed(try indexBuffer(fan), offset: 0, count: fan.count)
-        case .lineLoop:
-            let vertexList = vertexList
-            guard vertexList.count >= 2 else { return nil }
-            let loop = vertexList + [vertexList[0]]
-            primitive = .lineStrip
-            call = .indexed(try indexBuffer(loop), offset: 0, count: loop.count)
-        default:
-            switch draw.mode {
-            case .triangles: primitive = .triangle
-            case .triangleStrip: primitive = .triangleStrip
-            case .lines: primitive = .line
-            case .lineStrip: primitive = .lineStrip
-            default: primitive = .point
-            }
-            if let indices = draw.indices {
-                call = .indexed(try indexBuffer(indices), offset: draw.first * 4, count: draw.count)
-            } else {
-                call = .arrays(start: draw.first, count: draw.count)
-            }
-        }
-
-        // The viewport, and the region of the drawing buffer the output shows.
-        let (W, H) = geometry.size
-        let (rx, ry, rw, rh) = geometry.region
-        let (w, h) = geometry.output
-        let viewport = draw.viewport.map { $0.standardized }
-        let vx = Double(viewport?.minX ?? 0), vy = Double(viewport?.minY ?? 0)
-        let vw = Double(viewport?.width ?? CGFloat(W)), vh = Double(viewport?.height ?? CGFloat(H))
-        guard vw > 0, vh > 0 else { return nil }
-        // Clip space of the viewport onto clip space of the output; outside the viewport is cut.
-        let clip: [Float] = [Float(vw / rw), Float(vh / rh), Float((2 * (vx - rx) + vw) / rw - 1),
-                             Float(1 + (2 * vy + vh - 2 * (H - ry)) / rh)]
-        let x0 = max(0, min(w, ((vx - rx) * w / rw).rounded()))
-        let x1 = max(0, min(w, ((vx + vw - rx) * w / rw).rounded()))
-        let y0 = max(0, min(h, ((H - vy - vh - ry) * h / rh).rounded()))
-        let y1 = max(0, min(h, ((H - vy - ry) * h / rh).rounded()))
-        guard x1 > x0, y1 > y0 else { return nil }
-        let scissor = MTLScissorRect(x: Int(x0), y: Int(y0), width: Int(x1 - x0), height: Int(y1 - y0))
-        // gl_FragCoord from the output's pixels, top-left origin, to the drawing buffer's, bottom-left.
-        let own: [String: [Float]] = [
-            "bezzle_clip": clip,
-            "bezzle_fragCoord": [Float(rw / w), Float(-rh / h), Float(rx), Float(H - ry)],
-            "bezzle_pointScale": [Float((w / rw + h / rh) / 2)],
-        ]
-        let values = Uniforms(draw.uniforms, own: own)
+        let scissor = MTLScissorRect(x: plan.scissor.x, y: plan.scissor.y, width: plan.scissor.width,
+                                     height: plan.scissor.height)
 
         var vertexBuffers: [(Int, VertexData)] = []
-        for (index, bytes) in layout.buffers {
+        for (index, bytes) in plan.vertexBuffers {
             if bytes.count <= 4096 {
                 vertexBuffers.append((index, .bytes(bytes)))
             } else {
@@ -452,30 +308,23 @@ public final class ShaderRenderer: @unchecked Sendable {
             }
         }
         return Prepared(pipeline: pipeline,
-                        vertexUniforms: program.vertex.buffers.map { ($0.index, values.pack($0)) },
-                        fragmentUniforms: program.fragment.buffers.map { ($0.index, values.pack($0)) },
+                        vertexUniforms: plan.vertexUniforms,
+                        fragmentUniforms: plan.fragmentUniforms,
                         vertexBuffers: vertexBuffers,
-                        vertexTextures: try bind(program.vertex.textures, draw),
-                        fragmentTextures: try bind(program.fragment.textures, draw),
+                        vertexTextures: try bind(plan.vertexTextures, plan),
+                        fragmentTextures: try bind(plan.fragmentTextures, plan),
                         scissor: scissor, primitive: primitive, call: call,
-                        blendColor: draw.blend?.color)
+                        blendColor: plan.blendColor)
     }
 
-    private func bind(_ list: [Program.Texture], _ draw: ShaderDraw) throws -> [(Int, MTLTexture, MTLSamplerState)] {
-        var bound: [(Int, MTLTexture, MTLSamplerState)] = []
-        for texture in list {
-            for element in 0..<max(1, texture.count) {
-                let name = texture.count > 1 ? "\(texture.name)[\(element)]" : texture.name
-                let image = draw.textures[name] ?? (element == 0 ? draw.textures[texture.name] ?? draw.textures["\(texture.name)[0]"] : nil)
-                let sampling = draw.sampling[name] ?? draw.sampling[texture.name] ?? ShaderDraw.Sampling()
-                let metal = try image.map {
-                    try textures.texture($0, flip: draw.flipsTextures, premultiply: draw.premultipliesTextures,
-                                         mipmaps: sampling.mipmap != nil, cube: texture.cube)
-                } ?? textures.blank(cube: texture.cube)
-                bound.append((texture.index + element, metal, try sampler(sampling)))
-            }
+    private func bind(_ list: [DrawPlan.Texture], _ plan: DrawPlan) throws -> [(Int, MTLTexture, MTLSamplerState)] {
+        try list.map { texture in
+            let metal = try texture.picture.map {
+                try textures.texture($0, flip: plan.flipsTextures, premultiply: plan.premultipliesTextures,
+                                     mipmaps: texture.sampling.mipmap != nil, cube: texture.cube)
+            } ?? textures.blank(cube: texture.cube)
+            return (texture.slot, metal, try sampler(texture.sampling))
         }
-        return bound
     }
 
     private func sampler(_ sampling: ShaderDraw.Sampling) throws -> MTLSamplerState {
@@ -554,69 +403,5 @@ public final class ShaderRenderer: @unchecked Sendable {
             }
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
-    }
-}
-
-/// A draw's uniform values, written into a uniform block as its layout says.
-struct Uniforms {
-    let values: [String: [Float]]
-    let own: [String: [Float]]
-    /// "u_colors[2]" and the like, by "u_colors": each element given on its own, in order.
-    let elements: [String: [(Int, [Float])]]
-
-    init(_ values: [String: [Float]], own: [String: [Float]] = [:]) {
-        self.values = values
-        self.own = own
-        var elements: [String: [(Int, [Float])]] = [:]
-        for (key, value) in values where key.hasSuffix("]") {
-            guard let open = key.lastIndex(of: "["),
-                  let index = Int(key[key.index(after: open)..<key.index(before: key.endIndex)]) else { continue }
-            elements[String(key[..<open]), default: []].append((index, value))
-        }
-        self.elements = elements.mapValues { $0.sorted { $0.0 < $1.0 } }
-    }
-
-    func pack(_ buffer: Program.Buffer) -> [UInt8] {
-        // Metal rounds a struct's size up to its alignment, which in a uniform block is at most 16.
-        var bytes = [UInt8](repeating: 0, count: (max(16, buffer.size) + 15) / 16 * 16)
-        bytes.withUnsafeMutableBytes { raw in
-            for member in buffer.members { write(member, into: raw) }
-        }
-        return bytes
-    }
-
-    private func write(_ member: Program.Member, into raw: UnsafeMutableRawBufferPointer) {
-        let size = max(1, member.rows * member.columns)
-        func store(_ element: Int, _ numbers: ArraySlice<Float>) {
-            guard element < member.count else { return }
-            for (k, value) in numbers.prefix(size).enumerated() {
-                let column = k / member.rows, row = k % member.rows
-                var offset = member.offset + element * member.arrayStride
-                if member.columns > 1 {
-                    offset += member.rowMajor ? row * member.matrixStride + column * 4 : column * member.matrixStride + row * 4
-                } else {
-                    offset += k * 4
-                }
-                guard offset >= 0, offset + 4 <= raw.count else { continue }
-                switch member.base {
-                case .float: raw.storeBytes(of: value, toByteOffset: offset, as: Float.self)
-                case .int:
-                    raw.storeBytes(of: Int32(clamping: Int64(value.isFinite ? value.rounded(.towardZero) : 0)),
-                                   toByteOffset: offset, as: Int32.self)
-                case .uint: raw.storeBytes(of: ShaderRenderer.unsigned(value), toByteOffset: offset, as: UInt32.self)
-                }
-            }
-        }
-        /// Elements from `first` on, as many as `numbers` holds.
-        func fill(from first: Int, _ numbers: [Float]) {
-            var element = first, start = 0
-            while start < numbers.count && element < member.count {
-                store(element, numbers[start..<min(numbers.count, start + size)])
-                start += size
-                element += 1
-            }
-        }
-        if let whole = own[member.name] ?? values[member.name] { fill(from: 0, whole) }
-        for (index, numbers) in elements[member.name] ?? [] { fill(from: index, numbers) }
     }
 }

@@ -91,15 +91,7 @@ final class Textures: @unchecked Sendable {
             return true
         }
         guard drawn else { throw ShaderError("A picture did not read.") }
-        if !premultiply {
-            for i in stride(from: 0, to: pixels.count, by: 4) {
-                let alpha = Int(pixels[i + 3])
-                if alpha == 0 || alpha == 255 { continue }
-                for c in 0..<3 {
-                    pixels[i + c] = UInt8(min(255, (Int(pixels[i + c]) * 255 + alpha / 2) / alpha))
-                }
-            }
-        }
+        if !premultiply { Packing.straighten(&pixels) }
         pixels.withUnsafeBytes { bytes in
             for slice in 0..<(cube ? 6 : 1) {
                 // A flipped stack keeps its faces' order: each face is turned in its place.

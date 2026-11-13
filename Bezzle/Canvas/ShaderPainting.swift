@@ -4,9 +4,11 @@ import ImageIO
 import Shaders
 
 /// Shader fills drawn (`ShaderFill`): the fill's frame, at a moment of its own time, handed to
-/// Bezzle's Metal engine (Packages/Shaders) and drawn into the part of the layer that a tile or a
-/// picture shows, as sharp as it shows there. What cannot be drawn, on a Mac without Metal or a
-/// program that does not build, gives way to the fill's picture, which is how it came in.
+/// Bezzle's engine (Packages/Shaders, Metal on the Mac, Direct3D on Windows) and drawn into the
+/// part of the layer that a tile or a picture shows, as sharp as it shows there. What cannot be
+/// drawn, on a computer without either or a program that does not build, gives way to the fill's
+/// picture, which is how it came in. Bezzle for Windows compiles this same file, with
+/// Windows/Sources/BezzleCore/Host/ShaderPictures.swift saying the engine's types in its core's.
 ///
 /// Thread-safe: the canvas's tiles are drawn on several threads at once (`Renderer`).
 nonisolated enum ShaderPainting {
@@ -113,7 +115,9 @@ nonisolated enum ShaderPainting {
                            premultipliedAlpha: shader.premultipliedAlpha ?? true, antialias: shader.antialias ?? true)
     }
 
-    private static func mode(_ m: Bezzle.ShaderDraw.Mode) -> Shaders.ShaderDraw.Mode {
+    /// `ShaderDraw` unqualified is the model's, the module's own (Bezzle here, BezzleCore on
+    /// Windows, which compiles this file too), found before the engine's.
+    private static func mode(_ m: ShaderDraw.Mode) -> Shaders.ShaderDraw.Mode {
         switch m {
         case .triangles: .triangles
         case .triangleStrip: .triangleStrip

@@ -1,4 +1,6 @@
+#if !os(Windows)
 import CoreGraphics
+#endif
 import Foundation
 import Testing
 import ShaderCompiler
@@ -118,13 +120,76 @@ import ShaderCompiler
             let vertex = version == 100
                 ? "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }"
                 : "#version 300 es\nin vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }"
+            #if os(Windows)
+            let upgradedVertex = Upgrade.upgrade(vertex, stage: .vertex, sprites: .init(coordinates: false)).source
+            let upgraded = Upgrade.upgrade(fragment, stage: .fragment, sprites: .init(coordinates: false))
+            var translation = BZHLSLTranslation()
+            let ok = bz_translate_hlsl(upgradedVertex, upgraded.source, &translation)
+            let reflection = translation.reflection.map { String(cString: $0) } ?? ""
+            bz_hlsl_translation_free(&translation)
+            #else
             let upgradedVertex = Upgrade.upgrade(vertex, stage: .vertex).source
             let upgraded = Upgrade.upgrade(fragment, stage: .fragment)
             var translation = BZTranslation()
             let ok = bz_translate(upgradedVertex, upgraded.source, &translation)
             let reflection = translation.reflection.map { String(cString: $0) } ?? ""
             bz_translation_free(&translation)
+            #endif
             if ok != 1 || !reflection.contains("\"bezzle_\(word)\"") { failed.append(word) }
+        }
+        #expect(failed.isEmpty, "\(failed)")
+    }
+
+    /// Names a page is free to give its own things that HLSL or the Metal Shading Language keep
+    /// for themselves still draw: SPIRV-Cross renames them in what it writes.
+    @Test func namesTheBackEndsKeepStillWork() throws {
+        let vertex = """
+            attribute vec2 point;
+            varying vec2 line;
+            varying float groupshared;
+            void main() { line = point * 0.5 + 0.5; groupshared = 0.5; gl_Position = vec4(point, 0.0, 1.0); }
+            """
+        let fragment = """
+            precision mediump float;
+            varying vec2 line;
+            varying float groupshared;
+            uniform float matrix;
+            uniform vec2 vector;
+            uniform float cbuffer;
+            uniform float register;
+            float linear(float string) { return string * matrix; }
+            float device(float constant) { return constant + cbuffer + register; }
+            void main() { gl_FragColor = vec4(linear(line.x), groupshared, device(vector.y), 1.0); }
+            """
+        let draw = ShaderDraw(vertex: vertex, fragment: fragment,
+                              uniforms: ["matrix": [1], "vector": [0, 0.25], "cbuffer": [0.25], "register": [0.25]],
+                              attributes: ["point": ShaderDraw.fullSurfacePositions], count: 6)
+        let pixels = try Shaders_draw(ShaderFrame(size: CGSize(width: 4, height: 4), draws: [draw]))
+        #expect(near(pixels[2, 2], [159, 128, 191, 255], within: 2), "\(pixels[2, 2])")
+        let interface = try renderer.interface(of: vertex, fragment)
+        #expect(Set(interface.uniforms.map(\.name)) == ["matrix", "vector", "cbuffer", "register"])
+        #expect(interface.attributes.map(\.name) == ["point"])
+
+        // Every word on the list, as a varying, a parameter and a variable; as a uniform, keeping its
+        // value; as a function.
+        var failed: [String] = []
+        for word in Upgrade.keptByTheBackEnds.sorted() {
+            let plain = "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }"
+            let programs = [
+                ("attribute vec2 p; varying float \(word); void main() { \(word) = 0.5; gl_Position = vec4(p, 0.0, 1.0); }",
+                 "precision mediump float; varying float \(word); float f(float \(word)) { return \(word) * 1.0; }"
+                     + " void main() { float c = f(\(word)); { float \(word) = c; gl_FragColor = vec4(\(word)); } }"),
+                (plain, "precision mediump float; uniform float \(word); void main() { gl_FragColor = vec4(\(word)); }"),
+                (plain, "precision mediump float; uniform float u; float \(word)(float x) { return x * 2.0; }"
+                     + " void main() { gl_FragColor = vec4(\(word)(u)); }"),
+            ]
+            for (vertex, fragment) in programs {
+                // Each draws 0.5 everywhere: the varying, the uniform, or 0.25 twice.
+                let draw = ShaderDraw(vertex: vertex, fragment: fragment, uniforms: [word: [0.5], "u": [0.25]],
+                                      attributes: ["p": ShaderDraw.fullSurfacePositions], count: 6)
+                let pixels = try? Shaders_draw(ShaderFrame(size: CGSize(width: 2, height: 2), draws: [draw]))
+                if pixels.map({ !near($0[1, 1], [128, 128, 128, 128], within: 1) }) ?? true { failed.append(word) }
+            }
         }
         #expect(failed.isEmpty, "\(failed)")
     }
@@ -164,6 +229,7 @@ import ShaderCompiler
             """.split(whereSeparator: \.isWhitespace).map(String.init)
         #expect(Upgrade.newSince100.isDisjoint(with: es100))
         #expect(Upgrade.newSince300.isDisjoint(with: es300))
+        #expect(Upgrade.keptByTheBackEnds.isDisjoint(with: es300))
     }
 
     @Test func webGL1Extensions() throws {

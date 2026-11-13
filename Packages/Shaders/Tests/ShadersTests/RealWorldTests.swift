@@ -1,4 +1,6 @@
+#if !os(Windows)
 import CoreGraphics
+#endif
 import Foundation
 import Testing
 @testable import Shaders

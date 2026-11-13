@@ -1,4 +1,28 @@
+#if os(Windows)
+import Foundation
+
+/// A picture a draw samples, or the one a frame draws: RGBA, 8 bits a channel, rows top first,
+/// each colour multiplied by its alpha, in sRGB, as Core Graphics keeps a picture on the Mac.
+/// Kept by identity, as the Mac keeps its pictures: the same picture is uploaded once.
+public final class ShaderPicture: @unchecked Sendable {
+    public let width: Int
+    public let height: Int
+    /// `width` times `height` times 4 bytes.
+    public let pixels: [UInt8]
+
+    public init(width: Int, height: Int, pixels: [UInt8]) {
+        precondition(pixels.count == width * height * 4, "A picture's pixels are width times height times 4 bytes.")
+        self.width = width
+        self.height = height
+        self.pixels = pixels
+    }
+}
+#else
 import CoreGraphics
+
+/// A picture a draw samples: on the Mac, Core Graphics' own.
+public typealias ShaderPicture = CGImage
+#endif
 
 /// A stage of a WebGL program.
 public enum ShaderStage: Sendable { case vertex, fragment }
@@ -210,7 +234,7 @@ public struct ShaderDraw: Sendable {
     /// Sampler uniform name to its picture: "u_image", or "u_images[1]" for an array's element.
     /// A samplerCube takes its six faces stacked top to bottom (+X, -X, +Y, -Y, +Z, -Z); any
     /// other picture is used for all six. A sampler without a picture reads opaque black.
-    public var textures: [String: CGImage]
+    public var textures: [String: ShaderPicture]
     /// UNPACK_FLIP_Y_WEBGL was on: pictures are turned upside down on upload.
     public var flipsTextures: Bool
     /// UNPACK_PREMULTIPLY_ALPHA_WEBGL was on: pictures are uploaded premultiplied.
@@ -224,7 +248,7 @@ public struct ShaderDraw: Sendable {
 
     public init(vertex: String, fragment: String, uniforms: [String: [Float]] = [:],
                 attributes: [String: Attribute] = [:], indices: [UInt32]? = nil, mode: Mode = .triangles,
-                first: Int = 0, count: Int, textures: [String: CGImage] = [:], flipsTextures: Bool = false,
+                first: Int = 0, count: Int, textures: [String: ShaderPicture] = [:], flipsTextures: Bool = false,
                 premultipliesTextures: Bool = false, sampling: [String: Sampling] = [:], blend: Blend? = nil,
                 viewport: CGRect? = nil) {
         self.vertex = vertex
@@ -257,7 +281,7 @@ public struct ShaderDraw: Sendable {
 
     /// A fragment shader drawn over the whole drawing buffer with `fullSurfaceVertex`.
     public static func fullSurface(fragment: String, uniforms: [String: [Float]] = [:],
-                                   textures: [String: CGImage] = [:], blend: Blend? = nil) -> ShaderDraw {
+                                   textures: [String: ShaderPicture] = [:], blend: Blend? = nil) -> ShaderDraw {
         ShaderDraw(vertex: fullSurfaceVertex, fragment: fragment, uniforms: uniforms,
                    attributes: ["a_position": fullSurfacePositions], count: 6, textures: textures, blend: blend)
     }

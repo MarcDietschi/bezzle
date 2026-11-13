@@ -10,7 +10,9 @@ import Foundation
 ///   `gl_FragData` declared outputs, `texture2D` and its kin `texture`, `textureLod`, ...;
 ///   extension lines for what ES 3.10 has built in are dropped.
 /// - Names the page could use for its own things in its version but ES 3.10 keeps for itself
-///   (`texture`, `sample`, `round`, `buffer`, ...) are renamed, and named back in reflection.
+///   (`texture`, `sample`, `round`, `buffer`, ...) are renamed, and named back in reflection; so
+///   are those the Metal or HLSL compiler refuses although SPIRV-Cross leaves them as they are
+///   (`register`, `private`, `float2`, ...), on both platforms alike.
 /// - lowp and mediump become highp: Metal computes in 32 bits anyway, and uniforms of one name
 ///   must agree across the stages.
 /// - The page's `main` is called from one of Bezzle's, which maps `gl_Position` from the
@@ -20,12 +22,24 @@ import Foundation
 /// - A depth written (`gl_FragDepth`, `gl_FragDepthEXT`) goes to a plain variable: no depth
 ///   buffer is kept, and Metal will not build a shader that writes depth without one.
 /// - Globals may start from uniforms and other globals, as browsers allow in WebGL 1.
+/// - Where the back end draws no sized points (Direct3D 11, `PointSprites`), `gl_PointSize` goes
+///   out of the vertex stage as `bezzle_PointSize`, and `gl_PointCoord` comes into the fragment
+///   stage as `bezzle_PointCoord`, for Bezzle's geometry shader to make squares of (Bridge/HLSL.cpp).
 enum Upgrade {
     struct Result {
         var source: String
         /// Names in `source` that the page wrote otherwise, to its own.
         var original: [String: String]
         var webGL2: Bool
+        /// The fragment stage reads gl_PointCoord.
+        var readsPointCoord = false
+    }
+
+    /// Points drawn by Bezzle's geometry shader, for a back end that draws no sized points.
+    struct PointSprites {
+        /// The fragment stage reads gl_PointCoord, which the vertex stage then gives as nought for
+        /// the geometry shader to fill in.
+        var coordinates: Bool
     }
 
     /// What the page's names that ES 3.10 keeps for itself are given before them.
@@ -33,7 +47,7 @@ enum Upgrade {
     /// Uniforms Bezzle adds, never shown as the page's.
     static let ownUniforms: Set<String> = ["bezzle_clip", "bezzle_fragCoord", "bezzle_pointScale"]
 
-    static func upgrade(_ text: String, stage: ShaderStage) -> Result {
+    static func upgrade(_ text: String, stage: ShaderStage, sprites: PointSprites? = nil) -> Result {
         let bytes = Array(text.utf8)
         // Pass one: the version and which words appear.
         var version = 100
@@ -53,7 +67,7 @@ enum Upgrade {
 
         var renames: [String: String] = [:]
         var original: [String: String] = [:]
-        for word in (webGL2 ? newSince300 : newSince100) where words.contains(word) {
+        for word in (webGL2 ? renamedIn300 : renamedIn100) where words.contains(word) {
             renames[word] = ownPrefix + word
             original[ownPrefix + word] = word
         }
@@ -80,6 +94,12 @@ enum Upgrade {
         if fragCoord { renames["gl_FragCoord"] = "bezzle_FragCoord" }
         if fragment && words.contains("dFdy") { renames["dFdy"] = "bezzle_dFdy" }
         if wraps { renames["main"] = "bezzle_main" }
+        let pointCoord = fragment && words.contains("gl_PointCoord")
+        let pointSize = !fragment && words.contains("gl_PointSize")
+        if sprites != nil {
+            if pointCoord { renames["gl_PointCoord"] = "bezzle_PointCoord" }
+            if pointSize { renames["gl_PointSize"] = "bezzle_PointSize" }
+        }
 
         // Pass two: the rewritten body.
         var body = [UInt8]()
@@ -113,6 +133,9 @@ enum Upgrade {
             if fragDepth {
                 header += "highp float bezzle_FragDepth;\n"
             }
+            if sprites != nil && pointCoord {
+                header += "in highp vec2 bezzle_PointCoord;\n"
+            }
             if !webGL2 && words.contains("gl_FragColor") {
                 header += "layout(location = 0) out highp vec4 bezzle_FragColor;\n"
             }
@@ -134,20 +157,22 @@ enum Upgrade {
                     """
             }
         } else {
-            let pointSize = words.contains("gl_PointSize")
             header += "uniform highp vec4 bezzle_clip;\n"
             if pointSize { header += "uniform highp float bezzle_pointScale;\n" }
+            if sprites != nil && pointSize { header += "out highp float bezzle_PointSize;\n" }
+            if sprites?.coordinates == true { header += "out highp vec2 bezzle_PointCoord;\n" }
+            let size = sprites == nil ? "gl_PointSize" : "bezzle_PointSize"
             footer += """
                 void main() {
                     bezzle_main();
                     gl_Position.xy = gl_Position.xy * bezzle_clip.xy + bezzle_clip.zw * gl_Position.w;
-                \(pointSize ? "    gl_PointSize *= bezzle_pointScale;\n" : "")}
+                \(pointSize ? "    \(size) *= bezzle_pointScale;\n" : "")\(sprites?.coordinates == true ? "    bezzle_PointCoord = vec2(0.0);\n" : "")}
 
                 """
         }
         header += "#line 1\n"
         let source = header + String(decoding: body, as: UTF8.self) + footer
-        return Result(source: source, original: original, webGL2: webGL2)
+        return Result(source: source, original: original, webGL2: webGL2, readsPointCoord: pointCoord)
     }
 
     /// A name as the page wrote it: each word of `u_lights[1].bezzle_sample` put back.
@@ -184,6 +209,36 @@ enum Upgrade {
         "GL_OES_standard_derivatives", "GL_EXT_shader_texture_lod", "GL_EXT_frag_depth", "GL_EXT_draw_buffers",
         "GL_EXT_shadow_samplers",
     ]
+
+    static let renamedIn100 = newSince100.union(keptByTheBackEnds)
+    static let renamedIn300 = newSince300.union(keptByTheBackEnds)
+
+    /// Free names in GLSL ES that SPIRV-Cross leaves as they are and the Metal Shading Language's
+    /// or HLSL's compiler refuses (C++'s keywords, the back ends' own types and address spaces)
+    /// as a uniform, a function, a parameter or a variable. Found by building each word in those
+    /// four places with Metal and with Direct3D (`LanguageTests.namesTheBackEndsKeepStillWork`
+    /// builds them all), without `not`, which is GLSL's own function.
+    static let keptByTheBackEnds: Set<String> = Set("""
+        alignas alignof and and_eq array auto bitand bitor bool2 bool2x2 bool2x3 bool2x4 bool3 bool3x2 bool3x3
+        bool3x4 bool4 bool4x2 bool4x3 bool4x4 catch char char16_t char2 char3 char32_t char4 compl const_cast
+        constant constexpr decltype delete device double2 double2x2 double2x3 double2x4 double3 double3x2 double3x3
+        double3x4 double4 double4x2 double4x3 double4x4 dynamic_cast explicit export float2 float2x2 float2x3
+        float2x4 float3 float3x2 float3x3 float3x4 float4 float4x2 float4x3 float4x4 friend half2 half2x2 half2x3
+        half2x4 half3 half3x2 half3x3 half3x4 half4 half4x2 half4x3 half4x4 imageblock int2 int2x2 int2x3 int2x4 int3
+        int3x2 int3x3 int3x4 int4 int4x2 int4x3 int4x4 long2 long2x2 long2x3 long2x4 long3 long3x2 long3x3 long3x4
+        long4 long4x2 long4x3 long4x4 matrix metal min16float2 min16float2x2 min16float2x3 min16float2x4 min16float3
+        min16float3x2 min16float3x3 min16float3x4 min16float4 min16float4x2 min16float4x3 min16float4x4 min16int2
+        min16int2x2 min16int2x3 min16int2x4 min16int3 min16int3x2 min16int3x3 min16int3x4 min16int4 min16int4x2
+        min16int4x3 min16int4x4 min16uint2 min16uint2x2 min16uint2x3 min16uint2x4 min16uint3 min16uint3x2
+        min16uint3x3 min16uint3x4 min16uint4 min16uint4x2 min16uint4x3 min16uint4x4 mutable new noexcept not_eq
+        nullptr operator or or_eq packed_float3 private protected ptrdiff_t ray_data register reinterpret_cast
+        sampler short2 short2x2 short2x3 short2x4 short3 short3x2 short3x3 short3x4 short4 short4x2 short4x3 short4x4
+        size_t static_assert static_cast texture2d texture3d texturecube thread thread_local threadgroup
+        threadgroup_imageblock throw try typeid typename uchar uchar2 uchar3 uchar4 uint2 uint2x2 uint2x3 uint2x4
+        uint3 uint3x2 uint3x3 uint3x4 uint4 uint4x2 uint4x3 uint4x4 ulong ulong2 ulong2x2 ulong2x3 ulong2x4 ulong3
+        ulong3x2 ulong3x3 ulong3x4 ulong4 ulong4x2 ulong4x3 ulong4x4 ushort ushort2 ushort2x2 ushort2x3 ushort2x4
+        ushort3 ushort3x2 ushort3x3 ushort3x4 ushort4 ushort4x2 ushort4x3 ushort4x4 vec virtual wchar_t xor xor_eq
+        """.split(whereSeparator: \.isWhitespace).map(String.init))
 
     /// Free names in GLSL ES 1.00 that are keywords, reserved or built-in functions in ES 3.10.
     /// Found by asking glslang (see the package's tests), without vendors' extensions.

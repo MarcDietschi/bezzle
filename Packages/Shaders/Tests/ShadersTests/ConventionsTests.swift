@@ -1,6 +1,8 @@
+#if !os(Windows)
 import CoreGraphics
-import Foundation
 import Metal
+#endif
+import Foundation
 import Testing
 @testable import Shaders
 
@@ -162,6 +164,7 @@ import Testing
         #expect(near(pixels[11, 11], [239, 239, 0, 255], within: 2))  // its bottom right
     }
 
+    #if !os(Windows)
     @Test func intoATextureTheCallerOwns() throws {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 64, height: 32, mipmapped: false)
         descriptor.usage = [.renderTarget, .shaderRead]
@@ -175,6 +178,7 @@ import Testing
         texture.getBytes(&bgra, bytesPerRow: 64 * 4, from: MTLRegionMake2D(63, 0, 1, 1), mipmapLevel: 0)
         #expect(near(bgra.map(Int.init), [0, 251, 253, 255]))  // top right: red and green, in BGRA
     }
+    #endif
 
     @Test func opaqueAndUnpremultipliedCanvases() throws {
         let fragment = "precision mediump float; void main() { gl_FragColor = vec4(1.0, 0.5, 0.0, 0.5); }"

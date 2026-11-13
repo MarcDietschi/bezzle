@@ -1,4 +1,6 @@
+#if !os(Windows)
 import CoreGraphics
+#endif
 import Foundation
 import Testing
 @testable import Shaders
@@ -7,7 +9,13 @@ import Testing
 @Suite(.serialized) struct MeasureTests {
     @Test func translationAndDrawing() throws {
         // A renderer of its own and a uniform no other run has, so nothing is kept from before.
+        #if os(Windows)
+        let fresh = ShaderRenderer()!
+        let (language, compiler) = ("HLSL", "Direct3D (\(fresh.adapter))")
+        #else
         let fresh = ShaderRenderer(device: renderer.device)!
+        let (language, compiler) = ("MSL", "Metal")
+        #endif
         let unique = "uniform float u_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""));\n"
         var lines: [String] = []
         // glslang's tables are made once in a process, at its first program.
@@ -23,8 +31,8 @@ import Testing
             let start = Date()
             let program = try Program(device: fresh.device, vertex: vertex, fragment: fragment)
             let total = Date().timeIntervalSince(start)
-            lines.append(String(format: "%@: GLSL to MSL %.1f ms, Metal %.1f ms, together %.1f ms", name,
-                                program.translationTime * 1000, program.buildTime * 1000, total * 1000))
+            lines.append(String(format: "%@: GLSL to %@ %.1f ms, %@ %.1f ms, together %.1f ms", name, language,
+                                program.translationTime * 1000, compiler, program.buildTime * 1000, total * 1000))
         }
 
         func time(_ label: String, _ frame: ShaderFrame, scale: Double) throws {

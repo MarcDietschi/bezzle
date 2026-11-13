@@ -1,4 +1,6 @@
+#if !os(Windows)
 import CoreGraphics
+#endif
 import Foundation
 @testable import Shaders
 
@@ -10,7 +12,16 @@ struct Pixels {
     let height: Int
     let bytes: [UInt8]
 
-    init(_ image: CGImage) {
+    init(width: Int, height: Int, bytes: [UInt8]) {
+        self.width = width
+        self.height = height
+        self.bytes = bytes
+    }
+
+    init(_ image: ShaderPicture) {
+        #if os(Windows)
+        self.init(width: image.width, height: image.height, bytes: image.pixels)
+        #else
         width = image.width
         height = image.height
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
@@ -22,6 +33,7 @@ struct Pixels {
             context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         }
         self.bytes = bytes
+        #endif
     }
 
     /// x from the left, y from the top.
@@ -63,17 +75,27 @@ func near(_ pixel: [Double], _ expected: [Int], within tolerance: Double = 3) ->
 }
 
 /// A picture of `width` by `height` from RGBA bytes, top row first, not premultiplied.
-func picture(_ width: Int, _ height: Int, _ rgba: [UInt8]) -> CGImage {
+func picture(_ width: Int, _ height: Int, _ rgba: [UInt8]) -> ShaderPicture {
+    #if os(Windows)
+    // Premultiplied as Core Graphics keeps it on the Mac, rounded to the nearest.
+    var premultiplied = rgba
+    for i in stride(from: 0, to: rgba.count, by: 4) {
+        let alpha = Int(rgba[i + 3])
+        for c in 0..<3 { premultiplied[i + c] = UInt8((Int(rgba[i + c]) * alpha + 127) / 255) }
+    }
+    return ShaderPicture(width: width, height: height, pixels: premultiplied)
+    #else
     let provider = CGDataProvider(data: Data(rgba) as CFData)!
     return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
                    space: CGColorSpace(name: CGColorSpace.sRGB)!,
                    bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue), provider: provider,
                    decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    #endif
 }
 
 /// One fragment shader over all of a drawing buffer.
 func frame(_ width: Int, _ height: Int, _ fragment: String, uniforms: [String: [Float]] = [:],
-           textures: [String: CGImage] = [:], antialias: Bool = false) -> ShaderFrame {
+           textures: [String: ShaderPicture] = [:], antialias: Bool = false) -> ShaderFrame {
     var draw = ShaderDraw.fullSurface(fragment: fragment, uniforms: uniforms, textures: textures)
     draw.uniforms["u_resolution"] = draw.uniforms["u_resolution"] ?? [Float(width), Float(height)]
     return ShaderFrame(size: CGSize(width: width, height: height), draws: [draw], antialias: antialias)

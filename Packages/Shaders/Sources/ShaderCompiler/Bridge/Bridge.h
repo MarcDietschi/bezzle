@@ -1,9 +1,10 @@
 // Bezzle's own: what the two halves of the bridge give each other. GLSL.cpp sees only glslang,
-// MSL.cpp only SPIRV-Cross, since both bring a `spirv.hpp` of their own.
+// Cross.cpp, MSL.cpp and HLSL.cpp only SPIRV-Cross, since both bring a `spirv.hpp` of their own.
 
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -26,7 +27,18 @@ bool parsesGLSL(const char *source, bool fragment, std::string &log);
 bool translateToMSL(const std::vector<uint32_t> &words, bool vertex, std::string &msl, std::string &layout,
                     std::string &log);
 
+/// One stage's SPIR-V to HLSL for Direct3D 11 (shader model 5.0), with its layout as JSON in
+/// the same shape as the MSL's. False with the reason in `log`.
+bool translateToHLSL(const std::vector<uint32_t> &words, bool vertex, std::string &hlsl, std::string &layout,
+                     std::string &log);
+
 /// `text` as a JSON string, quotes included.
 std::string jsonString(const std::string &text);
+
+/// `text` copied for C, to be let go with `free`.
+char *copyString(const std::string &text);
+
+/// Held around every call into glslang and SPIRV-Cross, which keep state of their own.
+std::mutex &translating();
 
 } // namespace bezzle
