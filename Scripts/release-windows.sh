@@ -178,7 +178,7 @@ fi
 # Mac's pointers, words and icons, the web core's generated files) and the open fonts.
 SRC="$WORK/src"
 mkdir -p "$SRC"
-git -C "$ROOT" archive "$COMMIT" -- Windows Bezzle Web/Sources Web/prepare.sh RELEASE_NOTES.md Scripts/release | tar -x -C "$SRC"
+git -C "$ROOT" archive "$COMMIT" -- Windows Bezzle Web/Sources Web/prepare.sh RELEASE_NOTES.md Scripts/release Packages/Vectorizer | tar -x -C "$SRC"
 if [ -n "$PUBLISH" ]; then
   python3 "$SRC/Scripts/release/notes.py" check "$VERSION"
 else
@@ -195,8 +195,8 @@ if [ -z "$REUSE" ]; then
 
   echo "Copying it into the VM ($VM_DIR)…"
   # The sources anew (a file the commit no longer has must not stay), the build kept.
-  "$VM" "New-Item -ItemType Directory -Force '$VM_DIR' | Out-Null; foreach (\$d in 'Windows\\Sources','Windows\\Installer','Windows\\Credits','Windows\\Resources','Bezzle','Web') { if (Test-Path \"$VM_DIR\\\$d\") { Remove-Item -Recurse -Force \"$VM_DIR\\\$d\" } }"
-  COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch -C "$SRC" --exclude 'Web/out' -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts \
+  "$VM" "New-Item -ItemType Directory -Force '$VM_DIR' | Out-Null; foreach (\$d in 'Windows\\Sources','Windows\\Installer','Windows\\Credits','Windows\\Resources','Bezzle','Web','Packages\\Vectorizer') { if (Test-Path \"$VM_DIR\\\$d\") { Remove-Item -Recurse -Force \"$VM_DIR\\\$d\" } }"
+  COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch -C "$SRC" --exclude 'Web/out' -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts Packages/Vectorizer \
     | "$VM" "tar -x -f - -C '$VM_DIR'"
 
   echo "Building and making the installers in the VM (some minutes per architecture)…"

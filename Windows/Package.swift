@@ -8,6 +8,7 @@ import PackageDescription
 //   BezzleCore/Shared, Platform and Web link to Web/Sources/BezzleCore), with Host/ in place of
 //   the browser: CBezzleHost does with Skia (skia.ps1 builds it into Packages/skia) what the page
 //   does with CanvasKit. The modules named after Apple's frameworks are the web core's empty ones.
+//   Vectorize traces pictures with the Mac's own engine, the package ../Packages/Vectorizer.
 // - Bezzle: the app, with WinUI 3 bindings that winrt.ps1 fetches into Packages/.
 // - bezzle-render: draws a design's artboards to PNG files, to compare with the Mac.
 // - bezzle-share: works on shared designs headless, for the Mac's tests to check.
@@ -86,6 +87,8 @@ let package = Package(
         .package(path: "Packages/swift-windowsappsdk"),
         .package(path: "Packages/swift-windowsfoundation"),
         .package(path: "Packages/swift-uwp"),
+        // Vectorize's engine, the Mac's (Foundation alone, always built optimized).
+        .package(path: "../Packages/Vectorizer"),
     ],
     targets: frameworks.map { .target(name: $0) } + [
         .target(name: "LZFSE", exclude: ["LICENSE", "README.md"]),
@@ -104,7 +107,8 @@ let package = Package(
         ),
         .target(
             name: "BezzleCore",
-            dependencies: frameworks.map { .target(name: $0) } + ["LZFSE", "CBezzleHost", "Compression", "Accelerate"],
+            dependencies: frameworks.map { .target(name: $0) } + ["LZFSE", "CBezzleHost", "Compression", "Accelerate",
+                                                                  .product(name: "Vectorizer", package: "Vectorizer")],
             // The browser's host and Main.swift are replaced by Host/; DesignTokens.swift comes
             // from Web/prepare.sh, as for the web core. Live.swift seals with CryptoKit, which
             // Host/Sealing.swift stands in for with Windows' own cryptography. Which picture files

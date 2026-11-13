@@ -1,9 +1,11 @@
 #!/bin/zsh
-# Copies the working tree's Windows build inputs into the Bezzle test VM, at C:\src\Bezzle:
-# Windows/, and what it shares with the Mac app and the web core. Symlinks arrive as the files
-# they point at. Leaves Windows\Packages and .build there alone.
+# Copies the working tree's Windows build inputs into the Bezzle test VM, at C:\src\Bezzle or the
+# folder given (a second working copy's, `sync.sh 'C:\src\<folder>'`): Windows/, and what it shares
+# with the Mac app and the web core, the Vectorize engine (Packages/Vectorizer) among it. Symlinks
+# arrive as the files they point at. Leaves Windows\Packages and .build there alone.
 set -euo pipefail
 here=${0:A:h}
+dest=${1:-'C:\src\Bezzle'}
 cd ${here:h:h}
 # The Mac's pointers, as cursors for the Windows build to put into Bezzle.exe.
 $here/../Resources/make-cursors.sh
@@ -16,6 +18,6 @@ sed -nE 's/^[[:space:]]*MARKETING_VERSION = "?([^";]+)"?;$/\1/p' Bezzle.xcodepro
   > $here/../Resources/Generated/version.txt
 # The welcome tour's lake photo, painted as the Mac paints it, for the build to put into Bezzle.resources.
 $here/../Resources/make-welcome-photo.sh
-COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch --exclude .build --exclude Packages --exclude node_modules --exclude 'Web/out' \
-    -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts \
-  | $here/win 'New-Item -ItemType Directory -Force C:\src\Bezzle | Out-Null; tar -x -f - -C C:\src\Bezzle'
+COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -ch --exclude .build --exclude Windows/Packages --exclude node_modules --exclude 'Web/out' \
+    -f - Windows Bezzle/Model Bezzle/Canvas Web/Sources Web/prepare.sh Web/site/openfonts Packages/Vectorizer \
+  | $here/win "New-Item -ItemType Directory -Force '$dest' | Out-Null; tar -x -f - -C '$dest'"
