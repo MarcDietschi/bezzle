@@ -385,12 +385,16 @@ extension Inspector {
     private func filmCard() -> UIElement {
         let fixed = film.lengthSet
         var rows: [UIElement] = []
+        // The words, then, only once the length was set, the way back to as long as the keys, which
+        // gives way when the words are long, then the seconds.
         let length = Grid()
+        length.columnSpacing = 6
+        for w in [GridLength(value: 1, gridUnitType: .auto), GridLength(value: 1, gridUnitType: .star), GridLength(value: 1, gridUnitType: .auto)] {
+            let c = ColumnDefinition()
+            c.width = w
+            length.columnDefinitions.append(c)
+        }
         length.children.append(Theme.text(Words.t("Length"), size: 12, ink: 2))
-        let right = StackPanel()
-        right.orientation = .horizontal
-        right.spacing = 6
-        right.horizontalAlignment = .right
         if fixed {
             let follow = Pressable(radius: 6) { [weak self] in self?.film.setLength(nil) }
             let words = Theme.text(Words.t("Follow the Keys"), size: 11.5, weight: 500)
@@ -398,12 +402,15 @@ extension Inspector {
             words.margin = Theme.inset(4, 0, 4, 0)
             follow.box.child = words
             follow.box.height = 24
-            right.children.append(follow.box)
+            follow.box.horizontalAlignment = .right
+            try? Grid.setColumn(follow.box, 1)
+            length.children.append(follow.box)
         }
-        right.children.append(field("", film.length, unit: "s", range: 0.25...600, scrub: 0.02, width: 84, decimals: 2) { [weak self] v in
+        let lengthField = field("", film.length, unit: "s", range: 0.25...600, scrub: 0.02, width: 84, decimals: 2) { [weak self] v in
             self?.film.setLength(v)
-        })
-        length.children.append(right)
+        }
+        try? Grid.setColumn(lengthField, 2)
+        length.children.append(lengthField)
         rows.append(length)
         rows.append(Controls.segmented(film.once, [(false, "Round and Round"), (true, "Once")], width: Theme.cardWidth - 24) { [weak self] once in
             self?.film.setOnce(once)
@@ -537,7 +544,8 @@ private final class MoveChip {
         drawing.horizontalAlignment = .center
         drawing.isHitTestVisible = false
         stack.children.append(drawing)
-        let words = Theme.text(title, size: 10.5, ink: 2)
+        // Made a little smaller where the word is long, as the Mac lets it shrink to fit.
+        let words = Theme.text(title, size: title.count > 9 ? 8.5 : title.count > 7 ? 9.5 : 10.5, ink: 2)
         words.horizontalAlignment = .center
         stack.children.append(words)
         root.child = stack
