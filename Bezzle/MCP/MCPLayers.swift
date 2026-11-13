@@ -24,7 +24,9 @@ extension MCPTools {
         if named.count > 1, case let firsts = firstCells(named, in: doc), firsts.count == 1 { return firsts[0].id }
         if named.isEmpty { throw MCPError("There is no layer \"\(ref)\". get_design lists them, with their ids.") }
         let places = named.prefix(6).map { "\($0.id.uuidString) (on \(doc.artboard(of: $0.id)?.name ?? "the canvas"))" }
-        throw MCPError("\(named.count) layers are called \"\(ref)\": \(places.joined(separator: ", ")). Use an id, or \"Artboard/\(ref)\".")
+        // An artboard's name tells them apart only when they lie on different ones.
+        let apart = Set(named.map { doc.artboard(of: $0.id)?.id }).count == named.count
+        throw MCPError("\(named.count) layers are called \"\(ref)\": \(places.joined(separator: ", ")). Use an id\(apart ? ", or \"Artboard/\(ref)\"" : "").")
     }
 
     /// The layers `layers` names, or the selection when it names none.
