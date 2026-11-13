@@ -49,7 +49,7 @@ nonisolated enum PlayerPictures {
     /// One layer alone, lying in what holds it at `origin` on its screen, with all it paints round
     /// it, its shadow too: the picture, and where on the screen it lies.
     static func layer(_ n: Node, origin: CGPoint, board: Node, scale: CGFloat, assets: Assets?) -> (CGImage, CGRect)? {
-        let r = Renderer.reach(of: n, eye: Eye.stage(board.frame.size).inside(origin)).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -1, dy: -1).integral
+        let r = rect(of: n, origin: origin, board: board)
         guard r.width > 0, r.height > 0, r.width * scale < 6000, r.height * scale < 6000 else { return nil }
         let size = CGSize(width: max(1, (r.width * scale).rounded()), height: max(1, (r.height * scale).rounded()))
         guard let ctx = Renderer.bitmap(size) else { return nil }
@@ -66,6 +66,12 @@ nonisolated enum PlayerPictures {
             Renderer.drawNode(n, in: ctx, options: o)
         }
         return ctx.makeImage().map { ($0, r) }
+    }
+
+    /// Where one layer alone paints on its screen, with all round it, seen from the screen's eye
+    /// as it is drawn (`Eye.stage`): what its picture covers, and where a move lays it.
+    static func rect(of n: Node, origin: CGPoint, board: Node) -> CGRect {
+        Renderer.reach(of: n, eye: Eye.stage(board.frame.size).inside(origin)).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -1, dy: -1).integral
     }
 
     /// The device's screen as one picture: a screen scrolled, or a sheet over the screen under it.
@@ -649,8 +655,9 @@ final class PlayerScreenView: NSView {
         var moving: [Moving] = []
         for (i, p) in pieces.enumerated() {
             let ia = images["m\(g).\(i).a"], ib = images["m\(g).\(i).b"]
-            let ra = p.from.map { Renderer.reach(of: $0).offsetBy(dx: p.fromOrigin.x, dy: p.fromOrigin.y).insetBy(dx: -1, dy: -1).integral }
-            let rb = p.to.map { Renderer.reach(of: $0).offsetBy(dx: p.toOrigin.x, dy: p.toOrigin.y).insetBy(dx: -1, dy: -1).integral }
+            // Laid where its picture was drawn over, seen from each screen's eye.
+            let ra = p.from.map { PlayerPictures.rect(of: $0, origin: p.fromOrigin, board: a.board) }
+            let rb = p.to.map { PlayerPictures.rect(of: $0, origin: p.toOrigin, board: b.board) }
             let holder = CALayer()
             var la: CALayer?, lb: CALayer?
             if let ia { let l = CALayer(); l.contents = ia; l.contentsGravity = .resize; holder.addSublayer(l); la = l }

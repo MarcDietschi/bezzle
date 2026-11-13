@@ -318,6 +318,16 @@ struct DepthSceneTests {
         #expect(t.z == 40 && t.x == 0 && t.y == 0, "\(t)")
     }
 
+    @Test func inThePlayerALiftedLayersPictureIsLaidWhereItWasDrawn() throws {
+        let lifted = card("Lifted", CGRect(x: 20, y: 130, width: 40, height: 40), z: 100)
+        let b = board([lifted])
+        let (_, drawn) = try #require(PlayerPictures.layer(lifted, origin: .zero, board: b, scale: 1, assets: nil))
+        // A move between screens lays the picture over the same rect it was drawn over: where the
+        // layer shows from the screen's eye, out past its frame to the left.
+        #expect(PlayerPictures.rect(of: lifted, origin: .zero, board: b) == drawn)
+        #expect(drawn.minX < 0 && drawn != Renderer.reach(of: lifted).insetBy(dx: -1, dy: -1).integral, "\(drawn)")
+    }
+
     // MARK: Handed over
 
     @Test func itsCodeSaysTheSceneAsCSSDoes() {
