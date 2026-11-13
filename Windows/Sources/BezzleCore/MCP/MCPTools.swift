@@ -89,8 +89,16 @@ import Foundation
         update_layers changes many layers at once. Look at what you made with render and fix \
         what looks wrong. browse opens websites in Bezzle's own browser, signed in as the person \
         left it and clicked through, and import_website brings in the pages it shows, several at \
-        once into one design. Every change is one step the person can undo with Ctrl+Z, and designs \
-        save themselves: there is no save.
+        once into one design. An artboard is also a film, in Animate: get_animation reads its keys \
+        and animate sets them, for its layers and for a camera that looks at it. Keys hold \
+        changes from the design, never places of their own, so a layer comes on with one key away \
+        from the design at the start (fade 0, move a little below) and one back at the design a \
+        little later (fade 1, move 0, 0). Its moves give several layers such an entrance ready \
+        made, one after another by apart seconds. Leave pace at auto unless there is a reason: it \
+        settles what comes home and flows through keys that keep going. The camera at rest (zoom \
+        1, no tilt) shows the whole artboard, and a fly over is a few camera keys with tilt and \
+        zoom, ending at rest. Every change is one step the person can undo with Ctrl+Z, and \
+        designs save themselves: there is no save.
         """
 
     // MARK: Designs open in tabs

@@ -349,20 +349,23 @@ extension MCPTools {
                        properties: .object([design, ("steps", Self.integer("How many; 1 otherwise."))]),
                        run: { [unowned self] in try await self.undo($0, redo: true) }),
             Definition(name: "render", title: "Look at a design",
-                       description: "Draws an artboard, a layer, or the whole design as a picture, as it will export, so you can see what you made. Look after making changes, and fix what looks wrong.",
+                       description: "Draws an artboard, a layer, or the whole design as a picture, as it will export, so you can see what you made. Look after making changes, and fix what looks wrong. With time or frames it draws an artboard's Animate film instead, as its movie shows it (camera, depth, blur, backdrop): one moment, or a sheet of moments across the film, left to right and top to bottom as order says, to see an animation as it plays and fix its timing.",
                        properties: .object([
                            design,
-                           ("layer", Self.text("An artboard or a layer to draw. The whole design otherwise.")),
+                           ("layer", Self.text("An artboard or a layer to draw. The whole design otherwise. With time or frames, the artboard whose film it is (or a layer on it); the selection's or the one in sight otherwise.")),
+                           ("time", Self.number("Draws the artboard's film at this many seconds from its start.")),
+                           ("frames", Self.integer("Draws the artboard's film at this many moments, 2 to 24, evenly from its start to its end, on one sheet.")),
                            ("scale", Self.number("Pixels to a point: 2 otherwise, less when that would be bigger than maxSize.")),
                            ("maxSize", Self.integer("The longest side, in pixels; 1568 otherwise.")),
                        ]), readOnly: true, run: { [unowned self] in try await self.render($0) }),
             Definition(name: "export", title: "Export",
-                       description: "Exports artboards or layers as files, as the Export panel does: a picture or SVG each, or one PDF with a page each. A carousel goes out a picture a slide. With marked, each goes out as its exports say instead (see update_layers). Files of the same name already there are kept, the new ones numbered, unless replace is true; a / in a name puts the file in a folder.",
+                       description: "Exports artboards or layers as files, as the Export panel does: a picture or SVG each, or one PDF with a page each; or, with format mp4, artboards' Animate films as movies, as Save as Movie does (H.264, an .mp4 each, as long as the film runs). A carousel goes out a picture a slide. With marked, each goes out as its exports say instead (see update_layers). Files of the same name already there are kept, the new ones numbered, unless replace is true; a / in a name puts the file in a folder.",
                        properties: .object([
                            design,
                            ("layers", Self.list("Artboards or layers to export. The selection otherwise, or every artboard when nothing is selected; with marked, everything marked for export.")),
-                           ("format", Self.choice(ExportFormat.offered.map(\.rawValue), "png otherwise.")),
-                           ("scale", Self.integer("For pictures (png, jpeg, webp, avif): pixels to a point, 1 to 4; 1 otherwise.")),
+                           ("format", Self.choice(ExportFormat.offered.map(\.rawValue) + ["mp4"], "png otherwise. mp4 saves films: artboards named (or the artboards of layers named), the one in sight, or every artboard with a film.")),
+                           ("scale", Self.number("For pictures (png, jpeg, webp, avif): pixels to a point, 1 to 4; 1 otherwise. For mp4: 0.25 to 4, 2 otherwise, and no side over 3840 pixels.")),
+                           ("fps", Self.integer("For mp4: frames a second, 60 otherwise, 120 at most; 24, 25, 30 and 50 are usual too.")),
                            ("quality", Self.number("For jpeg, webp and avif: how much of the picture is kept, 0 to 1; 0.9 otherwise. 1 makes a webp lossless.")),
                            ("marked", Self.boolean("Export each layer as its exports say, ignoring format and scale.")),
                            ("replace", Self.boolean("Replace files of the same name already in the folder. Ask the user first: false otherwise, which numbers the new files.")),
@@ -411,6 +414,7 @@ extension MCPTools {
         ] + resourceDefinitions(design: design) + componentDefinitions(design: design) + libraryDefinitions(design: design)
           + curveDefinitions(design: design)
           + prototypeDefinitions(design: design)
+          + animateDefinitions(design: design)
     }
 
     /// What a layer can be given, when it is added or changed.

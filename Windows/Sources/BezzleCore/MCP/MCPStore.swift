@@ -45,6 +45,10 @@ import Foundation
     public var endEditing: () -> Void = {}
     /// What came across from the other app the design just opened was brought in from, for the window to say.
     public var broughtIn: (WindowsCore.ImportSummary) -> Void = { _ in }
+    /// The design's film desk (Animate), and the window's mode: 0 design, 1 prototype, 2 inspect, 3 animate.
+    public var film: () -> WindowsCore.FilmDesk? = { nil }
+    public var mode: () -> Int = { 0 }
+    public var setMode: (Int) -> Void = { _ in }
 }
 
 /// The Mac's DocumentStore as the tools ask it, over one open design. What it reads and changes
@@ -110,6 +114,36 @@ import Foundation
             return doc.nodes[i]
         }
     }
+
+    // MARK: Animate, as the Mac's store has it (AnimateOperations.swift)
+
+    /// The window's film desk for this design.
+    private var desk: WindowsCore.FilmDesk? { lent(nil) { MCPHost.shared.film() } }
+    /// Whether the window shows the design in Animate.
+    var animating: Bool { lent(false) { MCPHost.shared.mode() == 3 } }
+    /// The desk as the tools read it: its artboard, whether it plays, where the playhead shows.
+    struct FilmShown {
+        var board: UUID?
+        var playing: Bool
+        var live: Double
+    }
+    var film: FilmShown {
+        guard let d = desk else { return FilmShown(board: nil, playing: false, live: 0) }
+        return FilmShown(board: d.board, playing: d.playing, live: d.live)
+    }
+    var filmTime: Double { desk?.filmTime ?? 0 }
+    var filmBoard: Node? { lent(nil) { desk?.filmBoard } }
+    func focusFilm() { if slot.isOpen { WindowsCore.using(slot) { desk?.focus() } } }
+    /// Turns the window to Animate.
+    func showAnimate() { if slot.isOpen { WindowsCore.using(slot) { MCPHost.shared.setMode(3) } } }
+    func seek(_ t: Double) { desk?.seek(t) }
+    func playFilm(fromStart: Bool = false) { desk?.play(fromStart: fromStart) }
+    func pauseFilm() { desk?.pause() }
+    static func cameraAim(at ids: [UUID], on board: Node, in doc: BezzleDocument, time t: Double) -> (move: [Double], zoom: Double)? {
+        board.cameraAim(at: ids, in: doc, time: t)
+    }
+    /// The post a deck shows in front.
+    func front(of deck: Node) -> Int? { deck.front(in: fronts) }
 
     var canUndo: Bool { lent(false) { !Editing.undos.isEmpty && Editing.gestureStart == nil } }
     var canRedo: Bool { lent(false) { !Editing.redos.isEmpty && Editing.gestureStart == nil } }
