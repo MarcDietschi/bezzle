@@ -322,6 +322,8 @@ nonisolated extension Node {
         plain.transform3D = nil
         plain.exports = nil
         plain.flow = nil
+        // How the text moves in its film is the group's, as its opacity is: its paths move with it.
+        plain.motion = nil
         plain.hidden = false
         var words: [RGBA?: String] = [:]
         for run in runs { words[run.look.color, default: ""] += run.text }

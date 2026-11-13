@@ -177,9 +177,11 @@ extension DocumentStore {
         return vector(of: id).map { ($0.version.shapes, $0.version.colors) }
     }
 
-    /// The picture layer as it would lie now, where its vector lies and as large.
+    /// The picture layer as it would lie now, where its vector lies and as large, and moving in
+    /// its film as its vector does now: keys set since it became shapes are not the picture's to lose.
     private func lying(_ source: VectorSource, _ version: VectorSource.Version, as group: Node) -> Node {
         var picture = source.picture
+        picture.motion = group.motion
         let was = version.frame, now = group.frame
         let fx = was.width > 0 ? now.width / was.width : 1, fy = was.height > 0 ? now.height / was.height : 1
         picture.frame = CGRect(x: now.minX + (picture.frame.minX - was.minX) * fx, y: now.minY + (picture.frame.minY - was.minY) * fy,
