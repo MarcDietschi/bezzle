@@ -292,7 +292,9 @@ struct MotionLayersTests {
         #expect(store.node(third.id)?.children.first?[track: .move]?.keys.map(\.t) == [0, 1.6])
     }
 
-    @Test(.disabled("Nothing to do with a film, found on the way: in a copy that holds one layer alone, a change to that layer's fill, border, corners or path is taken for the copy flipped (Components.flipped, the `a.count == 1` of its guard, Model/Components.swift:954), so the change is thrown away and the copy marked flipped instead. Not this work's to mend."))
+    /// Found on the way, and nothing to do with a film: such a change was taken for the copy
+    /// flipped and thrown away (`Components.flipped`), until a flip was told by what it turns over.
+    @Test
     func aLookChangedInACopyOfOneLayerReachesItsComponent() throws {
         let card = try #require(bench.node("Card"))
         store.selection = [card.id]

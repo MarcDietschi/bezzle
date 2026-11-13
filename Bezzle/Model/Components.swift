@@ -848,8 +848,21 @@ extension Components {
            let found = scaling(a, b, plan) { return found }
         if alike(was.children, now.children, but: ["frame", "rotation"]), let found = turning(a, b, inst) { return found }
         let flipping: Set<String> = ["frame", "rotation", "fill", "moreFills", "border", "moreBorders", "corners", "rising", "path", "pathBox"]
-        if alike(was.children, now.children, but: flipping), let found = flipped(a, b, inst) { return found }
+        if alike(was.children, now.children, but: flipping),
+           let found = flipped(a, b, inst, turnedOver: { turnedOver(was.children, now.children, horizontally: $0) }) { return found }
         return nil
+    }
+
+    /// Whether what a flip turns over in a layer, its outline, its corners and its gradients, is
+    /// in `b` what that flip makes of it in `a`. A layer flipped about its own middle goes
+    /// nowhere: only by this is its flip told from a colour changed, and one way from the other.
+    private static func turnedOver(_ a: [Node], _ b: [Node], horizontally: Bool) -> Bool {
+        let looks: Set<String> = ["fill", "moreFills", "border", "moreBorders", "corners", "rising", "path", "pathBox"]
+        let others = Set(LayerField.all.map(\.name)).subtracting(looks)
+        let flipped = a.map { BezzleDocument.flipped($0, horizontally: horizontally, about: 0) }
+        // Flipped, something that looks the same either way is as it was: no flip to keep.
+        guard !alike(flipped, a, but: others.subtracting(["rotation"])) else { return false }
+        return alike(flipped, b, but: others)
     }
 
     private static func close(_ x: CGFloat, _ y: CGFloat, _ scale: CGFloat = 1) -> Bool { abs(x - y) <= 0.6 + 0.002 * abs(scale) }
@@ -938,7 +951,7 @@ extension Components {
     }
 
     /// Flipped as a whole across an upright or a level line.
-    private static func flipped(_ a: [Leaf], _ b: [Leaf], _ inst: Instance) -> Instance? {
+    private static func flipped(_ a: [Leaf], _ b: [Leaf], _ inst: Instance, turnedOver: (Bool) -> Bool) -> Instance? {
         for horizontally in [true, false] {
             let axis = horizontally ? (a[0].frame.midX + b[0].frame.midX) / 2 : (a[0].frame.midY + b[0].frame.midY) / 2
             let fits = zip(a, b).allSatisfy { x, y in
@@ -950,9 +963,11 @@ extension Components {
                     && abs(x.frame.width - y.frame.width) < 0.01 && abs(x.frame.height - y.frame.height) < 0.01
                     && abs(Geometry.normalized(y.rotation + x.rotation)) < 0.05
             }
-            // Something lying across the line itself stays where it is; a turn shows which way.
-            guard fits, zip(a, b).contains(where: { abs($0.frame.midX - $1.frame.midX) > 0.01 || abs($0.frame.midY - $1.frame.midY) > 0.01 || $0.rotation != $1.rotation })
-                    || a.count == 1 else { continue }
+            // Something lying across the line itself stays where it is. With nothing gone anywhere,
+            // as one layer alone flipped about its own middle, what was turned over in it shows
+            // that it was flipped, and which way: a colour changed in it is no flip.
+            guard fits, zip(a, b).contains(where: { abs($0.frame.midX - $1.frame.midX) > 0.01 || abs($0.frame.midY - $1.frame.midY) > 0.01 })
+                    || turnedOver(horizontally) else { continue }
             var next = inst
             let c = inst.box.center
             if horizontally {

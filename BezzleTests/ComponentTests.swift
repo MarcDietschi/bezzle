@@ -170,6 +170,64 @@ struct ComponentTests {
         #expect(layer("Shape", in: second, bench)?.cornerRadius == 12)
     }
 
+    /// A component of one layer alone, a rectangle with one corner rounded so that it shows which
+    /// way it faces, and a second copy of it 100 points lower.
+    private func lone() -> (Bench, UUID, UUID) {
+        var shape = Node(kind: .rectangle, name: "Shape", frame: CGRect(x: 40, y: 40, width: 120, height: 40))
+        shape.fill.color = RGBA(r: 0.2, g: 0.4, b: 1)
+        shape.corners = [20, 0, 0, 0]
+        let bench = Bench(extra: [shape])
+        bench.store.selection = [bench.node("Shape")!.id]
+        bench.step { bench.store.makeComponent() }
+        let first = bench.store.selection[0]
+        bench.step { bench.store.duplicateSelection(offset: CGPoint(x: 0, y: 100)) }
+        return (bench, first, bench.store.selection[0])
+    }
+
+    @Test func aLookChangedInACopyOfOneLayerIsNoFlip() {
+        // Flipped about its own middle, one layer alone goes nowhere, so its flip is told by what
+        // was turned over in it. A colour, a border or other corners are none of that.
+        let (bench, first, second) = lone()
+        let red = RGBA(r: 1, g: 0, b: 0)
+        let shape = layer("Shape", in: second, bench)!.id
+        bench.step { bench.store.update([shape], "Fill") { $0.fill.color = red } }
+        #expect(layer("Shape", in: first, bench)?.fill.color == red)
+        #expect(layer("Shape", in: second, bench)?.fill.color == red)
+        bench.step { bench.store.update([shape], "Border") { $0.border.width = 3 } }
+        #expect(layer("Shape", in: first, bench)?.border.width == 3)
+        bench.step { bench.store.update([shape], "Corners") { $0.corners = [20, 20, 0, 0] } }
+        #expect(layer("Shape", in: first, bench)?.corners == [20, 20, 0, 0])
+        for copy in [first, second] {
+            #expect(bench.store.doc.node(copy)?.instance?.flipX == nil)
+            #expect(bench.store.doc.node(copy)?.instance?.flipY == nil)
+        }
+    }
+
+    @Test(arguments: [true, false])
+    func aCopyOfOneLayerFlippedKeepsItsFlipAndWhichWay(horizontally: Bool) {
+        let (bench, first, second) = lone()
+        bench.store.selection = [second]
+        bench.step { bench.store.flip(horizontally: horizontally) }
+        let turned: [CGFloat] = horizontally ? [0, 20, 0, 0] : [0, 0, 0, 20]
+        #expect(layer("Shape", in: second, bench)?.corners == turned)
+        #expect(layer("Shape", in: first, bench)?.corners == [20, 0, 0, 0])
+        #expect(bench.store.doc.node(second)?.instance?.flipX == (horizontally ? true : nil))
+        #expect(bench.store.doc.node(second)?.instance?.flipY == (horizontally ? nil : true))
+        // A change to the component reaches the flipped copy, which stays flipped the way it was.
+        let red = RGBA(r: 1, g: 0, b: 0)
+        let shape = layer("Shape", in: first, bench)!.id
+        bench.step { bench.store.update([shape], "Fill") { $0.fill.color = red } }
+        #expect(layer("Shape", in: second, bench)?.fill.color == red)
+        #expect(layer("Shape", in: second, bench)?.corners == turned)
+        #expect(bench.store.doc.node(second)?.instance?.flipX == (horizontally ? true : nil))
+        #expect(bench.store.doc.node(second)?.instance?.flipY == (horizontally ? nil : true))
+        // Flipped back, it is as it was.
+        bench.store.selection = [second]
+        bench.step { bench.store.flip(horizontally: horizontally) }
+        #expect(layer("Shape", in: second, bench)?.corners == [20, 0, 0, 0])
+        #expect(bench.store.doc.node(second)?.instance?.flipX == nil && bench.store.doc.node(second)?.instance?.flipY == nil)
+    }
+
     @Test func keepingAChangeInOneCopyPutsTheOthersBack() {
         let (bench, first, second) = two()
         let shape = layer("Shape", in: second, bench)!
