@@ -505,29 +505,13 @@ private struct CameraPad: View {
                     store.beginGesture()
                 }
                 guard let from else { return }
-                var tilt = from.tilt + Double(g.translation.height) * 0.6
-                var swing = from.swing - Double(g.translation.width) * 0.6
-                if NSEvent.modifierFlags.contains(.shift) {
-                    tilt = (tilt / 15).rounded() * 15
-                    swing = (swing / 15).rounded() * 15
-                } else {
-                    // Straight on is caught, each way by itself.
-                    if abs(tilt) < 2.5 { tilt = 0 }
-                    if abs(swing) < 2.5 { swing = 0 }
-                }
-                store.poseCamera(.cameraTilt, [tilt])
-                store.poseCamera(.cameraSwing, [swing])
+                store.turnScene(from: from, by: g.translation, stepped: NSEvent.modifierFlags.contains(.shift))
             }
             .onEnded { _ in
                 from = nil
                 store.endGesture("Turn the Scene")
             })
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            store.beginGesture()
-            store.poseCamera(.cameraTilt, [0])
-            store.poseCamera(.cameraSwing, [0])
-            store.endGesture("Look Straight Down")
-        })
+        .simultaneousGesture(TapGesture(count: 2).onEnded { store.straightenScene() })
         .help("Drag to tip the scene back and swing it round under the camera. Double click to look straight down.")
         .accessibilityElement()
         .accessibilityLabel(Text(LocalizedStringResource("animate.camera", defaultValue: "Camera")))

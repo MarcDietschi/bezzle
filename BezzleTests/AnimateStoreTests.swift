@@ -349,6 +349,41 @@ struct AnimateStoreTests {
         #expect(store.keyState(.cameraMove) == .here && store.keyState(.cameraZoom) == .none)
     }
 
+    @Test func theCamerasPadTurnsTheSceneFromWhereTheDragBeganAndCatchesStraightOn() {
+        animate()
+        store.pickCamera()
+        store.seek(1)
+        let from = store.filmBoard!.camera(at: 1)
+        bench.step {
+            store.beginGesture()
+            // Down tips it back, left swings it round: six tenths of a degree to the point.
+            store.turnScene(from: from, by: CGSize(width: -50, height: 40), stepped: false)
+            #expect(store.filmBoard!.camera(at: 1).tilt == 24 && store.filmBoard!.camera(at: 1).swing == 30)
+            // Measured from where the drag began, not from the step before.
+            store.turnScene(from: from, by: CGSize(width: -3, height: 60), stepped: false)
+            #expect(store.filmBoard!.camera(at: 1).tilt == 36 && store.filmBoard!.camera(at: 1).swing == 0)
+            // With Shift, by fifteen degrees.
+            store.turnScene(from: from, by: CGSize(width: -40, height: 60), stepped: true)
+            #expect(store.filmBoard!.camera(at: 1).tilt == 30 && store.filmBoard!.camera(at: 1).swing == 30)
+            // No further than the scene still shows.
+            store.turnScene(from: from, by: CGSize(width: 900, height: 900), stepped: false)
+            #expect(store.filmBoard!.camera(at: 1).tilt == 80 && store.filmBoard!.camera(at: 1).swing == -80)
+            store.endGesture("Turn the Scene")
+        }
+        #expect(undoing == "Turn the Scene")
+        // Two clicks on the pad look straight down again, the zoom left as it is.
+        bench.step { store.poseCamera(.cameraZoom, [2]) }
+        bench.step { store.straightenScene() }
+        let seen = store.filmBoard!.camera(at: 1)
+        #expect(seen.tilt == 0 && seen.swing == 0 && seen.zoom == 2 && undoing == "Look Straight Down")
+        bench.undo.undo(); bench.undo.undo(); bench.undo.undo()
+        #expect(!store.filmBoard!.hasCamera)
+        // Straight already, two clicks are nothing.
+        let before = store.doc
+        bench.step { store.straightenScene() }
+        #expect(store.doc == before)
+    }
+
     @Test func seeingTheWholeArtboardWithoutACameraIsNothing() {
         animate()
         store.pickCamera()

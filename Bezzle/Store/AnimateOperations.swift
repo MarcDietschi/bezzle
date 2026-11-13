@@ -565,6 +565,32 @@ extension DocumentStore {
         if filmBoard?.motion != was, t > before + 0.05 { showFilm(from: before, to: t, back: t) }
     }
 
+    /// Turns the scene under the camera as its pad is dragged: from how the camera stood when
+    /// the drag began, by how far the pointer has gone since. Down tips the scene back, and left
+    /// swings it round. Straight on is caught, each way by itself; `stepped`, with Shift held, it
+    /// goes by fifteen degrees. Within a gesture, which the pad begins and ends.
+    func turnScene(from: FilmCamera, by drag: CGSize, stepped: Bool) {
+        var tilt = from.tilt + Double(drag.height) * 0.6
+        var swing = from.swing - Double(drag.width) * 0.6
+        if stepped {
+            tilt = (tilt / 15).rounded() * 15
+            swing = (swing / 15).rounded() * 15
+        } else {
+            if abs(tilt) < 2.5 { tilt = 0 }
+            if abs(swing) < 2.5 { swing = 0 }
+        }
+        poseCamera(.cameraTilt, [tilt])
+        poseCamera(.cameraSwing, [swing])
+    }
+
+    /// Has the camera look straight down at the playhead, as two clicks on its pad do.
+    func straightenScene() {
+        beginGesture()
+        poseCamera(.cameraTilt, [0])
+        poseCamera(.cameraSwing, [0])
+        endGesture("Look Straight Down")
+    }
+
     /// Has the camera see the whole artboard, straight on, from the playhead on.
     func restCamera() {
         guard filmBoard?.hasCamera == true else { return }
