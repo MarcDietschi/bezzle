@@ -95,8 +95,15 @@ along one artboard's film. Its keys are changes from the design and never the de
   undo and redo among them, and checks the film after every step. Put
   `TEST_RUNNER_ANIMATE_RUNS=800` before `xcodebuild test` for 800 more seeds (about 3 minutes),
   `TEST_RUNNER_ANIMATE_RUN=<seed>` to follow one, and `TEST_RUNNER_ANIMATE_DEEP=<every>,<from>` to
-  undo and redo the whole session every so many steps. A switch for tests never begins with
-  `BEZZLE_`: the tests run inside the app, where such a name sets off DebugHooks.
+  undo and redo the whole session every so many steps. `TEST_RUNNER_ANIMATE_FILM_TIMING=1` also
+  times the writing of a three second movie, into `$TMPDIR/bezzle-film-timing.txt`. A switch for
+  tests never begins with `BEZZLE_`: the tests run inside the app, where such a name sets off
+  DebugHooks.
+- **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
+  `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
+  `/given` for a key the app placed itself), so two people keying one layer both keep theirs
+  (`Bezzle/Model/FlatDesign.swift`). Keys closer than a frame's quarter are one:
+  `BezzleDocument.repairMotion()`.
 - **Driving a copy:** `BEZZLE_ANIMATE` and `BEZZLE_FILM` (`Bezzle/App/AnimateHooks.swift`) pick,
   pose, play and press. Their clock starts when the hook does, well after launch: photograph late.
 - **Its words** are in the catalog in all four languages; `AnimateWordsTests` fails when one is

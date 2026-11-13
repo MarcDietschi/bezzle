@@ -28,6 +28,8 @@ struct AnimateWordsTests {
         "Film", "Film Length", "Length", "Follow the Keys", "Round and Round", "Once", "Play Once", "Play Round and Round",
         "Backdrop", "What shows past the artboard's edges when the camera sees them",
         "Pictures a second", "%@ × %@ pixels, %lld a second", "Save as Movie…", "Stop Saving", "Save the Film as a Movie",
+        "This film is too long to save as a movie.",
+        "A movie runs for an hour at most. Give the film a shorter length, or take away the keys that come later.",
         "Moves", "Everything", "Comes On", "Goes", "One After Another",
         "Pose", "Set a key here", "A key here. Click to take it away.",
         "Fly the Camera Here", "The camera looks at what is picked from the playhead on, and flies there from where it was before",

@@ -4003,6 +4003,28 @@
         }
       }
     },
+    "A movie runs for an hour at most. Give the film a shorter length, or take away the keys that come later." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Video dauert höchstens eine Stunde. Gib dem Film eine kürzere Länge oder entferne die späteren Keyframes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une vidéo dure une heure au plus. Donnez au film une durée plus courte ou supprimez les images clés qui viennent plus tard."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un video dura al massimo un’ora. Dai al film una durata più breve oppure togli i fotogrammi chiave successivi."
+          }
+        }
+      }
+    },
     "A new variant of the component, as this copy looks now. What is changed in its copies stays in it." : {
       "localizations" : {
         "de" : {
@@ -53897,6 +53919,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dalla testina di riproduzione in poi la camera guarda la selezione, e ci vola da dove si trovava prima"
+          }
+        }
+      }
+    },
+    "This film is too long to save as a movie." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Film ist zu lang, um ihn als Video zu sichern."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce film est trop long pour être enregistré en vidéo."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo film è troppo lungo per essere salvato come video."
           }
         }
       }
