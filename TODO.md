@@ -30,8 +30,7 @@ file was made (2026-11-14): look before starting on one.
 - **Shape keys in points:** a layer resized in the design keeps its Shape changes the same size,
   as Move's are; they do not grow with it.
 - **Not built** *(from notes, 2026-11-13)*: zooming the timeline with a pinch, a control for a
-  spring's bounce, depth of field, animating looks (colour, corner, border), a lesson in the
-  welcome tour.
+  spring's bounce, depth of field, animating looks (colour, corner, border).
 - **Unchecked:** a movie saved from the sandboxed build onto another disk, where it is copied into
   place instead of renamed. (Checked 2026-11-14 with a sandboxed copy of the Debug build and
   `BEZZLE_FILM` › `movie=`: a new movie through the save panel, one replacing another, and a place
@@ -67,7 +66,6 @@ file was made (2026-11-14): look before starting on one.
 - Textured pictures make more shapes than vectorizer.ai's.
 - Gradients become bands of flat colour (`Blend` is unused).
 - 10 point text loses pieces.
-- No lesson in the welcome tour.
 
 ## Remove Background on Windows *(from notes, 2026-11-08)*
 
@@ -81,12 +79,34 @@ file was made (2026-11-14): look before starting on one.
 - Not built: groups that keep their layers' depth when turned (as CSS `preserve-3d`), turning
   several layers as one body about their common middle, orbiting the Design view.
 
+## The welcome tour
+
+- **Windows:** the lessons on Vectorize and Animate (2026-11-14) were looked at with
+  `bezzle-render` only, never in the app's window.
+- **Windows, the tour's film:** turning to Animate keeps an artboard clear of a timeline of four
+  lines only and centres it both ways (`DesignCanvas.frameFilm`, `FilmTimelineView.foot`); the Mac
+  counts the film's lines and moves it only the way it must (5b0c1f4). The postcard's film has
+  seven lines, so its foot can lie under the timeline and its words leave the view.
+- **Windows releases 1.5 to 1.7 shipped the tour without its photo** (grey boxes in Photo editing,
+  Masks, Adaptive layout and Gradients and pictures; seen in the release's build folder and with
+  the render tool, not in an installed copy). `Scripts/release-windows.sh` paints the tour's
+  pictures since e9046e7 and the installer refuses an app without them; the next Windows release
+  is the first real run of that.
+- **Unchecked on the Mac:** Space playing the postcard's film by a pressed key (the hook sends key
+  down only; the code path and the `start` hook were run), and Vectorize's pencil pass over the
+  badge in a photograph.
+- **For Erik:** three handwritten notes of older lessons end in exclamation marks ("Go on, move
+  one!", "into the sky!", "your turn!"). Left as they were.
+
 ## The browser viewer
 
 - `Web/README.md` › Not done in the prototype lists what it does not draw or do.
 - A few SF Pro and Avenir words come out up to 0.2 pt a letter narrower (`Web/README.md`).
 
 ## Housekeeping
+
+- **A word nobody reads:** "Twenty-six lessons, about a minute each." is still in
+  `Localizable.xcstrings`; neither platform's tour uses it since it has 28 lessons.
 
 - **Agent branches:** eight branches of finished agents are left (`git branch --list 'worktree-agent-*'`,
   those with no worktree in `git worktree list`). Their worktrees are gone and their commits are on
