@@ -53,9 +53,11 @@ public final class ShaderRenderer: @unchecked Sendable {
         try program(vertex, fragment).interface
     }
 
-    /// Throws when a program does not translate or build.
+    /// Throws when a program does not translate or build, or the frame has what Direct3D does
+    /// not draw yet (README, What WebGL does that this does not): the caller shows its picture.
     public func check(_ frame: ShaderFrame) throws {
-        for draw in frame.draws {
+        try refuse(frame)
+        for draw in frame.everyPass.flatMap(\.draws) {
             let program = try program(draw.vertex, draw.fragment)
             _ = try program.inputLayout(VertexLayout(draw, program.layout, firstBuffer: 0).attributes, device: device)
             if let blend = draw.blend { _ = try blendState(blend) }
@@ -64,20 +66,26 @@ public final class ShaderRenderer: @unchecked Sendable {
 
     /// `region` (drawing-buffer pixels, top-left origin; nil: all of it) drawn `pixels` big.
     /// Top row first, RGBA premultiplied as the canvas composites it, in sRGB.
-    public func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect? = nil) throws -> ShaderPicture {
+    ///
+    /// `earlier` is the Mac's, for frames that build on the frames before them, which Direct3D
+    /// does not draw yet.
+    public func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect? = nil,
+                      earlier: ((Int) throws -> ShaderFrame)? = nil) throws -> ShaderPicture {
         let width = Int(pixels.width.rounded()), height = Int(pixels.height.rounded())
         guard width > 0, height > 0, width <= 16384, height <= 16384 else {
             throw ShaderError("No picture can be \(width) by \(height) pixels.")
         }
+        try refuse(frame)
+        let pass = frame.everyPass[0]
         let geometry = try Geometry(frame, region: region, output: width, height)
         // Everything made first, so a program that does not build throws before anything is drawn.
         var prepared: [Prepared] = []
-        for draw in frame.draws {
+        for draw in pass.draws {
             if let ready = try prepare(draw, geometry: geometry) { prepared.append(ready) }
         }
         let arena = Arena()
         let draws = prepared.map { $0.described(in: arena) }
-        let clear = (frame.clear ?? []) + [0, 0, 0, 0]
+        let clear = (pass.clearColor ?? []) + [0, 0, 0, 0]
         var description = BZD3DFrame(
             width: Int32(width), height: Int32(height), samples: frame.antialias && multisamples ? 4 : 1,
             clear: (clear[0], clear[1], clear[2], clear[3]),
@@ -94,6 +102,13 @@ public final class ShaderRenderer: @unchecked Sendable {
             throw ShaderError(why.isEmpty ? "Direct3D: the frame did not draw." : why)
         }
         return ShaderPicture(width: width, height: height, pixels: out)
+    }
+
+    /// Passes into textures, depth and stencil, instances and the rest of what the Mac draws
+    /// since 2026-11-14 are not drawn here yet: refused by name, before anything is made.
+    private func refuse(_ frame: ShaderFrame) throws {
+        if let fault = frame.fault() { throw ShaderError(fault) }
+        if let what = frame.beyondPlainDraws { throw ShaderError("Direct3D does not draw \(what) yet.") }
     }
 
     // MARK: One draw
