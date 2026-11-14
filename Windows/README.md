@@ -305,7 +305,10 @@ run an app from an unknown publisher (More info, then Run anyway).
   installer as `Bezzle-<v>-<arch>.pdb.exe` for reading crashes), writes its icon and version into it,
   and compiles `Installer/Bezzle.iss`, Remove Background with it: the subject matte measured (it
   refuses any other) and ONNX Runtime and DirectML for its architecture, which take the installer
-  from about 99 MiB to about 490 MiB. It installs for the person alone, with no administrator, into
+  from about 99 MiB to about 490 MiB. It refuses an app without the welcome tour's two pictures (its
+  lake photo and its logo to trace), which are painted on the Mac (`Resources/make-welcome-photo.sh`,
+  run by `VM/sync.sh` and by the release) and laid into `Bezzle.resources` by `build.ps1`: up to 1.7
+  the release left the photo out. It installs for the person alone, with no administrator, into
   `%LOCALAPPDATA%\Programs\Bezzle`: a Start menu entry, an entry in Settings › Apps to remove it, the
   `bezzle:` links, Open in Bezzle on a `.bezzle` folder in Explorer, and the Windows App Runtime 1.7
   when it is missing (Microsoft's own installer, run quietly, per user). `-Name 'Bezzle Test'` makes a

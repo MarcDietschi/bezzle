@@ -117,6 +117,11 @@ foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'Direc
 if (-not (& $readobj --coff-resources "$stage\Bezzle.exe" | Select-String 'GROUP_CURSOR')) {
     throw 'Bezzle.exe has no pointers: run build.ps1 (it compiles Bezzle.rc) after touching Package.swift'
 }
+# The welcome tour's pictures must be in it, or the tour's lessons on pictures have none (build.ps1
+# puts them in from Resources\Generated, where Resources/make-welcome-photo.sh paints them on the Mac).
+foreach ($picture in 'welcome-lake.jpg', 'welcome-logo.png') {
+    if (-not (Test-Path "$stage\Bezzle.resources\$picture")) { throw "No $picture in ${App}: paint it on the Mac (Resources/make-welcome-photo.sh, which VM/sync.sh runs), send it and run build.ps1" }
+}
 
 # Bezzle.exe without its debugging information, which takes most of its size; the whole one is
 # kept beside the installer for reading crashes.

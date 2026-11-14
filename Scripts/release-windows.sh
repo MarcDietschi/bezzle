@@ -175,7 +175,8 @@ SWIFT
 fi
 
 # The commit, not the working tree: what the VM builds, with what is made from it on the Mac (the
-# Mac's pointers, words and icons, the web core's generated files) and the open fonts.
+# Mac's pointers, words and icons, the welcome tour's pictures, the web core's generated files) and
+# the open fonts.
 SRC="$WORK/src"
 mkdir -p "$SRC"
 git -C "$ROOT" archive "$COMMIT" -- Windows Bezzle Web/Sources Web/prepare.sh RELEASE_NOTES.md Scripts/release Packages/Vectorizer Packages/Shaders | tar -x -C "$SRC"
@@ -189,6 +190,7 @@ if [ -z "$REUSE" ]; then
   "$SRC/Windows/Resources/make-cursors.sh" >/dev/null
   python3 "$SRC/Windows/Resources/make-strings.py" >/dev/null
   "$SRC/Windows/Resources/make-icons.sh" >/dev/null
+  "$SRC/Windows/Resources/make-welcome-photo.sh" >/dev/null
   echo "$VERSION" > "$SRC/Windows/Resources/Generated/version.txt"
   mkdir -p "$SRC/Web/site"
   cp -R "$ROOT/Web/site/openfonts" "$SRC/Web/site/openfonts"
