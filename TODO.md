@@ -331,9 +331,6 @@ room's hands and presence, four languages, the icon library in the core, and mem
 - **The icon library** is read by the core (`bz.icons`), but no page uses it and `publish.sh`
   does not copy `Icons.deflate`; placing an icon would be editing, which the viewer leaves out
   at Erik's wish.
-- **The core's rectangles** answer `contains` by the edges since 9d78526 (Windows' fix, in the
-  `Platform` folder both compile); the viewer was built with it but its film was not compared
-  with the Mac's again after it.
 - **Unchecked:** the film with the open fonts the published page uses (compared with Apple's
   only), in Safari and Firefox, on a phone, a WebGL context lost mid-film.
 - **Windows, not checked after these commits:** the build (`Platform`, `Web` and `Bezzle/Model`
