@@ -146,7 +146,9 @@ card's work. What keeps it quick and true:
 - **Shader fills** are drawn with WebGL, which their programs were written for (`site/shaders.mjs`,
   asked through `Web/WebShaderPainting.swift`): in a film, at the film's moment, the part of the
   layer its picture shows. In the design itself, and where there is no WebGL, the fill's picture
-  stands in as before.
+  stands in as before. So it does for a fill that draws through textures first or with depth,
+  stencil, instances or textures of numbers (`ShaderFill.beyondPlain`, kept under `Fill`'s key
+  `scene`): `shaders.mjs` draws a fill's draws onto its canvas and nothing more.
 - **Without WebGL** the same frames are made by Skia on the processor and put on the canvas: right,
   and slow.
 
@@ -222,7 +224,9 @@ platform-neutral half of `TextLayout.swift` (the `Node` extension at its end).
 
 Text on curves, list markers, paragraph spacing, letters painted with a gradient or picture,
 photo develop, blurs that grow along a ramp, "plus darker" mixing (drawn as multiply), shader
-fills outside a film (the design shows their picture), live co-working's pointers and presence
+fills outside a film (the design shows their picture), shader fills with passes into textures,
+steps that build on the frames before, tests and masks, instances or textures of numbers (their
+picture, in a film too), live co-working's pointers and presence
 (the page hears only that there are new records), the icon library (needs zlib), localization
 (English only), any editing UI.
 

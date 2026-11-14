@@ -25,7 +25,10 @@ nonisolated enum ShaderPainting {
     /// so that the picture is drawn when it did not: always, outside a film.
     static func paint(_ shader: ShaderFill, picture: ImageFill?, in path: CGPath, size: CGSize, rule: CGPathFillRule,
                       in ctx: CGContext, film: Double?, assets: Assets?, box: CGRect? = nil) -> Bool {
-        guard let film, !unavailable else { return false }
+        // What a fill holds beyond draws onto its canvas (passes into textures, depth and
+        // stencil, instances, textures of numbers: `ShaderFill.beyondPlain`) the page does not
+        // draw yet, and would draw wrongly: its picture stands in.
+        guard let film, !unavailable, !shader.beyondPlain else { return false }
         let box = box ?? CGRect(origin: .zero, size: size)
         let drawn = picture.map { Renderer.imageRect($0, in: box.size).offsetBy(dx: box.minX, dy: box.minY) } ?? box
         guard drawn.width > 0, drawn.height > 0, shader.size.width >= 1, shader.size.height >= 1 else { return false }
