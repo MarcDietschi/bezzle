@@ -1,5 +1,7 @@
 import AppKit
 import CoreImage
+import CoreVideo
+import IOSurface
 
 /// The film's stage, in Animate: the artboard being animated, shown as its pieces' pictures
 /// (`FilmPictures`), each placed where the camera shows it at the playhead (`FilmLens`). Pictures
@@ -14,6 +16,13 @@ import CoreImage
 /// It lies under the canvas, which cuts a window over the artboard to show it. So everything the
 /// canvas draws over the design, the handles and the motion's path, is drawn over the film as
 /// over any artboard, in the same frame.
+///
+/// Under a camera that blurs what stands off its focus (`FilmPlacement.soft`) the pictures are
+/// not moved by the graphics card's layers, which can blur a layer by one amount only and
+/// before it is tipped: the film's frame is put together as a movie's is (`FilmExport.composed`),
+/// of the same pictures in the same places, and shown in one layer over the others (`focus`).
+/// That is made away from here too, one frame at a time and always the newest asked for, so the
+/// playhead is never kept waiting for it. A film with nothing blurred never comes there.
 final class FilmStageView: NSView {
     private let store: DocumentStore
 
@@ -23,6 +32,8 @@ final class FilmStageView: NSView {
     private let gate = CALayer()
     /// The artboard's own points, scaled to the frame.
     private let scene = CALayer()
+    /// The film's frame as a camera that blurs shows it, over the scene, which is hidden meanwhile.
+    private let lens = CALayer()
 
     /// A piece on the stage: its whole picture's layer, and what it was drawn from.
     private struct Shown {
@@ -33,13 +44,16 @@ final class FilmStageView: NSView {
         var rect: CGRect
         var reach: CGRect
         var layer: CALayer
+        /// Its whole picture.
+        var picture: FilmPictures.Picture
         /// How many pixels to the point its whole picture has.
         var sharp: CGFloat
         var blurred = false
         /// The part drawn sharper, in a layer of its own right over the whole picture's and
-        /// placed as that is, while one is shown; and which part.
+        /// placed as that is, while one is shown; which part; and its picture.
         var over: CALayer?
         var part: FilmPictures.Part?
+        var overPicture: FilmPictures.Picture?
     }
 
     /// A part of a piece drawn sharper than its whole picture: what it shows, and its picture.
@@ -133,6 +147,24 @@ final class FilmStageView: NSView {
     private var link: CADisplayLink?
     private static let queue = DispatchQueue(label: "Bezzle film pictures", qos: .userInteractive)
 
+    /// What the lens was last asked to show; whether a frame of it is being made, and the
+    /// newest asked for meanwhile, which is made next; and a count that tells frames asked for
+    /// before the lens was put away from those asked for since.
+    private var lensAsked: LensLook?
+    private var lensing = false
+    private var lensNext: LensJob?
+    private var lensRound = 0
+    /// The picture the lens shows, and the part of the artboard it covers, in the artboard's
+    /// points from its top left.
+    private var lensShown: (surface: IOSurface, covers: CGRect, board: CGSize)?
+    /// The pictures the lens's frames are made in, by turns, so that none is written to while
+    /// the screen still shows it.
+    private var surfaces: [IOSurface] = []
+    private var turn = 0
+    /// The pieces' pictures as Core Image takes them, each made once.
+    private var stills: [ObjectIdentifier: (image: CGImage, still: FilmExport.Still)] = [:]
+    private static let lensQueue = DispatchQueue(label: "Bezzle film lens", qos: .userInteractive)
+
     init(store: DocumentStore) {
         self.store = store
         super.init(frame: .zero)
@@ -143,6 +175,12 @@ final class FilmStageView: NSView {
         gate.isHidden = true
         scene.anchorPoint = .zero
         gate.addSublayer(scene)
+        lens.name = Self.lensName
+        lens.anchorPoint = .zero
+        lens.contentsGravity = .resize
+        lens.isOpaque = true
+        lens.isHidden = true
+        gate.addSublayer(lens)
         content.addSublayer(gate)
     }
 
@@ -231,6 +269,8 @@ final class FilmStageView: NSView {
             sharper = [:]
             sharpRound += 1
             signature = nil
+            surfaces = []
+            stills = [:]
         }
         screen = zoom * scale
         let wanted = Signature(version: store.version, board: board.id, loose: Set(store.posedLayers), fronts: store.fronts, step: step,
@@ -255,6 +295,8 @@ final class FilmStageView: NSView {
             scene.bounds = CGRect(origin: .zero, size: board.frame.size)
             scene.position = .zero
             scene.transform = CATransform3DMakeScale(rect.width / board.frame.width, rect.height / board.frame.height, 1)
+            // What the lens shows stays on the artboard while the view moves, until its next frame comes.
+            fitLens()
             place(board, at: t, pixels: zoom * scale)
         }
         // A film that plays while its stage was put away goes on now that it shows.
@@ -275,6 +317,9 @@ final class FilmStageView: NSView {
         generation += 1
         making = false
         stop()
+        unlens()
+        surfaces = []
+        stills = [:]
         // A film whose artboard is gone has stopped, which the next frame would have told the desk.
         if store.film.playing, store.filmBoard == nil { _ = store.filmStep(CACurrentMediaTime()) }
         Self.still {
@@ -438,11 +483,12 @@ final class FilmStageView: NSView {
                 if layer.contents as AnyObject? !== had.picture.image { layer.contents = had.picture.image }
                 layer.bounds = had.picture.rect
                 var piece = Shown(piece: item.piece, subject: item.subject, rect: had.picture.rect, reach: had.reach, layer: layer,
-                                  sharp: FilmPictures.sharpness(of: had.picture), blurred: blurred.contains(item.piece.key))
+                                  picture: had.picture, sharp: FilmPictures.sharpness(of: had.picture), blurred: blurred.contains(item.piece.key))
                 // A part laid over it before stays until `place` finds out whether it still fits.
                 if let was = shown.first(where: { $0.layer === layer }) {
                     piece.over = was.over
                     piece.part = was.part
+                    piece.overPicture = was.overPicture
                 }
                 next.append(piece)
             }
@@ -471,6 +517,8 @@ final class FilmStageView: NSView {
 
     /// The name of a layer that shows a part of a piece, sharper, over the piece's whole picture.
     static let partName = "part"
+    /// The name of the layer that shows the film's frame under a camera that blurs.
+    static let lensName = "lens"
 
     /// Puts the layers on the stage in the order the pieces are stacked, each part right over
     /// its piece.
@@ -534,6 +582,7 @@ final class FilmStageView: NSView {
             }
         }
         sharpen(board, at: t, now: placements, window: window, pixels: pixels, playing: playing)
+        focus(board, placements, pixels: pixels)
     }
 
     // MARK: Sharp however near
@@ -625,6 +674,7 @@ final class FilmStageView: NSView {
             shown[i].over?.removeFromSuperlayer()
             shown[i].over = nil
             shown[i].part = nil
+            shown[i].overPicture = nil
             shown[i].layer.mask = nil
             return
         }
@@ -659,6 +709,202 @@ final class FilmStageView: NSView {
         mask.path = path
         if layer.mask !== mask { layer.mask = mask }
         shown[i].part = kept.part
+        shown[i].overPicture = kept.picture
+    }
+
+    // MARK: A camera that blurs
+
+    /// A frame for the lens: every piece's pictures and where the film has them.
+    private struct LensJob: @unchecked Sendable {
+        var cuts: [[FilmExport.Cut]]
+        var placements: [FilmPlacement]
+        var order: [Int]
+        var backdrop: RGBA
+        var board: CGSize
+        /// The film's frame in the screen's pixels, and the part of it to make, as Core Image
+        /// counts: up from the bottom left.
+        var size: CGSize
+        var part: CGRect
+        /// That part in the artboard's points, from its top left.
+        var covers: CGRect
+        var round: Int
+    }
+
+    /// What tells one frame of the lens from another.
+    private struct LensLook: Equatable {
+        var placements: [FilmPlacement]
+        var order: [Int]
+        var pictures: [ObjectIdentifier]
+        var backdrop: RGBA
+        var size: CGSize
+        var part: CGRect
+    }
+
+    /// A picture handed to the thread that fills it.
+    private struct LensSurface: @unchecked Sendable {
+        let surface: IOSurface
+    }
+
+    /// Shows the film through the lens where the camera blurs something that stands off its
+    /// focus, and takes the lens away where it blurs nothing. The frame is the film's on the
+    /// screen, pixel for pixel, and only what of it shows in the view is made, with a little
+    /// round it for a view on its way.
+    private func focus(_ board: Node, _ placements: [FilmPlacement], pixels: CGFloat) {
+        let zoom = store.viewport.zoom, frame = gate.frame, sheet = board.frame.size
+        guard zoom > 0, pixels > 0, frame.width > 0, frame.height > 0, placements.count == shown.count else { return unlens() }
+        let backing = pixels / zoom
+        let size = CGSize(width: max(1, (frame.width * backing).rounded()), height: max(1, (frame.height * backing).rounded()))
+        guard placements.contains(where: { p in p.opacity >= 0.001 && p.soft.map { FilmExport.blurs($0, board: sheet, size: size) } == true }) else {
+            return unlens()
+        }
+        let seen = frame.intersection(bounds)
+        guard !seen.isNull, seen.width > 0, seen.height > 0 else { return }
+        // In steps, so that a view that scrolls asks for pictures of another size only now and then.
+        let step: CGFloat = 64
+        let x0 = max(0, ((seen.minX - frame.minX) * backing / step).rounded(.down) * step - step)
+        let y0 = max(0, ((seen.minY - frame.minY) * backing / step).rounded(.down) * step - step)
+        let x1 = min(size.width, ((seen.maxX - frame.minX) * backing / step).rounded(.up) * step + step)
+        let y1 = min(size.height, ((seen.maxY - frame.minY) * backing / step).rounded(.up) * step + step)
+        guard x1 > x0, y1 > y0 else { return }
+        var cuts: [[FilmExport.Cut]] = [], pictures: [ObjectIdentifier] = []
+        for piece in shown {
+            let whole = still(piece.picture)
+            pictures.append(ObjectIdentifier(piece.picture.image))
+            if piece.over != nil, let over = piece.overPicture {
+                // Its part over it, and the whole picture giving way there, as the layers have it.
+                let part = still(over)
+                pictures.append(ObjectIdentifier(over.image))
+                cuts.append([FilmExport.Cut(still: whole, under: part), FilmExport.Cut(still: part)])
+            } else {
+                cuts.append([FilmExport.Cut(still: whole)])
+            }
+        }
+        let part = CGRect(x: x0, y: size.height - y1, width: x1 - x0, height: y1 - y0)
+        let backdrop = Self.onScreen(board.filmBackdrop, in: space)
+        let look = LensLook(placements: placements, order: order, pictures: pictures, backdrop: backdrop, size: size, part: part)
+        // Asked for already: shown, or on its way.
+        guard look != lensAsked else { return }
+        lensAsked = look
+        if stills.count > pictures.count * 2 + 8 {
+            let used = Set(pictures)
+            stills = stills.filter { used.contains($0.key) }
+        }
+        let kx = sheet.width / size.width, ky = sheet.height / size.height
+        let job = LensJob(cuts: cuts, placements: placements, order: order, backdrop: backdrop, board: sheet, size: size, part: part,
+                          covers: CGRect(x: x0 * kx, y: y0 * ky, width: (x1 - x0) * kx, height: (y1 - y0) * ky), round: lensRound)
+        // One at a time: the newest asked for while one is made is made next, and those between are not.
+        if lensing { lensNext = job } else { make(job) }
+    }
+
+    /// A piece's picture as Core Image takes it. The stage's pictures are in the screen's own
+    /// colours and shown in them, so their numbers are taken as they are.
+    private func still(_ picture: FilmPictures.Picture) -> FilmExport.Still {
+        let id = ObjectIdentifier(picture.image)
+        if let had = stills[id] { return had.still }
+        let still = FilmExport.Still.asItIs(picture)
+        stills[id] = (picture.image, still)
+        return still
+    }
+
+    /// A colour in the numbers the screen's colours have for it.
+    private static func onScreen(_ color: RGBA, in space: CGColorSpace?) -> RGBA {
+        guard let space, let made = color.cgColor.converted(to: space, intent: .defaultIntent, options: nil),
+              let v = made.components, v.count >= 3 else { return color }
+        return RGBA(r: Double(v[0]), g: Double(v[1]), b: Double(v[2]), a: color.a)
+    }
+
+    /// A picture to make the lens's next frame in: one of three by turns, so neither the one the
+    /// screen shows nor the one it showed before. Said to be in the screen's colours, as the
+    /// pieces' pictures are, so that nothing converts it again.
+    private func surface(_ width: Int, _ height: Int) -> IOSurface? {
+        guard width > 0, height > 0, width * height <= 80_000_000 else { return nil }
+        if let first = surfaces.first, first.width != width || first.height != height { surfaces = [] }
+        guard surfaces.count < 3 else {
+            turn = (turn + 1) % surfaces.count
+            return surfaces[turn]
+        }
+        guard let made = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]) else { return nil }
+        if let space = space ?? CGColorSpace(name: CGColorSpace.sRGB) {
+            if let list = space.copyPropertyList() {
+                made.setAttachment(list, forKey: kIOSurfaceColorSpace as String)
+            } else if let profile = space.copyICCData() {
+                made.setAttachment(profile, forKey: kIOSurfaceICCProfile as String)
+            }
+        }
+        surfaces.append(made)
+        turn = surfaces.count - 1
+        return made
+    }
+
+    /// Makes a frame for the lens, away from here, and shows it when it has come.
+    private func make(_ job: LensJob) {
+        guard let surface = surface(Int(job.part.width), Int(job.part.height)) else {
+            lensing = false
+            return
+        }
+        lensing = true
+        let target = LensSurface(surface: surface)
+        Self.lensQueue.async {
+            let began = CACurrentMediaTime()
+            let image = FilmExport.composed({ job.cuts[$0] }, placements: job.placements, order: job.order, backdrop: job.backdrop, board: job.board, size: job.size)
+            let destination = CIRenderDestination(ioSurface: target.surface)
+            // In the pictures' own numbers, which are the screen's.
+            destination.colorSpace = nil
+            let made = (try? FilmExport.imaging.startTask(toRender: image, from: job.part, to: destination, at: .zero).waitUntilCompleted()) != nil
+            let took = CACurrentMediaTime() - began
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self.show(target.surface, of: job, made: made, took: took) }
+            }
+        }
+    }
+
+    /// A frame of the lens has come: shown, unless the lens was put away meanwhile. Then the
+    /// newest asked for since is made.
+    private func show(_ surface: IOSurface, of job: LensJob, made: Bool, took: Double) {
+        #if DEBUG
+        lensFrames += 1
+        lensSpent += took
+        lensLongest = max(lensLongest, took)
+        #endif
+        if made, job.round == lensRound {
+            Self.still {
+                lens.contents = surface
+                lensShown = (surface, job.covers, job.board)
+                fitLens()
+                if lens.isHidden {
+                    lens.isHidden = false
+                    scene.isHidden = true
+                }
+            }
+        }
+        if let next = lensNext {
+            lensNext = nil
+            make(next)
+        } else {
+            lensing = false
+        }
+    }
+
+    /// Lays the lens's picture over the part of the artboard it covers, in the gate as it lies now.
+    private func fitLens() {
+        guard let shown = lensShown, shown.board.width > 0, shown.board.height > 0 else { return }
+        let kx = gate.bounds.width / shown.board.width, ky = gate.bounds.height / shown.board.height
+        lens.bounds = CGRect(x: 0, y: 0, width: shown.covers.width * kx, height: shown.covers.height * ky)
+        lens.position = CGPoint(x: shown.covers.minX * kx, y: shown.covers.minY * ky)
+    }
+
+    /// Takes the lens away: the pieces' own layers show the film again, placed as they are.
+    private func unlens() {
+        guard lensAsked != nil || lensNext != nil || lensShown != nil || scene.isHidden else { return }
+        lensRound += 1
+        lensAsked = nil
+        lensNext = nil
+        lensShown = nil
+        Self.still {
+            scene.isHidden = false
+            lens.isHidden = true
+            lens.contents = nil
+        }
     }
 
     /// The moment a film that plays shows a while after another.
@@ -784,7 +1030,26 @@ final class FilmStageView: NSView {
     private(set) var picturesMade = 0
     private(set) var partsMade = 0
     /// Whether pictures are being drawn right now, away from here.
-    var isDrawing: Bool { making || sharpening }
+    var isDrawing: Bool { making || sharpening || lensing }
+    /// How many frames the lens has made, and how long they took, in all and the longest, in seconds.
+    private(set) var lensFrames = 0
+    private(set) var lensSpent = 0.0
+    private(set) var lensLongest = 0.0
+    /// What the lens shows, while the film shows through it: its picture, eight bits to a
+    /// colour in the stage's colours, and the part of the artboard it covers, in the artboard's
+    /// points from its top left.
+    var lensPicture: (image: CGImage, covers: CGRect)? {
+        guard !lens.isHidden, let shown = lensShown else { return nil }
+        let surface = shown.surface
+        surface.lock(options: .readOnly, seed: nil)
+        defer { surface.unlock(options: .readOnly, seed: nil) }
+        let data = Data(bytes: surface.baseAddress, count: surface.bytesPerRow * surface.height)
+        guard let provider = CGDataProvider(data: data as CFData), let space = space ?? CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        guard let image = CGImage(width: surface.width, height: surface.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: surface.bytesPerRow,
+                                  space: space, bitmapInfo: info, provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
+        return (image, shown.covers)
+    }
     /// Whether the film runs: each frame of the screen moves it on.
     var isRunning: Bool { link != nil }
     #endif
