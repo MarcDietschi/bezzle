@@ -28,7 +28,27 @@ file was made (2026-11-14): look before starting on one.
   the design's outline gets more points while such a key keeps its old count of noughts (points
   added in 1.7, or one person keying while another edits the design's points), 1.7 shows the
   stretch to that key bent; this Bezzle reads the key right and rewrites it at its next change.
-- **Not built** *(from notes, 2026-11-13)*: depth of field.
+- **The camera's focus** (2026-11-14: Focus and Blur on the Camera card, Focus the Camera Here,
+  `Bezzle/Model/FilmFocus.swift`; `README.md` › Animate › The camera's focus has the numbers).
+  The stage shows it through a lens of eight bits, so a wide blurred gradient can band on the
+  stage where the movie does not. Under a quick scrub the lens shows the last frame made, a
+  frame behind the handles, and one sharp frame can show before the first lens frame. While
+  playing on the 75 Hz screen the lens made 72 frames a second.
+- **The lens's cost:** about a millisecond for every plane blurred by itself. Never measured on a
+  screen of two pixels to the point; the composer alone took 20 to 22 ms a frame there for
+  fifteen lifted cards at 2880×1800. A cheaper blur for planes the camera faces has another
+  edge than the ramp's (up to 9.7 of 255 apart), so it needs a cross-fade to the ramp or a blur
+  of our own.
+- **The camera's focus, as chosen and not built:** the camera's blur is as wide as a layer's own
+  Blur of the same amount but not the same shape along an edge (up to 4 % of tone). No shapes
+  of light in the blur, no pointing at the canvas to focus (a card does it), and the pad dots
+  only the line along which the sheet is sharp. The German, French and Italian words (Fokus and
+  Unschärfe, Mise au point and Flou, Messa a fuoco and Sfocatura) were not read by a native
+  speaker. Pictures made with `BEZZLE_SNAPSHOT_LAYERS` do not show the lens: photograph the
+  window. Seen in a running window once, in German.
+- **The camera's focus in Bezzle 1.7:** it keeps both tracks through the file and through
+  sharing, counts their keys for the film's length and shows the film without the blur. Its
+  Remove Motion on the camera leaves them; clearing the whole artboard's motion takes them.
 - **Looks keyed in Animate** (2026-11-14: fill and text colour, gradient colours and their
   places, border colour and width, a rectangle's corners, shadows; `Bezzle/Model/LookMotion.swift`).
   Not keyed: picture and shader fills, on and off, adding and taking away, dashes, a border's
@@ -113,6 +133,18 @@ outlines and looks. What is left:
   takes is in e652531's report: `bz_film_frame` composing in sixteen bits, the stand-in pictures
   carrying depth, P010 and an HEVC Main 10 encoder where the PC has one, measured with
   `FilmBandingTests` and `TEST_RUNNER_ANIMATE_BANDING_MOVIE`.
+- **The camera's focus is not drawn:** Windows keeps the keys, shows Focus and Blur as lines in
+  its timeline through shared code, and plays such a film sharp all over. To build:
+  `Host/FilmStage.swift` (`filmPiece`) and `Host/FilmMovie.swift` draw `FilmPlacement.soft`
+  (blur by `across·x + down·y + level` frame points, pieces in one plane, `FilmSoft.matches`,
+  laid together and blurred once; `bz_film_piece` has one `blur` only, so a first step is
+  `soft.blur(at:)` at the piece's middle, and a ramp takes more in Skia); `FilmDesk` gets
+  `focusCamera(on:)` as `DocumentStore.focusCamera` does it (`Node.focus(on:at:pieces:)`,
+  `FilmCamera.usualBlur`, `Node.filmHasDepth`); `AnimatePanel.swift` gets rows for Focus and
+  Blur after Swing, a Focus the Camera Here card under Fly the Camera Here and
+  `FilmLens.sharpLine` on the pad; `MCPAnimate.swift` gets `focusOn` and the descriptions, and
+  would give its one-key warning for `cameraBlur`. Nothing of the camera's focus was built or
+  run in the VM; See the Whole Artboard there leaves focus and blur alone, as on the Mac.
 - **A movie's frames a second:** 172 at most, fewer for large frames (144 at 2560×1440, 64 at
   3840×2160): H.264's levels as Media Foundation's encoder keeps them; the Mac goes to 240.
 - **A movie's frames lie one frame late** in the file as AVFoundation reads it (the first at
@@ -325,6 +357,9 @@ room's hands and presence, four languages, the icon library in the core, and mem
   and 16 megapixels; past that it is sharp only when the film rests.
 - **A film's gentle tones:** the page draws each piece of a film with eight bits, where the Mac's
   movie keeps pieces finer and cuts once: up to 2 levels of 255.
+- **A film's focus:** a film whose camera blurs plays sharp all over in the viewer
+  (`Web/Sources/BezzleCore/Film/WebFilm.swift` reads a piece's `map`, `opacity` and `blur`,
+  not `FilmPlacement.soft`).
 - **Not set beside the Mac in the viewer:** 3D bodies and the look from the side, groups that
   keep depth, Shape keys with other outlines, and looks keyed in a film (drawn through the
   shared `FilmPictures.subject` and `piece.changes`; the core compiles with them).
