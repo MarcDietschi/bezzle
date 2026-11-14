@@ -175,10 +175,13 @@ nonisolated enum Icons {
 
     // MARK: Reading
 
+    /// The sets as they are packed, already unpacked, from a host with no bundle to read them
+    /// from: the browser's page fetches Icons.deflate, unpacks it and hands it over here before
+    /// any set is asked for. Nil on the Mac and on Windows, which read their own file.
+    nonisolated(unsafe) static var unpacked: Data?
+
     private static func load() -> [IconSet] {
-        guard let url = Bundle.main.url(forResource: "Icons", withExtension: "deflate"),
-              let packed = try? Data(contentsOf: url),
-              let raw = try? (packed as NSData).decompressed(using: .zlib) as Data,
+        guard let raw = unpacked ?? packedInBundle(),
               let top = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
               let list = top["sets"] as? [[String: Any]]
         else { return [] }
@@ -195,5 +198,17 @@ nonisolated enum Icons {
                            stroke: (s["stroke"] as? Double).map { CGFloat($0) },
                            styles: s["styles"] as? [String] ?? [""], icons: icons, byName: byName)
         }
+    }
+
+    private static func packedInBundle() -> Data? {
+        #if os(WASI)
+        // A page has no bundle, and asking for one stops the core.
+        return nil
+        #else
+        guard let url = Bundle.main.url(forResource: "Icons", withExtension: "deflate"),
+              let packed = try? Data(contentsOf: url)
+        else { return nil }
+        return try? (packed as NSData).decompressed(using: .zlib) as Data
+        #endif
     }
 }
