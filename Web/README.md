@@ -133,7 +133,16 @@ card's work. What keeps it quick and true:
 - **Pictures made ahead**, one every 20 ms from when the artboard is shown, and each put on the
   graphics card then, so playing does not wait for them (`bz_film_warm`).
 - **Nothing kept.** The core says which pictures it has let go (`drop` in every answer), and the
-  page forgets them: after a film none of its pictures is held.
+  page forgets them: after a film none of its pictures is held. A surface on the processor gives
+  its pixels back only to CanvasKit's `dispose`, not `delete` (`raster` in `site/bezzle.mjs`):
+  with `delete`, a film played in Node kept a frame's pixels at every moment, 1.8 GB after 500 and
+  then an abort; now CanvasKit's memory stays at 154 MB over 1200. A text is kept as long as the
+  core keeps its own copy of it, and a film can have one set anew at every moment (a text that
+  breaks its lines at its width, growing by a key inside a piece drawn again), about 0.3 MB each
+  time: 647 MB after 900 moments. So once a film has had 600 more texts set than the page held
+  when it opened, every text is let go on both sides and the film opened again (`mostTexts` in
+  `site/bezzle.mjs`): 319 MB however long it plays, for a wait as at the film's start every 600
+  texts. Frames and the design come out the same to the byte after it.
 - **Shader fills** are drawn with WebGL, which their programs were written for (`site/shaders.mjs`,
   asked through `Web/WebShaderPainting.swift`): in a film, at the film's moment, the part of the
   layer its picture shows. In the design itself, and where there is no WebGL, the fill's picture
@@ -154,10 +163,10 @@ arithmetic puts every piece; `tools/film-compare.mjs` compares. In Playwright's 
 | Pixels off by more than 24 levels, graphics card | 0.44% (worst frame 0.81%) | 0.20% (0.24%) | 1.17% (2.67%) |
 | The same, processor | 0.36% (0.58%) | 0.34% (0.43%) | 0.63% (1.07%) |
 | Mean difference of 255, graphics card and processor | 0.57 and 0.54 | 0.47 and 0.68 | 1.62 and 1.01 |
-| Frames a second playing, graphics card | 59.9 at 960×640 | 59.8 at 840×600 | 60.1 at 786×1704 |
-| A frame there: core, making pictures, placing | 0.5, 0.2, 0.9 ms | 4.3 (3.2 of it the shader), 0.6, 0.4 ms | 0.2, 0, 0.3 ms |
-| Longest wait for a frame | 33 ms, the first | 50 ms, the first | 17 ms |
-| Frames a second, processor | 7.5 | 7 | 2.9 |
+| Frames a second playing, graphics card | 60.0 at 960×640 | 59.9 at 840×600 | 60.2 at 786×1704 |
+| A frame there: core, making pictures, placing | 0.5, 0.2, 0.8 ms | 4.1 (3.0 of it the shader), 0.6, 0.3 ms | 0.2, 0, 0.3 ms |
+| Longest wait for a frame | 33 ms, the first | 33 ms, the first | 17 ms |
+| Frames a second, processor | 7.7 | 8.5 | 2.8 |
 
 The differences lie on edges and in the photographs' detail, as the stills' do. The Mac was busy
 with other builds while this ran.

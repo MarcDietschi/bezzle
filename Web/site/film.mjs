@@ -126,7 +126,8 @@ export function createScreen({ CanvasKit: CK, bz, software = false }) {
         pictureMs = bz.filmDraw(made.getCanvas(), frame, backdrop).pictureMs
         const info = { width, height, colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB }
         const px = made.getCanvas().readPixels(0, 0, info)
-        made.delete()
+        // `dispose`, not `delete`, gives a processor's surface its pixels back.
+        made.dispose()
         if (px) canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, px.length), width, height), 0, 0)
       }
       // What the core took to say what the frame is made from, what making its new pictures took, and placing them all.

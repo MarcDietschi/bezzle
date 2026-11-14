@@ -973,12 +973,35 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     canvas.clear(CK.TRANSPARENT)
     draw(canvas)
     const img = surface.makeImageSnapshot()
-    surface.delete()
+    // The picture has pixels of its own; a surface on the processor gives its back only to `dispose`
+    // (`delete` alone kept them, every time: a frame's worth a moment once a film played there).
+    surface.dispose()
     spent.pictures += performance.now() - t0
     return img
   }
 
   // MARK: Films
+
+  // Texts are kept as long as the core keeps its own copies of them (WebText's `kept`): until the
+  // fonts change. A film can have one set anew at every moment (a text that breaks its lines at
+  // its width, growing by a key inside a piece drawn again each time), and each costs CanvasKit
+  // about 0.3 MB. So once a film has had `mostTexts` more set than the page held when it opened,
+  // every text is let go, here and in the core, and the film is opened again: its pictures are
+  // drawn once more, a moment's wait in place of memory that never comes back.
+  const mostTexts = 600
+  let filmOf = -1, textsThen = 0, textsLetGo = 0
+
+  function forgetTexts() {
+    for (const t of texts.values()) for (const line of t.lines) line.paragraph?.delete()
+    texts.clear()
+    const fonts = new Set()
+    for (const letters of glyphLines.values()) for (const l of letters) fonts.add(l.font)
+    for (const f of fonts) f.delete()
+    glyphLines.clear()
+    // The core forgets its own, and with them the film, whose pictures were drawn with them.
+    x.bz_forget_text()
+    textsLetGo++
+  }
 
   // Pictures of a film the core holds no more: what was made of them is let go. Only a film's
   // pictures ever are; an artboard drawn as the design keeps its own, as it always has.
@@ -1120,12 +1143,20 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     film(index) {
       const r = reply(x.bz_film(index))
       forget(r.drop)
+      filmOf = r.error ? -1 : index
+      textsThen = texts.size + glyphLines.size
       return r.error ? null : r
     },
     /** What the open film's frame at `t` seconds is made from, for a canvas `width` by `height` pixels:
         { pieces }, each a picture and where it shows. `playing` leaves sharper parts for when the film rests. */
     filmFrame(t, width, height, playing = false) {
       const t0 = performance.now()
+      if (filmOf >= 0 && texts.size + glyphLines.size - textsThen > mostTexts) {
+        // Too many texts set for its moments: all let go, and the film opened again (see `mostTexts`).
+        forgetTexts()
+        forget(reply(x.bz_film(filmOf)).drop)
+        textsThen = texts.size + glyphLines.size
+      }
       const r = reply(x.bz_film_frame(t, Math.round(width), Math.round(height), playing ? 1 : 0))
       if (r.error) throw new Error(r.error)
       forget(r.drop)
@@ -1161,9 +1192,10 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     /** Where the open film's arithmetic has each piece at `t`, for comparing with the Mac's. */
     filmPlacements(t) { return reply(x.bz_film_placements(t)) },
     /** Lets the open film go. */
-    filmClose() { forget(reply(x.bz_film_close()).drop) },
-    /** How many pictures the page holds, for seeing that a film lets go of its own. */
-    held() { return { described: images.size, made: made.size, shaderFrames: shaderFrames.size, spent: { ...spent } } },
+    filmClose() { filmOf = -1; forget(reply(x.bz_film_close()).drop) },
+    /** How many pictures and texts the page holds, and how often a film had its texts let go, for
+        seeing that a film lets go of its own. */
+    held() { return { described: images.size, made: made.size, shaderFrames: shaderFrames.size, texts: texts.size + glyphLines.size, textsLetGo, spent: { ...spent } } },
     texts() { return reply(x.bz_texts()) },
     // Where each letter of a text the core laid (texts()' laid) is set along its line, from the
     // text's left, by where in the words it is from, per line: for comparing with the Mac.
