@@ -173,6 +173,7 @@ extension MCPTools {
             }
             pairs.append(("transform3D", .object(turn)))
         }
+        if node.keepsDepth == true { pairs.append(("keepsDepth", true)) }
         if let blend = node.blend { pairs.append(("blend", .string(blend.rawValue))) }
         if node.isArtboard && !node.clips { pairs.append(("clips", false)) }
         if node.isArtboard && node.pinsLayers == true { pairs.append(("adapts", false)) }
@@ -316,7 +317,7 @@ extension MCPTools {
 
     static let propertyKeys: Set<String> = [
         "name", "x", "y", "width", "height", "rotation", "opacity", "hidden", "locked", "fill", "border", "shadow",
-        "cornerRadius", "cornerSmoothing", "text", "spans", "font", "blur", "transform3D", "blend", "x1", "y1", "x2", "y2", "path", "evenOdd",
+        "cornerRadius", "cornerSmoothing", "text", "spans", "font", "blur", "transform3D", "keepsDepth", "blend", "x1", "y1", "x2", "y2", "path", "evenOdd",
         "clips", "preset", "carousel", "slides", "exports", "adapts",
     ]
 
@@ -504,6 +505,9 @@ extension MCPTools {
         if has("blur") { try blur(value("blur"), on: &node) }
         if has("transform3D") {
             if node.isArtboard { warnings.append("An artboard is the page itself: transform3D left out on \(name). Turn its layers.") } else { try transform3D(value("transform3D"), on: &node) }
+        }
+        if let v = try Read.bool(value("keepsDepth"), "keepsDepth") {
+            if node.isGroup { node.keepsDepth = v ? true : nil } else { warnings.append("Only a group keeps the depth of what it holds: keepsDepth left out on \(name).") }
         }
         if has("blend") {
             if let b = try Read.string(value("blend"), "blend"), b.lowercased() != "normal" {
