@@ -3,8 +3,8 @@ import Foundation
 // Animate: what a press, a pick and the panel do with a shape's points in hand, as the Mac's
 // MotionTool and the Pose card's chip decide it (Canvas/MotionTool.swift, Views/AnimateInspector
 // .swift). The points themselves are the shared pen's (`PenTool`), worked by `FilmPoints`; this
-// is only when they are taken up and put down. Nothing here asks Windows or the design anything,
-// so Windows/Tests checks it on a Mac too.
+// is only when they are taken up and put down, and when some may be taken away. Nothing here
+// asks Windows or the design anything, so Windows/Tests checks it on a Mac too.
 
 nonisolated enum FilmPointRules {
     /// What a press does, while a shape's points are in hand, that is on none of its points or
@@ -44,4 +44,9 @@ nonisolated enum FilmPointRules {
     /// Whether the Pose card shows Draw and Shape: when every layer picked is a shape whose
     /// outline is points.
     static func showsShape(_ reshapes: [Bool]) -> Bool { !reshapes.isEmpty && reshapes.allSatisfy { $0 } }
+
+    /// Whether points taken away at the playhead leave an outline a key can hold: `runs` is how
+    /// many points each of its runs keeps, and one of them has to keep two, which is a line.
+    /// Else nothing is taken away, and the canvas beeps: the last of a shape's points stay.
+    static func leavesAnOutline(runs: [Int]) -> Bool { runs.contains { $0 >= 2 } }
 }

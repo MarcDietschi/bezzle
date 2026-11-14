@@ -1,11 +1,12 @@
 import Foundation
 
-// Animate: a shape's points moved at the playhead, as the Mac's FilmPoints (Canvas/FilmPoints
-// .swift, ported). The shared pen (`PenTool`) moves them as it does in the design, with this for
-// its host: the points are where the film shows them at the playhead, through the layer's pose
-// and the camera (`Node.filmPointMap`), and every move is a pose of the layer's Shape there, as
-// moving a layer is a pose of where it is. The design's outline is never changed here, and its
-// points are only moved (`pointsFixed`): they are added and taken away in the design.
+// Animate: a shape's points moved at the playhead, and added and taken away there, as the Mac's
+// FilmPoints (Canvas/FilmPoints.swift, ported). The shared pen (`PenTool`) does it as it does in
+// the design, with this for its host: the points are where the film shows them at the playhead,
+// through the layer's pose and the camera (`Node.filmPointMap`), and every change is a pose of
+// the layer's Shape there, as moving a layer is a pose of where it is. The design's outline is
+// never changed here: an outline with other points than it has is one the key holds itself
+// (`Node.poseShape`).
 //
 // The canvas hand (`MotionHand`) owns it, takes the points in hand and hands the pen the pointer
 // and the keys while they are.
@@ -17,7 +18,8 @@ extension WindowsCore {
         private let film: () -> (board: Node, pieces: [FilmPiece])?
         /// Where the canvas is on the stage: a canvas point `p` is at `pan + p · zoom`.
         private let view: () -> (zoom: CGFloat, pan: CGPoint)
-        /// Points moved in a way no pose can keep, or taken away: the canvas beeps.
+        /// Points moved in a way no pose can keep, or taken away so that nothing is left to draw:
+        /// the canvas beeps.
         var beep: () -> Void = {}
 
         init(desk: FilmDesk, view: @escaping () -> (zoom: CGFloat, pan: CGPoint), film: @escaping () -> (board: Node, pieces: [FilmPiece])?) {
@@ -54,7 +56,6 @@ extension WindowsCore {
         }
         var penInHand: Bool { false }
         var selecting: Bool { true }
-        var pointsFixed: Bool { true }
         func dropPen() {}
         var zoom: CGFloat { view().zoom }
         func toView(_ p: CGPoint) -> CGPoint {
@@ -101,13 +102,15 @@ extension WindowsCore {
             }
         }
 
-        /// Points moved on the canvas: the layer's Shape posed at the playhead to have them there.
-        /// Points added or taken away are no pose, and change nothing. Inside a drag each pose is
-        /// made again from where the drag began, as every change of a gesture is here.
+        /// Points moved, added or taken away on the canvas: the layer's Shape posed at the playhead
+        /// to have them there, with the design's points, each moved, or as an outline the key
+        /// holds itself (`Node.poseShape`). An outline with nothing left to draw is no pose, and
+        /// changes nothing. Inside a drag each pose is made again from where the drag began, as
+        /// every change of a gesture is here: a point added by a press and dragged on is one step.
         func setPoints(_ points: BezierPath, of id: UUID, _ action: LocalizedStringResource) {
             guard let (map, origin, node) = placing(id), !node.locked else { return }
             guard let own = points.mapped({ map.back(CGPoint(x: $0.x - origin.x, y: $0.y - origin.y)) }),
-                  node.shapeChange(to: own) != nil else {
+                  node.shapeValue(of: own) != nil else {
                 beep()
                 return
             }
@@ -129,8 +132,20 @@ extension WindowsCore {
             }
         }
 
-        /// Points are taken away in the design.
-        func deleteSelectedPoints() { beep() }
+        /// Takes the picked points away at the playhead, joining those either side: the outline
+        /// that leaves is what the key there holds. The last of a shape's points stay.
+        func deleteSelectedPoints() {
+            let picked = livePoints
+            guard !picked.isEmpty, let (id, points) = editedPoints else { return }
+            var next = points
+            next.remove(picked)
+            guard FilmPointRules.leavesAnOutline(runs: next.subpaths.map(\.anchors.count)) else {
+                beep()
+                return
+            }
+            setPoints(next, of: id, picked.count == 1 ? "Delete Point" : "Delete Points")
+            selectedPoints = []
+        }
 
         func nudgePoints(dx: CGFloat, dy: CGFloat) {
             let picked = livePoints
@@ -157,7 +172,7 @@ extension WindowsCore.FilmDesk {
     }
 
     /// Poses a layer's Shape at the playhead so its outline is `outline` there, in its own upright
-    /// points: what moving its points on the canvas does.
+    /// points: what moving its points on the canvas does, and adding them and taking them away.
     func poseShape(of id: UUID, _ outline: BezierPath) {
         let t = filmTime
         let before = WindowsCore.design

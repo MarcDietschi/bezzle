@@ -287,10 +287,13 @@ design's `DesignSession.film`), its canvas tool in `Host/MotionHand.swift` and i
 (the camera flown somewhere, the scene turned on its pad) they are one change here, since a gesture
 on Windows makes each change again from where it began. Alt held while a layer is moved lifts it
 nearer or lowers it (the shared DepthPushing, Control on the Mac). A shape's Draw and Shape
-(`README.md` › Animate, Shapes) are the Mac's too: its points are moved in the film with the shared
-pen through `Host/FilmPoints.swift`, the Mac's FilmPoints, which the canvas hand takes in hand with
-a double click and the Pose card's Edit Points, and puts down as `Host/FilmPointRules.swift` says;
-the Draw move's chip draws its line part of the way with `Host/DrawnLine.swift`, as WinUI cannot
+(`README.md` › Animate, Shapes) are the Mac's too: its points are moved in the film, and added and
+taken away there (a click on the outline, Delete), with the shared pen through
+`Host/FilmPoints.swift`, the Mac's FilmPoints, which the canvas hand takes in hand with a double
+click and the Pose card's Edit Points, and puts down as `Host/FilmPointRules.swift` says. Where a
+click would add a point the pen's pale point shows on the outline; the pointer stays the arrow,
+where the Mac's is its pen with a plus.
+The Draw move's chip draws its line part of the way with `Host/DrawnLine.swift`, as WinUI cannot
 cut a curve short. Both rule files ask Windows nothing, so `swift test --package-path Windows/Tests`
 checks them on a Mac (with Xcode's developer directory, whose Swift has the testing macros). The film is drawn as the Mac draws it:
 each piece is a picture the Mac's own `FilmPictures` (linked into `Sources/BezzleCore/Film/`) draws

@@ -5,7 +5,8 @@ import Testing
 /// When Animate takes a shape's points in hand and puts them down (Host/FilmPointRules.swift), as
 /// the Mac's AnimateCanvasPathTests have it: a double click on a shape picked alone takes them up;
 /// a press off them pulls a loop round some; a double click there, or a press on another layer,
-/// puts them down; picking anything else puts them down; the Pose card's chip says Done for them.
+/// puts them down; picking anything else puts them down; the Pose card's chip says Done for them;
+/// Delete takes the picked ones away while an outline is left.
 struct FilmPointRulesTests {
     let shape = UUID(), card = UUID(), group = UUID()
 
@@ -65,5 +66,20 @@ struct FilmPointRulesTests {
         #expect(FilmPointRules.showsShape([true, true]))
         #expect(!FilmPointRules.showsShape([true, false]))
         #expect(!FilmPointRules.showsShape([]))
+    }
+
+    /// Delete with points picked takes them away at the playhead, as the Mac's FilmPoints does,
+    /// while what is left can be drawn: the last of a shape's points stay, and the canvas beeps.
+    @Test func pointsAreTakenAwayWhileARunKeepsTwo() {
+        // A triangle less one point is a line, which a key can hold.
+        #expect(FilmPointRules.leavesAnOutline(runs: [2]))
+        #expect(FilmPointRules.leavesAnOutline(runs: [5]))
+        // Of two runs one is gone (the shared path drops a run left with fewer than two): the other is drawn.
+        #expect(FilmPointRules.leavesAnOutline(runs: [3]))
+        #expect(FilmPointRules.leavesAnOutline(runs: [1, 3]))
+        // Nothing left, or a single point: no outline, so nothing is taken away.
+        #expect(!FilmPointRules.leavesAnOutline(runs: []))
+        #expect(!FilmPointRules.leavesAnOutline(runs: [1]))
+        #expect(!FilmPointRules.leavesAnOutline(runs: [1, 1]))
     }
 }

@@ -37,8 +37,9 @@ extension WindowsCore {
 
         // MARK: A shape's points
 
-        /// A shape's points moved at the playhead, with the pen's hands: each move poses its Shape
-        /// there (`FilmPoints`). A double click on a shape, or Edit Points in the panel, takes them in hand.
+        /// A shape's points moved at the playhead, added and taken away there, with the pen's
+        /// hands: each change poses its Shape there (`FilmPoints`). A double click on a shape, or
+        /// Edit Points in the panel, takes them in hand.
         private lazy var points: FilmPoints = FilmPoints(desk: desk, view: { [unowned self] in (self.zoom, self.pan) }) { [weak self] in
             guard let scene = self?.scene else { return nil }
             return (scene.board, scene.pieces)
@@ -50,7 +51,8 @@ extension WindowsCore {
             return tool
         }()
 
-        /// What sounds when points are moved where no pose can keep them, or Delete would take one away.
+        /// What sounds when points are moved where no pose can keep them, or Delete would take away
+        /// the last a shape has to draw.
         public var beep: () -> Void {
             get { points.beep }
             set { points.beep = newValue }
@@ -275,7 +277,9 @@ extension WindowsCore {
         public enum Pointer: Equatable { case arrow, resize(Double), rotate(Double), turn, cross, pointingHand, grab, grabbing }
 
         public func pointer(at v: CGPoint) -> Pointer {
-            // A shape's points in hand: the arrow, on them and off, as the Mac's pen has it there.
+            // A shape's points in hand: the arrow, on them and off. Where a click on the outline
+            // adds a point the Mac's pointer is its pen with a plus; here the pale point the pen
+            // shows on the outline says so (`Pen.Overlay.spot`), as `Pointer` has no pen to give.
             if points.editingPath != nil { return .arrow }
             guard let scene else { return .arrow }
             let found = dragging ? held : find(v)
@@ -798,9 +802,9 @@ extension WindowsCore {
                 if name == "escape" { cancel() }
                 return true
             }
-            // A shape's points in hand: the arrows move the picked ones, Enter and Escape put them
-            // down, Delete takes none away. Enter on a shape not in hand plays the film, as it
-            // does on anything here.
+            // A shape's points in hand: the arrows move the picked ones, Delete takes them away at
+            // the playhead (never keys, while points are in hand), Enter and Escape put them down.
+            // Enter on a shape not in hand plays the film, as it does on anything here.
             if points.editingPath != nil, !ctrl, !alt, pen.key(Self.penKey(name), flags: Self.penFlags(shift: shift)) {
                 redraw()
                 return true
