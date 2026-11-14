@@ -632,6 +632,14 @@ final class FilmTimelineView {
     /// is being done is done, unless that makes them again itself, as a key dragged along while
     /// the sheet creeps under it does. So a step draws them once, not twice.
     private func owesLines() {
+        // A page turned while the film plays is drawn at once: nothing else is being done, and
+        // what is put off waits for a moment the frames leave free, which a film that takes all
+        // of them does not give (seen in the VM: the playhead went on over the page before).
+        if desk.playing {
+            linesOwed = false
+            Probe.time("timeline.refresh(looked)") { refresh() }
+            return
+        }
         guard !linesOwed else { return }
         linesOwed = true
         later { [weak self] in
