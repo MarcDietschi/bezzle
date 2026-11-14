@@ -338,6 +338,8 @@ extension WindowsCore {
 
         /// A press at a point on the stage. `deep` (Ctrl) picks the topmost layer, through groups.
         public func down(at v: CGPoint, clicks: Int, shift: Bool, deep: Bool) {
+            // A press ends a pinch still held to be going on.
+            pinchEnded()
             if desk.playing {
                 let looking = desk.looking
                 desk.pause()
@@ -708,8 +710,60 @@ extension WindowsCore {
             if let span { desk.show(from: span.from, to: span.to, back: t) }
         }
 
+        // MARK: Two fingers on the camera
+
+        /// A pinch going on as the camera's, and how close it has brought it so far.
+        private var pinched: Double?
+        /// A pinch put back with Escape while it went on: what is left of it is swallowed.
+        private var pinchSpent = false
+        public var pinching: Bool { pinched != nil || pinchSpent }
+
+        /// Two fingers pinched on a touchpad, at a point on the stage: the camera comes closer by
+        /// `factor`, or draws back, as on the Mac (MotionTool.magnify). False where the pinch is
+        /// the view's: only with the camera picked, nothing else in hand and the pointer on its
+        /// film is it the camera's, and it stays what it was when it began. Windows says neither
+        /// where a pinch begins nor where it ends, so whoever tells of it says when no more of it
+        /// came for a moment (`pinchEnded`): from first to last it poses the camera as one step.
+        public func pinch(by factor: Double, at v: CGPoint) -> Bool {
+            if pinchSpent { return true }
+            if pinched == nil {
+                guard desk.camera, !desk.playing, !dragging, let scene, scene.rect.contains(v) else { return false }
+                begin([scene.board.id], scene)
+                pinched = scene.camera.zoom
+            }
+            guard let now = pinched, factor.isFinite, factor > 0 else { return true }
+            // Within what a camera's zoom may be (`MotionProperty.cameraZoom`).
+            let next = min(max(now * factor, 0.1), 16)
+            pinched = next
+            desk.poseCamera(.cameraZoom, [next])
+            redraw()
+            return true
+        }
+
+        /// No more of a pinch came: what it did to the camera is one step.
+        public func pinchEnded() {
+            let was = pinched
+            pinched = nil
+            pinchSpent = false
+            guard was != nil else { return }
+            finish()
+            redraw()
+        }
+
         @discardableResult
         public func cancel() -> Bool {
+            // A pinch put back: the camera where it was, and the rest of the pinch does nothing.
+            if pinched != nil {
+                pinched = nil
+                pinchSpent = true
+                if WindowsCore.inGesture {
+                    WindowsCore.cancelGesture()
+                    desk.edited()
+                }
+                tracksBefore = [:]
+                redraw()
+                return true
+            }
             guard dragging else { return false }
             // The points' drag put back as Escape puts it back, with the pen's own drag let go.
             if pen.dragging {
@@ -739,7 +793,8 @@ extension WindowsCore {
                 redraw()
                 return true
             }
-            if dragging {
+            // With a drag or a pinch in hand only Escape does anything: it puts them back.
+            if dragging || pinched != nil {
                 if name == "escape" { cancel() }
                 return true
             }

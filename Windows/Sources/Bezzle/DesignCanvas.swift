@@ -5194,11 +5194,27 @@ final class DesignCanvas {
         ]
     }
 
+    private var pinchCount = 0
+
     private func wheel(_ args: PointerRoutedEventArgs?) {
         guard let current = try? args?.getCurrentPoint(stage), let properties = current.properties else { return }
         let delta = Double(properties.mouseWheelDelta)
         let p = point(args)
-        if control {
+        // Two fingers pinched on a touchpad: Windows turns the wheel and says Ctrl is held with it
+        // (VirtualKeyModifiers' Control, 1), while no key is down.
+        let pinched = UInt32(truncatingIfNeeded: args?.keyModifiers.rawValue ?? 0) & 1 != 0 && !control
+        // With the camera in hand, a pinch on its film brings it closer, as on the Mac; the wheel
+        // with Ctrl stays the view's.
+        if animating, pinched {
+            syncMotion()
+            if motion.pinch(by: pow(1.0015, delta), at: p) {
+                pinchEnds()
+                drawMotion()
+                args?.handled = true
+                return
+            }
+        }
+        if control || pinched {
             zoom(to: zoom * pow(1.0015, delta), around: p)
         } else if properties.isHorizontalMouseWheel || shift {
             pan.x = CGFloat(Double(pan.x) - delta)
@@ -5208,6 +5224,20 @@ final class DesignCanvas {
             place()
         }
         args?.handled = true
+    }
+
+    /// A pinch on the camera is held to have ended when no more of it came for a third of a
+    /// second (Windows does not say where one ends): all of it is then one step.
+    private func pinchEnds() {
+        pinchCount += 1
+        let mine = pinchCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.33) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.pinchCount == mine else { return }
+                self.motion.pinchEnded()
+                self.drawMotion()
+            }
+        }
     }
 
     /// The Mac's zoom range (2% to 6400%), keeping `p` (on the stage) where it is.
