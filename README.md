@@ -375,7 +375,8 @@ film asks about each of them as the design does (`FilmStand.lying`, made by the 
 measured where its place is, in the group (`FilmStand.posed`): a Move slides it along the
 group's plane, a Lift raises it along the way the group faces, a Tilt or a Swing is added to its
 own turn inside the group, so the film shows at every moment what the same change shows made in
-the design, and what the same keys show with the group as one card. The
+the design, and a layer lying in the group slides where the same keys slide it on a group that
+is one card. The
 flag is one optional key on a group, written only when set, and one more property shared on its
 own (`LayerField`): a Bezzle that does not know it reads the same group as one card.
 
