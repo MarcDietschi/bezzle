@@ -34,7 +34,7 @@
 <header>
   <span class="title" id="title">Bezzle</span>
   <span class="owner" id="owner"></span>
-  <span class="status" id="status" data-state="connecting"><span class="dot"></span><span id="state">Opening…</span></span>
+  <span class="status" id="status" data-state="connecting"><span class="dot"></span><span id="state"></span></span>
 </header>
 <div class="body">
   <aside id="boards"></aside>
@@ -44,6 +44,7 @@
 import { createBezzle } from './bezzle.mjs'
 import { createFilm } from './film.mjs'
 import { createLive } from './live.mjs'
+import { WORDS, language } from './words.mjs'
 import { ShareKeys, SharedRoom, Relay, RELAY, browserSelf, toB64 } from './share.mjs'
 
 // A design shared by link, opened in the browser: the link's secret after the #, as
@@ -60,30 +61,8 @@ const paths = {
   relay: query.get('relay') ?? RELAY,
 }
 
-// The page's few words, in the visitor's language where the site has it.
-const WORDS = {
-  en: { opening: 'Opening…', live: 'Live', connecting: 'Connecting…', away: 'Reconnecting…', gone: 'No longer shared', offline: 'Offline', none: 'No design',
-    by: (n) => `Shared by ${n}`, incomplete: ['This link is not complete.', 'Ask whoever shared the design for its link again.'],
-    ended: ['This design is no longer shared.', 'Whoever shared it has stopped sharing it.'], missing: ['This link does not lead to a design.', 'Ask whoever shared the design for its link again.'],
-    unreachable: ['Bezzle could not reach the design.', 'Check the connection and open the link again.'], empty: ['Nothing to show yet.', 'The design has no artboards.'],
-    play: 'Play the film', stop: 'Stop the film', film: 'Film', people: 'People', goTo: (n) => `Go to ${n}` },
-  de: { opening: 'Wird geöffnet …', live: 'Live', connecting: 'Verbinden …', away: 'Neu verbinden …', gone: 'Nicht mehr geteilt', offline: 'Offline', none: 'Kein Design',
-    by: (n) => `Geteilt von ${n}`, incomplete: ['Dieser Link ist unvollständig.', 'Bitte die Person, die das Design geteilt hat, noch einmal um den Link.'],
-    ended: ['Dieses Design wird nicht mehr geteilt.', 'Wer es geteilt hat, teilt es nicht mehr.'], missing: ['Dieser Link führt zu keinem Design.', 'Bitte die Person, die das Design geteilt hat, noch einmal um den Link.'],
-    unreachable: ['Bezzle konnte das Design nicht erreichen.', 'Prüfe die Verbindung und öffne den Link noch einmal.'], empty: ['Noch nichts zu sehen.', 'Das Design hat keine Zeichenflächen.'],
-    play: 'Den Film abspielen', stop: 'Den Film anhalten', film: 'Film', people: 'Personen', goTo: (n) => `Zu ${n}` },
-  fr: { opening: 'Ouverture…', live: 'En direct', connecting: 'Connexion…', away: 'Reconnexion…', gone: 'N’est plus partagé', offline: 'Hors ligne', none: 'Aucun design',
-    by: (n) => `Partagé par ${n}`, incomplete: ['Ce lien est incomplet.', 'Demande à nouveau le lien à la personne qui a partagé le design.'],
-    ended: ['Ce design n’est plus partagé.', 'La personne qui l’a partagé a arrêté de le partager.'], missing: ['Ce lien ne mène à aucun design.', 'Demande à nouveau le lien à la personne qui a partagé le design.'],
-    unreachable: ['Bezzle n’a pas pu atteindre le design.', 'Vérifie la connexion et ouvre à nouveau le lien.'], empty: ['Rien à voir pour l’instant.', 'Le design n’a pas de plan de travail.'],
-    play: 'Lire le film', stop: 'Arrêter le film', film: 'Film', people: 'Personnes', goTo: (n) => `Vers ${n}` },
-  it: { opening: 'Apertura…', live: 'Dal vivo', connecting: 'Connessione…', away: 'Riconnessione…', gone: 'Non più condiviso', offline: 'Offline', none: 'Nessun design',
-    by: (n) => `Condiviso da ${n}`, incomplete: ['Questo link è incompleto.', 'Chiedi di nuovo il link a chi ha condiviso il design.'],
-    ended: ['Questo design non è più condiviso.', 'Chi l’ha condiviso ha smesso di condividerlo.'], missing: ['Questo link non porta a nessun design.', 'Chiedi di nuovo il link a chi ha condiviso il design.'],
-    unreachable: ['Bezzle non è riuscito a raggiungere il design.', 'Controlla la connessione e apri di nuovo il link.'], empty: ['Ancora niente da vedere.', 'Il design non ha tavole.'],
-    play: 'Riproduci il film', stop: 'Ferma il film', film: 'Film', people: 'Persone', goTo: (n) => `Vai a ${n}` },
-}
-const lang = (navigator.languages ?? [navigator.language]).map((l) => l.slice(0, 2).toLowerCase()).find((l) => WORDS[l]) ?? 'en'
+// The page's few words, in the visitor's language where Bezzle has it (words.mjs).
+const lang = language()
 const t = WORDS[lang]
 document.documentElement.lang = lang
 
@@ -95,6 +74,7 @@ const note = ([title, text]) => {
   $('stage').replaceChildren(p)
 }
 say(t.opening)
+$('boards').setAttribute('aria-label', t.boards)
 
 const secret = ShareKeys.secretIn(location.hash)
 if (!secret) {

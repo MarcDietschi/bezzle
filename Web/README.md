@@ -97,7 +97,17 @@ core's: `bz_shared_open`, `bz_shared_receive`, `bz_shared_changes`, `bz_shared_w
 
 `site/shared.html` is the page a link opens: `shared.html#2.<secret>` shows the design, with its
 name and who shared it, takes in everyone's changes as the relay says they are there, and fetches
-pictures as drawings ask for them. It edits nothing yet. `?relay=` points it at another relay.
+pictures as drawings ask for them. It edits nothing: it is for looking at a design, and at who
+works on it (below). `?relay=` points it at another relay.
+
+Its words are in English, German, French and Italian, by the first of the visitor's languages it
+has (`site/words.mjs`), and where the app or the website says the same thing they are its words:
+the app's `Localizable.xcstrings` for what is shared, by whom, and no longer, for artboards and
+people; the website's invitation page for a link that is not whole. The app's French says "vous",
+the page "tu", like the website. `node tools/words.mjs --site ~/Sites/bezzle-web` holds them to
+that (218 checks: every word in every language, written as Bezzle writes, and the same as the
+app's and the website's). The film's bar and the live room's labels take their words from there
+too. `site/index.html`, the sample viewer for this Mac, is in English alone.
 
 Tested against the relay itself, running here (`cd ../Relay && npx wrangler dev --port 8790`):
 
