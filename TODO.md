@@ -112,10 +112,48 @@ file was made (2026-11-14): look before starting on one.
   its trace after each matte was not read from an app's own trace file, and their times were not
   taken in a quiet VM.
 
-## 3D scenes *(from notes, 2026-11-13)*
+## 3D scenes
 
-- Not built: groups that keep their layers' depth when turned (as CSS `preserve-3d`), turning
-  several layers as one body about their common middle, orbiting the Design view.
+Built 2026-11-14 on the Mac (`README.md` › 3D): several layers turned as one body, an artboard
+looked at from the side, groups that keep their layers' depth. None of it was seen in a real
+window, only in tests and in pictures the renderer made. What that left:
+
+- **For Erik, looking from the side:** it moves the eye and leaves the page where it is, so every
+  tool stays true while looking (`DepthLook`); a true orbit that tilts the page is not built. Say
+  if the page itself should turn.
+- **Looking from the side:** no menu command. The word "Look from the Front" may sit over a
+  carousel's slide numbers, and the posts are drawn over everything. Under a layer standing in a
+  group that keeps depth the posts go down to the group's plane, not the page; looking from the
+  side at such groups has no test.
+- **One body:** Animate's canvas grips still tip or swing one layer; only the Pose card and the AI
+  server's `turn_layers` pose several as one body. A body posed by keys is rigid at each key and
+  only nearly so between them (its angles ease one by one). A body's lead can change between
+  turns when a group's fitted frame outgrows it, and angles are kept to hundredths of a degree,
+  so a body facing several ways drifts by thousandths of a point over many turns.
+- **Groups that keep depth, different or not built:** SVG export writes a turned or lifted one as
+  one picture, true inside itself but not ordered among the layers beside it (PNG, JPEG, PDF,
+  tiles, thumbnails and films are true). The prototype player's hit test (`Prototype.chain`)
+  orders per group, not across such a group's border. One with keys of its own is one card in
+  its film, and a key's tilt or swing on a layer inside is added to the angles the group gives
+  it. Seen exactly edge on, hits and bounds take layers standing off it as lying in it. A
+  background blur lying directly in a group makes it one card, which CSS does not do. The switch
+  shows only in the 3D card, so a group lying flat needs the card opened first.
+- **Groups that keep depth, unchecked:** the switch, the outline and the handles in a window; the
+  tiles' redraw around such groups on a live canvas (it rests on `Renderer.reach` and its test);
+  a 1.7 copy in a live room beside the new `keepsDepth` entry. Bezzle 1.7 opening and saving such
+  a design writes it back without the flag.
+- **Web import:** a page's 3D transforms arrive flattened to 2D (`flat(matrix)` in
+  `Import/WebPageReader.js`), so nothing imported is in depth and `transform-style: preserve-3d`
+  has nothing to keep.
+- **Windows, not built:** its AI server lacks `turn_layers` and `keepsDepth`
+  (`Windows/Sources/BezzleCore/MCP`); its 3D card, aim pad and fields set each layer alone and
+  should call `turnInDepth` and `layFlat`, its Pose card `poseInDepth`; the 3D card lacks the
+  switch for groups; looking from the side needs the host's `looks` (handed to `doc.looks`, put
+  back after undo, cleared on leaving Design), a gesture, the posts and the word drawn, and a
+  redraw of what stands off the page. The shared model is there for all of it.
+- **Windows, unchecked in the VM:** turning from a side and the new order of faces turned alike
+  (shared `DepthTurning`, `DepthOrder`); a group that keeps depth drawn, picked, its tiles redrawn
+  and played in a film (drawing and picking are shared, the tiles' damage is its own).
 
 ## The welcome tour
 
