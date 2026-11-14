@@ -29,9 +29,11 @@ nonisolated extension ShaderFrame {
 
 nonisolated extension ShaderRenderer {
     /// `region` of the frame drawn `pixels` big, as a picture the core draws like any other.
-    func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect) throws -> CGImage {
+    /// `earlier` gives the frames of the steps before, for a fill that builds on them.
+    func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect,
+               earlier: ((Int) throws -> ShaderFrame)? = nil) throws -> CGImage {
         let picture = try image(of: frame, pixels: Foundation.CGSize(width: pixels.width, height: pixels.height),
-                                region: ShaderPictures.rect(region))
+                                region: ShaderPictures.rect(region), earlier: earlier)
         return CGImage(width: picture.width, height: picture.height,
                        source: .pixels(picture.pixels, bytesPerRow: picture.width * 4, gray: false))
     }

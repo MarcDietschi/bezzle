@@ -104,6 +104,13 @@ public final class ShaderRenderer: @unchecked Sendable {
         return ShaderPicture(width: width, height: height, pixels: out)
     }
 
+    /// The whole frame drawn `width` by `height`, as its bytes: RGBA premultiplied, top row first.
+    /// For telling two frames apart, the same on the Mac and on Windows.
+    public func pixels(of frame: ShaderFrame, width: Int, height: Int,
+                       earlier: ((Int) throws -> ShaderFrame)? = nil) throws -> [UInt8] {
+        try image(of: frame, pixels: CGSize(width: Double(width), height: Double(height)), earlier: earlier).pixels
+    }
+
     /// Passes into textures, depth and stencil, instances and the rest of what the Mac draws
     /// since 2026-11-14 are not drawn here yet: refused by name, before anything is made.
     private func refuse(_ frame: ShaderFrame) throws {
