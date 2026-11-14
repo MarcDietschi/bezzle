@@ -150,6 +150,66 @@ along one artboard's film. Its keys are changes from the design and never the de
   as a design, `tones.bezzle`, and `TEST_RUNNER_ANIMATE_BANDING_MOVIE=<a file>` measures a
   movie of that film made elsewhere: on Windows, or a kept one after a video site packed it
   again.
+- **The camera's focus** (depth of field; `Bezzle/Model/FilmFocus.swift`, shared). The camera has
+  two more numbers, keyed like its others in the artboard's tracks `cameraFocus` and `cameraBlur`.
+  Blur is how much: so many points of blur for every hundred points a thing stands off the
+  focus, counted in the artboard's points before the camera shows the thing larger or smaller,
+  so a card a hundred points off under a Blur of 4 is blurred as its own Blur of 4 would blur
+  it. Nothing, as designed, blurs nothing. Focus is what is sharp: so many points nearer the eye
+  than the point of the sheet the camera looks at, along its line of sight (`FilmLens.nearness`).
+  So a camera at rest is sharp on the page, one that comes closer stays sharp on what it looks
+  at, a layer lifted 120 under a camera that looks straight down stands at 120, and under a
+  camera tipped back the sheet's foot is nearer and its top further. A flat thing the camera
+  does not face is therefore sharp along a line and softer away from it both ways, and in the
+  frame that is a plain ramp: `FilmSoft`, three numbers that `Node.placement` gives every piece
+  (`FilmPlacement.soft`; nil under a camera that blurs nothing, where a film is drawn as it
+  always was). No blur goes past `FilmSoft.most`, 200 points, as far as a layer's own goes.
+  One composer puts a frame together for the movie, a single frame and the stage
+  (`FilmExport.composed`). Pieces that follow one another and lie in one plane
+  (`FilmSoft.matches`) are laid together first and blurred as the one picture they are, so the
+  page shows no seam where it is several pieces; a piece is blurred as if it went on past the
+  frame's edge as it is there, and only where it shows and as far round that as its blur
+  carries it (`reach`), not all over the frame. The ramp is Core Image's masked variable blur,
+  which stops near 49 pixels however much is asked, so past 40 the same is done to a picture a
+  quarter the size and mixed in between 20 and 40 (`varied`), which holds at any size of frame.
+  It is worked out in half floats from the pieces' pictures and cut once with the frame, so a
+  movie's blurred edges are as gentle as its other tones without a piece being drawn deep for
+  it. Core Animation blurs a layer by one amount and by no ramp, so while anything that shows is blurred
+  by half a pixel or more, the stage shows the frame through a lens (`FilmStageView.focus`, its
+  layer named `lens`): the same composer, fed the stage's own pictures and parts, off the main
+  thread into a surface in the screen's colours, only the part the view shows, one frame at a
+  time with the newest moment winning. The pieces' own layers stay placed as ever under it,
+  hidden while it shows, so nothing on the main thread waits for a frame of it: under a quick
+  hand the lens shows the last frame it made, a frame behind the handles. Once nothing is
+  blurred the lens is gone and the layers show again.
+  In the app the Camera card has Focus and Blur under its other numbers and its pad dots the
+  line along which the sheet lies in focus; with layers picked, in a film where anything stands
+  off the page or the camera looks at an angle (`Node.filmHasDepth`), a card under Fly the
+  Camera Here keys the focus at the playhead to where they stand (`DocumentStore.focusCamera`,
+  `Node.focus(on:at:pieces:)`), and a camera that never blurred gets `FilmCamera.usualBlur` as
+  one key, which holds for the whole film, so that from one such key to the next the focus
+  alone is pulled. See the Whole Artboard leaves both (`MotionProperty.view`). An assistant
+  sets `cameraBlur` and `cameraFocus`, or a camera key with `focusOn`, the layers it is sharp
+  on then. Bezzle 1.7 knows neither track: it keeps them, in the file and shared, and shows the
+  film without the blur. Its tests are `FilmFocusTests` (the arithmetic, by hand),
+  `FilmFocusFrameTests` (frames measured by how far an edge is spread, the stage against the
+  frame, the movie), `FilmFocusKeysTests` (keys, the file, sharing, an older Bezzle, the store)
+  and `FilmFocusMCPTests`. `TEST_RUNNER_ANIMATE_FOCUS_PICTURES=<a folder>` writes frames of
+  such films there to look at, and `TEST_RUNNER_ANIMATE_FOCUS_DESIGN=<a folder>` the film the
+  scrub was measured with, once without a lens and once with one: 1440 by 900, twenty cards of
+  which fifteen stand off the page at three heights, under a camera that zooms, tips and swings.
+  Measured on 2026-11-14 (M5 Pro, a screen of one pixel to the point at 75 a second, other work
+  going on beside) in optimized copies with a window of 3400 by 1300, the playhead dragged 120
+  times a second: without a lens this copy kept 120.0 steps a second in nine scrubs of nine with
+  no gap over 15 ms, as the copy from before the lens did in three of its six (113.6 to 119.6 in
+  the three made beside a heavier load). With a lens it is 119.1 to 120.0 steps a second in ten scrubs
+  of twelve (115.7 and 118.1 in the other two, with gaps of 40 and 27 ms), and the lens makes 67 to
+  95 frames a second at 10 to 13 ms each, and 72 of the screen's 75 while the film plays. A lens
+  frame costs about a millisecond for every plane that is blurred by itself, whatever its size
+  (the variable blur), and the page's pixels: the same film at two pixels to the point takes 20
+  to 22 ms a frame in the test host (`TEST_RUNNER_ANIMATE_FOCUS_TIMES=<a design>`, which times
+  the composer alone; `TEST_RUNNER_ANIMATE_FILM_DESIGN` says what the lens made on the stage),
+  and no screen of that kind has shown it yet.
 - **Keeping it quick:** what is placed at every frame is found once (`Node.filmLayers`, not a
   search through the artboard per piece); new pictures are placed on the stage without drawing
   the canvas again; what is watched by views (`film.playing`, the timeline's hand) is set only
@@ -161,7 +221,10 @@ along one artboard's film. Its keys are changes from the design and never the de
   do not depend on the playhead. To measure, `BEZZLE_FILM=…;4:scrub=0,10,8`
   with `BEZZLE_SCRUB_OUT=<file>` drags the playhead through a film 120 times a second and writes
   how many steps the app kept up with; run it on an optimized copy (see Speed, above) of a copy
-  of a real design, and `sample <pid>` meanwhile.
+  of a real design, and `sample <pid>` meanwhile. Under a camera that blurs, the line ends with
+  what the stage's lens made: how many frames, how many a second, and how long each took. Launch
+  the copy with `--args -ApplePersistenceIgnoreState YES`: a copy that was stopped by a signal
+  otherwise comes up without a window the next time, runs no hook and writes nothing.
 - **The timeline looked at closer:** which part of the film shows is `store.film.window`, the
   viewer's own and no part of the design (nil is the whole film, and each film is seen whole
   first). Where a moment lies is `FilmScale` with its `start`, and looking closer, moving along
