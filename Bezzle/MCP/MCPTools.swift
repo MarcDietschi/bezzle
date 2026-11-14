@@ -103,6 +103,8 @@ final class MCPTools {
         with frames shows a film as it plays, a sheet of its moments, and with time one moment; \
         export with format mp4 saves it as a movie. A layer filled with a shader (fill.shader, GLSL \
         as WebGL takes it, from a website or written by you) moves by itself as the film plays. \
+        How a layer looks is keyed too (a key with look): its colours, a border's width, its \
+        corners and its shadow, each value the look itself at that time. \
         The animate prompt brings an artboard's film with how motion is done well. browse opens \
         websites in Bezzle's own browser, signed in as the person left it and clicked through, \
         and import_website brings in the pages it shows, several at once into one design. Every \

@@ -281,7 +281,7 @@ along one artboard's film. Its keys are changes from the design and never the de
   What cannot be keyed (a picture, a shader, on and off, dashes, a border's side, which side a
   shadow falls on, a gradient's line) is not on the cards there. A rectangle's corner dots are on
   the stage (`MotionTool.cornerDots`). Its tests are `MotionLooksTests` for the arithmetic and
-  `AnimateLooksTests` for the cards, the timeline and the stage.
+  `AnimateLooksTests` for the cards, the timeline, the stage and the AI server.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
   `/given` for a key the app placed itself; a look's by its track's name, `motion/fill.0/1000`),

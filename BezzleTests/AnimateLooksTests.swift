@@ -4,7 +4,7 @@ import AppKit
 
 /// How layers look, keyed in Animate as it is used: the design's own cards changing a colour, a
 /// border, the corners and a shadow at the playhead, the bead on each card, their lines in the
-/// timeline and a rectangle's corner dots on the stage. The arithmetic is in
+/// timeline, a rectangle's corner dots on the stage, and the assistant. The arithmetic is in
 /// `MotionLooksTests`.
 @MainActor
 @Suite(.serialized)
@@ -377,5 +377,86 @@ struct AnimateLooksTests {
         f.hover(f.middle("Card"))
         f.drag(CGPoint(x: corner.x + 10, y: corner.y + 10), CGPoint(x: corner.x + 30, y: corner.y + 30))
         #expect(f.undo.undoActionName != "Change Corners" && keys != nil && f.node("Card")[track: "corners"] == keys)
+    }
+
+    // MARK: The assistant
+
+    @Test func theAssistantKeysLooksAndReadsThem() async throws {
+        var layers = Self.layers
+        layers[1].fill.gradient = Gradient(kind: .linear, stops: [GradientStop(offset: 0, color: Self.red), GradientStop(offset: 1, color: Self.blue)],
+                                           start: CGPoint(x: 0, y: 0.5), end: CGPoint(x: 1, y: 0.5))
+        let bench = Bench(extra: layers)
+        MCPTools.opened(bench.store)
+        defer { MCPTools.closed(bench.store) }
+        let tools = MCPTools()
+        func call(_ name: String, _ arguments: [String: Any]) async -> (text: String, failed: Bool) {
+            var arguments = arguments
+            arguments["design"] = bench.store.name
+            let result = await tools.call(name, arguments)
+            let object = try? JSONSerialization.jsonObject(with: result.data) as? [String: Any]
+            let content = object?["content"] as? [[String: Any]] ?? []
+            return (content.compactMap { $0["text"] as? String }.joined(separator: "\n"), object?["isError"] as? Bool == true)
+        }
+        let design = bench.store.doc.nodes.map { board -> Node in
+            var board = board
+            board.children = board.children.map { var n = $0; n.motion = nil; return n }
+            return board
+        }
+        let keyed = await call("animate", ["keys": [
+            ["layer": "Card", "look": "fill", "time": 0, "value": "#E61A1A"],
+            ["layer": "Card", "look": "fill", "time": 2, "value": "#1A4DCC", "pace": "linear"],
+            ["layer": "Card", "look": "borderWidth", "time": 0, "value": 2],
+            ["layer": "Card", "look": "borderWidth", "time": 2, "value": 8, "pace": "linear"],
+            ["layer": "Card", "look": "corners", "time": 2, "value": [4, 8, 12, 16]],
+            ["layer": "Card", "look": "shadow", "time": 2, "value": ["y": 16, "color": "#00000080"]],
+            ["layer": "Badge", "look": "fill", "time": 2, "value": ["#00FF00", ["color": "#0000FF", "offset": 0.8]]],
+        ]])
+        #expect(!keyed.failed, "\(keyed.text)")
+        let card = try #require(bench.node("Card")), badge = try #require(bench.node("Badge"))
+        #expect(card[track: "fill.0"]?.keys.map(\.t) == [0, 2] && card[track: "fill.0"]?.keys.last?.ease?.kind == .linear)
+        #expect(card[track: "fill.0"]?.keys.first?.v == [0, 0, 0, 0, 0])
+        #expect(MotionLooksTests.near(card.looked(at: 2).fill.color, Self.blue, within: 0.01))
+        #expect(card.looked(at: 1).border.width == 5 && card.looked(at: 2).radii == [4, 8, 12, 16])
+        #expect(card.looked(at: 2).shadow.y == 16 && card.looked(at: 2).shadow.blur == 8)
+        #expect(abs(card.looked(at: 2).shadow.color.a - 0.5) < 0.01)
+        #expect(badge.looked(at: 2).fill.gradient?.stops.map(\.offset) == [0, 0.8])
+        // Nothing of it is the design's.
+        let after = bench.store.doc.nodes.map { board -> Node in
+            var board = board
+            board.children = board.children.map { var n = $0; n.motion = nil; return n }
+            return board
+        }
+        #expect(after == design)
+        // Read back as the looks themselves.
+        let read = await call("get_animation", ["artboard": "A"])
+        let object = try JSONSerialization.jsonObject(with: Data(read.text.utf8)) as? [String: Any]
+        let listed = (object?["layers"] as? [[String: Any]])?.first { $0["name"] as? String == "Card" }
+        let looks = listed?["looks"] as? [[String: Any]] ?? []
+        #expect(looks.map { $0["look"] as? String } == ["fill", "borderWidth", "corners", "shadow"])
+        let fill = looks.first { $0["look"] as? String == "fill" }
+        #expect(fill?["design"] as? String == "#E61A1A")
+        #expect((fill?["keys"] as? [[String: Any]])?.map { $0["value"] as? String } == ["#E61A1A", "#1A4DCC"])
+        let width = looks.first { $0["look"] as? String == "borderWidth" }
+        #expect((width?["keys"] as? [[String: Any]])?.map { $0["value"] as? Double } == [2, 8])
+        // What a layer has not, a gradient given the wrong count, a look there is none of: each said.
+        let none = await call("animate", ["keys": [["layer": "Badge", "look": "shadow", "time": 1, "value": ["y": 2]]]])
+        #expect(none.failed && none.text.contains("no shadow"))
+        let count = await call("animate", ["keys": [["layer": "Badge", "look": "fill", "time": 1, "value": "#FF0000"]]])
+        #expect(count.failed && count.text.contains("gradient of 2 colours"))
+        #expect(await call("animate", ["keys": [["layer": "Card", "look": "glow", "time": 1, "value": 1]]]).failed)
+        #expect(await call("animate", ["keys": [["layer": "Card", "look": "fill", "property": "fade", "time": 1, "value": 1]]]).failed)
+        #expect(await call("animate", ["keys": [["layer": "Card", "property": "fade", "which": 2, "time": 1, "value": 1]]]).failed)
+        // Corners and a shape for one rectangle: a shape's keys move the points its corners make.
+        let both = await call("animate", ["keys": [
+            ["layer": "Card", "look": "corners", "time": 1, "value": 6],
+            ["layer": "Card", "property": "shape", "time": 1, "path": "M0 0 L120 0 L120 80 L0 80 Z"],
+        ]])
+        #expect(both.failed && both.text.contains("corners and a shape"), "\(both.text)")
+        #expect(bench.node("Card") == card)
+        // Taken away by look: one key, then all of them.
+        let one = await call("animate", ["remove": [["layer": "Card", "look": "borderWidth", "time": 2]]])
+        #expect(!one.failed && bench.node("Card")?[track: "border.0.width"] == nil)
+        let gone = await call("animate", ["remove": [["layer": "Card", "look": "fill"]]])
+        #expect(!gone.failed && bench.node("Card")?[track: "fill.0"] == nil && bench.node("Card")?[track: "corners"] != nil)
     }
 }
