@@ -35,8 +35,30 @@ file was made (2026-11-14): look before starting on one.
   the design's outline gets more points while such a key keeps its old count of noughts (points
   added in 1.7, or one person keying while another edits the design's points), 1.7 shows the
   stretch to that key bent; this Bezzle reads the key right and rewrites it at its next change.
-- **Not built** *(from notes, 2026-11-13)*: depth of field, animating looks (colour, corner,
-  border).
+- **Not built** *(from notes, 2026-11-13)*: depth of field.
+- **Looks keyed in Animate** (2026-11-14: fill and text colour, gradient colours and their
+  places, border colour and width, a rectangle's corners, shadows; `Bezzle/Model/LookMotion.swift`).
+  Not keyed: picture and shader fills, on and off, adding and taking away, dashes, a border's
+  side, a shadow inside or outside, blend, smooth corners, a gradient's line, ends and count of
+  colours. A look change made in Animate that no picked layer can key (a picture swapped, a fill
+  turned off) changes the design as before, with no word that it did.
+- **Keyed looks, as chosen:** a keyed colour is a colour of its own, so it cannot be a named
+  colour or a variable and does not turn with a dark artboard (only the keys the app gave follow
+  the design). A rectangle whose Shape has keys keeps the design's corners: its Corners keys wait
+  and show faint, the card and the corner dots are not offered, the AI server refuses; rounding
+  it over time takes a Shape key with rounder corners. Hover previews of presets and styles do
+  not show on the film, and no ready-made move changes a look. A rectangle's corner dots show
+  only for one picked rectangle drawn as a piece of its own and at least 48 points each way.
+- **Keyed looks, unchecked:** photographed in German at one window size before the marquee, the
+  outline keys and the gentle tones were on main; gradient colours, the beads, the corner dots
+  and the marquee over a look's line are driven by tests only. Scrub speed was measured on 1.7's
+  base only (120 steps a second, longest gap 11.1 ms, 49 layers of which 7 change look), not
+  since the movie's sixteen-bit pictures; a movie with keyed looks was made in a test only.
+  Restacking or removing fills while another person keys them was tested through the model's
+  merge, never with two copies in a live room.
+- **Look keys in Bezzle 1.7:** kept, and the design's look shown. A whole-layer retime there
+  leaves them at their old moments, Remove Motion takes them, and a layer with only look keys
+  has no line.
 - **The timeline looked at closer** (2026-11-14): the pinch, two fingers moving it along, the
   double tap and the creep under a drag were driven by tests and by made events in a test copy,
   never felt on a trackpad (the creep's pace, the four times of the double tap, the catch at the
@@ -113,6 +135,16 @@ file was made (2026-11-14): look before starting on one.
   as the browser's stand-in was, so Windows may draw parts needlessly as the browser did
   (`WebFilm.holds` is the remedy there). Not measured. The Mac was measured (2,495 askings in
   eight films, none answered wrongly) and draws nothing needlessly.
+- **Keyed looks** (the Mac's since 2026-11-14) are not built for Windows and were never run in
+  the VM. The stage and the movie should draw them through shared code (`piece.changes`,
+  `Node.posed`) and the timeline lists their lines from the shared `FilmRow.rows`, but
+  `Host/FilmHand.swift` and `Host/Animating.swift` (`tracks(of:)`, `retime`) do not pass `look:`,
+  so a key on a look's line stands for every key of the layer at that moment when dragged, paced
+  or deleted; twice on a look's line and "Add Key Here" hold the whole layer (`holdHere`) where
+  the Mac toggles that look's key; `FilmRow.Mark.gone` is not drawn faint. There are no look
+  cards at the playhead in `AnimatePanel.swift`, no beads and no corner dots, so a look cannot
+  be keyed by hand (to call: `Node.looked(at:)`, `poseLooks(at:_:)`, `fits`, `lookValue(_:at:)`,
+  `setLookKey`). The AI server has no `look` in `animate` and lists none in `get_animation`.
 - **A double click in Prototype and Inspect** may also reach WinUI's double tap and start editing
   the design underneath, as it did in Animate before 114d057 fixed it there.
 
@@ -293,6 +325,9 @@ window, only in tests and in pictures the renderer made. What that left:
   0.3 MB of CanvasKit's memory.
 - **Pictures of the design are never let go:** every artboard drawn stays in the page (`made`,
   `images`), so a shared design drawn again at each edit grows. Older than the film.
+- **Keyed looks in a film** are drawn through the shared `FilmPictures.subject` and
+  `piece.changes`; the core compiles with them, but they were never looked at in a browser nor
+  compared with the Mac's frames.
 - **The film, unchecked:** with the open fonts the published page uses (compared with Apple's
   only), in Safari and Firefox, on a phone, a WebGL context lost mid-film, and the Windows build
   after these commits.
