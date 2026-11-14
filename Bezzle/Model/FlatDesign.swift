@@ -195,7 +195,7 @@ nonisolated struct LayerField: @unchecked Sendable {
         LayerField("pathBox", \.pathBox), LayerField("evenOdd", \.evenOdd), LayerField("mask", \.mask), LayerField("clipsToFirst", \.clipsToFirst),
         LayerField("blur", \.blur), LayerField("blend", \.blend), LayerField("screen", \.screen), LayerField("hidden", \.hidden),
         LayerField("locked", \.locked), LayerField("clips", \.clips), LayerField("pinsLayers", \.pinsLayers), LayerField("dark", \.dark), LayerField("slideSize", \.slideSize),
-        LayerField("transform3D", \.transform3D),
+        LayerField("transform3D", \.transform3D), LayerField("keepsDepth", \.keepsDepth),
         LayerField("grid", \.grid),
         LayerField("deck", \.deck), LayerField("post", \.post), LayerField("own", \.own),
         LayerField("layout", \.layout), LayerField("guides", entries: \.guides),

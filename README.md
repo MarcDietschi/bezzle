@@ -269,8 +269,8 @@ and `contains`, and `Renderer.reach` all go through; a click on such a layer tak
 inside the group the layer. In a film, such a group with no keys of its own comes apart into
 pieces that stand where it puts them (`FilmPiece.stand`), so the camera at rest shows what the
 design does and sees between the layers when it moves; with keys of its own it is one card. The
-flag is one optional key on a group, written only when set: a Bezzle that does not know it reads
-the same group as one card.
+flag is one optional key on a group, written only when set, and one more property shared on its
+own (`LayerField`): a Bezzle that does not know it reads the same group as one card.
 
 - **Where:** all shared with Windows and the browser. `Bezzle/Model/Perspective.swift` has `Eye`,
   the homography seen from it, and `BezzleDocument.eye(inside:)` and `eye(forParentOf:)`, where any

@@ -309,6 +309,10 @@ struct DepthKeepTests {
         let data = try JSONEncoder().encode(doc)
         let back = try JSONDecoder().decode(BezzleDocument.self, from: data)
         #expect(back == doc && node(back, "Group").keepsDepth == true && node(back, "Inner").keepsDepth == true)
+        // Shared with others, it is one more property of the group, sent and merged on its own.
+        let shared = FlatDesign(doc).document()
+        #expect(node(shared, "Group").keepsDepth == true && node(shared, "Inner").keepsDepth == true && node(shared, "Lying").keepsDepth == nil)
+        #expect(LayerField.all.contains { $0.name == "keepsDepth" })
         // A group not told to keep depth is written as it always was: no key at all.
         func cleared(_ n: Node) -> Node {
             var n = n
