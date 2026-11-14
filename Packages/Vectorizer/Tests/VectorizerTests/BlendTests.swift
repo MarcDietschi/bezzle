@@ -178,6 +178,27 @@ final class BlendTests: XCTestCase {
         XCTAssertLessThanOrEqual(off, 0.6)
     }
 
+    func testAGentleRunInAPictureMadeSmallerKeepsItsEdges() throws {
+        // Larger than the engine reads, it is made a little smaller first: each pixel then the
+        // mean of what it covers, parts of pixels counted, so the bar is where it was drawn to
+        // a small part of a pixel. The ball's edge is two pixels wide there, and where both
+        // were read as a thin thing of their own and given to the sky, the edge is found
+        // again a pixel further in.
+        for dithered in [false, true] {
+            let how = dithered ? "every pixel a level off" : "as drawn"
+            let (traced, _, off) = try large(6, dithered: dithered)
+            XCTAssertEqual(traced.shapes.count, 3, how)
+            XCTAssertEqual(traced.shapes.filter { $0.blend != nil }.count, 2, how)
+            XCTAssertLessThanOrEqual(off, 0.7, how)
+            let flat = try XCTUnwrap(traced.shapes.first { $0.blend == nil })
+            guard case .rectangle(let at, let width, let height, _, _)? = flat.figure else { return XCTFail("the bar is no rectangle, \(how)") }
+            XCTAssertEqual(at.x, 1800, accuracy: 0.1, how)
+            XCTAssertEqual(at.y, 1368, accuracy: 0.1, how)
+            XCTAssertEqual(width, 720, accuracy: 0.15, how)
+            XCTAssertEqual(height, 144, accuracy: 0.15, how)
+        }
+    }
+
     func testShapesOnColoursThatRunStayThemselves() throws {
         // A sky with a dark disc, a white bar and a bar of one of the sky's own colours on
         // it, lying where the sky is another colour: three shapes of one colour each on one of
@@ -286,6 +307,39 @@ final class BlendTests: XCTestCase {
         }
         XCTAssertLessThanOrEqual(worst, 0.7)
         XCTAssertLessThanOrEqual(sum / max(count, 1), 0.17)
+    }
+
+    func testASkyABallAndABarAsAProgramDrawsThem() throws {
+        // As CoreGraphics draws them, at 800 by 600 pixels and at twice that. The mixed pixels
+        // along the ball's edge are read as a thin thing in one of the sky's colours, further
+        // from the ball's than bands are from each other, and the picture takes no step along
+        // a tenth of where the two meet: that makes it no part of the ball. And where such a
+        // thin thing was given to the sky with a piece of the ball in it, the ball's edge is
+        // found again where it is.
+        for times in [1, 2] {
+            let size = Double(times), how = "\(800 * times) pixels wide"
+            let traced = try XCTUnwrap(Vectorizer.trace(try XCTUnwrap(painted(times: times))))
+            XCTAssertEqual(traced.shapes.count, 3, how)
+            XCTAssertEqual(traced.shapes.first?.blend?.kind, .linear, how)
+            let ball = try XCTUnwrap(traced.shapes.first { $0.blend?.kind == .radial })
+            guard case .ellipse(let center, let radiusX, let radiusY, _)? = ball.figure else {
+                XCTFail("the ball is no ellipse, \(how)")
+                continue
+            }
+            XCTAssertEqual(center.x, 260 * size, accuracy: 0.1, how)
+            XCTAssertEqual(center.y, 280 * size, accuracy: 0.1, how)
+            XCTAssertEqual(radiusX, 140 * size, accuracy: 0.1, how)
+            XCTAssertEqual(radiusY, 140 * size, accuracy: 0.1, how)
+            let bar = try XCTUnwrap(traced.shapes.first { $0.blend == nil })
+            guard case .rectangle(let at, let width, let height, _, _)? = bar.figure else {
+                XCTFail("the bar is no rectangle, \(how)")
+                continue
+            }
+            XCTAssertEqual(at.x, 600 * size, accuracy: 0.1, how)
+            XCTAssertEqual(at.y, 456 * size, accuracy: 0.1, how)
+            XCTAssertEqual(width, 240 * size, accuracy: 0.15, how)
+            XCTAssertEqual(height, 48 * size, accuracy: 0.15, how)
+        }
     }
     #endif
 }

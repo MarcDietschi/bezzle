@@ -99,7 +99,15 @@ extension Vectorizer {
                     let (x0, y0) = pixel(along, line), (x1, y1) = pixel(along + 1, line)
                     let a = at[y0 * w + x0], b = at[y1 * w + x1]
                     guard a != b, coloured.blends[Int(a)] != nil || coloured.blends[Int(b)] != nil else { continue }
-                    let found = crossing(line, along, a, b) ?? crossing(line, along + 1, a, b)
+                    // Looked for where the samples change, and a pixel further to either side:
+                    // what was read as something thin of its own along the edge went whole to
+                    // one of the two, and where it was two pixels thick the samples change
+                    // that far from the edge.
+                    var found: (at: Double, from: Int, to: Int)?
+                    for shift in [0, 1, -1, 2] {
+                        found = crossing(line, along + shift, a, b)
+                        if found != nil { break }
+                    }
                     let about = found.map { Int($0.at) } ?? along
                     let before = (crossing(line - 1, about, a, b) ?? (found == nil ? crossing(line - 1, about + 1, a, b) : nil))?.at
                     let after = (crossing(line + 1, about, a, b) ?? (found == nil ? crossing(line + 1, about + 1, a, b) : nil))?.at

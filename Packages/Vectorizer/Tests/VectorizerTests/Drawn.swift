@@ -98,6 +98,36 @@ func kept(_ bitmap: Bitmap, quality: Double) -> Bitmap? {
     for i in 0..<(w * h) { read[i * 4 + 3] = 255 }
     return Bitmap(width: w, height: h, pixels: read)
 }
+
+/// A sky, a lit ball and a white bar as CoreGraphics draws them, 800 by 600 pixels `times`
+/// over: the ball round 260, 280 and 140 across its half, the bar from 480, 432 to 720, 480.
+/// Every pixel of its runs of colours is a little off, each its own way.
+func painted(times: Int) -> Bitmap? {
+    let w = 800 * times, h = 600 * times
+    var pixels = [UInt8](repeating: 255, count: w * h * 4)
+    let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    let done = pixels.withUnsafeMutableBytes { raw -> Bool in
+        guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        ctx.scaleBy(x: CGFloat(times), y: CGFloat(times))
+        func run(_ colors: [CGColor]) -> CGGradient? { CGGradient(colorsSpace: space, colors: colors as CFArray, locations: nil) }
+        let both: CGGradientDrawingOptions = [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+        guard let sky = run([CGColor(srgbRed: 0.14, green: 0.24, blue: 0.5, alpha: 1), CGColor(srgbRed: 0.95, green: 0.66, blue: 0.5, alpha: 1)]),
+              let lit = run([CGColor(srgbRed: 1, green: 0.9, blue: 0.62, alpha: 1), CGColor(srgbRed: 0.7, green: 0.26, blue: 0.08, alpha: 1)]) else { return false }
+        ctx.drawLinearGradient(sky, start: CGPoint(x: 0, y: 600), end: CGPoint(x: 300, y: 0), options: both)
+        ctx.saveGState()
+        ctx.addEllipse(in: CGRect(x: 120, y: 180, width: 280, height: 280))
+        ctx.clip()
+        ctx.drawRadialGradient(lit, startCenter: CGPoint(x: 220, y: 370), startRadius: 0, endCenter: CGPoint(x: 220, y: 370), endRadius: 200, options: both)
+        ctx.restoreGState()
+        ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 480, y: 120, width: 240, height: 48))
+        return true
+    }
+    guard done else { return nil }
+    for i in 0..<(w * h) { pixels[i * 4 + 3] = 255 }
+    return Bitmap(width: w, height: h, pixels: pixels)
+}
 #endif
 
 /// A line as a hand draws it: from the left of a picture to its right, rising or falling a

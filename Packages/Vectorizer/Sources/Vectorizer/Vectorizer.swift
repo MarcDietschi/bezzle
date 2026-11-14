@@ -317,11 +317,13 @@ public enum Vectorizer {
         guard abs(sx - 1) > 1e-9 || abs(sy - 1) > 1e-9 else { return figure }
         // Only when it was made smaller alike both ways does a circle stay one.
         guard abs(sx - sy) < 1e-3 else { return nil }
+        // Upright, it is as high as the picture was made smaller that way: the two ways differ by
+        // a part in some thousands, a quarter of a pixel down a large picture.
         switch figure {
         case .ellipse(let c, let rx, let ry, let angle):
-            return .ellipse(center: Spot(c.x * sx, c.y * sy), radiusX: rx * sx, radiusY: ry * sx, angle: angle)
+            return .ellipse(center: Spot(c.x * sx, c.y * sy), radiusX: rx * sx, radiusY: ry * (angle == 0 ? sy : sx), angle: angle)
         case .rectangle(let c, let w, let h, let radius, let angle):
-            return .rectangle(center: Spot(c.x * sx, c.y * sy), width: w * sx, height: h * sx, radius: radius * sx, angle: angle)
+            return .rectangle(center: Spot(c.x * sx, c.y * sy), width: w * sx, height: h * (angle == 0 ? sy : sx), radius: radius * sx, angle: angle)
         }
     }
 }

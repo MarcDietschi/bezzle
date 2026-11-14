@@ -40,6 +40,10 @@ struct Raster: @unchecked Sendable {
 
     /// The bitmap made ready: no larger than `cap` pixels, and its see-through pixels given the
     /// colours of the solid ones beside them, so nothing foreign is mixed in at its edges.
+    ///
+    /// Made smaller, each pixel is the mean of what it covers of the bitmap's own, a part of a
+    /// pixel counted as that part: so an edge lies in the smaller picture where it lay in the
+    /// bitmap, to a small part of a pixel, however little smaller it was made.
     static func prepare(_ bitmap: Bitmap, cap: Int) -> Raster {
         var w = bitmap.width, h = bitmap.height
         let rgb: Store<UInt8>, alpha: Store<UInt8>
@@ -48,29 +52,37 @@ struct Raster: @unchecked Sendable {
             let dw = max(1, Int((Double(w) * f).rounded())), dh = max(1, Int((Double(h) * f).rounded()))
             rgb = Store(dw * dh * 3, 0)
             alpha = Store(dw * dh, 0)
-            let sw = w, sh = h
+            let sw = w
+            let (fx, wx) = spans(w, dw), (fy, wy) = spans(h, dh)
+            let covered = Float(Double(w) / Double(dw) * Double(h) / Double(dh))
+            let out = rgb.p, solid = alpha.p
             bitmap.pixels.withUnsafeBufferPointer { src in
-                let s = src.baseAddress!
-                for y in 0..<dh {
-                    let y0 = y * sh / dh, y1 = max(y0 + 1, (y + 1) * sh / dh)
-                    for x in 0..<dw {
-                        let x0 = x * sw / dw, x1 = max(x0 + 1, (x + 1) * sw / dw)
-                        var r = 0, g = 0, b = 0, a = 0
-                        for yy in y0..<y1 {
-                            var q = s + (yy * sw + x0) * 4
-                            for _ in x0..<x1 {
-                                let qa = Int(q[3])
-                                r += Int(q[0]) * qa; g += Int(q[1]) * qa; b += Int(q[2]) * qa; a += qa
-                                q += 4
+                let s = Sent(src.baseAddress!)
+                parallel(dh, atLeast: 16) { rows in
+                    for y in rows {
+                        let down = wy[y]
+                        for x in 0..<dw {
+                            // Colour times how solid, and how solid.
+                            var r: Float = 0, g: Float = 0, b: Float = 0, a: Float = 0
+                            var row = Int(fy[y])
+                            let across = wx[x], first = Int(fx[x])
+                            for ky in down {
+                                var q = s.value + (row * sw + first) * 4
+                                for kx in across {
+                                    let k = ky * kx * Float(q[3])
+                                    r += Float(q[0]) * k; g += Float(q[1]) * k; b += Float(q[2]) * k; a += k
+                                    q += 4
+                                }
+                                row += 1
                             }
+                            let i = y * dw + x
+                            if a > 0 {
+                                out[i * 3] = UInt8(min(max((r / a).rounded(), 0), 255))
+                                out[i * 3 + 1] = UInt8(min(max((g / a).rounded(), 0), 255))
+                                out[i * 3 + 2] = UInt8(min(max((b / a).rounded(), 0), 255))
+                            }
+                            solid[i] = UInt8(min(max((a / covered).rounded(), 0), 255))
                         }
-                        let n = (y1 - y0) * (x1 - x0), i = y * dw + x
-                        if a > 0 {
-                            rgb.p[i * 3] = UInt8((r + a / 2) / a)
-                            rgb.p[i * 3 + 1] = UInt8((g + a / 2) / a)
-                            rgb.p[i * 3 + 2] = UInt8((b + a / 2) / a)
-                        }
-                        alpha.p[i] = UInt8((a + n / 2) / n)
                     }
                 }
             }
@@ -225,23 +237,25 @@ struct Raster: @unchecked Sendable {
         return Double(middle) / 6
     }
 
+    /// For each pixel along an axis of `old` pixels made `new`, the old ones it covers and how
+    /// much of each.
+    private static func spans(_ old: Int, _ new: Int) -> (first: [Int32], weights: [[Float]]) {
+        let r = Double(old) / Double(new)
+        var first = [Int32](repeating: 0, count: new), weights = [[Float]](repeating: [], count: new)
+        for i in 0..<new {
+            let a = Double(i) * r, b = min(Double(i + 1) * r, Double(old))
+            let from = Int(a.rounded(.down)), to = min(Int(b.rounded(.up)), old)
+            first[i] = Int32(from)
+            weights[i] = (from..<max(to, from + 1)).map { Float(max(min(Double($0 + 1), b) - max(Double($0), a), 0)) }
+        }
+        return (first, weights)
+    }
+
     /// The picture smaller, each pixel the mean of what it covers of the picture's own, a part
     /// of a pixel counted as that part.
     func resized(_ nw: Int, _ nh: Int) -> Raster {
         guard nw > 0, nh > 0, nw < w || nh < h else { return self }
-        /// For each new pixel along an axis, the old ones it covers and how much of each.
-        func spans(_ old: Int, _ new: Int) -> (first: [Int32], weights: [[Float]]) {
-            let r = Double(old) / Double(new)
-            var first = [Int32](repeating: 0, count: new), weights = [[Float]](repeating: [], count: new)
-            for i in 0..<new {
-                let a = Double(i) * r, b = min(Double(i + 1) * r, Double(old))
-                let from = Int(a.rounded(.down)), to = min(Int(b.rounded(.up)), old)
-                first[i] = Int32(from)
-                weights[i] = (from..<max(to, from + 1)).map { Float(max(min(Double($0 + 1), b) - max(Double($0), a), 0)) }
-            }
-            return (first, weights)
-        }
-        let (fx, wx) = spans(w, nw), (fy, wy) = spans(h, nh)
+        let (fx, wx) = Raster.spans(w, nw), (fy, wy) = Raster.spans(h, nh)
         // Across first: colour times how solid, and how solid.
         let mid = Store<Float>(nw * h * 4, 0)
         let src = rgb.p, sa = alpha.p, w = w, h = h
