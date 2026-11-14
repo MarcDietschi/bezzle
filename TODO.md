@@ -36,7 +36,7 @@ file was made (2026-11-14): look before starting on one.
   added in 1.7, or one person keying while another edits the design's points), 1.7 shows the
   stretch to that key bent; this Bezzle reads the key right and rewrites it at its next change.
 - **Not built** *(from notes, 2026-11-13)*: depth of field, animating looks (colour, corner,
-  border). On the timeline, a marquee over keys (several are picked with Shift).
+  border).
 - **The timeline looked at closer** (2026-11-14): the pinch, two fingers moving it along, the
   double tap and the creep under a drag were driven by tests and by made events in a test copy,
   never felt on a trackpad (the creep's pace, the four times of the double tap, the catch at the
@@ -55,8 +55,22 @@ file was made (2026-11-14): look before starting on one.
 - **Bands outside movies** (measured 2026-11-14, not changed): shadows and blurs in an exported
   PNG are plain eight bits, a JPEG wipes out the dither Core Graphics gives gradients, and what
   the stage shows on screen was not measured beyond its pieces being eight bits.
-- **Driving a copy:** `press=` of `BEZZLE_FILM` does not reach SwiftUI's gestures in the
-  timeline's header; `AnimateBounceTests.theChipItselfTellsADragFromAClick` shows a way that does.
+- **The marquee over keys** (2026-11-14: a drag from the timeline's bare sheet picks the keys it
+  touches; the ruler and the playhead's own line move the playhead). Escape is read from the
+  keyboard's state (`FilmHand.escapeOnKeyboard`), because the app hears no key while SwiftUI
+  follows a press: driven by tests with a stand-in for the key, never with a real key, never in
+  the sandboxed release build. Never felt: drawn once in a background copy by made presses; the 3
+  points before it begins, the 4 within which it catches a bead and the 4 that take the
+  playhead's line were not tried with a pointer.
+- **The marquee, not built:** Escape under other drags on the timeline (a key, a bar, the playhead
+  or the film's end dragged is not given back; `FilmHand.heed` could do it). It begins only on
+  bare sheet: where every line's bar runs the film's length and the card shows no spare line,
+  there is none to begin on. In a film of more than seven lines it does not scroll the lines up
+  or down, it creeps only along the film, and Escape leaves the sheet where it crept to. Shift
+  is read as the press comes. Keys cannot be copied in Animate, so a marquee's keys move and are
+  deleted together but are not copied.
+- **Driving a copy:** `press=` replaces `acceptsFirstMouse` on the kind of view under the point
+  while the press lasts (Debug only).
 - **Unchecked:** a movie saved from the sandboxed build onto another disk, where it is copied into
   place instead of renamed. (Checked 2026-11-14 with a sandboxed copy of the Debug build and
   `BEZZLE_FILM` › `movie=`: a new movie through the save panel, one replacing another, and a place
@@ -92,6 +106,13 @@ file was made (2026-11-14): look before starting on one.
   (`Host/FilmPoints.swift` still passes `pointsFixed`, `AnimatePanel.swift` has no From… chip,
   `MCP/MCPAnimate.swift` refuses a path with other points). A film with outline keys made on the
   Mac plays there, since the drawing is shared; unchecked in the VM.
+- **The timeline has no marquee over keys,** and bare sheet dragged still moves the playhead
+  there. The shared `FilmMarquee` (`Bezzle/Model/FilmKeys.swift`) is tested and there to use.
+- **The film's parts:** `Host/FilmMovie.swift` and `Host/FilmStage.swift` ask
+  `insetBy(…).contains(…)` of Foundation's own `CGRect`, whose `contains` is `union(r) == self`
+  as the browser's stand-in was, so Windows may draw parts needlessly as the browser did
+  (`WebFilm.holds` is the remedy there). Not measured. The Mac was measured (2,495 askings in
+  eight films, none answered wrongly) and draws nothing needlessly.
 - **A double click in Prototype and Inspect** may also reach WinUI's double tap and start editing
   the design underneath, as it did in Animate before 114d057 fixed it there.
 
@@ -208,9 +229,6 @@ window, only in tests and in pictures the renderer made. What that left:
 - **The film, unchecked:** with the open fonts the published page uses (compared with Apple's
   only), in Safari and Firefox, on a phone, a WebGL context lost mid-film, and the Windows build
   after these commits.
-- **Mac, `FilmExport.Reel`:** `core.insetBy(dx: -0.01, dy: -0.01).contains(seen.part)` answered
-  false from rounding in the browser's stand-in and drew parts needlessly there (now
-  `WebFilm.holds`); whether the Mac draws parts needlessly for the same reason is not measured.
 - `Web/README.md` › Not done in the prototype lists what it does not draw or do.
 - A few SF Pro and Avenir words come out up to 0.2 pt a letter narrower (`Web/README.md`).
 
