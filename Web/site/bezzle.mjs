@@ -791,19 +791,18 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     } else if (d.from !== undefined) {
       const from = get(d.from)
       if (from) {
-        let crop = [0, 0, d.w, d.h], matrix = null, filter = null
+        let crop = [0, 0, d.w, d.h], matrix = null, blur = null
         for (const ch of d.changes) {
           if (ch.crop) crop = ch.crop
-          if (ch.blur !== undefined) filter = CK.ImageFilter.MakeBlur(ch.blur, ch.blur, ch.clamp ? CK.TileMode.Clamp : CK.TileMode.Decal, null)
+          if (ch.blur !== undefined) blur = ch
           if (ch.perspective) matrix = ch.perspective
         }
+        const tiles = blur?.clamp ? CK.TileMode.Clamp : CK.TileMode.Decal
         img = raster(d.w, d.h, (canvas) => {
           canvas.translate(-crop[0], -crop[1])
           if (matrix) canvas.concat(matrix)
-          const paint = new CK.Paint()
-          if (filter) paint.setImageFilter(filter)
-          canvas.drawImageOptions(from, 0, 0, CK.FilterMode.Linear, CK.MipmapMode.None, paint)
-          paint.delete()
+          if (blur?.ramp && blur.blur > 0) rampBlurred(canvas, from, blur.blur, blur.ramp, blur.clamp)
+          else drawBlurred(canvas, from, blur ? blur.blur : -1, blur?.clamp)
         })
       }
     } else if (d.pixels) {
@@ -812,6 +811,59 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     }
     made.set(id, img)
     return img
+  }
+
+  // A blur that grows along a ramp, from none at its start to `sigma` at its end and staying so
+  // past either, the ramp given in the picture's pixels (Core Image's masked variable blur under a
+  // linear gradient, which measures as a Gaussian of the mask's grey times the radius, a step of
+  // black to white within 0.02 of it). Skia has no blur whose strength changes from place to
+  // place: the picture is blurred at `rampLevels` strengths, even steps from sharp to the whole
+  // blur, and each is weighed by how near the ramp is to it there. The weights come to one
+  // everywhere, so what is added up blends from each strength to the next. As Windows' host does.
+  const rampLevels = 7
+
+  // A picture drawn at the canvas's origin, blurred by `sigma` (not at all below nought). With
+  // `clamp` its edges carry on outward first, as what lies behind a pane of glass does. Without,
+  // it fades into the nothing around it, and is blurred as a layer of its own: handed the blur on
+  // its own paint, CanvasKit's processor multiplies such a picture's colours by its alpha once more
+  // (a white square came out grey wherever it faded, 9 of 255 at an alpha of 47), which showed as a
+  // dark rim round every blurred layer.
+  function drawBlurred(canvas, from, sigma, clamp) {
+    const paint = new CK.Paint()
+    const filter = sigma >= 0 ? CK.ImageFilter.MakeBlur(sigma, sigma, clamp ? CK.TileMode.Clamp : CK.TileMode.Decal, null) : null
+    if (filter) paint.setImageFilter(filter)
+    if (filter && !clamp) {
+      canvas.saveLayer(paint, null)
+      canvas.drawImageOptions(from, 0, 0, CK.FilterMode.Linear, CK.MipmapMode.None, null)
+      canvas.restore()
+    } else {
+      canvas.drawImageOptions(from, 0, 0, CK.FilterMode.Linear, CK.MipmapMode.None, paint)
+    }
+    paint.delete()
+    filter?.delete()
+  }
+
+  function rampBlurred(canvas, from, sigma, ramp, clamp) {
+    const step = 1 / (rampLevels - 1)
+    const sum = new CK.Paint()
+    sum.setBlendMode(CK.BlendMode.Plus)
+    for (let k = 0; k < rampLevels; k++) {
+      const at = k * step, positions = [], colors = []
+      if (k > 0) { positions.push(at - step); colors.push(CK.Color4f(0, 0, 0, 0)) } else { positions.push(0); colors.push(CK.Color4f(0, 0, 0, 1)) }
+      if (k > 0) { positions.push(at); colors.push(CK.Color4f(0, 0, 0, 1)) }
+      if (k < rampLevels - 1) { positions.push(at + step); colors.push(CK.Color4f(0, 0, 0, 0)) }
+      if (positions.length < 2) { positions.push(1); colors.push(CK.Color4f(0, 0, 0, 1)) }
+      const shader = CK.Shader.MakeLinearGradient([ramp[0], ramp[1]], [ramp[2], ramp[3]], colors, positions, CK.TileMode.Clamp)
+      const weigh = new CK.Paint()
+      weigh.setShader(shader)
+      weigh.setBlendMode(CK.BlendMode.DstIn)
+      canvas.saveLayer(sum, null)
+      drawBlurred(canvas, from, sigma * at > 0.01 ? sigma * at : -1, clamp)
+      canvas.drawPaint(weigh)
+      canvas.restore()
+      weigh.delete(); shader.delete()
+    }
+    sum.delete()
   }
 
   // MARK: Developing photos, as the Mac's Developer does with Core Image (host.cpp has the same)
