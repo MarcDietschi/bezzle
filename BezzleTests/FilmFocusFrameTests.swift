@@ -301,6 +301,70 @@ struct FilmFocusFrameTests {
         #expect(film.spread(inRow: 300, at: 171, within: 80) > 10)
     }
 
+    // MARK: Only where it shows
+
+    /// A plane is blurred where it shows and as far round that as its blur carries it, not all
+    /// over the frame (`FilmExport.reach`), which is what makes a frame of many small pieces
+    /// quick. The frame is the one that blurring every plane all over makes: nothing is cut off
+    /// that eight bits or ten would show, whether the blur is one amount or a ramp, a few pixels
+    /// or hundreds, in the frame's middle or at its edge.
+    @Test func blurredOnlyWhereItShowsAFrameIsTheOneBlurredAllOver() throws {
+        var films: [(name: String, board: Node, scale: CGFloat)] = []
+        func film(_ name: String, _ layers: [Node], _ camera: [(MotionProperty, [Double])], size: CGSize = CGSize(width: 400, height: 300), scale: CGFloat = 2) {
+            var b = Self.board(size)
+            b.children = layers
+            for (property, value) in camera { b.setKey(property, value, at: 0) }
+            films.append((name, b, scale))
+        }
+        film("cards", scene(), [(.cameraBlur, [8])])
+        film("sharp on a card", scene(), [(.cameraBlur, [8]), (.cameraFocus, [120])])
+        film("tipped and swung", scene(), [(.cameraBlur, [10]), (.cameraTilt, [40]), (.cameraSwing, [-20]), (.cameraZoom, [1.3]), (.cameraFocus, [30])])
+        // Small cards under a blur that grows steeply across them, and one at the frame's corner.
+        film("steep", [Self.box("Corner", CGRect(x: 0, y: 0, width: 60, height: 50), lift: 90), Self.box("Middle", CGRect(x: 170, y: 120, width: 60, height: 60), lift: 150)],
+             [(.cameraBlur, [40]), (.cameraTilt, [55]), (.cameraSwing, [25])])
+        // Blurred by a hundred points and more, made of smaller pictures.
+        film("far off", [Self.box("Card", CGRect(x: 700, y: 150, width: 200, height: 100), lift: 400), Self.box("Low", CGRect(x: 100, y: 40, width: 120, height: 80), lift: -300)],
+             [(.cameraBlur, [25])], size: CGSize(width: 1600, height: 400), scale: 1)
+        for (name, board, scale) in films {
+            let quick = try frame(of: board, scale: scale)
+            FilmExport.blursAllOver = true
+            defer { FilmExport.blursAllOver = false }
+            let plain = try frame(of: board, scale: scale)
+            // Half a step of a movie's ten bits is an eighth of one of eight.
+            let apart = quick.distance(to: plain)
+            #expect(apart.most < 0.125, "\(name): \(apart)")
+        }
+    }
+
+    /// How long a frame of a design's film takes to put together once its pieces are drawn, at
+    /// one and at two pixels to the point: as it is, with every plane blurred all over the
+    /// frame, without the camera's blur, and with nothing but the page. Run with
+    /// `TEST_RUNNER_ANIMATE_FOCUS_TIMES=<a design>`; the answer is in `$TMPDIR/bezzle-focus-times.txt`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["ANIMATE_FOCUS_TIMES"] != nil))
+    func timesAFrame() throws {
+        let url = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["ANIMATE_FOCUS_TIMES"]))
+        let doc = try DesignFile.read(url)
+        let board = try #require(doc.nodes.first { $0.isArtboard && !$0.hidden })
+        var plain = board
+        plain.motion?.removeValue(forKey: MotionProperty.cameraBlur.rawValue)
+        var page = board
+        page.children.removeAll { $0[track: .lift] != nil }
+        var lines: [String] = []
+        for scale in [1, 2] as [CGFloat] {
+            let size = CGSize(width: board.frame.width * scale, height: board.frame.height * scale)
+            for t in [0.5, 3, 6] {
+                func ms(_ board: Node, allOver: Bool = false) throws -> String {
+                    FilmExport.blursAllOver = allOver
+                    defer { FilmExport.blursAllOver = false }
+                    return String(format: "%.1f", try #require(FilmExport.composing(board, at: t, size: size, assets: nil, runs: 12)) * 1000)
+                }
+                lines.append("\(Int(size.width)) by \(Int(size.height)) at \(t) s: \(try ms(board)) ms as it is, \(try ms(board, allOver: true)) blurred all over, "
+                    + "\(try ms(plain)) without the blur, \(try ms(page)) the page alone; \(board.filmPieces().count) pieces")
+            }
+        }
+        try lines.joined(separator: "\n").write(to: FileManager.default.temporaryDirectory.appendingPathComponent("bezzle-focus-times.txt"), atomically: true, encoding: .utf8)
+    }
+
     // MARK: Gentle tones
 
     @Test func aBlurredEdgeKeepsItsTonesUntilTheFramesOwnStepsCutThemOnce() throws {
@@ -526,6 +590,71 @@ struct FilmFocusFrameTests {
         wide.children = [Self.box("Card", CGRect(x: 0, y: 0, width: 800, height: 400), lift: 400)]
         wide.setKey(.cameraBlur, [25], at: 0)
         try save(wide, "hundreds of pixels", scale: 1)
+    }
+
+    /// A film to scrub, for measuring what the stage's lens costs: a board of twenty cards with
+    /// words and shadows at four heights off the page, under a camera that comes closer, tips
+    /// back and swings round over ten seconds. Once as it is, `scene.bezzle`, and once with a
+    /// lens whose focus is pulled from the nearest cards to the page, `scene-lens.bezzle`.
+    /// `TEST_RUNNER_ANIMATE_FOCUS_DESIGN=<folder> xcodebuild test
+    /// -only-testing:BezzleTests/FilmFocusFrameTests/aFilmToScrub` writes both into the folder.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["ANIMATE_FOCUS_DESIGN"] != nil))
+    func aFilmToScrub() throws {
+        let folder = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["ANIMATE_FOCUS_DESIGN"]))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var board = Node(kind: .artboard, name: "Scene", frame: CGRect(x: 0, y: 0, width: 1440, height: 900))
+        board.fill.gradient = Gradient(kind: .linear, stops: [GradientStop(offset: 0, color: RGBA(r: 0.96, g: 0.94, b: 0.9)), GradientStop(offset: 1, color: RGBA(r: 0.8, g: 0.86, b: 0.95))],
+                                       start: CGPoint(x: 0, y: 0), end: CGPoint(x: 1, y: 1))
+        board.children.append(AdaptTests.text("Twenty cards and a camera", 44, face: "Bold", at: CGPoint(x: 80, y: 44)))
+        for row in 0..<4 {
+            for column in 0..<5 {
+                let i = row * 5 + column
+                var card = Node(kind: .group, name: "Card \(i + 1)", frame: CGRect(x: 80 + column * 262, y: 140 + row * 182, width: 232, height: 152))
+                var back = Node(kind: .rectangle, name: "Back", frame: CGRect(x: 0, y: 0, width: 232, height: 152))
+                back.fill.color = RGBA(r: 1, g: 1, b: 1)
+                back.cornerRadius = 14
+                back.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.22), x: 0, y: 8, blur: 22)
+                var swatch = Node(kind: .rectangle, name: "Swatch", frame: CGRect(x: 16, y: 16, width: 200, height: 56))
+                swatch.cornerRadius = 8
+                swatch.fill.gradient = Gradient(kind: .linear, stops: [
+                    GradientStop(offset: 0, color: RGBA(r: 0.2 + Double(column) * 0.15, g: 0.35, b: 0.9 - Double(row) * 0.18)),
+                    GradientStop(offset: 1, color: RGBA(r: 0.95, g: 0.5 + Double(row) * 0.1, b: 0.3 + Double(column) * 0.1)),
+                ], start: CGPoint(x: 0, y: 0.5), end: CGPoint(x: 1, y: 0.5))
+                card.children = [back, swatch, AdaptTests.text("Card number \(i + 1)", 17, face: "Semibold", at: CGPoint(x: 16, y: 86)),
+                                 AdaptTests.text("Stands \(row * 60) points off the page", 12, at: CGPoint(x: 16, y: 114), color: RGBA(r: 0.4, g: 0.4, b: 0.45))]
+                // Each row higher off the page than the one above it, and coming up to there in turn.
+                if row > 0 {
+                    card.setKey(.lift, [0], at: 0, ease: .linear)
+                    card.setKey(.lift, [Double(row * 60)], at: 1 + Double(column) * 0.3)
+                }
+                board.children.append(card)
+            }
+        }
+        board.film = Film(length: 10)
+        board.setKey(.cameraZoom, [1], at: 0)
+        board.setKey(.cameraZoom, [1.7], at: 4)
+        board.setKey(.cameraZoom, [1.2], at: 10)
+        board.setKey(.cameraTilt, [0], at: 0)
+        board.setKey(.cameraTilt, [38], at: 4)
+        board.setKey(.cameraTilt, [20], at: 10)
+        board.setKey(.cameraSwing, [0], at: 2)
+        board.setKey(.cameraSwing, [-22], at: 6)
+        board.setKey(.cameraSwing, [14], at: 10)
+        board.setKey(.cameraMove, [0, 0], at: 0)
+        board.setKey(.cameraMove, [160, 120], at: 5)
+        board.setKey(.cameraMove, [-120, 60], at: 10)
+        var design = BezzleDocument()
+        design.nodes = [board]
+        func write(_ name: String) throws {
+            let file = folder.appendingPathComponent(name)
+            try? FileManager.default.removeItem(at: file)
+            try DesignFile.write(design, to: file)
+        }
+        try write("scene.bezzle")
+        design.nodes[0].setKey(.cameraBlur, [5], at: 0)
+        design.nodes[0].setKey(.cameraFocus, [180], at: 2)
+        design.nodes[0].setKey(.cameraFocus, [0], at: 7)
+        try write("scene-lens.bezzle")
     }
 
     // MARK: The movie

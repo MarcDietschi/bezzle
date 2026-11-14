@@ -572,6 +572,7 @@ struct FilmSharpTests {
             let board = try #require(store.filmBoard)
             let length = min(board.filmLength, 4)
             let atRest = stage.partsMade
+            let lensBefore = (frames: stage.lensFrames, spent: stage.lensSpent)
             store.playFilm(fromStart: true)
             let began = try #require(store.film.pass?.began)
             let clock = ContinuousClock()
@@ -602,9 +603,14 @@ struct FilmSharpTests {
             }
             store.pauseFilm()
             while stage.isDrawing { try await Task.sleep(for: .milliseconds(2)) }
+            // Where the camera blurs, what the stage's lens made of those frames, and how long one took.
+            let lensFrames = stage.lensFrames - lensBefore.frames, lensSpent = stage.lensSpent - lensBefore.spent
+            let lens = lensFrames > 0
+                ? String(format: "; the lens made %d frames, %.1f ms each, %.1f ms the longest", lensFrames, lensSpent / Double(lensFrames) * 1000, stage.lensLongest * 1000)
+                : ""
             lines.append("\(Int(2 * zoom)) to the point: \(frames) frames, the main thread kept \(whole / max(frames, 1)) a frame and \(longest) at most; "
                 + "\(atRest) parts at rest, \(stage.partsMade - atRest) while playing; softest \(softest) of what shows at \(softAt) s, \(soft) frames under 0.8; "
-                + "\(board.filmPieces().count) pieces, their whole pictures \(wholes) pixels to the point, shown at up to \(most)")
+                + "\(board.filmPieces().count) pieces, their whole pictures \(wholes) pixels to the point, shown at up to \(most)" + lens)
         }
         try lines.joined(separator: "\n").write(to: FileManager.default.temporaryDirectory.appendingPathComponent("bezzle-film-stage.txt"), atomically: true, encoding: .utf8)
     }

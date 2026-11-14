@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreImage
+import IOSurface
 import Metal
 import VideoToolbox
 
@@ -118,6 +119,35 @@ nonisolated enum FilmExport {
         let image = composed(stills, parts, shot, backdrop: board.filmBackdrop, board: board.frame.size, size: size)
         return imaging.createCGImage(image, from: CGRect(origin: .zero, size: size), format: deep ? .RGBAh : .RGBA8, colorSpace: sRGB)
     }
+
+    #if DEBUG
+    /// For the tests: how long putting a frame together takes once its pieces are drawn, in
+    /// seconds, the mean of `runs` after one that does not count. Into a picture such as the
+    /// stage's lens fills, eight bits in the pieces' own colours.
+    @MainActor
+    static func composing(_ board: Node, at t: Double, size: CGSize, assets: Assets?, runs: Int) -> Double? {
+        let size = CGSize(width: size.width.rounded(), height: size.height.rounded())
+        guard size.width >= 1, size.height >= 1, board.frame.width > 0, board.frame.height > 0, runs > 0 else { return nil }
+        var reel = Reel(board, size: size)
+        let shot = reel.shot(at: t)
+        var stills = [Still?](repeating: nil, count: reel.pieces.count), parts = stills
+        for fresh in shot.fresh {
+            let still = FilmPictures.picture(of: fresh.subject, scale: fresh.scale, assets: assets, part: fresh.part, deep: false).map(Still.init)
+            if fresh.part != nil { parts[fresh.piece] = still } else { stills[fresh.piece] = still }
+        }
+        guard let surface = IOSurface(properties: [.width: Int(size.width), .height: Int(size.height), .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]) else { return nil }
+        var spent = 0.0
+        for run in 0...runs {
+            let began = CFAbsoluteTimeGetCurrent()
+            let image = composed(stills, parts, shot, backdrop: board.filmBackdrop, board: board.frame.size, size: size)
+            let destination = CIRenderDestination(ioSurface: surface)
+            destination.colorSpace = nil
+            guard (try? imaging.startTask(toRender: image, from: CGRect(origin: .zero, size: size), to: destination, at: .zero).waitUntilCompleted()) != nil else { return nil }
+            if run > 0 { spent += CFAbsoluteTimeGetCurrent() - began }
+        }
+        return spent / Double(runs)
+    }
+    #endif
 
     /// Writes the film of `board` (an artboard as it is seen; its frame's origin may be anywhere)
     /// to `url` as an .mp4: H.264 or HEVC as the settings say, sRGB, square pixels, `fps` frames
@@ -542,9 +572,38 @@ nonisolated enum FilmExport {
         let most = min(range.most, FilmSoft.most * Double(size.width / board.width + size.height / board.height) / 2)
         // Less than half a pixel at its most: sharp (`blurs`).
         guard range.most.isFinite, range.most >= 0.5, !image.extent.isEmpty else { return image }
+        // Nothing of it in the frame: nothing of it shows, however far it is blurred.
+        let own = image.extent.intersection(frame)
+        guard !own.isNull, !own.isEmpty else { return image.cropped(to: frame) }
         let base = image.cropped(to: frame).composited(over: CIImage(color: .clear).cropped(to: frame)).clampedToExtent()
-        return varied(base, by: field, least: min(range.least, most), most: most, in: frame).cropped(to: frame)
+        return varied(base, by: field, least: min(range.least, most), most: most, in: frame)
+            .cropped(to: reach(of: image.extent, own: own, by: field, most: most, in: frame))
     }
+
+    /// The part of the frame a picture shows in once it is blurred: its own, and round it as far
+    /// as the blur carries it there. Only that is made of it, so a card is blurred where it is
+    /// and not all over the frame, which with many cards and two pixels to the point is most of
+    /// what such a frame would cost. A blur carries a pixel four times its own width at the
+    /// very most (a gaussian has a thirty thousandth of itself left that far out), and where
+    /// the pixel lands the blur is what it is inside the picture and what it grows by on the
+    /// way there.
+    private static func reach(of extent: CGRect, own: CGRect, by field: Field, most: Double, in frame: CGRect) -> CGRect {
+        guard !extent.isInfinite else { return frame }
+        #if DEBUG
+        if blursAllOver { return frame }
+        #endif
+        let steep = hypot(field.across, field.up)
+        let inside = min(field.range(in: own).most, most)
+        let width = steep < 0.2 ? min(inside / (1 - 4 * steep), most) : most
+        let far = CGFloat(4 * width + 4)
+        return own.insetBy(dx: -far, dy: -far).integral.intersection(frame)
+    }
+
+    #if DEBUG
+    /// For the tests: every plane is blurred all over the frame, the plain way that the quick
+    /// one is held against. The picture is the same either way.
+    nonisolated(unsafe) static var blursAllOver = false
+    #endif
 
     /// A picture blurred by what `field` gives at each pixel, between `least` and `most` within
     /// `frame`, which the picture reaches past on every side. Core Image's variable blur does
