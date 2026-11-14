@@ -106,6 +106,14 @@ struct Sample {
     var jpeg: Double?
     /// Drawn with hard edges and scaled up by this, as pixel art is.
     var blocks: Int?
+    /// Lines of one thickness in it: how even each comes out is measured (`Gaps.swift`).
+    var strokes: [Stroke] = []
+    /// How many shapes it was drawn of, and how many of them have colours running across them.
+    var shapes: Int?
+    var blends: Int?
+    /// The colour it is drawn on, and the colour of its letters when their pieces are counted.
+    var paper: UInt32?
+    var letters: UInt32?
     let draw: (CGContext) -> Void
 }
 
@@ -224,6 +232,8 @@ let samples: [Sample] = [
     },
 ]
 
+let allSamples = samples + gapSamples
+
 func drawn(_ sample: Sample, zoom: Int) -> CGImage {
     if let blocks = sample.blocks {
         // Drawn small and hard, then every pixel a square.
@@ -312,9 +322,22 @@ let zoom = option("--zoom").flatMap(Int.init) ?? 4
 let png = option("--png")
 let keep = option("--keep")
 
+/// A picture traced, and how long it took: the quickest of three, since other work on the Mac
+/// slows any one of them.
+func timed(_ picture: Bitmap) -> (Tracing, Double)? {
+    var seconds = Double.greatestFiniteMagnitude
+    var found: Tracing?
+    for _ in 0..<3 {
+        let began = Date()
+        found = Vectorizer.trace(picture, settings: settings)
+        seconds = min(seconds, Date().timeIntervalSince(began))
+    }
+    return found.map { ($0, seconds) }
+}
+
 func describe(_ t: Tracing, seconds: Double) -> String {
-    let figures = t.shapes.filter { $0.figure != nil }.count
-    return "\(t.shapes.count) shapes, \(t.points) points, \(t.palette.count) colours, \(figures) figures, \(t.layers(most: 0).count) layers packed\(t.pixelArt ? ", pixel art" : ""), \(String(format: "%.2f", seconds)) s"
+    let figures = t.shapes.filter { $0.figure != nil }.count, blends = t.shapes.filter { $0.blend != nil }.count
+    return "\(t.shapes.count) shapes, \(t.points) points, \(t.palette.count) colours, \(figures) figures, \(blends) gradients, \(t.layers(most: 0).count) layers packed\(t.pixelArt ? ", pixel art" : ""), \(String(format: "%.2f", seconds)) s"
 }
 
 switch arguments.first {
@@ -336,7 +359,7 @@ case "trace" where arguments.count >= 3:
 case "samples" where arguments.count >= 2:
     let folder = arguments[1]
     try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-    for sample in samples {
+    for sample in allSamples {
         let small = drawn(sample, zoom: 1)
         if let quality = sample.jpeg {
             save(small, "\(folder)/\(sample.name).jpg", jpeg: quality)
@@ -345,12 +368,13 @@ case "samples" where arguments.count >= 2:
         }
         save(drawn(sample, zoom: 4), "\(folder)/\(sample.name)@truth.png")
     }
-    print("\(samples.count) samples in \(folder)")
+    print("\(allSamples.count) samples in \(folder)")
 
 case "score" where arguments.count >= 2:
     let folder = arguments[1]
     if let keep { try? FileManager.default.createDirectory(atPath: keep, withIntermediateDirectories: true) }
-    for sample in samples {
+    let wanted = option("--only")
+    for sample in allSamples where wanted == nil || sample.name.hasPrefix(wanted!) {
         let file = "\(folder)/\(sample.name).\(sample.jpeg == nil ? "png" : "jpg")"
         guard let picture = load(file), let truthSource = CGImageSourceCreateWithURL(URL(fileURLWithPath: "\(folder)/\(sample.name)@truth.png") as CFURL, nil),
               let truth = CGImageSourceCreateImageAtIndex(truthSource, 0, nil),
@@ -358,13 +382,25 @@ case "score" where arguments.count >= 2:
             print("\(sample.name): missing; run samples first")
             continue
         }
-        let began = Date()
-        guard let tracing = Vectorizer.trace(picture, settings: settings) else { continue }
-        let seconds = Date().timeIntervalSince(began)
+        guard let (tracing, seconds) = timed(picture) else { continue }
         let traced = render(tracing, zoom: 4)
         let mine = score(traced, against: truth, zoom: 4), plain = score(scaledUp(small, zoom: 4), against: truth, zoom: 4)
-        print(String(format: "%-12@ edges off %.3f px (scaled up: %.3f), colours off %.2f (%.2f)  ", sample.name as NSString, mine.offset, plain.offset, mine.difference, plain.difference)
+        print(String(format: "%-16@ edges off %.3f px (scaled up: %.3f), colours off %.2f (%.2f)  ", sample.name as NSString, mine.offset, plain.offset, mine.difference, plain.difference)
             + describe(tracing, seconds: seconds))
+        let indent = String(repeating: " ", count: 17)
+        if let shapes = sample.shapes {
+            print(indent + "drawn of \(shapes) shapes\(sample.blends.map { ", \($0) of them with colours running across" } ?? "")")
+        }
+        if !sample.strokes.isEmpty, let paper = sample.paper, let wide = bitmap(render(tracing, zoom: 8)), let drawnWide = bitmap(drawn(sample, zoom: 8)) {
+            for stroke in sample.strokes {
+                let t = thickness(of: stroke, in: wide, zoom: 8, paper: paper), d = thickness(of: stroke, in: drawnWide, zoom: 8, paper: paper)
+                print(indent + String(format: "line %.1f px: comes out %.2f thick, wavering %.3f (as drawn %.2f, %.3f), middle off %.2f, missing %.0f %%",
+                                      stroke.width, t.mean, t.wavers, d.mean, d.wavers, t.off, t.missing * 100))
+            }
+        }
+        if let ink = sample.letters, let paper = sample.paper, let a = bitmap(traced), let b = bitmap(truth) {
+            print(indent + letters(traced: a, truth: b, ink: ink, paper: paper))
+        }
         if let keep {
             save(traced, "\(keep)/\(sample.name)@traced.png")
             try? tracing.svg().write(toFile: "\(keep)/\(sample.name).svg", atomically: true, encoding: .utf8)
@@ -392,9 +428,7 @@ case "against" where arguments.count >= 3:
     for name in names {
         let base = (name as NSString).deletingPathExtension
         guard FileManager.default.fileExists(atPath: "\(references)/\(base).svg"), let picture = load("\(folder)/\(name)") else { continue }
-        let began = Date()
-        guard let tracing = Vectorizer.trace(picture, settings: settings) else { continue }
-        let seconds = Date().timeIntervalSince(began)
+        guard let (tracing, seconds) = timed(picture) else { continue }
         let file = keep.map { "\($0)/\(base).svg" } ?? temporary
         try! tracing.svg().write(toFile: file, atomically: true, encoding: .utf8)
         guard let mine = show(file, zoom: 2, crop: nil, nodes: false), let theirs = show("\(references)/\(base).svg", zoom: 2, crop: nil, nodes: false),
