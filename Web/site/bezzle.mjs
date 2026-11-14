@@ -1197,6 +1197,11 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         paint.setShader(shader)
         canvas.drawPath(path, paint)
         shader.delete(); path.delete()
+      } else if (blur) {
+        // As a layer of its own, for what the processor does with such a blur on a picture's own paint (`drawBlurred`).
+        canvas.saveLayer(paint, null)
+        canvas.drawImageOptions(img, 0, 0, CK.FilterMode.Linear, piece.still ? CK.MipmapMode.Linear : CK.MipmapMode.None, null)
+        canvas.restore()
       } else {
         canvas.drawImageOptions(img, 0, 0, CK.FilterMode.Linear, piece.still ? CK.MipmapMode.Linear : CK.MipmapMode.None, paint)
       }
