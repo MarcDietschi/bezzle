@@ -170,4 +170,11 @@ console.log(`artboards: ${report.boards.length}`)
 for (const b of report.boards) console.log(`  ${b.design} · ${b.board}: ${b.size ?? `${b.differing}% of pixels differ, mean ${b.meanDiff}`}  (core ${b.coreMs} ms, all ${b.totalMs} ms)`)
 console.log(`texts: ${T.length}; lines break alike in ${same}; multi-line ${T.filter((x) => x.lines[0] > 1).length}, alike ${T.filter((x) => x.lines[0] > 1 && x.sameBreaks).length}`)
 console.log(`  natural width within 0 pt: ${widthWithin(0)}, 1 pt: ${widthWithin(1)}, 3 pt: ${widthWithin(3)}`)
+// The natural width is in whole points. What a text on one line is set at is not: how near that comes.
+const single = T.filter((x) => x.lines[0] === 1 && x.lines[1] === 1)
+if (single.length) {
+  const widest = single.reduce((a, b) => (Math.abs(b.dWidth) > Math.abs(a.dWidth) ? b : a))
+  console.log(`  of ${single.length} on one line, set within 0.02 pt of the Mac's width: ${single.filter((x) => Math.abs(x.dWidth) <= 0.02).length}, 0.1 pt: ${single.filter((x) => Math.abs(x.dWidth) <= 0.1).length}; ` +
+    `furthest ${widest.dWidth > 0 ? '+' : ''}${widest.dWidth} pt (“${widest.text.slice(0, 24)}”, ${widest.family} ${widest.face} ${widest.size})`)
+}
 console.log(`  height alike: ${T.filter((x) => Math.abs(x.dHeight) < 0.01).length}, first baseline alike: ${T.filter((x) => Math.abs(x.dBaseline) < 0.01).length}`)

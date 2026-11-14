@@ -262,6 +262,10 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
 
   // MARK: Text
 
+  // The system font's own spacing at a size, from its table of sizes. Between two of them Core
+  // Text takes the value on the line from one to the other and drops what is over a whole unit
+  // of the font, towards nought: 3 at 72 pt, where the line is at 3.5, and −14 at 22.6 pt, where
+  // it is at −15 but for the last digit of 22.6 (measured, tools/WidthTruthTests.swift).
   function trak(size) {
     if (!options.trak) return 0
     const t = system.trak
@@ -269,7 +273,7 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     for (let i = 1; i < t.length; i++) {
       if (size <= t[i][0]) {
         const [s0, v0] = t[i - 1], [s1, v1] = t[i]
-        return (v0 + (v1 - v0) * (size - s0) / (s1 - s0)) * size / system.upem
+        return Math.trunc(v0 + (v1 - v0) * (size - s0) / (s1 - s0)) * size / system.upem
       }
     }
     return t[t.length - 1][1] * size / system.upem
