@@ -360,9 +360,11 @@ by hand there; the AI server keys looks and reads them back as the Mac's does (`
 `look` and `which`, `get_animation`'s `looks`: `MCP/MCPAnimateLooks.swift`, the Mac's file). For a
 test run, `look=fill:ff0000` (or `border:`, `width:`, `corners:`, `shadow:`)
 keys what is picked at the playhead through the shared `Node.poseLooks`, and `open=Card 2` opens
-a layer's lines. Looked at in the VM on 2026-11-14 with a fill keyed red at 1 s and blue at 5 s:
-the stage, at rest and playing, the AI server's `render` and the frames of a movie saved from it
-show the colours the shared model works out (#8c53a2 half way, in all three).
+a layer's lines. Looked at in the VM on 2026-11-14, the colours being what the shared model's
+rule gives, worked out apart from it: a fill keyed red at 1 s and blue at 4 s shows #4e46d4 on
+the stage at 2.5 s, and playing goes through purple; keyed red at 1 s and blue at 5 s, come to
+evenly, it is #8c53a2 at 3 s in the AI server's `render` and in the frame of a movie saved from
+the same copy.
 
 To measure, as on the Mac: `BEZZLE_ANIMATE=3` and
 `BEZZLE_FILM='6:scrub=0,10,8;16:pick=Card 1;17:scrub=0,10,8;27:pick=camera;28:scrub=0,10,8;38:pick=;39:start;41:watch=8'`
