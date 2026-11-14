@@ -123,6 +123,8 @@ What every session here keeps to (Erik's rules, gathered from many sessions):
   `git diff --cached --name-only`: other sessions stage their own files in the same tree). Push only
   when Erik says, or as a release's step. A push to bezzle-web deploys the website, and
   `Web/publish.sh` publishes the browser viewer: both only at Erik's word.
+- **What is left** is in `TODO.md`. A session that leaves a gap (something not built, not checked,
+  or different from the Mac) adds it there; one that closes a gap takes it out in the same commit.
 - **Builds for others:** archive, sign for distribution or notarize only when Erik asks.
 - **Erik's designs are never touched.** Test copies run with their own `BEZZLE_LIBRARY` and, while
   his Bezzle runs, a bundle id of their own; never `com.erik.Bezzle`'s sandbox container, which holds

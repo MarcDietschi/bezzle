@@ -16,11 +16,12 @@ Start here to find how anything is done. Each part has its own document; this pa
 | `Web/` | The browser viewer (the model and renderer in WebAssembly, drawn with CanvasKit), published at bezzle.ch/app. `README.md` |
 | `Relay/` | The Cloudflare relay that shared designs and live co-working go through. `README.md`, `SHARING.md` |
 | `Packages/WebP/` | libwebp, vendored, for WebP export |
-| `Packages/Vectorizer/` | Vectorize's engine: a picture traced into shapes, in plain Swift (the Mac app builds it in; Windows does not have Vectorize yet). Its own tests and a command line that measures it. `README.md` |
-| `Packages/Shaders/` | Shader fills' engine: a website's WebGL GLSL turned into Metal (glslang and SPIRV-Cross, vendored) and a recorded WebGL frame drawn into a picture or a texture. Its own tests. `README.md` |
+| `Packages/Vectorizer/` | Vectorize's engine: a picture traced into shapes, in plain Swift (the Mac app and Windows build it in). Its own tests and a command line that measures it. `README.md` |
+| `Packages/Shaders/` | Shader fills' engine: a website's WebGL GLSL turned into Metal on the Mac and Direct3D 11 on Windows (glslang and SPIRV-Cross, vendored) and a recorded WebGL frame drawn into a picture or a texture. Its own tests. `README.md` |
 | `Scripts/release.sh` | The Mac release. `Scripts/release-windows.sh`: the Windows release. `Scripts/release/`: the notes parser and the Windows feed writer |
 | `Scripts/subject-matte/` | Makes Remove Background's model (git-ignored, too large for git) for the Mac and for Windows. `README.md` |
 | `RELEASE_NOTES.md` | Every version's notes in English, German, French and Italian; the releases read them |
+| `TODO.md` | What is known to be left: missing, unfinished or unchecked, by area |
 | `AppStore/screenshots-src/` | Sources of the website's screenshots (the App Store version itself is gone) |
 | `~/Sites/bezzle-web` | The website, bezzle.ch: its own repository, mfrports/bezzle-web, with its own `README.md` and `CLAUDE.md` |
 
