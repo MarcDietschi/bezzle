@@ -552,6 +552,11 @@ nonisolated struct Node: Identifiable, Codable, Equatable, Sendable {
     var blur: Blur?
     /// Turned in depth; nil lies flat in the page. Never for artboards, which are the page.
     var transform3D: Transform3D?
+    /// Groups only: whether what it holds keeps its depth when the group is turned or lifted, as
+    /// CSS's `preserve-3d` has it, so that each layer in it stands in the artboard's scene on
+    /// its own, nearer over further across the group's border. Nil for a group that is one card,
+    /// as every group was before. See `opensInDepth`.
+    var keepsDepth: Bool?
     /// Mixes the layer with what lies under it; nil draws it over as it is.
     var blend: BlendMode?
     /// Mockups only: the place for a design, as a Photoshop smart object is. A picture dropped

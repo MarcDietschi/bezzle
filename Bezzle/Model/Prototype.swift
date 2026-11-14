@@ -335,7 +335,7 @@ nonisolated enum Prototype {
                 if n.isGroup {
                     // Where the point lies on the group drawn flat, if it is turned in depth.
                     let flat = Perspective(n, eye: eye).map { $0.flat(p) } ?? p
-                    if let flat, let deeper = look(n.children, flat - n.frame.origin, eye?.inside(n.frame.origin), [n] + above) { return deeper }
+                    if let flat, let deeper = look(n.children, flat - n.frame.origin, eye?.within(n), [n] + above) { return deeper }
                 }
                 return [n] + above
             }

@@ -313,7 +313,8 @@ nonisolated enum Inspect {
         if n.isArtboard, Self.holdsDepth(n) {
             put("perspective", px(CGFloat(FilmLens.distance(for: n.frame.size))))
             put("perspective-origin", "center")
-        } else if n.isGroup, !Perspective.inDepth(n), Self.holdsDepth(n) {
+        } else if n.isGroup, n.opensInDepth || (!Perspective.inDepth(n) && Self.holdsDepth(n)) {
+            // So does a group told to keep its layers' depth, however it is turned itself.
             put("transform-style", "preserve-3d")
         }
 

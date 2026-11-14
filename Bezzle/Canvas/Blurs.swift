@@ -116,8 +116,8 @@ nonisolated extension Renderer {
     /// Where what casts a shadow lies, in the layer's parent's coordinates: the layer as it is
     /// drawn, turned in depth with it, or its outline as the spread grows it.
     static func casting(_ node: Node, _ shadow: Shadow, eye: Eye?) -> CGRect {
-        let perspective = Perspective(node, eye: eye)
-        let drawn = perspective.map { $0.bounds(of: reach(of: flattened(node), eye: eye)) } ?? ink(of: node, eye: eye).applying(localTransform(node))
+        let perspective = Perspective.onCanvas(node, eye: eye)
+        let drawn = perspective.map { $0.bounds(of: reach(of: flattened(node), eye: eye?.level)) } ?? ink(of: node, eye: eye).applying(localTransform(node))
         return spreads(node, shadow) && perspective == nil ? drawn.insetBy(dx: -max(shadow.grown, 0), dy: -max(shadow.grown, 0)) : drawn
     }
 

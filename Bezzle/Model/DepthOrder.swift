@@ -126,6 +126,77 @@ nonisolated enum DepthOrder {
         return keys
     }
 
+    /// A layer among those drawn together in a scene: one of the layers asked about, or one that
+    /// a group among them holds and keeps the depth of (`Node.opensInDepth`), which then stands
+    /// among the rest on its own.
+    struct Standing: Sendable {
+        var node: Node
+        /// Which of the layers asked about it is, or lies in.
+        var top: Int
+        /// Where what holds it is seen from.
+        var eye: Eye?
+        /// Where what holds it begins, in the coordinates of the layers asked about.
+        var origin = CGPoint.zero
+        /// The groups it was taken out of, outermost first: none for a layer asked about itself.
+        var groups: [UUID] = []
+
+        /// A point as it shows on the canvas, measured as the layers asked about are, in what
+        /// holds this layer: where it lies there. Nil where that is seen edge on.
+        func placed(_ p: CGPoint) -> CGPoint? {
+            let q = CGPoint(x: p.x - origin.x, y: p.y - origin.y)
+            guard let lens = eye?.lens else { return q }
+            return lens.flat(q)
+        }
+    }
+
+    /// Layers lying together as they stand in their scene, bottom first, nearer over further:
+    /// each of them, but for a group that keeps its layers' depth, in whose place its layers
+    /// stand, so that they are ordered among everything beside the group, across its border, as
+    /// CSS's `preserve-3d` has it. `eye` is where the layers are seen from; with none there is no
+    /// scene, and with no such group this is `order`. Not `ordered`, they come as listed.
+    static func scene<C: Collection>(_ nodes: C, eye: Eye?, ordered: Bool = true) -> [Standing] where C.Element == Node {
+        let listed = Array(nodes)
+        guard let eye, eye.space != nil || listed.contains(where: { !$0.hidden && $0.opensInDepth && !$0.children.isEmpty }) else {
+            return (ordered ? order(listed) : Array(listed.indices)).map { Standing(node: listed[$0], top: $0, eye: eye) }
+        }
+        var all: [Standing] = [], faces: [Face] = []
+        func add(_ node: Node, top: Int, eye: Eye, origin: CGPoint, groups: [UUID]) {
+            if node.opensInDepth, !node.hidden, !node.children.isEmpty {
+                let within = eye.within(node)
+                let inner = CGPoint(x: origin.x + node.frame.minX, y: origin.y + node.frame.minY)
+                for child in node.children where !child.hidden {
+                    add(child, top: top, eye: within, origin: inner, groups: groups + [node.id])
+                }
+                return
+            }
+            all.append(Standing(node: node, top: top, eye: eye, origin: origin, groups: groups))
+            if ordered { faces.append(face(of: node, eye: eye, origin: origin)) }
+        }
+        for (i, node) in listed.enumerated() { add(node, top: i, eye: eye, origin: .zero, groups: []) }
+        guard ordered else { return all }
+        return sorted(nearness(faces)).map { all[$0] }
+    }
+
+    /// A layer as it stands in the scene of what holds it, for the order: inside a group that
+    /// keeps depth, where the group's turn and height put it.
+    private static func face(of node: Node, eye: Eye, origin: CGPoint) -> Face {
+        var face: Face
+        if let space = eye.space {
+            let t = node.isArtboard ? nil : node.transform3D
+            let own = t.map { $0.x != 0 || $0.y != 0 ? Spin($0) : Spin.none } ?? Spin.none
+            let spin = space.spin.after(own)
+            let middle = space(ScenePoint(x: Double(node.frame.midX), y: Double(node.frame.midY), z: Double(height(of: node))))
+            face = Face(middle: middle, size: node.frame.size, rotation: node.isGroup ? 0 : node.rotation, turn: spin)
+            if spin == Spin.none { face.turn = nil }
+        } else {
+            face = Face(node)
+        }
+        face.middle.x += Double(origin.x)
+        face.middle.y += Double(origin.y)
+        face.box = face.box.offsetBy(dx: origin.x, dy: origin.y)
+        return face
+    }
+
     /// The order layers lying together are drawn in, bottom first, as positions among them:
     /// further under nearer, and as listed where they are as near as each other.
     static func order<C: Collection>(_ nodes: C) -> [C.Index] where C.Element == Node {

@@ -9,7 +9,7 @@ import CoreGraphics
 
 /// A place, or a way, in a scene: across and down as the page is drawn, and up off it toward
 /// the eye.
-nonisolated struct ScenePoint: Equatable, Sendable {
+nonisolated struct ScenePoint: Equatable, Hashable, Sendable {
     var x = 0.0, y = 0.0, z = 0.0
 
     static func + (a: ScenePoint, b: ScenePoint) -> ScenePoint { ScenePoint(x: a.x + b.x, y: a.y + b.y, z: a.z + b.z) }
@@ -18,7 +18,7 @@ nonisolated struct ScenePoint: Equatable, Sendable {
 
 /// A turn in space: three rows of three, as a layer's turn in depth is one (`Transform3D`, its
 /// tip after its swing) and its turn in the page another.
-nonisolated struct Spin: Equatable, Sendable {
+nonisolated struct Spin: Equatable, Hashable, Sendable {
     var a = 1.0, b = 0.0, c = 0.0
     var d = 0.0, e = 1.0, f = 0.0
     var g = 0.0, h = 0.0, i = 1.0

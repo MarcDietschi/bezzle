@@ -49,13 +49,26 @@ struct Picking {
                 let local = p - node.frame.origin
                 // Nearer before further, as they are drawn (`DepthOrder`), each seen from the artboard's eye.
                 let eye = doc.stage(of: node)
-                for child in DepthOrder.stacked(node.seenLayers(fronts: fronts)).reversed() where !child.hidden && !child.locked {
-                    if Geometry.contains(child, local, tolerance: tolerance, eye: eye) { return child.id }
-                }
+                if let child = topmost(node.seenLayers(fronts: fronts), at: local, eye: eye) { return child.id }
                 if inside { return nil }
             } else if !node.locked, Geometry.contains(node, p, tolerance: tolerance) {
                 return node.id
             }
+        }
+        return nil
+    }
+
+    /// The topmost of layers lying together under a point of what holds them, as a click takes
+    /// it: nearer before further, as they are drawn (`DepthOrder.scene`), so a layer of a group
+    /// that keeps depth standing over a layer beside the group is met first, and takes the click
+    /// for its group. Hidden and locked layers are passed through.
+    func topmost<C: Collection>(_ nodes: C, at p: CGPoint, eye: Eye?) -> Node? where C.Element == Node {
+        let listed = Array(nodes)
+        let seen = eye?.lens?.shown(p) ?? p
+        for piece in DepthOrder.scene(listed, eye: eye).reversed() {
+            let top = listed[piece.top]
+            guard !top.hidden, !top.locked, let q = piece.placed(seen) else { continue }
+            if Geometry.contains(piece.node, q, tolerance: tolerance, eye: piece.eye) { return top }
         }
         return nil
     }
@@ -85,10 +98,9 @@ struct Picking {
             let takes = !holder.locked && !holder.hidden
             let edge = Renderer.heldOutline(of: holder).copy(strokingWithWidth: 12 / zoom, lineCap: .round, lineJoin: .round, miterLimit: 4)
             if takes, edge.contains(inner) { return holder.id }
-            return DepthOrder.stacked(group.children.dropFirst()).reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance, eye: eye) }?.id
-                ?? (takes ? holder.id : nil)
+            return topmost(group.children.dropFirst(), at: inner, eye: eye)?.id ?? (takes ? holder.id : nil)
         }
-        return DepthOrder.stacked(group.children).reversed().first { !$0.hidden && !$0.locked && Geometry.contains($0, inner, tolerance: tolerance, eye: eye) }?.id
+        return topmost(group.children, at: inner, eye: eye)?.id
     }
 
     /// Something picked inside a mask, where its ghost shows past the mask's shape.

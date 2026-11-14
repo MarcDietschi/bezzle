@@ -9,6 +9,19 @@ import CoreGraphics
 nonisolated struct Eye: Equatable, Hashable, Sendable {
     var at: CGPoint
     var distance: CGFloat
+    /// Inside a group that keeps its layers' depth (`Node.opensInDepth`): how what the group
+    /// holds stands in the scene this eye sees. Nil where what is seen lies in the scene's page.
+    var space: Space? = nil
+
+    /// Where a place inside a group that keeps depth stands in the scene: turned, then moved.
+    /// The place is given in the group's own points and how high over its plane; the scene in
+    /// the same points as `Eye.at`, as if every group down to this one lay flat where it is.
+    struct Space: Equatable, Hashable, Sendable {
+        var spin: Spin
+        var shift: ScenePoint
+
+        func callAsFunction(_ p: ScenePoint) -> ScenePoint { spin(p) + shift }
+    }
 
     /// The eye of an artboard of this size, in its own points.
     static func stage(_ size: CGSize) -> Eye {
@@ -17,7 +30,53 @@ nonisolated struct Eye: Equatable, Hashable, Sendable {
 
     /// The same eye, in the coordinates of something whose own begin at `origin` in these.
     func inside(_ origin: CGPoint) -> Eye {
-        Eye(at: CGPoint(x: at.x - origin.x, y: at.y - origin.y), distance: distance)
+        var eye = Eye(at: CGPoint(x: at.x - origin.x, y: at.y - origin.y), distance: distance)
+        if let space {
+            let o = ScenePoint(x: Double(origin.x), y: Double(origin.y))
+            eye.space = Space(spin: space.spin, shift: space.shift + space.spin(o) - o)
+        }
+        return eye
+    }
+
+    /// The same eye, seeing what lies in the scene's own page.
+    var level: Eye { Eye(at: at, distance: distance) }
+
+    /// Where what a group holds is seen from, in the group's coordinates. A group is one card:
+    /// what it holds is seen as if the card lay flat where it is, whatever it lies in. A group
+    /// that keeps its layers' depth passes the scene on instead, with how it stands in it.
+    func within(_ group: Node) -> Eye {
+        guard group.opensInDepth else { return level.inside(group.frame.origin) }
+        guard let t = group.transform3D, t.x != 0 || t.y != 0 || t.z != 0 else { return inside(group.frame.origin) }
+        let outer = space ?? Space(spin: .none, shift: ScenePoint())
+        let own = Spin(t)
+        let o = ScenePoint(x: Double(group.frame.minX), y: Double(group.frame.minY))
+        let flat = ScenePoint(x: Double(group.frame.midX), y: Double(group.frame.midY))
+        // As high as the group shows as a card (`Perspective.turn`), so what lies in its plane lies in the card's.
+        let middle = ScenePoint(x: flat.x, y: flat.y, z: Double(min(t.z, distance * 0.4)))
+        var eye = level.inside(group.frame.origin)
+        eye.space = Space(spin: outer.spin.after(own), shift: outer(own(o - flat) + middle) - o)
+        return eye
+    }
+
+    /// The plane of what a group that keeps depth holds, as it shows on the canvas: from a point
+    /// lying in the group to where it shows, both measured as `at` is. Nil for an eye that sees
+    /// the page itself.
+    var lens: Perspective? {
+        space == nil ? nil : Perspective(Transform3D(), center: at, eye: self, onCanvas: true)
+    }
+}
+
+nonisolated extension Node {
+    /// Whether a group told to keep its layers' depth (`keepsDepth`) does: what it holds then
+    /// stands in the artboard's scene layer by layer, where the group's turn and height put it,
+    /// instead of being drawn onto one card. As in CSS, anything done to a group as a whole
+    /// makes it one card again: a mask, a fade, a blur, a shadow, a blend; so does a repeat
+    /// grid, a group pinned by its corners, and a background blur lying directly in it, which
+    /// shows what lies behind in the page. Off any artboard there is no scene, and it is a card.
+    var opensInDepth: Bool {
+        guard keepsDepth == true, isGroup, grid == nil, mask == nil, clipsToFirst != true, transform3D?.pinned != true,
+              opacity >= 0.999, blur?.on != true, blend == nil, !shadow.on, moreShadows?.contains(where: \.on) != true else { return false }
+        return !children.contains { $0.blur?.on == true && $0.blur?.background == true }
     }
 }
 
@@ -69,14 +128,25 @@ nonisolated struct Perspective {
         self.init(t, center: center, eye: Eye(at: center, distance: d))
     }
 
-    /// Turned about `center`, and seen from `eye`.
-    init(_ t: Transform3D, center: CGPoint, eye: Eye) {
+    /// Turned about `center`, and seen from `eye`. Inside a group that keeps depth (`Eye.space`)
+    /// the layer stands in the scene, and where it shows is given as a point lying in the group
+    /// that shows at the same place, so that the group's own perspective, a card's, carries it
+    /// on to the canvas as it carries everything else in it; `onCanvas` gives where it shows
+    /// itself (`onCanvas(_:eye:)`).
+    init(_ t: Transform3D, center: CGPoint, eye: Eye, onCanvas: Bool = false) {
         self.center = center
         self.eye = eye.at
         distance = eye.distance
-        m = Self.turn(t, distance: eye.distance, off: CGPoint(x: center.x - eye.at.x, y: center.y - eye.at.y))
-        nearest = eye.distance * 0.02
-        uneven = Self.off(center, eye)
+        guard let space = eye.space else {
+            m = Self.turn(t, distance: eye.distance, off: CGPoint(x: center.x - eye.at.x, y: center.y - eye.at.y))
+            nearest = eye.distance * 0.02
+            uneven = Self.off(center, eye)
+            return
+        }
+        let made = Self.seen(Self.stood(t, center: center, eye: eye, in: space), eye: eye, in: space, onCanvas: onCanvas, pinned: false)
+        m = made.0
+        nearest = made.1
+        uneven = true
     }
 
     /// A layer pinned by its corners into `frame`, then turned, seen from in front of its middle.
@@ -85,15 +155,22 @@ nonisolated struct Perspective {
     }
 
     /// A layer pinned by its corners into `frame`, then turned, seen from `eye`.
-    init(_ t: Transform3D, frame: CGRect, eye: Eye) {
+    init(_ t: Transform3D, frame: CGRect, eye: Eye, onCanvas: Bool = false) {
         guard t.pinned, let corners = t.corners, let pin = Self.pin(corners, size: frame.size) else {
-            self = Perspective(t, center: frame.center, eye: eye)
+            self = Perspective(t, center: frame.center, eye: eye, onCanvas: onCanvas)
             return
         }
         let d = eye.distance
         center = frame.center
         self.eye = eye.at
         distance = d
+        if let space = eye.space {
+            let made = Self.seen(Self.multiply(Self.stood(t, center: frame.center, eye: eye, in: space), pin), eye: eye, in: space, onCanvas: onCanvas, pinned: true)
+            m = made.0
+            nearest = made.1
+            uneven = true
+            return
+        }
         let turned = Self.multiply(Self.turn(t, distance: d, off: CGPoint(x: frame.midX - eye.at.x, y: frame.midY - eye.at.y)), pin)
         // Its middle in front of the eye, whichever way round the corners were given.
         m = turned.8 < 0 ? Self.scaled(turned, -1) : turned
@@ -148,6 +225,42 @@ nonisolated struct Perspective {
         let out = multiply(square, unit)
         let det = out.0 * (out.4 * out.8 - out.5 * out.7) - out.1 * (out.3 * out.8 - out.5 * out.6) + out.2 * (out.3 * out.7 - out.4 * out.6)
         return abs(det) > 1e-12 && det.isFinite ? out : nil
+    }
+
+    /// A layer turned and lifted inside a group that keeps depth, standing in the scene as the
+    /// eye sees it: from its own points, measured from its middle, to where they show on the
+    /// canvas, measured from the eye. With no group about it, this is `turn`.
+    private static func stood(_ t: Transform3D, center: CGPoint, eye: Eye, in space: Eye.Space) -> Matrix {
+        let d = eye.distance
+        let r = space.spin.after(Spin(t))
+        let k = space(ScenePoint(x: Double(center.x), y: Double(center.y), z: Double(min(t.z, d * 0.4))))
+        let kx = CGFloat(k.x) - eye.at.x, ky = CGFloat(k.y) - eye.at.y
+        return (d * CGFloat(r.a), d * CGFloat(r.b), d * kx, d * CGFloat(r.d), d * CGFloat(r.e), d * ky,
+                -CGFloat(r.g), -CGFloat(r.h), d - CGFloat(k.z))
+    }
+
+    /// What stands in the scene so, as a point lying in the group that shows at the same place,
+    /// unless it is wanted on the canvas itself; and how near the eye anything of it may come.
+    /// A group seen edge on has no such points: what it holds then shows as it stands.
+    private static func seen(_ standing: Matrix, eye: Eye, in space: Eye.Space, onCanvas: Bool, pinned: Bool) -> (Matrix, CGFloat) {
+        var m = standing
+        if !onCanvas, let back = inverse(stood(Transform3D(), center: eye.at, eye: eye, in: space)) {
+            m = multiply(back, standing)
+        } else if !pinned {
+            return (m, eye.distance * 0.02)
+        }
+        if m.8 < 0 { m = scaled(m, -1) }
+        return (m, abs(m.8) * 0.02)
+    }
+
+    private static func inverse(_ a: Matrix) -> Matrix? {
+        let c0 = a.4 * a.8 - a.5 * a.7, c1 = a.5 * a.6 - a.3 * a.8, c2 = a.3 * a.7 - a.4 * a.6
+        let det = a.0 * c0 + a.1 * c1 + a.2 * c2
+        let size = max(abs(a.0), abs(a.1), abs(a.2), abs(a.3), abs(a.4), abs(a.5), abs(a.6), abs(a.7), abs(a.8))
+        guard det.isFinite, abs(det) > 1e-9 * size * size * size else { return nil }
+        return (c0 / det, (a.2 * a.7 - a.1 * a.8) / det, (a.1 * a.5 - a.2 * a.4) / det,
+                c1 / det, (a.0 * a.8 - a.2 * a.6) / det, (a.2 * a.3 - a.0 * a.5) / det,
+                c2 / det, (a.1 * a.6 - a.0 * a.7) / det, (a.0 * a.4 - a.1 * a.3) / det)
     }
 
     private static func multiply(_ a: Matrix, _ b: Matrix) -> Matrix {
@@ -245,6 +358,16 @@ nonisolated struct Perspective {
         return out
     }
 
+    /// A layer as it shows on the canvas itself, which what draws it asks: from its own flat
+    /// points to where they show, both measured from where what holds it begins, as if every
+    /// group it lies in lay flat. Outside groups that keep depth this is `init(_:eye:)`. Inside
+    /// one (`Eye.space`) even a layer lying flat in the group shows somewhere else than its
+    /// frame says, as the group is turned. Nil where it shows as it lies.
+    static func onCanvas(_ node: Node, eye: Eye?) -> Perspective? {
+        guard let eye, eye.space != nil, !node.isArtboard else { return Perspective(node, eye: eye) }
+        return Perspective(node.transform3D ?? Transform3D(), frame: node.frame, eye: eye, onCanvas: true)
+    }
+
     /// Where a point drawn flat in a layer's parent shows, the layer turned in depth or not;
     /// `eye` is where its parent is seen from.
     static func shown(_ p: CGPoint, of node: Node, eye: Eye? = nil) -> CGPoint {
@@ -273,8 +396,7 @@ nonisolated extension BezzleDocument {
         if container.isArtboard { return stage(of: container) }
         let chain = ancestors(of: id)
         guard let top = chain.first, top.isArtboard else { return nil }
-        let origin = (chain.dropFirst() + [container]).reduce(CGPoint.zero) { $0 + $1.frame.origin }
-        return stage(of: top).inside(origin)
+        return (chain.dropFirst() + [container]).reduce(stage(of: top)) { $0.within($1) }
     }
 
     /// Where a layer's parent is seen from, in the parent's coordinates, in which the layer's
@@ -293,7 +415,7 @@ nonisolated extension BezzleDocument {
         var eye = Eye.stage(top.frame.size).looking(look)
         for c in chain.dropFirst() {
             out.append(eye)
-            eye = eye.inside(c.frame.origin)
+            eye = eye.within(c)
         }
         return out
     }

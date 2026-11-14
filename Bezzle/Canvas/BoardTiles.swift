@@ -645,7 +645,7 @@ nonisolated extension Renderer {
         switch node.kind {
         case .group:
             var r = CGRect.null
-            let within = eye?.inside(node.frame.origin)
+            let within = eye?.within(node)
             for child in node.children where !child.hidden { r = r.union(reach(of: child, eye: within)) }
             return r.isNull ? own : r
         case .text:
@@ -669,8 +669,16 @@ nonisolated extension Renderer {
     /// Where a layer may paint in its parent's coordinates, its shadow and blur included, and
     /// turned in depth, seen from `eye`, where its parent is seen from (`Eye`).
     static func reach(of node: Node, eye: Eye? = nil) -> CGRect {
-        if let perspective = Perspective(node, eye: eye) {
-            return shadowed(perspective.bounds(of: reach(of: flattened(node), eye: eye)), by: node, spreading: false)
+        // A group that keeps its layers' depth paints where each of them does, standing in the scene.
+        if let eye, node.opensInDepth, !node.hidden, !node.children.isEmpty {
+            var r = CGRect.null
+            for piece in DepthOrder.scene([node], eye: eye, ordered: false) {
+                r = r.union(reach(of: piece.node, eye: piece.eye).offsetBy(dx: piece.origin.x, dy: piece.origin.y))
+            }
+            return r
+        }
+        if let perspective = Perspective.onCanvas(node, eye: eye) {
+            return shadowed(perspective.bounds(of: reach(of: flattened(node), eye: eye?.level)), by: node, spreading: false)
         }
         var r = shadowed(ink(of: node, eye: eye).applying(localTransform(node)), by: node)
         if let blur = node.blur, blur.on, !blur.background { r = r.insetBy(dx: -blur.radius * 3, dy: -blur.radius * 3) }

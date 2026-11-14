@@ -10,7 +10,10 @@ nonisolated extension Renderer {
     static func drawInDepth(_ node: Node, _ perspective: Perspective, in ctx: CGContext, options: Options) {
         let plain = flattened(node)
         let eye = options.eye
-        var region = reach(of: plain, eye: eye).insetBy(dx: -1, dy: -1).integral
+        // Lying flat, it is drawn as in the page: only where it stands is the scene's.
+        var level = options
+        level.space = nil
+        var region = reach(of: plain, eye: eye?.level).insetBy(dx: -1, dy: -1).integral
         // Sharp where it comes nearest: made as big as it shows there, within reason.
         let corners = [CGPoint(x: region.minX, y: region.minY), CGPoint(x: region.maxX, y: region.minY),
                        CGPoint(x: region.maxX, y: region.maxY), CGPoint(x: region.minX, y: region.maxY)]
@@ -41,7 +44,7 @@ nonisolated extension Renderer {
         if keeps, let kept = BlurCache.shared.depth(key, scale: scale, region: region, casting: options.castingShadow, eye: eye) {
             made = kept
         } else {
-            made = offscreen(region, scale: scale) { drawNode(plain, in: $0, options: options) }
+            made = offscreen(region, scale: scale) { drawNode(plain, in: $0, options: level) }
                 .flatMap { bent($0, from: region.origin, scale: scale, by: perspective) }
             if keeps, let made { BlurCache.shared.keep(depth: key, scale: scale, region: region, casting: options.castingShadow, eye: eye, image: made.image, at: made.at) }
         }

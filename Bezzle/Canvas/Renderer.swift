@@ -55,7 +55,16 @@ nonisolated enum Renderer {
 
         /// Where the layers being drawn are seen from in depth, in what holds them: in front of
         /// their artboard's middle (`Eye.stage`). Off any artboard, nil: each from its own middle.
-        var eye: Eye? { board.map { Eye.stage($0.frame.size).looking(looks?[$0.id]).inside(offset) } }
+        var eye: Eye? {
+            board.map {
+                var eye = Eye.stage($0.frame.size).looking(looks?[$0.id]).inside(offset)
+                eye.space = space
+                return eye
+            }
+        }
+        /// Drawing what a group that keeps its layers' depth holds: how that stands in the
+        /// artboard's scene (`Eye.space`), in the coordinates `offset` begins.
+        var space: Eye.Space?
     }
 
     static func draw(_ doc: BezzleDocument, in ctx: CGContext, options: Options = Options()) {
@@ -105,11 +114,31 @@ nonisolated enum Renderer {
         var inner = options
         inner.board = board
         inner.offset = .zero
-        // Nearer over further (`DepthOrder`).
-        for child in DepthOrder.stacked(board.children) where !child.hidden && inSight(child, inner) {
-            drawNode(child, in: ctx, options: inner)
-        }
+        inner.space = nil
+        drawScene(board.children, in: ctx, options: inner)
         ctx.restoreGState()
+    }
+
+    /// Layers lying together, nearer over further (`DepthOrder`). Those a group that keeps its
+    /// layers' depth holds are drawn one by one among the rest, each where it stands in the
+    /// scene, so that what is nearer covers what is further across the group's border.
+    static func drawScene<C: Collection>(_ nodes: C, in ctx: CGContext, options: Options) where C.Element == Node {
+        for piece in DepthOrder.scene(nodes, eye: options.eye) where !piece.node.hidden {
+            guard !piece.groups.isEmpty else {
+                if inSight(piece.node, options) { drawNode(piece.node, in: ctx, options: options) }
+                continue
+            }
+            // Its group is the layer the drawing ends before, or is left out.
+            if let halt = options.halt, piece.groups.contains(halt.before) { halt.reached = true }
+            guard !piece.groups.contains(where: options.skipping.contains) else { continue }
+            var inner = options
+            inner.offset = CGPoint(x: options.offset.x + piece.origin.x, y: options.offset.y + piece.origin.y)
+            inner.space = piece.eye?.space
+            ctx.saveGState()
+            ctx.translateBy(x: piece.origin.x, y: piece.origin.y)
+            drawNode(piece.node, in: ctx, options: inner)
+            ctx.restoreGState()
+        }
     }
 
     /// The outline of a shape in its own coordinates, its frame's top left at zero.
@@ -207,7 +236,12 @@ nonisolated enum Renderer {
             if halt.reached { return }
         }
         guard !options.skipping.contains(node.id), node.opacity > 0 else { return }
-        if let perspective = Perspective(node, eye: options.eye) {
+        // A group that keeps its layers' depth, drawn on its own: its layers, each where it stands.
+        if node.opensInDepth, !node.hidden, !node.children.isEmpty, options.eye != nil {
+            drawScene([node], in: ctx, options: options)
+            return
+        }
+        if let perspective = Perspective.onCanvas(node, eye: options.eye) {
             drawInDepth(node, perspective, in: ctx, options: options)
             return
         }
@@ -311,13 +345,13 @@ nonisolated enum Renderer {
         }
         var inner = options
         inner.offset = CGPoint(x: options.offset.x + group.frame.minX, y: options.offset.y + group.frame.minY)
+        // A group is one card: what it holds is drawn as if it lay flat where it is.
+        inner.space = nil
         if let holder = group.holder, group.children.count > 1 {
             drawHeld(by: holder, group.children.dropFirst(), in: ctx, options: inner)
             return
         }
-        for child in DepthOrder.stacked(group.children) where !child.hidden && inSight(child, inner) {
-            drawNode(child, in: ctx, options: inner)
-        }
+        drawScene(group.children, in: ctx, options: inner)
     }
 
     /// A shape holding layers, as it holds a picture (see `Mask`): its fill and the shadow it casts
@@ -334,9 +368,7 @@ nonisolated enum Renderer {
         ctx.saveGState()
         ctx.addPath(heldOutline(of: holder))
         ctx.clip(using: holder.evenOdd == true ? .evenOdd : .winding)
-        for child in DepthOrder.stacked(held) where !child.hidden && inSight(child, options) {
-            drawNode(child, in: ctx, options: options)
-        }
+        drawScene(held, in: ctx, options: options)
         ctx.restoreGState()
         guard shows, !holder.borders.isEmpty || !holder.innerShadows.isEmpty else { return }
         var over = holder

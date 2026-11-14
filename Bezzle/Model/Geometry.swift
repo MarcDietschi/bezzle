@@ -60,10 +60,37 @@ nonisolated enum Geometry {
     /// The upright rectangle around a layer as it is drawn, turned and all, in the page and in
     /// depth; `eye` is where its parent is seen from (`BezzleDocument.eye`).
     static func bounds(of node: Node, eye: Eye? = nil) -> CGRect {
+        // A group that keeps its layers' depth is where they show, each standing in the scene.
+        if let eye, node.opensInDepth {
+            let pts = standing(node, eye: eye)
+            if let x0 = pts.map(\.x).min(), let x1 = pts.map(\.x).max(), let y0 = pts.map(\.y).min(), let y1 = pts.map(\.y).max() {
+                return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+            }
+        }
         guard Perspective.inDepth(node) else { return bounds(of: node.frame, rotation: node.rotation) }
         let pts = Perspective.corners(of: node, eye: eye)
         let xs = pts.map(\.x), ys = pts.map(\.y)
         return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+    }
+
+    /// The corners of everything a group that keeps its layers' depth holds, as they show, in the
+    /// group's parent; `eye` is where that is seen from.
+    static func standing(_ group: Node, eye: Eye) -> [CGPoint] {
+        let lens = eye.lens
+        var out: [CGPoint] = []
+        for piece in DepthOrder.scene([group], eye: eye, ordered: false) where !piece.groups.isEmpty {
+            let own = Perspective.onCanvas(piece.node, eye: piece.eye)
+            for p in corners(of: piece.node.frame, rotation: piece.node.rotation) {
+                let flat = own?.shown(p) ?? p
+                let seen = CGPoint(x: flat.x + piece.origin.x, y: flat.y + piece.origin.y)
+                guard let lens else {
+                    out.append(seen)
+                    continue
+                }
+                if let q = lens.flat(seen) { out.append(q) }
+            }
+        }
+        return out
     }
 
     static func bounds(of frame: CGRect, rotation: Double) -> CGRect {
@@ -82,6 +109,14 @@ nonisolated enum Geometry {
     /// where its parent is seen from (`BezzleDocument.eye`).
     @MainActor
     static func contains(_ node: Node, _ p: CGPoint, tolerance: CGFloat, eye: Eye? = nil) -> Bool {
+        // A group that keeps its layers' depth is wherever any of them shows, standing in the scene.
+        if let eye, node.opensInDepth, !node.children.isEmpty {
+            let seen = eye.lens?.shown(p) ?? p
+            return DepthOrder.scene([node], eye: eye, ordered: false).contains { piece in
+                guard !piece.groups.isEmpty, let q = piece.placed(seen) else { return false }
+                return contains(piece.node, q, tolerance: tolerance, eye: piece.eye)
+            }
+        }
         // Turned in depth: wherever the point lies on the layer drawn flat.
         if let perspective = Perspective(node, eye: eye) {
             guard let flat = perspective.flat(p) else { return false }
@@ -95,7 +130,7 @@ nonisolated enum Geometry {
             if let mask = node.mask?.first, !contains(mask, inner, tolerance: tolerance) { return false }
             // A mask is all its shape, wherever what it holds shows or not.
             if let holder = node.holder { return Mask.inside(holder, inner, tolerance: tolerance) }
-            let within = eye?.inside(node.frame.origin)
+            let within = eye?.within(node)
             return node.children.contains { !$0.hidden && contains($0, inner, tolerance: tolerance, eye: within) }
         }
         if node.kind == .line {

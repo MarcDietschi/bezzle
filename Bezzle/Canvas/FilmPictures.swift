@@ -228,7 +228,7 @@ nonisolated enum FilmPictures {
             o.board = subject.board
             o.offset = subject.origin
             ctx.translateBy(x: subject.origin.x, y: subject.origin.y)
-            for n in DepthOrder.stacked(subject.layers) { Renderer.drawNode(n, in: ctx, options: o) }
+            Renderer.drawScene(subject.layers, in: ctx, options: o)
         }
         return ctx.makeImage().map { Picture(image: $0, rect: r) }
     }
