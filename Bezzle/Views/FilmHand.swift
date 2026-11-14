@@ -374,6 +374,42 @@ final class FilmHand {
         again()
     }
 
+    // MARK: A spring's bounce
+
+    /// How far the Spring chip is dragged for a spring to go from no bounce to all of it.
+    static let bounceTravel: CGFloat = 150
+    /// The bounce the springs in hand had as the chip was taken, and whether the drag rests at
+    /// the usual bounce now.
+    @ObservationIgnored private var bounceFrom: Double?
+    @ObservationIgnored private var bounceCaught = false
+
+    /// The chosen Spring chip dragged sideways, `dx` points from where it was pressed: the
+    /// springs among the keys in hand go further past, or less far, all of them alike and in one
+    /// step. As it passes the usual bounce it is held there a moment, and the trackpad ticks.
+    func turnBounce(by dx: CGFloat) {
+        if bounceFrom == nil {
+            guard store.sharedPace == .spring else { return }
+            bounceFrom = store.sharedBounce ?? MotionEase.spring().springBounce
+            bounceCaught = false
+            store.beginGesture()
+        }
+        guard let from = bounceFrom else { return }
+        let usual = MotionEase.spring().springBounce
+        let (to, stop) = Dial.settle(from + Double(dx / Self.bounceTravel), in: 0...1, stops: from == usual ? [] : [usual])
+        if (stop != nil) != bounceCaught {
+            bounceCaught = stop != nil
+            if bounceCaught { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+        }
+        store.setBounce(to)
+    }
+
+    /// The chip let go.
+    func bounceTurned() {
+        guard bounceFrom != nil else { return }
+        bounceFrom = nil
+        store.endGesture("Bounce")
+    }
+
     private func snapped(_ t: Double) -> Double { max((t / 0.05).rounded() * 0.05, 0) }
 
     /// The moment under the pointer for the playhead: a key's when one is within reach, else
@@ -405,11 +441,9 @@ final class FilmHand {
         var entries: [MenuEntry] = []
         if let ref = hot.key {
             if !store.film.keys.contains(ref) { store.film.keys = [ref] }
-            let shared = store.sharedEase?.kind
+            let shared = store.sharedPace
             for kind in MotionEase.Kind.allCases {
-                entries.append(.item(.verbatim(MotionEase(kind: kind).title), checked: shared == kind) {
-                    store.setEase(kind == .spring ? .spring() : MotionEase(kind: kind))
-                })
+                entries.append(.item(.verbatim(MotionEase(kind: kind).title), checked: shared == kind) { store.setPace(kind) })
             }
             entries.append(.separator)
             entries.append(.item("Remove Key", shortcut: "⌫") { store.removeFilmKeys() })

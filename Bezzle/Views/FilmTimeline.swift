@@ -48,7 +48,7 @@ struct FilmTimeline: View {
         let length = board?.filmLength ?? MotionTiming.shortest
         let shown = Self.shown(of: rows.count)
         VStack(spacing: 0) {
-            FilmHeader(store: store, once: board?.film?.once == true)
+            FilmHeader(store: store, hand: hand, once: board?.film?.once == true)
             Hairline()
             GeometryReader { geo in
                 let names = Self.names(in: geo.size.width)
@@ -182,14 +182,31 @@ struct FilmTimeline: View {
 /// panels' moment, so a scrub draws it again no more than thirty times a second.
 private struct FilmHeader: View {
     let store: DocumentStore
+    /// Only told what is done here, and read nothing of: what the hand holds changes under a
+    /// scrub, and this row is not to be drawn again for it.
+    let hand: FilmHand
     let once: Bool
 
     var body: some View {
+        // With room for it, a spring's bounce stands beside the paces to the number; on a narrow
+        // card the Spring chip alone sets it, dragged sideways.
+        ViewThatFits(in: .horizontal) {
+            row(exact: true)
+            row(exact: false)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .frame(height: 44)
+    }
+
+    private func row(exact: Bool) -> some View {
         let playing = store.film.playing
         // At the panels' moment, which a scrub catches up with thirty times a second.
         let t = store.panelTime
         let inHand = store.hasKeysToRemove(at: t)
-        let pace = inHand ? store.sharedEase(at: t)?.kind : nil
+        let pace = inHand ? store.sharedPace(at: t) : nil
+        let springs = pace == .spring
+        let bounce = springs ? store.sharedBounce(at: t) : nil
         let hold = store.holdState(at: t)
         return HStack(spacing: 10) {
             Button { store.toggleFilm() } label: {
@@ -209,29 +226,56 @@ private struct FilmHeader: View {
             .animation(Theme.spring, value: playing)
             FilmClock(store: store)
             Spacer(minLength: 4)
+            if exact {
+                // How far past its key a spring goes. Its room is always kept, so nothing moves
+                // as the keys in hand turn to springs: it is only there for those.
+                // Named beside its number, as the panel's cards name theirs: a word that is long in
+                // one language keeps its letters, and the row is left out where it has no room.
+                HStack(spacing: 6) {
+                    Text("Bounce")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.ink3)
+                        .lineLimit(1)
+                        .fixedSize()
+                    NumberField(label: .verbatim(""), value: bounce.map { ($0 * 100).rounded() }, unit: "%", range: 0...100, step: 5, scrub: 0.5, decimals: 0,
+                                action: "Bounce") { store.setBounce($0 / 100) }
+                        .frame(width: 76)
+                        .accessibilityLabel(Text("Bounce"))
+                }
+                .help("How far a spring goes past its key before it comes to rest")
+                .opacity(springs ? 1 : 0)
+                .allowsHitTesting(springs)
+                .accessibilityHidden(!springs)
+                .animation(Theme.quick, value: springs)
+            }
             HoldBead(state: hold) {
                 if store.holdState == .here { store.removeFilmKeys() } else { store.holdHere() }
             }
             HStack(spacing: 1) {
                 ForEach(MotionEase.Kind.allCases, id: \.self) { kind in
-                    PaceChip(kind: kind, chosen: pace == kind) {
-                        store.setEase(kind == .spring ? .spring() : MotionEase(kind: kind))
-                    }
+                    // The chosen Spring chip draws the springs' own bounce, and dragged, sets it.
+                    let dial = kind == .spring && springs
+                    PaceChip(kind: kind, chosen: pace == kind, bounce: dial ? bounce : nil, turned: dial ? { dx in
+                        if let dx { hand.turnBounce(by: dx) } else { hand.bounceTurned() }
+                    } : nil) { store.setPace(kind) }
                 }
             }
             // Always there, so nothing moves as keys come into hand: only readier.
             .opacity(inHand ? 1 : 0.3)
             .allowsHitTesting(inHand)
             .animation(Theme.quick, value: inHand)
+            // A dial taken from under the hand, as when the film plays on past the springs: what
+            // it had set by then is the step, and nothing is left open.
+            .onChange(of: springs) { _, still in
+                if !still { hand.bounceTurned() }
+            }
+            .onDisappear { hand.bounceTurned() }
             Hairline(vertical: true)
                 .frame(height: 16)
             RoundButton(on: !once, help: once ? "Plays once and stops. Click to play it round and round." : "Plays round and round. Click to play it once.") {
                 store.setFilm(once ? "Play Round and Round" : "Play Once") { $0.once = once ? nil : true }
             }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 10)
-        .frame(height: 44)
     }
 }
 
@@ -661,8 +705,15 @@ private struct HoldBead: View {
 struct PaceChip: View {
     let kind: MotionEase.Kind
     let chosen: Bool
+    /// A spring's own bounce, which the chip's curve then tells. Nil draws the chip's usual picture.
+    var bounce: Double? = nil
+    /// Makes the chip a dial, as the chosen Spring chip is for its bounce: told how far it is
+    /// dragged sideways, and nil when it is let go.
+    var turned: ((CGFloat?) -> Void)? = nil
     let action: () -> Void
     @State private var hovering = false
+    /// Whether the press under way has turned the dial, and so is no click.
+    @State private var turning = false
 
     var body: some View {
         Canvas { ctx, size in
@@ -671,7 +722,7 @@ struct PaceChip: View {
             let steps = 28
             for s in 0...steps {
                 let u = Double(s) / Double(steps)
-                let p = CGPoint(x: box.minX + box.width * CGFloat(u), y: box.maxY - box.height * CGFloat(MotionEase.progress(kind, u, bounce: 0.55)) * (kind == .spring ? 0.8 : 1))
+                let p = CGPoint(x: box.minX + box.width * CGFloat(u), y: box.maxY - box.height * CGFloat(MotionEase.progress(kind, u, bounce: bounce.map(Self.drawn) ?? Self.usual)) * (kind == .spring ? 0.8 : 1))
                 if s == 0 { path.move(to: p) } else { path.addLine(to: p) }
             }
             let color = chosen ? Theme.pencil : Theme.ink.opacity(hovering ? 0.9 : 0.6)
@@ -682,12 +733,46 @@ struct PaceChip: View {
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(chosen ? Theme.pencilWash : Theme.ink.opacity(hovering ? 0.06 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(perform: action)
-        .help(Text(verbatim: MotionEase(kind: kind).title))
+        // One or the other: a click waited for beside the drag would keep the drag waiting until
+        // the pointer is let go, and the dial would never turn under the hand.
+        .gesture(turned == nil ? TapGesture().onEnded(action) : nil)
+        .gesture(turned == nil ? nil : DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                // A press that goes nowhere is a click; from three points on it turns the dial.
+                guard turning || abs(g.translation.width) >= 3 else { return }
+                turning = true
+                turned?(g.translation.width)
+            }
+            .onEnded { _ in
+                if turning {
+                    turning = false
+                    turned?(nil)
+                } else {
+                    action()
+                }
+            })
+        .onChange(of: turned == nil) { _, plain in
+            if plain { turning = false }
+        }
+        .pointerStyle(turned == nil ? .default : .frameResize(position: .trailing))
+        .help(turned == nil ? Text(verbatim: MotionEase(kind: kind).title) : Text("Spring. Drag sideways to set its bounce."))
         .animation(Theme.quick, value: hovering)
         .animation(Theme.quick, value: chosen)
         .accessibilityLabel(Text(verbatim: MotionEase(kind: kind).title))
+        .accessibilityValue(Text(verbatim: bounce.map { "\(Int(($0 * 100).rounded())) %" } ?? ""))
         .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
+    }
+
+    /// The bounce the Spring chip's picture is drawn with, more than a spring usually has: at
+    /// this size the usual one would not be seen to go past at all.
+    static let usual = 0.55
+
+    /// The bounce the chip draws for a spring's own: the same picture as ever at the usual
+    /// bounce, a plain arrival with none, and all of it with all. A picture this small tells the
+    /// whole dial that way; the line in the timeline is the true curve.
+    static func drawn(_ bounce: Double) -> Double {
+        let b = min(max(bounce, 0), 1), usually = MotionEase.spring().springBounce
+        return b <= usually ? b / usually * usual : usual + (b - usually) / (1 - usually) * (1 - usual)
     }
 
     /// How far along a stretch is when `u` of its time has passed, however it is paced.

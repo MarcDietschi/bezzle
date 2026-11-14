@@ -24,6 +24,7 @@ struct AnimateWordsTests {
         "Plays once and stops. Click to play it round and round.", "Plays round and round. Click to play it once.",
         "Where the film ends. Drag to set its length; double click to let it follow the keys.",
         "Add Key", "Add Key Here", "Remove Key", "Move Key", "Change Pace",
+        "Bounce", "How far a spring goes past its key before it comes to rest", "Spring. Drag sideways to set its bounce.",
         "Remove Motion", "Remove All Motion", "Remove the Camera's Motion",
         "Film", "Film Length", "Length", "Follow the Keys", "Round and Round", "Once", "Play Once", "Play Round and Round",
         "Backdrop", "What shows past the artboard's edges when the camera sees them",

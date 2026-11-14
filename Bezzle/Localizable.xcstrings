@@ -53165,6 +53165,72 @@
         }
       }
     },
+    "Bounce" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nachfedern"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebond"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rimbalzo"
+          }
+        }
+      }
+    },
+    "How far a spring goes past its key before it comes to rest" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wie weit eine Feder über ihren Keyframe hinausschwingt, bevor sie zur Ruhe kommt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De combien un ressort dépasse son image clé avant de se poser"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Di quanto una molla supera il suo fotogramma chiave prima di fermarsi"
+          }
+        }
+      }
+    },
+    "Spring. Drag sideways to set its bounce." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Feder. Zieh seitwärts, um ihr Nachfedern einzustellen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ressort. Faites glisser latéralement pour régler son rebond."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Molla. Trascina di lato per regolarne il rimbalzo."
+          }
+        }
+      }
+    },
     "Comes On" : {
       "localizations" : {
         "de" : {
