@@ -206,15 +206,31 @@ window, only in tests and in pictures the renderer made. What that left:
 - **Web import:** a page's 3D transforms arrive flattened to 2D (`flat(matrix)` in
   `Import/WebPageReader.js`), so nothing imported is in depth and `transform-style: preserve-3d`
   has nothing to keep.
-- **Windows, not built:** its AI server lacks `turn_layers` and `keepsDepth`
-  (`Windows/Sources/BezzleCore/MCP`); its 3D card, aim pad and fields set each layer alone and
-  should call `turnInDepth` and `layFlat`, its Pose card `poseInDepth`; the 3D card lacks the
-  switch for groups; looking from the side needs the host's `looks` (handed to `doc.looks`, put
-  back after undo, cleared on leaving Design), a gesture, the posts and the word drawn, and a
-  redraw of what stands off the page. The shared model is there for all of it.
-- **Windows, unchecked in the VM:** turning from a side and the new order of faces turned alike
-  (shared `DepthTurning`, `DepthOrder`); a group that keeps depth drawn, picked, its tiles redrawn
-  and played in a film (drawing and picking are shared, the tiles' damage is its own).
+- **A film at rest can order a layer wrongly against a group that keeps depth** (Mac and Windows,
+  found 2026-11-14 by Windows' truth test): a run of layers lying in such a turned group is
+  ordered by the height of the group's origin corner (`Film.swift`, `placement`, the run's
+  `DepthOrder.Face`), so a layer facing another way that stands in front of it can be drawn under
+  it, and the film at rest is not the design's picture. Reproducer: `DepthFilm.bezzle`, artboard
+  "Resting", written by `Windows/VM/DepthTruthTests.swift` (largest difference 164 of 255, 0.59%
+  of channels over 8).
+- **Keyed Move and Lift leave the group's plane:** on a layer inside a group that keeps depth they
+  go along the page and its normal (`FilmLens.layer`), so the layer sinks through the group's
+  plate; with the group as one card the same keys slide it on the card (films "Turning" and
+  "TurningCard" in the same design).
+- **Windows** has all three since 2026-11-14 (the card and the AI server turn bodies, the group's
+  switch, the look from the side with Alt; `Windows/README.md` › The app), measured against the
+  Mac's renderer (`Windows/VM/depth-agreement.sh`) and seen in the app's window. Left there:
+  Animate's Pose card keys Tilt and Swing of several layers each alone (`Host/Animating.swift`,
+  `pose(_:number:to:)` should call `poseInDepth`); Escape does not let go of what is picked in
+  Design, so it looks from the front only with nothing picked; a look from the side cannot be
+  begun in a read-only design or while looking back at versions; with no tiles, an artboard
+  looked at from the side is drawn whole at every step of the drag (not measured on a large
+  one); the 3D card's numbers follow a turn from a side only when the drag ends.
+- **Windows, not checked:** the switch and captions in German, French and Italian in the window;
+  a deck's artboard looked at from the side; the x64 build; a film of a group that keeps depth
+  playing in the window (only at rest there).
+- **Not looked at on the Mac:** whether the 3D card's row cuts "Layers keep their depth" (Windows
+  uses a wrapping row).
 
 ## The welcome tour
 
