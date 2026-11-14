@@ -344,13 +344,14 @@ nonisolated enum FilmExport {
 
     // MARK: - Composing
 
-    private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
+    static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
 
     /// Core Image on the graphics card, mixing in plain sRGB values as drawing does everywhere
     /// else in Bezzle (see `Renderer.imaging`), so a faded piece looks as it does on the canvas.
     /// It works in sixteen bit numbers, so fading, blurring and scaling keep what the deep
-    /// pictures bring, down to the last step, where the movie's own depth takes over.
-    private static let imaging: CIContext = {
+    /// pictures bring, down to the last step, where the movie's own depth takes over. The stage
+    /// makes its picture with it too, under a camera that blurs (`FilmStageView`'s lens).
+    static let imaging: CIContext = {
         let options: [CIContextOption: Any] = [.workingColorSpace: sRGB, .workingFormat: CIFormat.RGBAh, .cacheIntermediates: false]
         if let device = MTLCreateSystemDefaultDevice() { return CIContext(mtlDevice: device, options: options) }
         return CIContext(options: options)
@@ -358,7 +359,7 @@ nonisolated enum FilmExport {
 
     /// A piece's picture as Core Image takes it, made once so that it is handed to the graphics
     /// card once.
-    private struct Still: Sendable {
+    struct Still: Sendable {
         let image: CIImage
         /// The part of the artboard it covers, in the artboard's points.
         let rect: CGRect
@@ -367,24 +368,213 @@ nonisolated enum FilmExport {
             image = CIImage(cgImage: picture.image)
             rect = picture.rect
         }
+
+        /// Of a picture whose numbers are taken as they are, whatever colours it says they are
+        /// in: the stage's, which are in the screen's own and shown in them.
+        static func asItIs(_ picture: FilmPictures.Picture) -> Still {
+            Still(image: CIImage(cgImage: picture.image, options: [.colorSpace: NSNull()]), rect: picture.rect)
+        }
+
+        init(image: CIImage, rect: CGRect) {
+            self.image = image
+            self.rect = rect
+        }
     }
 
     /// A frame of `size` pixels: the backdrop, and over it each piece where the film has it, the
     /// lowest first. `board` is the artboard's size, which is the frame's in points.
     private static func composed(_ stills: [Still?], _ parts: [Still?], _ shot: Shot, backdrop: RGBA, board: CGSize, size: CGSize) -> CIImage {
+        // By the part drawn of a piece for this frame, where its whole picture would not do.
+        composed({ i in (shot.parts.contains(i) ? parts[i] : stills[i]).map { [Cut(still: $0)] } ?? [] },
+                 placements: shot.placements, order: shot.order, backdrop: backdrop, board: board, size: size)
+    }
+
+    /// One of a piece's pictures for a frame. A movie's frame has one of a piece, its whole
+    /// picture or the part drawn of it for that frame. The stage has both where it shows a part:
+    /// the whole picture, which gives way where the part lies (`under`), and the part over it.
+    struct Cut: Sendable {
+        var still: Still
+        /// A sharper picture of a part of the piece, laid over this one, which gives way there.
+        var under: Still?
+    }
+
+    /// The same frame of the pictures each piece has for it (`cuts`, by the piece's number), for
+    /// whatever shows a film: the movie, a single frame, and the stage under a camera that
+    /// blurs. A piece that stands off the camera's focus (`FilmPlacement.soft`) is blurred by
+    /// how far off it stands, where it shows; pieces lying in one plane, one after the other,
+    /// are blurred as the one picture they are, so nothing shows through where two of them meet.
+    static func composed(_ cuts: (Int) -> [Cut], placements: [FilmPlacement], order: [Int], backdrop: RGBA, board: CGSize, size: CGSize) -> CIImage {
         let frame = CGRect(origin: .zero, size: size)
         // The film counts points down from the top left, Core Image pixels up from the bottom left.
         let toPixels = CGAffineTransform(a: size.width / board.width, b: 0, c: 0, d: -size.height / board.height, tx: 0, ty: size.height)
         // A movie has nothing to show through to: a backdrop that is not solid lies on black.
         let ground = CIColor(red: backdrop.r * backdrop.a, green: backdrop.g * backdrop.a, blue: backdrop.b * backdrop.a)
         var out = CIImage(color: ground).cropped(to: frame)
-        for i in shot.order {
-            // By the part drawn of it for this frame, where its whole picture would not do.
-            guard let still = shot.parts.contains(i) ? parts[i] : stills[i],
-                  let piece = placed(still, by: shot.placements[i], toPixels: toPixels, board: board) else { continue }
-            out = piece.composited(over: out)
+        // What lies in one plane, gathered until something of another plane comes.
+        var plane: (image: CIImage, soft: FilmSoft)?
+        func lay() {
+            guard let gathered = plane else { return }
+            out = softened(gathered.image, by: gathered.soft, board: board, size: size).composited(over: out)
+            plane = nil
         }
+        for i in order {
+            var piece: CIImage?
+            for cut in cuts(i) {
+                guard var one = placed(cut.still, by: placements[i], toPixels: toPixels, board: board) else { continue }
+                if let part = cut.under {
+                    // Where the part lies, placed as the piece is, and all there, whatever the piece's own fade.
+                    var solid = placements[i]
+                    solid.opacity = 1
+                    solid.blur = 0
+                    let cover = Still(image: CIImage(color: .white).cropped(to: part.image.extent), rect: part.rect)
+                    if let gone = placed(cover, by: solid, toPixels: toPixels, board: board) {
+                        one = one.applyingFilter("CISourceOutCompositing", parameters: [kCIInputBackgroundImageKey: gone])
+                    }
+                }
+                piece = piece.map { one.composited(over: $0) } ?? one
+            }
+            guard let piece else { continue }
+            guard let soft = placements[i].soft else {
+                lay()
+                out = piece.composited(over: out)
+                continue
+            }
+            if let gathered = plane, gathered.soft.matches(soft, in: board) {
+                plane = (piece.composited(over: gathered.image), gathered.soft)
+            } else {
+                lay()
+                plane = (piece, soft)
+            }
+        }
+        lay()
         return out.cropped(to: frame)
+    }
+
+    // MARK: - Off the camera's focus
+
+    /// How many times its radius Core Image's variable blur spreads a picture, measured as a
+    /// gaussian's spread is: an edge blurred with radius 10 is as wide as one a gaussian of
+    /// 10.9 blurs (macOS 27, 2026-11-14, for radii from 2 to 40 and every strength of mask).
+    private static let variableSpread = 1.094
+
+    /// The most that blur is asked to spread a picture, in pixels. Asked for more than 45, it
+    /// gives 49 and no more (measured with the above), so what is blurred further is made of a
+    /// smaller picture (`varied`).
+    private static let variableMost = 40.0
+
+    /// How many times smaller the picture is that the blur past `variableMost` is made of.
+    private static let coarser = 4.0
+
+    /// Whether a piece that stands off the camera's focus shows blurred at all in a frame of
+    /// `size` pixels: by half a pixel or more somewhere in it. One rule for the frames of a
+    /// movie and for the stage, which shows a film without any such piece as it always has.
+    static func blurs(_ soft: FilmSoft, board: CGSize, size: CGSize) -> Bool {
+        let field = Field(soft, board: board, size: size)
+        let most = field.range(in: CGRect(origin: .zero, size: size)).most
+        return most.isFinite && most >= 0.5
+    }
+
+    /// How much a plane is blurred at each pixel of a frame, counted up from its bottom left:
+    /// `|across * x + up * y + level|` pixels (`FilmSoft`, in the frame's pixels).
+    private struct Field {
+        var across: Double
+        var up: Double
+        var level: Double
+
+        init(across: Double, up: Double, level: Double) {
+            self.across = across
+            self.up = up
+            self.level = level
+        }
+
+        init(_ soft: FilmSoft, board: CGSize, size: CGSize) {
+            let kx = Double(size.width / board.width), ky = Double(size.height / board.height), k = (kx + ky) / 2
+            across = k * soft.across / kx
+            up = -k * soft.down / ky
+            level = k * (soft.down * Double(size.height) / ky + soft.level)
+        }
+
+        /// The least and the most it blurs within a rect.
+        func range(in rect: CGRect) -> (least: Double, most: Double) {
+            let values = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)]
+                .map { across * Double($0.x) + up * Double($0.y) + level }
+            let low = values.min() ?? 0, high = values.max() ?? 0
+            return (low <= 0 && high >= 0 ? 0 : min(abs(low), abs(high)), max(abs(low), abs(high)))
+        }
+
+        /// The same for a picture so many times smaller.
+        func smaller(by times: Double) -> Field { Field(across: across, up: up, level: level / times) }
+
+        /// A picture that is black where it blurs by `from` pixels or less, white where by `to`
+        /// or more, and runs evenly between, within a rect.
+        func mask(from: Double, to: Double, in rect: CGRect) -> CIImage {
+            let steep = hypot(across, up)
+            guard steep * Double(hypot(rect.width, rect.height)) >= 0.05 else {
+                // As good as one blur all over.
+                let v = min(max((abs(across * Double(rect.midX) + up * Double(rect.midY) + level) - from) / max(to - from, 1e-9), 0), 1)
+                return CIImage(color: CIColor(red: v, green: v, blue: v))
+            }
+            // Two ramps, one each way from the line that is sharp, each black on the other's side.
+            let nx = across / steep, ny = up / steep
+            let sharp = CGPoint(x: -level * nx / steep, y: -level * ny / steep)
+            func ramp(_ way: Double) -> CIImage {
+                let a = way * from / steep, b = way * to / steep
+                return CIFilter(name: "CILinearGradient", parameters: [
+                    "inputPoint0": CIVector(x: sharp.x + a * nx, y: sharp.y + a * ny), "inputPoint1": CIVector(x: sharp.x + b * nx, y: sharp.y + b * ny),
+                    "inputColor0": CIColor.black, "inputColor1": CIColor.white,
+                ])?.outputImage ?? CIImage(color: .white)
+            }
+            return ramp(1).applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: ramp(-1)])
+        }
+    }
+
+    /// A picture placed in the frame, blurred by how far what it shows stands off the camera's
+    /// focus: at each pixel by what `soft` gives there, in the frame's pixels. Sharp along a
+    /// line and more blurred the further from it, for a thing the camera does not face, which
+    /// one blur for the whole of it could not show. What reaches the frame's edge is blurred as
+    /// if it went on past the edge as it is there: nothing dark or clear is drawn in from
+    /// outside, and nothing has to be drawn of a piece that the frame does not show.
+    private static func softened(_ image: CIImage, by soft: FilmSoft, board: CGSize, size: CGSize) -> CIImage {
+        let frame = CGRect(origin: .zero, size: size)
+        let field = Field(soft, board: board, size: size)
+        let range = field.range(in: frame)
+        // No more than anything is blurred, in the frame's points.
+        let most = min(range.most, FilmSoft.most * Double(size.width / board.width + size.height / board.height) / 2)
+        // Less than half a pixel at its most: sharp (`blurs`).
+        guard range.most.isFinite, range.most >= 0.5, !image.extent.isEmpty else { return image }
+        let base = image.cropped(to: frame).composited(over: CIImage(color: .clear).cropped(to: frame)).clampedToExtent()
+        return varied(base, by: field, least: min(range.least, most), most: most, in: frame).cropped(to: frame)
+    }
+
+    /// A picture blurred by what `field` gives at each pixel, between `least` and `most` within
+    /// `frame`, which the picture reaches past on every side. Core Image's variable blur does
+    /// it as far as it goes. What is blurred further is made of the picture four times smaller,
+    /// blurred a quarter as much and shown at its size again, which is the same to the eye
+    /// under that much blur; and that again, as often as it takes. So a blur of hundreds of
+    /// pixels takes little longer than one of ten.
+    private static func varied(_ image: CIImage, by field: Field, least: Double, most: Double, in frame: CGRect, depth: Int = 0) -> CIImage {
+        guard most > variableMost, depth < 12 else {
+            return image.applyingFilter("CIMaskedVariableBlur", parameters: [
+                "inputMask": field.mask(from: 0, to: most, in: frame), kCIInputRadiusKey: most / variableSpread,
+            ])
+        }
+        // On whole pixels of the smaller picture, with a little of what lies past the frame.
+        let room = coarser * 2
+        let whole = CGRect(x: -room, y: -room, width: (frame.maxX / coarser).rounded(.up) * coarser + room * 2, height: (frame.maxY / coarser).rounded(.up) * coarser + room * 2)
+        let small = image.cropped(to: whole).transformed(by: CGAffineTransform(scaleX: 1 / coarser, y: 1 / coarser), highQualityDownsample: true).clampedToExtent()
+        let within = CGRect(x: 0, y: 0, width: frame.maxX / coarser, height: frame.maxY / coarser)
+        let coarse = varied(small, by: field.smaller(by: coarser), least: least / coarser, most: most / coarser, in: within, depth: depth + 1)
+            .transformed(by: CGAffineTransform(scaleX: coarser, y: coarser))
+        // All of it blurred past what the variable blur gives: nothing of it is made at full size.
+        guard least < variableMost else { return coarse }
+        let fine = image.applyingFilter("CIMaskedVariableBlur", parameters: [
+            "inputMask": field.mask(from: 0, to: variableMost, in: frame), kCIInputRadiusKey: variableMost / variableSpread,
+        ])
+        // From the one to the other where the blur is between half and all of what the variable
+        // blur gives, and the smaller picture's coarseness is long lost in it.
+        return coarse.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: fine, kCIInputMaskImageKey: field.mask(from: variableMost / 2, to: variableMost, in: frame),
+        ])
     }
 
     /// A piece's picture where the film has it, in the frame's pixels; nil when it does not show.
