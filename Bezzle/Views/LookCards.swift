@@ -439,7 +439,8 @@ extension SelectionInspector {
     /// aimed on the pad, where the card faces the pointer, or on the canvas by the knob in each
     /// one's middle; the exact turn, and how near, under it. Several layers lying together are
     /// one body: the card says how its lead is turned, and what turns that turns them all about
-    /// the middle they share (`DepthBody`).
+    /// the middle they share (`DepthBody`). A group has a switch besides: whether what it holds
+    /// keeps its depth, each layer standing in the scene, or the group is one card (`Node.keepsDepth`).
     func depthCard(live: Bool) -> some View {
         let lead = store.depthLead(of: nodes)
         let turn = (lead ?? nodes.first)?.transform3D ?? Transform3D()
@@ -466,6 +467,14 @@ extension SelectionInspector {
                 depthField("X", unit: "°", range: -180...180, scrub: 0.5, lead: lead, get: { $0.x }, set: { $0.x = $1 })
                 depthField("Y", unit: "°", range: -180...180, scrub: 0.5, lead: lead, get: { $0.y }, set: { $0.y = $1 })
                 depthField("Z", range: -10_000...10_000, scrub: 1, lead: lead, get: { Double($0.z) }, set: { $0.z = CGFloat($1) })
+            }
+            // A group is one card, unless told that what it holds stands in the scene on its own.
+            if !nodes.isEmpty, nodes.allSatisfy(\.isGroup) {
+                Row(title: "Layers keep their depth") {
+                    Switch(isOn: Binding(get: { nodes.allSatisfy { $0.keepsDepth == true } }, set: { v in
+                        store.updateSelection(v ? "Keep Layers in Depth" : "Draw as One Card") { $0.keepsDepth = v ? true : nil }
+                    }))
+                }
             }
             Caption("On the canvas, drag the knob in its middle to aim it. Hold Control while you move a layer to bring it nearer or push it away. Just outside a side, a drag turns anything in depth.")
             Caption("Hold Control and drag beside the layers to look at an artboard from the side.")

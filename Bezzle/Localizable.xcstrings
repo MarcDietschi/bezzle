@@ -18256,6 +18256,28 @@
         }
       }
     },
+    "Draw as One Card" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als eine Karte zeichnen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dessiner comme une seule carte"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disegna come un'unica scheda"
+          }
+        }
+      }
+    },
     "Draw the design  ⌃P" : {
       "localizations" : {
         "de" : {
@@ -25796,6 +25818,28 @@
         }
       }
     },
+    "Keep Layers in Depth" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenen in der Tiefe belassen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder les calques en profondeur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantieni i livelli in profondità"
+          }
+        }
+      }
+    },
     "Keep Layers in Place" : {
       "localizations" : {
         "de" : {
@@ -26439,6 +26483,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Livelli che non sono forme dentro forme composte, omessi"
+          }
+        }
+      }
+    },
+    "Layers keep their depth" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenen behalten ihre Tiefe"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les calques gardent leur profondeur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I livelli mantengono la profondità"
           }
         }
       }
