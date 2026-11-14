@@ -314,31 +314,50 @@ window, only in tests and in pictures the renderer made. What that left:
 
 ## The browser viewer
 
-- **Its film is not published:** bezzle.ch/app shows the design without its film until
-  `Web/publish.sh` is run and bezzle-web pushed, at Erik's word (the film plays in the viewer since
-  2026-11-14, `Web/README.md` › Films).
-- **Shader fills** are drawn live only in a film; the design itself shows the fill's picture. A
-  moving shader's frame is read back from the graphics card each moment (about 3 ms at 840×600).
-  Cube maps, matrix attributes, `#version 300 es` programs and antialias off are written in
-  `site/shaders.mjs`, but no test design has them.
-- **A film without WebGL** plays at 3 to 9 frames a second on the processor.
+Worked through on 2026-11-14 (`Web/README.md` › What the prototype left out, and what is drawn
+now, with the numbers): plus darker, blurs along a ramp, shader fills in the design, the live
+room's hands and presence, four languages, the icon library in the core, and memory let go.
+
+- **Nothing of this is published:** bezzle.ch/app shows none of the mended drawing, the live
+  room, the four languages or the film until `Web/publish.sh` is run and bezzle-web pushed, at
+  Erik's word (`publish.sh` also copies `live.mjs` and `words.mjs`).
+- **Shader fills** beyond plain draws (passes into textures, steps building on frames before,
+  depth, stencil, instances, textures of numbers; `beyondPlain`), and every shader fill where
+  there is no WebGL, show their picture, in the design and in a film; drawing them needs
+  framebuffer passes, steps with kept state, a depth and stencil context, instancing, textures
+  of numbers and per-draw clocks in `site/shaders.mjs`. A moving shader's frame is read back
+  from the graphics card each moment (about 3 ms at 840×600). Cube maps, matrix attributes,
+  `#version 300 es` programs and antialias off are written there, but no test design has them.
+- **The live room** does not show a layer moving while it is dragged (it moves when the drag
+  ends), the glow of what was just changed, the light where others look, pictures on their way,
+  or following someone's view. Tested with the words two real Mac rooms said (`LiveTruthTests`)
+  and stand-ins on a local relay; never tried by hand with a Mac in the room.
+- **Words:** `Web/site/index.html`, the sample viewer for this Mac, is in English alone.
+- **Text widths:** at sizes that are not whole every face is up to a 64th of the size narrower
+  (FreeType takes sizes in 64ths; 0.10 pt on a word of 230 pt), and the system font's heavier
+  weights are up to 0.2 pt wider on a word at 96 pt (whole-unit advances at a weight between the
+  font's own). Both inside CanvasKit; measured with Apple's fonts, while the published page sets
+  open stand-ins.
+- **A film without WebGL** plays at 5 to 12 frames a second on the processor.
 - **A film's sharpness while playing:** a piece's whole picture is capped at 4,096 pixels a side
   and 16 megapixels; past that it is sharp only when the film rests.
-- **A text set anew at every moment of a film** (wrapped, scaled by a key inside a piece drawn
-  again): all text is let go every 600 settings and the film opened again, a wait as at its
-  start. Letting go of those texts alone needs `WebText`'s `kept`, shared with Windows, to say
-  which; whether Windows grows the same way is unchecked. Each text the page sets costs about
-  0.3 MB of CanvasKit's memory.
-- **Pictures of the design are never let go:** every artboard drawn stays in the page (`made`,
-  `images`), so a shared design drawn again at each edit grows. Older than the film.
-- **Keyed looks in a film** are drawn through the shared `FilmPictures.subject` and
-  `piece.changes`; the core compiles with them, but they were never looked at in a browser nor
-  compared with the Mac's frames.
-- **The film, unchecked:** with the open fonts the published page uses (compared with Apple's
-  only), in Safari and Firefox, on a phone, a WebGL context lost mid-film, and the Windows build
-  after these commits.
-- `Web/README.md` › Not done in the prototype lists what it does not draw or do.
-- A few SF Pro and Avenir words come out up to 0.2 pt a letter narrower (`Web/README.md`).
+- **A film's gentle tones:** the page draws each piece of a film with eight bits, where the Mac's
+  movie keeps pieces finer and cuts once: up to 2 levels of 255.
+- **Not set beside the Mac in the viewer:** 3D bodies and the look from the side, groups that
+  keep depth, Shape keys with other outlines, and looks keyed in a film (drawn through the
+  shared `FilmPictures.subject` and `piece.changes`; the core compiles with them).
+- **The icon library** is read by the core (`bz.icons`), but no page uses it and `publish.sh`
+  does not copy `Icons.deflate`; placing an icon would be editing, which the viewer leaves out
+  at Erik's wish.
+- **Unchecked:** the film with the open fonts the published page uses (compared with Apple's
+  only), in Safari and Firefox, on a phone, a WebGL context lost mid-film.
+- **Windows, not checked after these commits:** the build (`Platform`, `Web` and `Bezzle/Model`
+  files changed, additively); whether it keeps texts as the page did before `HostTexts`; and
+  its host's `pathOp`, which hands on Skia's Simplify and Op results as they come (even-odd,
+  contours either way round) and strokes at Skia's default precision, so Lucide icons whose
+  lines enclose something and combined shapes with holes may fill in, as they did in the page
+  before `wound` (the cure could move into `Platform/CGPath.swift`).
+- `Web/README.md` › Not done lists what the viewer still does not draw or do.
 
 ## Housekeeping
 
