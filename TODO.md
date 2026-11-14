@@ -118,10 +118,38 @@ file was made (2026-11-14): look before starting on one.
 
 ## Shaders
 
-- **What WebGL does that the engine does not:** framebuffers and render to texture (feedback,
-  blur chains), depth and stencil, instancing, video textures and the rest listed in
-  `Packages/Shaders/README.md` › What WebGL does that this does not (yet). Such canvases are
-  imported as pictures, and the import report says so.
+- **Kept live since 2026-11-14 on the Mac:** canvases that draw through framebuffers (blur chains,
+  feedback), with depth and stencil tests, culling, masks, scissor, instances, several outputs,
+  textures of numbers, uniform blocks and a blend constant. Checked with pages of our own that
+  imitate the calls of three.js, PixiJS, regl and ogl, never with the real libraries or a real
+  website, and never looked at in a running window.
+- **Not recorded on import** (the canvas stays a picture and the report says why): cube maps as
+  targets, `gl_FragDepth`, sampled depth textures, 3D, array, multisampled and integer targets,
+  `clearBuffer` of one of several outputs, `copyTexImage2D`, a blit from the canvas, transform
+  feedback, pages driven by `readPixels`, compressed textures, WebGL 1 `gl_FragColor` to several
+  outputs. A page that uploads its buffers anew every frame (PixiJS batches) is kept still.
+  Uniforms counted per frame run as slowly as the reading web view drew.
+- **Video textures** are the frame at capture only ("Videos in WebGL drawings, as still
+  pictures"); playing one needs the video's file kept in the design, decoding per film frame and
+  a mapping of film time to video time.
+- **What a fill keeps:** kept state over 12 MB, or unreadable, makes the canvas a picture; the
+  contents of targets and textures of numbers live as base64 in the design's JSON (keeping them
+  as files would be a format change). A 1.7 that saves such a design again drops the `scene` key
+  and keeps the picture.
+- **In a film:** a fill that builds on its frames is drawn in steps; a far jump forward draws
+  every step between once, and steps stop at 36,000.
+- **Direct3D draws none of it:** passes into textures, depth and stencil, culling, colour masks,
+  scissor, polygon offset, instances, several outputs and textures of numbers are refused by
+  name and such fills show their picture on Windows. It needs targets with formats, several
+  outputs, depth-stencil and rasterizer states, write masks, instanced draws, mipmaps of targets
+  and float read-back in `ShaderDirect3D.h/.cpp` and `Direct3D/Renderer.swift`, mirroring
+  Metal's `run`, `targets(of:)` and `Timelines`; then `TargetsTests`, `StateTests` and the 17
+  Agreement frames are turned on (`drawsPasses` in `Tests/ShadersTests/Support.swift`). On
+  Windows a web import keeps such a canvas as a picture; that path is compiled, never run in
+  the app.
+- **The browser viewer** shows the picture for such a fill (`beyondPlain`); drawing it needs
+  framebuffer passes, steps with kept state, a depth and stencil context, instancing, textures
+  of numbers and per-draw clocks in `site/shaders.mjs`.
 - **For Erik:** the glow layer of the Lawsearch AI design was recorded before the recorder was
   fixed (2026-11-13); importing it again gives the fixed recording.
 
