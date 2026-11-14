@@ -30,7 +30,8 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
     case draw
     /// Shapes only: where its points and their handles are, each moved from where the design has
     /// it, in the layer's own points: six numbers to a point (it, the handle in, the handle out,
-    /// each across and down), in the outline's order (`BezierPath.changed(by:)`).
+    /// each across and down), in the outline's order (`BezierPath.changed(by:)`). Or, for an
+    /// outline with other points than the design's, that outline itself (`BezierPath.asKey`).
     case shape
     /// Where the camera looks, in points from the artboard's middle.
     case cameraMove
@@ -435,6 +436,10 @@ nonisolated extension Node {
     func value(of property: MotionProperty, at t: Double) -> [Double] {
         let rest = property == .shape ? shapeRest : property.rest
         guard let track = self[track: property] else { return rest }
+        // A shape on its way to or from an outline with other points: what a key would hold to say it as it is then.
+        if property == .shape, track.holdsOutlines, let design = ownOutline {
+            return shapeValue(of: track.outline(at: t, from: design)).map(property.clamped) ?? rest
+        }
         return property.clamped(track.value(at: t, rest: rest))
     }
 
@@ -469,7 +474,7 @@ nonisolated extension Node {
     /// Posing a property that has no keys as designed does nothing.
     mutating func pose(_ property: MotionProperty, _ value: [Double], at time: Double, home: Double = MotionTiming.beat) {
         guard takes(property, value) else { return }
-        let t = MotionTiming.time(time), v = property.clamped(value)
+        let t = MotionTiming.time(time), v = kept(property, value)
         let rest = rest(of: property.rawValue)
         guard var track = self[track: property] else {
             guard !MotionTiming.alike(v, rest) else { return }
@@ -494,26 +499,36 @@ nonisolated extension Node {
     }
 
     /// Whether a property can be posed so: a shape's outline only on a layer that has one, and its
-    /// points with a change for every one of them.
+    /// points with a change for every one of them, or as an outline of its own.
     func takes(_ property: MotionProperty, _ value: [Double]) -> Bool {
         switch property {
-        case .shape: canReshape && value.count == shapeRest.count && !value.isEmpty
+        case .shape: canReshape && !value.isEmpty && (value.count == shapeRest.count || BezierPath(key: value) != nil)
         case .draw: canReshape
         default: true
         }
     }
 
+    /// A value as a key of the property keeps it: within its bounds, and for a Shape that says an
+    /// outline of its own, as this layer says that outline (`shapeValue(of:)`), whichever layer
+    /// the numbers were made for.
+    func kept(_ property: MotionProperty, _ value: [Double]) -> [Double] {
+        if property == .shape, value.count != shapeRest.count, let outline = BezierPath(key: value), let own = shapeValue(of: outline) {
+            return property.clamped(own)
+        }
+        return property.clamped(value)
+    }
+
     /// Sets a key and nothing else: where one is wanted exactly, as the timeline and an assistant ask.
     mutating func setKey(_ property: MotionProperty, _ value: [Double], at time: Double, ease: MotionEase? = nil) {
         guard takes(property, value) else { return }
-        let t = MotionTiming.time(time)
+        let t = MotionTiming.time(time), v = kept(property, value)
         var track = self[track: property] ?? MotionTrack()
         if let i = track.index(at: t) {
-            track.keys[i].v = property.clamped(value)
+            track.keys[i].v = v
             track.keys[i].given = nil
             if let ease { track.keys[i].ease = ease.kind == .auto ? nil : ease }
         } else {
-            track.keys.append(MotionKey(t: t, v: property.clamped(value), ease: ease.flatMap { $0.kind == .auto ? nil : $0 }))
+            track.keys.append(MotionKey(t: t, v: v, ease: ease.flatMap { $0.kind == .auto ? nil : $0 }))
             track.keys.sort { $0.t < $1.t }
         }
         self[track: property] = track

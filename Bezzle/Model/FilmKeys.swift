@@ -120,14 +120,16 @@ struct FilmRow: Identifiable, Equatable {
         for name in names {
             guard let track = node[track: name] else { continue }
             let rest = node.rest(of: name)
+            // A shape whose keys hold outlines of their own is paced as it is drawn.
+            let outline = name == MotionProperty.shape.rawValue && track.holdsOutlines ? node.ownOutline : nil
             for (i, key) in track.keys.enumerated() {
                 let home = MotionTiming.alike(key.v, rest)
                 if let j = out.firstIndex(where: { MotionTiming.same($0.t, key.t) }) {
                     out[j].home = out[j].home && home
                     out[j].given = out[j].given && key.given == true
                 } else {
-                    out.append(Mark(t: key.t, home: home, given: key.given == true,
-                                    pace: names.count == 1 && i > 0 ? track.pace(of: i - 1, rest: rest) : nil))
+                    let pace = names.count == 1 && i > 0 ? outline.map { track.shapePace(of: i - 1, from: $0) } ?? track.pace(of: i - 1, rest: rest) : nil
+                    out.append(Mark(t: key.t, home: home, given: key.given == true, pace: pace))
                 }
             }
         }

@@ -74,10 +74,14 @@ struct MotionPathTests {
         #expect(still && m.motion == nil)
     }
 
-    @Test func anOutlineWithOtherPointsIsNoPose() throws {
+    @Test func anOutlineWithOtherPointsIsAPoseTheKeyHoldsItself() throws {
+        // More of it in `MotionOutlineKeyTests`.
         var n = path("M 0 0 L 100 0 L 50 80 Z")
-        let square = n.poseShape(BezierPath("M 0 0 L 100 0 L 100 100 L 0 100 Z"), at: 1)
-        #expect(!square && n.motion == nil)
+        let square = BezierPath("M 0 0 L 100 0 L 100 100 L 0 100 Z")
+        let posed = n.poseShape(square, at: 1)
+        #expect(posed && n[track: .shape]?.keys.map(\.t) == [0, 1])
+        #expect(n.outline(at: 1) == square && n.outline(at: 0) == n.ownOutline)
+        #expect(n.ownOutline?.anchorCount == 3)
         var text = Node(kind: .text, name: "T", frame: CGRect(x: 0, y: 0, width: 50, height: 20))
         text.text = "Hi"
         let words = text.poseShape(BezierPath("M 0 0 L 1 1"), at: 1)

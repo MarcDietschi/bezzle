@@ -209,7 +209,28 @@ along one artboard's film. Its keys are changes from the design and never the de
   run the way their points go least far; a run with none to go with shrinks to its middle. Outlines
   with the same runs of as many points go point by point as they are numbered, so an outline taken
   from another shape is first numbered like the one it comes from (`laid(along:)`). Its tests are
-  `MotionMatchingTests`. No key holds an outline of its own yet, so nothing in the app asks for it.
+  `MotionMatchingTests`. A film asks for it between two keys that say other points
+  (`MotionTrack.outline(at:from:)`), and keeps the pairs it was given lately (`MatchedOutlines`).
+- **A key with an outline of its own** is what a Shape key is where it says other points than the
+  design's, more or fewer, or runs open where the design's are closed. Its numbers are in the `v`
+  every key has: a nought for each number a change of the design's points would have; then each run
+  as six numbers (how many anchors, closed or not, four kept for later) and six for each anchor,
+  where it and its handles are in the layer's own points; and last, how many sixes the runs take. So
+  it has one number more than a whole number of sixes, which a change never has, and is read from
+  its end (`BezierPath.asKey`, `BezierPath.init(key:)`). Bezzle 1.7 reads as many numbers as the
+  design's points have, the noughts: it shows the design at such a key, goes to it and from it
+  gently, and keeps the key as it is. At a key the outline is exactly the key's; between two that
+  say the same runs every point goes its own way, paced and flown like any property's; between two
+  that say other points the one goes into the other by `matched`, at the pace chosen or gently
+  (`MotionTrack.shapePace`). `Node.shapeValue(of:)` says an outline as a change where it can and as
+  itself where it cannot, and `Node.kept` brings numbers made for another layer to this one's. When
+  the design's outline changes, such a key keeps its outline where it shows: grown with a resize,
+  turned over with a flip, shifted when `setPoints` fits the frame anew
+  (`MotionTrack.withOutlines`). Another shape's outline is placed for a layer by
+  `Node.outline(of:for:at:)`, as large and turned as the other is on the artboard and about the
+  layer's own middle, and numbered to come from the key before by `Node.shapeValue(taking:at:)`,
+  which gives it points more on its own outline where the outline before has points it has none for.
+  Its tests are `MotionOutlineKeyTests`. Nothing in the app makes such a key yet.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
   `/given` for a key the app placed itself), so two people keying one layer both keep theirs

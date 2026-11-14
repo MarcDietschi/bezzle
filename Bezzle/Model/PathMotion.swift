@@ -207,10 +207,12 @@ nonisolated extension Node {
     }
 
     /// Its outline at a moment, in its own upright points: the design's, with its points where
-    /// its Shape keys have them. Keys made for another outline, one with other points, change nothing.
+    /// its Shape keys have them, or on the way to or from an outline a key holds itself, one
+    /// with other points (`MotionTrack.outline(at:from:)`). A key that says neither changes nothing.
     func outline(at t: Double) -> BezierPath? {
         guard let design = ownOutline else { return nil }
-        guard self[track: .shape] != nil else { return design }
+        guard let track = self[track: .shape] else { return design }
+        if track.holdsOutlines { return track.outline(at: t, from: design) }
         return design.changed(by: value(of: .shape, at: t)) ?? design
     }
 
@@ -218,6 +220,57 @@ nonisolated extension Node {
     /// for an outline with other points than the design's.
     func shapeChange(to outline: BezierPath) -> [Double]? {
         ownOutline?.change(to: outline)
+    }
+
+    /// What a key of its Shape holds to say `outline`, in its own upright points: a change of
+    /// each of the design's points where it has those, in runs closed or open as the design's
+    /// are, and else the outline itself (`BezierPath.asKey`). Nil for a layer with no outline, or
+    /// an outline with nothing to draw.
+    func shapeValue(of outline: BezierPath) -> [Double]? {
+        guard canReshape, let design = ownOutline else { return nil }
+        if design.hasRuns(of: outline), let change = design.change(to: outline) { return change }
+        let drawn = BezierPath(subpaths: outline.subpaths.filter { $0.anchors.count >= 2 })
+        guard !drawn.subpaths.isEmpty else { return nil }
+        return drawn.asKey(over: design.anchorCount)
+    }
+
+    /// The outline a value of its Shape says, in its own upright points; nil for one that says none.
+    func shapeOutline(of value: [Double]) -> BezierPath? {
+        guard let design = ownOutline else { return nil }
+        return design.changed(by: value) ?? BezierPath(key: value)
+    }
+
+    /// Artboards: the outline another shape on it has at a moment, as the layer `id` would have
+    /// it, in that layer's own upright points: as large as the other is and turned as it is on
+    /// the artboard, its frame's middle on the layer's. What the layer takes to become that
+    /// shape (`poseShape(taking:at:)`). Nil when either is not on it or has no outline.
+    func outline(of other: UUID, for id: UUID, at t: Double) -> BezierPath? {
+        guard other != id, let theirs = way(to: other), let mine = way(to: id),
+              let source = theirs.last, let layer = mine.last, layer.canReshape, let outline = source.outline(at: t) else { return nil }
+        // Each one's own points on the artboard: through its place and turn, and those of what holds it.
+        func onBoard(_ way: [Node]) -> CGAffineTransform { way.reversed().reduce(.identity) { $0.concatenating($1.placement) } }
+        let from = onBoard(theirs), to = onBoard(mine)
+        let there = CGPoint(x: source.frame.width / 2, y: source.frame.height / 2).applying(from)
+        let here = CGPoint(x: layer.frame.width / 2, y: layer.frame.height / 2).applying(to)
+        let place = from.concatenating(CGAffineTransform(translationX: here.x - there.x, y: here.y - there.y)).concatenating(to.inverted())
+        guard [place.a, place.b, place.c, place.d, place.tx, place.ty].allSatisfy(\.isFinite) else { return nil }
+        return outline.applying(place)
+    }
+
+    /// Artboards: the shapes whose outline the layer `id` can take (`outline(of:for:at:)`): the
+    /// others on it that are shown, the one in front first, as the timeline has them. None for a
+    /// layer that is locked, or has no outline itself.
+    func shapesToTake(for id: UUID) -> [Node] {
+        guard let layer = descendant(id), layer.canReshape, !layer.locked else { return [] }
+        var out: [Node] = []
+        func walk(_ nodes: [Node]) {
+            for n in nodes.reversed() where !n.hidden {
+                if n.id != id, n.canReshape { out.append(n) }
+                walk(n.children)
+            }
+        }
+        walk(children)
+        return out
     }
 
     /// The layer as its Shape and Draw have it at a moment, for drawing it: a path through its
@@ -229,11 +282,20 @@ nonisolated extension Node {
         guard reshapes, let design = ownOutline else { return self }
         var outline = design
         var moved = false
-        if self[track: .shape] != nil {
-            let change = value(of: .shape, at: t)
-            if change.contains(where: { abs($0) > 1e-9 }), let changed = design.changed(by: change) {
-                outline = changed
-                moved = true
+        if let track = self[track: .shape] {
+            if track.holdsOutlines {
+                // On the way to or from an outline with other points: whatever it is then.
+                let now = track.outline(at: t, from: design)
+                if design.change(to: now)?.contains(where: { abs($0) > 1e-9 }) ?? true {
+                    outline = now
+                    moved = true
+                }
+            } else {
+                let change = value(of: .shape, at: t)
+                if change.contains(where: { abs($0) > 1e-9 }), let changed = design.changed(by: change) {
+                    outline = changed
+                    moved = true
+                }
             }
         }
         let draw = value(of: .draw, at: t)
@@ -256,13 +318,240 @@ nonisolated extension Node {
     }
 
     /// Poses its Shape at a moment so that its outline is `outline` there, in its own upright
-    /// points, as moving its points on the canvas does. Returns false, changing nothing, for an
-    /// outline with other points than the design's: points are added and taken away in the design.
+    /// points, as moving its points on the canvas does: with the design's points, each moved, or
+    /// with other points, more or fewer, which the key then holds itself. Returns false, changing
+    /// nothing, for an outline with nothing to draw.
     @discardableResult
     mutating func poseShape(_ outline: BezierPath, at time: Double) -> Bool {
-        guard canReshape, let change = shapeChange(to: outline) else { return false }
-        pose(.shape, change, at: time)
+        guard let value = shapeValue(of: outline) else { return false }
+        pose(.shape, value, at: time)
         return true
+    }
+
+    /// Poses its Shape at a moment as the outline of another shape, `other`, which lies in this
+    /// layer's own upright points: its points numbered so that they come from the outline this
+    /// one has at the key before with nothing turning on the way (`BezierPath.laid(along:)`).
+    @discardableResult
+    mutating func poseShape(taking other: BezierPath, at time: Double) -> Bool {
+        guard let value = shapeValue(taking: other, at: time) else { return false }
+        pose(.shape, value, at: time)
+        return true
+    }
+
+    /// What a key of its Shape at a moment holds to say the outline of another shape, `other`,
+    /// numbered as `poseShape(taking:at:)` numbers it. Nil where `shapeValue(of:)` is.
+    func shapeValue(taking other: BezierPath, at time: Double) -> [Double]? {
+        guard canReshape, let design = ownOutline else { return nil }
+        // What it comes from: the key before, or the design, which a first key has for company.
+        let track = self[track: .shape]
+        let before = track?.keys.last { $0.t < time && !MotionTiming.same($0.t, time) }
+        let from = before.flatMap { key in track.map { $0.outline(of: key, from: design) } } ?? design
+        return shapeValue(of: other.laid(along: from))
+    }
+}
+
+// MARK: - A key with an outline of its own
+
+// A Shape key is a change of each of the design's points, and so says an outline that has the
+// design's points. A key that says another, with points more or fewer, holds that outline itself,
+// in the layer's own upright points. Its numbers: first a nought for every number a change of
+// the design's points has, which is all a Bezzle from before such keys reads of it (1.7 shows the
+// design there, and comes to it and leaves it gently); then its runs, each as six numbers (how
+// many anchors, whether closed, and four kept for later) and six more for each anchor (where it
+// is, its handle in, its handle out; a handle that is none lies on its anchor); and last, how
+// many sixes the runs take. So such a key has one number more than a whole number of sixes, which
+// a change of points never has, and is read from its end, whatever stands before its runs.
+
+nonisolated extension BezierPath {
+    /// This outline as a Shape key holds it, on a layer whose design has `design` anchors.
+    func asKey(over design: Int) -> [Double] {
+        var out = [Double](repeating: 0, count: max(design, 0) * Self.numbersPerAnchor)
+        var sixes = 0
+        for run in subpaths where !run.anchors.isEmpty {
+            out += [Double(run.anchors.count), run.closed ? 1 : 0, 0, 0, 0, 0]
+            out += Self(subpaths: [run]).numbers
+            sixes += 1 + run.anchors.count
+        }
+        out.append(Double(sixes))
+        return out
+    }
+
+    /// The outline a Shape key holds, if it holds one (`asKey`): nil for a change of points, and
+    /// for numbers that are neither.
+    init?(key v: [Double]) {
+        let n = Self.numbersPerAnchor
+        guard v.count % n == 1, v.count > n, let sixes = v.last, sixes >= 2, sixes == sixes.rounded(), sixes * Double(n) <= Double(v.count - 1) else { return nil }
+        let end = v.count - 1
+        var at = end - Int(sixes) * n
+        var runs: [Subpath] = []
+        while at < end {
+            let count = v[at], closed = v[at + 1]
+            guard count >= 1, count == count.rounded(), count < sixes, closed == 0 || closed == 1, at + n * (1 + Int(count)) <= end else { return nil }
+            at += n
+            guard v[at..<(at + n * Int(count))].allSatisfy(\.isFinite) else { return nil }
+            var anchors: [Anchor] = []
+            for _ in 0..<Int(count) {
+                let p = CGPoint(x: v[at], y: v[at + 1]), i = CGPoint(x: v[at + 2], y: v[at + 3]), o = CGPoint(x: v[at + 4], y: v[at + 5])
+                anchors.append(Anchor(p, in: Self.same(i, p) ? nil : i, out: Self.same(o, p) ? nil : o))
+                at += n
+            }
+            runs.append(Subpath(anchors: anchors, closed: closed == 1))
+        }
+        guard !runs.isEmpty else { return nil }
+        self.init(subpaths: runs)
+    }
+
+    /// Where every anchor is, and its handles, six numbers to an anchor in the outline's order:
+    /// what a change of points changes. A handle that is none lies on its anchor, and so does
+    /// one no curve is drawn with, into an open run's first anchor and out of its last.
+    var numbers: [Double] {
+        var out: [Double] = []
+        out.reserveCapacity(anchorCount * Self.numbersPerAnchor)
+        for run in subpaths {
+            let last = run.anchors.count - 1
+            for (i, a) in run.anchors.enumerated() {
+                let handleIn = !run.closed && i == 0 ? a.point : a.handleIn ?? a.point
+                let handleOut = !run.closed && i == last ? a.point : a.handleOut ?? a.point
+                out += [a.point.x, a.point.y, handleIn.x, handleIn.y, handleOut.x, handleOut.y].map { Double($0) }
+            }
+        }
+        return out
+    }
+
+    /// The outline with these runs whose anchors and handles are where `numbers` say; nil for
+    /// another number of them.
+    func with(numbers: [Double]) -> BezierPath? {
+        guard numbers.count == anchorCount * Self.numbersPerAnchor else { return nil }
+        var out = self
+        var k = 0
+        for s in out.subpaths.indices {
+            for i in out.subpaths[s].anchors.indices {
+                let p = CGPoint(x: numbers[k], y: numbers[k + 1]), handleIn = CGPoint(x: numbers[k + 2], y: numbers[k + 3])
+                let handleOut = CGPoint(x: numbers[k + 4], y: numbers[k + 5])
+                out.subpaths[s].anchors[i] = Anchor(p, in: Self.same(handleIn, p) ? nil : handleIn, out: Self.same(handleOut, p) ? nil : handleOut)
+                k += Self.numbersPerAnchor
+            }
+        }
+        return out
+    }
+}
+
+nonisolated extension MotionTrack {
+    /// A Shape's keys: whether any holds an outline of its own.
+    var holdsOutlines: Bool {
+        keys.contains { $0.v.count % BezierPath.numbersPerAnchor == 1 && BezierPath(key: $0.v) != nil }
+    }
+
+    /// The outline a Shape's key says, on a layer the design gives the outline `design`: that
+    /// with its points moved, or the key's own; the design's for a key that says neither.
+    func outline(of key: MotionKey, from design: BezierPath) -> BezierPath {
+        design.changed(by: key.v) ?? BezierPath(key: key.v) ?? design
+    }
+
+    /// The stretch from key `i` to the next, where both say outlines with the same runs of
+    /// points: those, and the keys either side that have them too, as keys of plain numbers,
+    /// each anchor's place and its handles'. So the stretch is paced and flown through as any
+    /// property's is. `at` is where key `i` is among them, `like` an outline with their runs, and
+    /// `rest` the design's numbers, where it has those runs. Nil where the two say other points.
+    private func numbered(_ i: Int, from design: BezierPath) -> (track: MotionTrack, at: Int, like: BezierPath, rest: [Double])? {
+        let a = outline(of: keys[i], from: design), b = outline(of: keys[i + 1], from: design)
+        guard a.hasRuns(of: b) else { return nil }
+        var list = [(keys[i], a), (keys[i + 1], b)]
+        var at = 0
+        if i > 0 {
+            let before = outline(of: keys[i - 1], from: design)
+            if before.hasRuns(of: a) {
+                list.insert((keys[i - 1], before), at: 0)
+                at = 1
+            }
+        }
+        if i + 2 < keys.count {
+            let after = outline(of: keys[i + 2], from: design)
+            if after.hasRuns(of: a) { list.append((keys[i + 2], after)) }
+        }
+        let track = MotionTrack(list.map { MotionKey(t: $0.0.t, v: $0.1.numbers, ease: $0.0.ease, given: $0.0.given) })
+        return (track, at, a, design.hasRuns(of: a) ? design.numbers : [])
+    }
+
+    /// How the stretch from key `i` of a Shape to the next is paced, where its keys may hold
+    /// outlines of their own. Between two that say the same points, as any property's stretch
+    /// is; from one outline into another with other points, by the pace chosen, or else gently
+    /// both ways, and gently home to the design.
+    func shapePace(of i: Int, from design: BezierPath) -> Pace {
+        if let same = numbered(i, from: design) { return same.track.pace(of: same.at, rest: same.rest) }
+        return unlikePace(of: i, from: design)
+    }
+
+    /// The same, for a stretch between two keys that say other points.
+    private func unlikePace(of i: Int, from design: BezierPath) -> Pace {
+        let ease = keys[i + 1].ease ?? .auto
+        guard ease.kind == .auto else { return .curve(ease.kind, bounce: ease.bounce ?? 0.3) }
+        let count = design.anchorCount * BezierPath.numbersPerAnchor
+        func home(_ key: MotionKey) -> Bool { key.v.count == count && key.v.allSatisfy { abs($0) < 1e-6 } }
+        return .curve(home(keys[i + 1]) && !home(keys[i]) ? .easeOut : .smooth, bounce: 0.3)
+    }
+
+    /// A Shape's outline at a time, where its keys may hold outlines of their own, on a layer
+    /// the design gives the outline `design`. At a key, the outline it says, with its own points;
+    /// between two that say the same points, each point on its way; between two that say other
+    /// points, the one going into the other with the points both are given for it
+    /// (`BezierPath.matched`).
+    func outline(at t: Double, from design: BezierPath) -> BezierPath {
+        guard let first = keys.first, let last = keys.last else { return design }
+        if !(t > first.t) { return outline(of: first, from: design) }
+        if t >= last.t { return outline(of: last, from: design) }
+        if let here = index(at: t) { return outline(of: keys[here], from: design) }
+        var i = 0
+        while i < keys.count - 2, keys[i + 1].t <= t { i += 1 }
+        let a = keys[i], b = keys[i + 1]
+        let span = b.t - a.t
+        guard span > 1e-9 else { return outline(of: b, from: design) }
+        if let same = numbered(i, from: design) {
+            return same.like.with(numbers: same.track.value(at: t, rest: same.rest)) ?? same.like
+        }
+        var p = (t - a.t) / span
+        if case .curve(let kind, let bounce) = unlikePace(of: i, from: design) { p = MotionEase.progress(kind, p, bounce: bounce) }
+        let (from, to) = MatchedOutlines.kept.matched(outline(of: a, from: design), outline(of: b, from: design))
+        return from.mixed(with: to, p)
+    }
+
+    /// Its keys that hold outlines of their own, each put where `place` puts the layer's own
+    /// points, on a layer whose design now has `anchors` anchors: what they need when the design
+    /// gives the layer another outline, or its own points another place.
+    func withOutlines(placed place: CGAffineTransform, over anchors: Int) -> MotionTrack {
+        guard [place.a, place.b, place.c, place.d, place.tx, place.ty].allSatisfy(\.isFinite) else { return self }
+        var out = self
+        for k in out.keys.indices where out.keys[k].v.count % BezierPath.numbersPerAnchor == 1 {
+            guard let outline = BezierPath(key: out.keys[k].v) else { continue }
+            out.keys[k].v = MotionProperty.shape.clamped(outline.applying(place).asKey(over: anchors))
+        }
+        return out
+    }
+}
+
+/// Outlines given the same points lately (`BezierPath.matched`): a film asks for the same two
+/// at every moment of a stretch, on whatever thread draws it.
+nonisolated private final class MatchedOutlines: @unchecked Sendable {
+    static let kept = MatchedOutlines()
+    private let lock = NSLock()
+    private var made: [[Double]: (BezierPath, BezierPath)] = [:]
+    private var order: [[Double]] = []
+
+    func matched(_ a: BezierPath, _ b: BezierPath) -> (BezierPath, BezierPath) {
+        let both = a.asKey(over: 0) + b.asKey(over: 0)
+        lock.lock()
+        let found = made[both]
+        lock.unlock()
+        if let found { return found }
+        let out = BezierPath.matched(a, b)
+        lock.lock()
+        if made[both] == nil {
+            made[both] = out
+            order.append(both)
+            if order.count > 64 { made[order.removeFirst()] = nil }
+        }
+        lock.unlock()
+        return out
     }
 }
 
@@ -486,13 +775,14 @@ nonisolated extension MotionTrack {
     /// The keys of a Shape made for the outline `before`, for the outline `after` that the design
     /// has now, each in the layer's own points as they were and as they are. `place` is where the
     /// old own points lie among the new: grown as the layer was resized, turned over as it was
-    /// flipped. Keys made for neither are left alone.
+    /// flipped. A key that holds an outline of its own has that put where `place` puts it. Keys
+    /// made for neither are left alone.
     func following(_ before: BezierPath, to after: BezierPath, placed place: CGAffineTransform = .identity, inOrder: Bool = false) -> MotionTrack {
         let count = before.anchorCount * BezierPath.numbersPerAnchor
-        guard count > 0, after.anchorCount > 0, keys.contains(where: { $0.v.count == count }),
-              [place.a, place.b, place.c, place.d, place.tx, place.ty].allSatisfy(\.isFinite) else { return self }
+        guard count > 0, after.anchorCount > 0, [place.a, place.b, place.c, place.d, place.tx, place.ty].allSatisfy(\.isFinite) else { return self }
+        var out = withOutlines(placed: place, over: after.anchorCount)
+        guard keys.contains(where: { $0.v.count == count }) else { return out }
         let follow = BezierPath.Following(from: before.applying(place), to: after, inOrder: inOrder)
-        var out = self
         for k in out.keys.indices where out.keys[k].v.count == count {
             out.keys[k].v = MotionProperty.shape.clamped(follow.carried(out.keys[k].v, placed: place))
         }
