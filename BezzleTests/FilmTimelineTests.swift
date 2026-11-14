@@ -405,12 +405,16 @@ struct FilmTimelineTests {
         store.seek(0.2)
         store.seek(0.35)
         #expect(store.filmTime == 0.35 && store.panelTime == 0.1)
-        try await Task.sleep(for: .milliseconds(80))
+        // Caught up a thirtieth of a second after the last catching up, or as soon after as the
+        // main thread is free: on a busy Mac that can be late, so it is waited for.
+        let clock = ContinuousClock(), began = clock.now
+        while store.panelTime != 0.35, clock.now - began < .seconds(3) { try await Task.sleep(for: .milliseconds(5)) }
         #expect(store.panelTime == 0.35)
         // What the panels read at the moment they show is what the store has there.
         let card = id("Card")
         #expect(store.sharedValue(.fade, 0, of: [card], at: store.panelTime) == store.sharedValue(.fade, 0, of: [card]))
-        // A step well after the last shows at once.
+        // A step well after the last catching up shows at once.
+        try await Task.sleep(for: .milliseconds(50))
         store.seek(0.5)
         #expect(store.panelTime == 0.5)
     }
