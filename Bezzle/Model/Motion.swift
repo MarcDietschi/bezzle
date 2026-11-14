@@ -43,9 +43,17 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
     case cameraTilt
     /// Degrees the scene is swung round under it, its right side going away.
     case cameraSwing
+    /// What the camera is sharp at: points nearer the eye than the point of the artboard's sheet
+    /// it looks at, along its line of sight; further, below nothing (`FilmCamera.focus`).
+    case cameraFocus
+    /// Points of blur for every hundred points a thing stands off the camera's focus
+    /// (`FilmCamera.blur`).
+    case cameraBlur
 
     static let layer: [MotionProperty] = [.move, .scale, .turn, .fade, .lift, .tilt, .swing, .blur, .draw, .shape]
-    static let camera: [MotionProperty] = [.cameraMove, .cameraZoom, .cameraRoll, .cameraTilt, .cameraSwing]
+    static let camera: [MotionProperty] = view + [.cameraFocus, .cameraBlur]
+    /// The camera's that say what it sees: where it looks, how close and from what angle.
+    static let view: [MotionProperty] = [.cameraMove, .cameraZoom, .cameraRoll, .cameraTilt, .cameraSwing]
 
     var isCamera: Bool { Self.camera.contains(self) }
 
@@ -58,7 +66,7 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
         case .fade, .cameraZoom: [1]
         case .draw: [0, 1]
         case .shape: []
-        case .turn, .lift, .tilt, .swing, .blur, .cameraRoll, .cameraTilt, .cameraSwing: [0]
+        case .turn, .lift, .tilt, .swing, .blur, .cameraRoll, .cameraTilt, .cameraSwing, .cameraFocus, .cameraBlur: [0]
         }
     }
 
@@ -77,6 +85,8 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
         case .tilt, .swing: out[0] = min(max(out[0], -360), 360)
         case .cameraZoom: out[0] = min(max(out[0], 0.1), 16)
         case .cameraTilt, .cameraSwing: out[0] = min(max(out[0], -80), 80)
+        case .cameraFocus: out[0] = min(max(out[0], -100_000), 100_000)
+        case .cameraBlur: out[0] = min(max(out[0], 0), 100)
         case .move, .turn, .cameraMove, .cameraRoll, .shape: break
         }
         return out
@@ -99,6 +109,8 @@ nonisolated enum MotionProperty: String, CaseIterable, Codable, Hashable, Sendab
         case .cameraRoll: String(localized: "animate.camera.roll", defaultValue: "Roll")
         case .cameraTilt: String(localized: "animate.camera.tilt", defaultValue: "Tilt")
         case .cameraSwing: String(localized: "animate.camera.swing", defaultValue: "Swing")
+        case .cameraFocus: String(localized: "animate.camera.focus", defaultValue: "Focus")
+        case .cameraBlur: String(localized: "animate.camera.blur", defaultValue: "Blur")
         }
     }
 }
@@ -693,6 +705,8 @@ nonisolated struct FilmCamera: Equatable, Sendable {
             case .cameraRoll: [roll]
             case .cameraTilt: [tilt]
             case .cameraSwing: [swing]
+            case .cameraFocus: [focus]
+            case .cameraBlur: [blur]
             default: property.rest
             }
         }
@@ -704,6 +718,8 @@ nonisolated struct FilmCamera: Equatable, Sendable {
             case .cameraRoll: roll = v[0]
             case .cameraTilt: tilt = v[0]
             case .cameraSwing: swing = v[0]
+            case .cameraFocus: focus = v[0]
+            case .cameraBlur: blur = v[0]
             default: break
             }
         }
