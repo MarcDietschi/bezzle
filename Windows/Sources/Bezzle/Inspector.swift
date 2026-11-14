@@ -37,6 +37,11 @@ final class Inspector {
     }
     /// While a dial turns, the cards are not made again: the card under the pointer must stay.
     var dialing = false
+    /// What of the Animate cards shows the film at the panels' moment: each puts itself right in
+    /// place when that moves on (`followFilm`), where making every card again at each step of a
+    /// scrub held the scrub up. One that cannot be put right in place says so, and the cards are
+    /// made again after all.
+    var filmFollowers: [() -> Bool] = []
     /// The piles of fills, borders and shadows shown, and the card of one just put in another
     /// place, which lands there from where it was let go once the panel is made again.
     var piles: [Pile] = []
@@ -122,12 +127,25 @@ final class Inspector {
         }
         root.children.append(scroll)
         session.listen { [weak self] in self?.changed() }
-        // Animated, the cards follow the playhead and what of the film is picked.
+        // Animated, the cards follow what of the film is picked, and the playhead at the panels'
+        // pace: a scrub catches them up no more than thirty times a second.
         session.listenToFilm { [weak self] in
             guard let self, self.session.mode == 3, !self.dialing else { return }
-            self.show()
+            Probe.time("inspector.show") { self.show() }
+        }
+        session.listenToPanelTime { [weak self] in
+            guard let self, self.session.mode == 3, !self.dialing else { return }
+            Probe.time("inspector.follow") { self.followFilm() }
         }
         show()
+    }
+
+    /// The panels' moment moved on: what shows the film at it is put right where it stands.
+    private func followFilm() {
+        for follower in filmFollowers where !follower() {
+            show()
+            return
+        }
     }
 
     /// The cards made again for a change. While a drag on the design's canvas goes on, only the
@@ -189,6 +207,7 @@ final class Inspector {
         cards.children.clear()
         piles = []
         summaries = [:]
+        filmFollowers = []
         // The card pointed at goes with them, and the layers it outlined with it.
         if cardLit {
             cardLit = false
@@ -842,7 +861,10 @@ final class Inspector {
     /// or leaving sets what was typed, Esc puts it back; the arrow keys step it, Shift by ten.
     func field(_ label: String, _ value: Double?, unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
                scrub: Double = 1, width: Double = Inspector.column, decimals: Int? = nil, each: ((Double) -> Void)? = nil,
-               set: @escaping (Double) -> Void) -> FrameworkElement {
+               follow: (() -> Double?)? = nil, set: @escaping (Double) -> Void) -> FrameworkElement {
+        // With `follow`, its number is read again as the film's playhead moves on (`filmFollowers`).
+        var value = value
+        var following: (() -> Void)?
         // With `decimals`, its number is shown and scrubbed to that many places, as the Mac's
         // NumberField; without, to one place shown and whole numbers scrubbed.
         let number: (Double) -> String = { v in decimals.map { Inspector.number(v, places: $0) } ?? self.number(v) }
@@ -861,7 +883,7 @@ final class Inspector {
         name.verticalAlignment = .center
         grid.children.append(name)
 
-        let shown = value.map(number) ?? "–"
+        var shown = value.map(number) ?? "–"
         let box = TextBox()
         // The panel takes no focus from clicks (so a click between cards leaves the fields alone);
         // a field itself does.
@@ -954,6 +976,8 @@ final class Inspector {
             edge.borderBrush = Theme.clear
             box.textWrapping = .noWrap
             commit()
+            // Nothing typed, and the playhead moved on meanwhile: the number of where it is now.
+            if !done { following?() }
         }
         box.gotFocus.addHandler { _, _ in
             box.textWrapping = .wrap
@@ -1023,6 +1047,22 @@ final class Inspector {
                 cover.isHitTestVisible = false
                 if (try? box.focus(.pointer)) != true { _ = try? box.focus(.programmatic) }
                 try? box.selectAll()
+            }
+        }
+        if let follow {
+            // Never under a hand: one typing in it (its cover put aside) or scrubbing over it.
+            let put = { [weak box, weak cover] in
+                guard let box, let cover, start == nil, cover.isHitTestVisible else { return }
+                let now = follow()
+                guard now != value else { return }
+                value = now
+                shown = now.map(number) ?? "–"
+                box.text = shown
+            }
+            following = put
+            filmFollowers.append {
+                put()
+                return true
             }
         }
         return well

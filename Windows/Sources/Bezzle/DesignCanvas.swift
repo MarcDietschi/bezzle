@@ -536,11 +536,12 @@ final class DesignCanvas {
         // A shape's points moved where no pose keeps them, or Delete on them: points are added and
         // taken away in the design.
         motion.beep = { _ = MessageBeep(0) }
-        film.resync = { [weak self] in self?.placeFilm() }
+        film.resync = { [weak self] in Probe.time("canvas.placeFilm(play)") { self?.placeFilm() } }
         session.film.run = { [weak self] in self?.film.run() }
         session.film.inSight = { [weak self] in self?.artboardInSight() }
         session.film.frame = { [weak self] id in self?.frameFilm(id) }
-        session.listenToFilm { [weak self] in self?.placeFilm() }
+        session.listenToFilm { [weak self] in Probe.time("canvas.placeFilm") { self?.placeFilm() } }
+        session.listenToPlayhead { [weak self] in Probe.time("canvas.placeFilm(moved)") { self?.placeFilm() } }
         curveHand.edited = { [weak self] in self?.session.edited(board: nil) }
         curveHand.fly = { [weak self] id, p in self?.letters.fly(id, from: p) }
         letters.watching = { [weak self] in
@@ -1008,7 +1009,7 @@ final class DesignCanvas {
         if !holds(stage, film.image) { stage.children.append(film.image) }
         if !holds(overlay, film.marks) { overlay.children.append(film.marks) }
         syncMotion()
-        film.sync(zoom: zoom, pan: CGPoint(x: Double(pan.x), y: Double(pan.y)), size: CGSize(width: stage.actualWidth, height: stage.actualHeight), pixelScale: pixelScale)
+        Probe.time("canvas.filmSync") { film.sync(zoom: zoom, pan: CGPoint(x: Double(pan.x), y: Double(pan.y)), size: CGSize(width: stage.actualWidth, height: stage.actualHeight), pixelScale: pixelScale) }
         coverSheet(film.shown)
         drawMotion()
     }
@@ -1024,7 +1025,7 @@ final class DesignCanvas {
 
     /// What is posed over the film, as the canvas hand has it now.
     private func drawMotion() {
-        guard animating else { film.marks.children.clear(); return }
+        guard animating else { film.drawMarks(nil, pixelScale: pixelScale); return }
         syncMotion()
         film.drawMarks(motion.marks(), pixelScale: pixelScale)
     }

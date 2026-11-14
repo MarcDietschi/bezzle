@@ -83,7 +83,7 @@ extension WindowsCore {
 
         public var hot = Hot() { didSet { if hot != oldValue { changed() } } }
 
-        struct Drag {
+        struct Drag: Equatable {
             enum Kind { case scrub, keys, band, length, nothing }
             var kind: Kind
             var refs: [FilmKeyRef] = []
@@ -107,9 +107,18 @@ extension WindowsCore {
         public func t(_ x: CGFloat) -> Double { scale.t(x) }
         public var perSecond: CGFloat { scale.perSecond }
 
+        /// The lines as they were last read, kept while the design, the artboard and the lines
+        /// opened are as they were: a scrub asks for them at every step.
+        private var rowsWorkedOut: (version: Int, fronts: [UUID: Int], board: UUID, open: Set<UUID>, rows: [FilmRow])?
+
         private var rows: [FilmRow] {
             guard let board = desk.filmBoard else { return [] }
-            return FilmRow.rows(of: board, open: desk.open)
+            if let had = rowsWorkedOut, had.version == WindowsCore.designVersion, had.fronts == WindowsCore.fronts, had.board == board.id, had.open == desk.open {
+                return had.rows
+            }
+            let rows = FilmRow.rows(of: board, open: desk.open)
+            rowsWorkedOut = (WindowsCore.designVersion, WindowsCore.fronts, board.id, desk.open, rows)
+            return rows
         }
 
         private func picked(_ row: FilmRow) -> Bool {
@@ -239,7 +248,7 @@ extension WindowsCore {
         /// everything a moment catches on, and `fine` (Alt) steps finer.
         public func dragged(to p: CGPoint, by dx: CGFloat, free: Bool = false, fine: Bool = false) {
             guard var d = drag else { return }
-            let rows = rows
+            let rows = Probe.time("hand.rows") { self.rows }
             let scale = scale
             let length = desk.length
             switch d.kind {
@@ -292,8 +301,13 @@ extension WindowsCore {
                 t = min(max(t, 0.25), scale.span)
                 desk.setLength(MotionTiming.time(t))
             }
+            // Only when it changed: the timeline is made again each time it is told, and a hand
+            // scrubbing through the film moves on many times a second with nothing else changed.
+            guard drag != d else { return }
             drag = d
-            changed()
+            // Nor for the playhead catching on a key or letting go of it: the timeline shows
+            // nothing of that, and the playhead tells of itself (`FilmDesk.moved`).
+            if d.kind != .scrub { Probe.time("hand.changed") { changed() } }
         }
 
         /// The press let go.

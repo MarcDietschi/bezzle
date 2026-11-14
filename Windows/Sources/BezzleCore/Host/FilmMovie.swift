@@ -292,6 +292,8 @@ extension WindowsCore {
         struct Reel {
             let board: Node
             let pieces: [FilmPiece]
+            /// The layer each piece places, found once for the whole film.
+            private let layers: [Node?]
             private let density: CGFloat
             private let pixels: CGFloat
             private let fps: Int
@@ -311,6 +313,7 @@ extension WindowsCore {
                 self.fps = max(fps, 1)
                 self.size = size
                 pieces = board.filmPieces()
+                layers = board.filmLayers(of: pieces)
                 ground = FilmPictures.Ground.of(board)
                 density = max(size.width / max(board.frame.width, 1), size.height / max(board.frame.height, 1))
                 pixels = size.width * size.height
@@ -325,7 +328,7 @@ extension WindowsCore {
 
             mutating func shot(at t: Double) -> Shot {
                 let camera = board.camera(at: t)
-                let placements = pieces.map { board.placement(of: $0, at: t, camera: camera) }
+                let placements = pieces.indices.map { board.placement(of: pieces[$0], layer: layers[$0], at: t, camera: camera) }
                 let frame = CGRect(origin: .zero, size: board.frame.size)
                 var fresh: [Shot.Fresh] = []
                 var inParts: Set<Int> = []
@@ -380,7 +383,7 @@ extension WindowsCore {
                 for k in stride(from: 1, through: fps / 2, by: 1) {
                     let then = t + Double(k) / Double(fps)
                     guard then <= length + 1e-9 else { break }
-                    let q = board.placement(of: piece, at: then, camera: board.camera(at: then))
+                    let q = board.placement(of: piece, layer: layers[i], at: then, camera: board.camera(at: then))
                     guard q.blur <= 0.05, q.opacity >= 0.001, let next = q.map.seen(of: reach, through: frame) else { continue }
                     let grown = all.union(next.part), sharper = max(most, CGFloat(next.stretch) * density)
                     let drawn = sharper * 1.2

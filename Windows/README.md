@@ -296,7 +296,28 @@ checks them on a Mac (with Xcode's developer directory, whose Swift has the test
 each piece is a picture the Mac's own `FilmPictures` (linked into `Sources/BezzleCore/Film/`) draws
 once, laid into the frame through the camera's 3×3 map by Skia (`bz_film_frame` in host.cpp) where
 the Mac's graphics card does it, and only for what shows of the artboard; a part is drawn sharper
-where the camera is close once the film rests (`Host/FilmStage.swift`). Save as Movie and the AI
+where the camera is close once the film rests (`Host/FilmStage.swift`).
+
+Scrubbing and playing keep pace as the Mac's do (`README.md` › Animate, Keeping it quick), each
+lesson where it applies to a stage put together on the processor. What is placed at every frame
+is found once (`Node.filmLayers`). A piece whose insides move (a moving shader) is drawn again at
+every moment, so only as far as it shows through the frame and as sharp as it shows there
+(`FilmStage.seenPart`, the Mac's). No sharper part is drawn while the film moves from one frame to
+the next or a hand is on the design: the Mac draws its parts away from the main thread, Windows
+draws on it, so they come with a frame asked for once the playhead has rested an eighth of a
+second (`FilmStage.owesParts`, `FilmView.sharpen`). Skia lays the frame out in bands, a thread
+each, for every processor but one (`bz_film_frame`; `BEZZLE_FILM_BANDS=1` lays it out in one, to
+compare: the same picture, but for a pixel or two in ten thousand that come out one step of 255
+off where the camera tilts). The playhead tells of itself apart from the film (`DesignSession.listenToPlayhead`,
+`FilmDesk.moved`), so a step of a scrub moves the timeline's playhead and makes none of its lines
+again, the header is painted only where it changed, and the marks on the canvas that are as they
+were stay (`FilmView.lay`; the way, its beads and the home outline are kept in `MotionHand` until
+the design changes). The Animate cards show `FilmDesk.panelTime`, the playhead caught up with
+thirty times a second at most, and each number, bead and summary puts itself right in place
+(`Inspector.filmFollowers`): making the cards again, as every other change does, took longer than
+a frame.
+
+Save as Movie and the AI
 server's `export` with format mp4 write H.264 in an .mp4 through Media Foundation's sink writer
 (`Host/FilmMovie.swift`, FilmExport's reel ported, and `CBezzleHost/movie.cpp`): High profile, a
 key frame every second, BT.709 and sRGB said, what says how it is read put before the pictures

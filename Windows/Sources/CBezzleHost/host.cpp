@@ -62,6 +62,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace skia::textlayout;
@@ -2802,28 +2803,28 @@ extern "C" void bz_picture_forget(int32_t id) {
 
 // MARK: A film's frame (Host/FilmStage.swift, FilmMovie.swift)
 
-extern "C" int32_t bz_film_frame(int32_t width, int32_t height, const double* backdrop, const bz_film_piece* pieces, int32_t count,
-                                 int32_t bgra, void* pixels) {
-    std::lock_guard<std::mutex> guard(lock);
-    const int w = std::max(1, width), h = std::max(1, height);
-    const SkImageInfo info = SkImageInfo::Make(w, h, bgra ? kBGRA_8888_SkColorType : kRGBA_8888_SkColorType, kPremul_SkAlphaType,
-                                               SkColorSpace::MakeSRGB());
-    auto surface = SkSurfaces::WrapPixels(info, pixels, size_t(w) * 4);
-    if (!surface) return 1;
+namespace {
+
+/// A piece of a frame with its picture found: what `layFilm` draws.
+struct FilmLaid {
+    sk_sp<SkImage> image;
+    const bz_film_piece* piece;
+};
+
+/// Lays the pieces into rows `top` to `bottom` of a frame, over the backdrop. The canvas is the
+/// whole frame's, cut down to those rows, so a pixel comes out as it does with the frame laid out
+/// in one go, blurs too. Measured on a film with a blur and a camera that tilts: the same to the
+/// last bit seen straight on, and seen in perspective up to 170 pixels of a million one step of
+/// 255 off, on edges Skia cuts to the rows it fills.
+void layFilm(const SkImageInfo& info, void* pixels, int top, int bottom, const double* backdrop, const std::vector<FilmLaid>& laid) {
+    auto surface = SkSurfaces::WrapPixels(info, pixels, size_t(info.width()) * 4);
+    if (!surface) return;
     SkCanvas* canvas = surface->getCanvas();
+    canvas->clipIRect(SkIRect::MakeLTRB(0, top, info.width(), bottom));
     canvas->clear(backdrop ? SkColor4f{float(backdrop[0]), float(backdrop[1]), float(backdrop[2]), float(backdrop[3])} : SkColors::kTransparent);
-    for (int k = 0; k < count; k++) {
-        const bz_film_piece& p = pieces[k];
-        if (p.opacity < 0.001) continue;
-        sk_sp<SkImage> image;
-        if (auto it = mipped.find(p.picture); it != mipped.end()) {
-            image = it->second;
-        } else if (auto drawn = get(p.picture)) {
-            image = drawn->withDefaultMipmaps();
-            if (!image) image = drawn;
-            mipped[p.picture] = image;
-        }
-        if (!image) continue;
+    for (const FilmLaid& l : laid) {
+        const bz_film_piece& p = *l.piece;
+        const sk_sp<SkImage>& image = l.image;
         const double* m = p.map;
         const SkMatrix map = SkMatrix::MakeAll(float(m[0]), float(m[1]), float(m[2]), float(m[3]), float(m[4]), float(m[5]),
                                                float(m[6]), float(m[7]), float(m[8]));
@@ -2854,6 +2855,62 @@ extern "C" int32_t bz_film_frame(int32_t width, int32_t height, const double* ba
         canvas->drawPath(outline.detach(), paint);
         canvas->restore();
     }
+}
+
+/// How many bands a frame is laid out in, a thread each: one for each processor but one, none
+/// thinner than 48 rows, and a small frame in one, which is laid out sooner than threads are
+/// begun. BEZZLE_FILM_BANDS says another number, for comparing.
+int filmBands(int width, int height) {
+    static const int asked = [] {
+        const char* said = getenv("BEZZLE_FILM_BANDS");
+        return said ? std::max(1, atoi(said)) : 0;
+    }();
+    if (asked > 0) return std::min(asked, std::max(1, height));
+    if (int64_t(width) * height < 160000) return 1;
+    const int processors = int(std::thread::hardware_concurrency());
+    return std::max(1, std::min({processors - 1, 12, height / 48}));
+}
+
+}
+
+extern "C" int32_t bz_film_frame(int32_t width, int32_t height, const double* backdrop, const bz_film_piece* pieces, int32_t count,
+                                 int32_t bgra, void* pixels) {
+    // Held until the frame is whole: the pictures are the core's, which forgets them under it.
+    std::lock_guard<std::mutex> guard(lock);
+    const int w = std::max(1, width), h = std::max(1, height);
+    const SkImageInfo info = SkImageInfo::Make(w, h, bgra ? kBGRA_8888_SkColorType : kRGBA_8888_SkColorType, kPremul_SkAlphaType,
+                                               SkColorSpace::MakeSRGB());
+    if (!SkSurfaces::WrapPixels(info, pixels, size_t(w) * 4)) return 1;
+    std::vector<FilmLaid> laid;
+    laid.reserve(size_t(std::max(count, 0)));
+    for (int k = 0; k < count; k++) {
+        const bz_film_piece& p = pieces[k];
+        if (p.opacity < 0.001) continue;
+        sk_sp<SkImage> image;
+        if (auto it = mipped.find(p.picture); it != mipped.end()) {
+            image = it->second;
+        } else if (auto drawn = get(p.picture)) {
+            image = drawn->withDefaultMipmaps();
+            if (!image) image = drawn;
+            mipped[p.picture] = image;
+        }
+        if (image) laid.push_back({image, &p});
+    }
+    // In bands, a thread each: a frame's time is Skia filling it on the processor, and the bands
+    // share nothing but the pictures, which are only read.
+    const int bands = filmBands(w, h);
+    if (bands <= 1) {
+        layFilm(info, pixels, 0, h, backdrop, laid);
+        return 0;
+    }
+    std::vector<std::thread> threads;
+    threads.reserve(size_t(bands - 1));
+    for (int b = 1; b < bands; b++) {
+        const int top = int(int64_t(h) * b / bands), bottom = int(int64_t(h) * (b + 1) / bands);
+        threads.emplace_back([&info, pixels, top, bottom, backdrop, &laid] { layFilm(info, pixels, top, bottom, backdrop, laid); });
+    }
+    layFilm(info, pixels, 0, int(int64_t(h) / bands), backdrop, laid);
+    for (auto& t : threads) t.join();
     return 0;
 }
 

@@ -25,6 +25,14 @@ extension WindowsCore {
         public private(set) var live = 0.0
         /// The same again, which the stage reads each frame.
         public private(set) var head = 0.0
+        /// The moment the panels show: where the playhead rests, but caught up with no more than
+        /// thirty times a second while a hand drags it (the Mac's FilmDesk.shown). The numbers of
+        /// a scrub are not read at the screen's pace, and making the panel's cards again at every
+        /// step took most of the main thread; the film, the playhead and its clock still follow
+        /// the hand at every step.
+        public private(set) var shown = 0.0
+        private var shownAt = -1.0
+        private var catching = false
         public private(set) var playing = false
         /// The camera picked, rather than any layer.
         public var camera = false { didSet { if camera != oldValue { changed() } } }
@@ -66,8 +74,14 @@ extension WindowsCore {
         public private(set) var selection: [UUID] = []
         /// Asks the window to select other layers (its select, which tells the film back).
         public var select: ([UUID]) -> Void = { _ in }
-        /// The desk changed: the playhead, what is picked, the camera. Shown again.
+        /// The desk changed: what is picked, the camera, whether the film plays. Shown again.
         public var changed: () -> Void = {}
+        /// The playhead moved, and nothing else changed: the film and the playhead follow it, as
+        /// they follow a hand on the timeline at every step.
+        public var moved: () -> Void = {}
+        /// The panels' moment (`panelTime`) caught up with the playhead: what they show at it,
+        /// shown again.
+        public var panelMoved: () -> Void = {}
         /// The design was changed through the film: shown and saved.
         public var edited: () -> Void = {}
         /// The film began to play, or show something: the stage runs frame by frame.
@@ -138,6 +152,7 @@ extension WindowsCore {
             keys = []
             camera = false
             time = 0
+            shown = 0
             live = 0
             head = 0
             if on { frameIt() }
@@ -162,6 +177,32 @@ extension WindowsCore {
         /// The moment that is posed: the playhead, within the film as it is now.
         public var filmTime: Double { min(max(time, 0), filmBoard?.filmLength ?? 0) }
 
+        /// The moment the panels show (`shown`), within the film as it is now.
+        public var panelTime: Double { min(max(shown, 0), filmBoard?.filmLength ?? 0) }
+
+        /// Brings the panels' moment to the playhead: at once when they last caught up a thirtieth
+        /// of a second ago or more, as for a step of the arrows; else as soon as that much has
+        /// passed, so the last moment of a drag is always the one they show.
+        private func catchUpPanels() {
+            guard shown != time else { return }
+            let now = WindowsCore.now, every = 1.0 / 30
+            if now - shownAt >= every {
+                shown = time
+                shownAt = now
+                panelMoved()
+                return
+            }
+            guard !catching else { return }
+            catching = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + every - (now - shownAt)) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.catching = false
+                    self.catchUpPanels()
+                }
+            }
+        }
+
         /// The layers a pose is given to: those picked that lie on the film's artboard.
         public var posedLayers: [UUID] {
             guard let board = filmBoard else { return [] }
@@ -178,16 +219,27 @@ extension WindowsCore {
 
         // MARK: The playhead
 
-        /// Puts the playhead at a moment, and stops the film there.
+        /// Puts the playhead at a moment, and stops the film there. A film that played stops, which
+        /// everything is told of; else only that the playhead moved, as a hand scrubbing through
+        /// the film moves it many times a second, and the panels catch up at their own pace.
         public func seek(_ t: Double) {
+            let stopped = playing || pass != nil
             playing = false
             pass = nil
             let length = filmBoard?.filmLength ?? 0
             let to = min(MotionTiming.time(min(max(t.isNaN ? 0 : t, 0), length)), length)
+            let same = time == to && live == to && head == to
             time = to
             live = to
             head = to
-            changed()
+            if stopped {
+                shown = to
+                shownAt = WindowsCore.now
+                changed()
+            } else if !same {
+                moved()
+                catchUpPanels()
+            }
         }
 
         /// Plays the film from the playhead, or from its start once it has reached the end.
@@ -221,10 +273,7 @@ extension WindowsCore {
         /// Stops the film where it is.
         public func pause() {
             guard playing else { return }
-            let rest = pass?.back ?? live
-            playing = false
-            pass = nil
-            seek(rest)
+            seek(pass?.back ?? live)
         }
 
         public func toggle() {
@@ -246,16 +295,12 @@ extension WindowsCore {
             let t = pass.from + max(now - pass.began, 0)
             if let to = pass.to {
                 if t >= to + 0.4 {
-                    playing = false
-                    self.pass = nil
                     seek(pass.back ?? to)
                     return false
                 }
                 head = min(t, to)
             } else if board.film?.once == true {
                 if t >= length {
-                    playing = false
-                    self.pass = nil
                     seek(length)
                     return false
                 }
@@ -362,9 +407,9 @@ extension WindowsCore {
 
         /// The number layers share of a property at the playhead, as the panel shows it; nil
         /// where they differ, or there are none.
-        public func sharedValue(_ name: String, _ index: Int) -> Double? {
+        public func sharedValue(_ name: String, _ index: Int, at moment: Double? = nil) -> Double? {
             guard let property = MotionProperty(rawValue: name), let board = filmBoard, index < property.rest.count else { return nil }
-            let t = filmTime
+            let t = moment ?? filmTime
             let values = posedLayers.compactMap { board.descendant($0)?.value(of: property, at: t)[index] }
             guard let first = values.first, values.allSatisfy({ abs($0 - first) < 1e-6 }) else { return nil }
             return first
@@ -387,10 +432,10 @@ extension WindowsCore {
             }
         }
 
-        /// The camera's number at the playhead.
-        public func cameraValue(_ name: String, _ index: Int) -> Double {
+        /// The camera's number at the playhead, or at a moment.
+        public func cameraValue(_ name: String, _ index: Int, at moment: Double? = nil) -> Double {
             guard let property = MotionProperty(rawValue: name), let board = filmBoard else { return 0 }
-            let v = board.value(of: property, at: filmTime)
+            let v = board.value(of: property, at: moment ?? filmTime)
             return index < v.count ? v[index] : 0
         }
 
@@ -420,9 +465,9 @@ extension WindowsCore {
         }
 
         /// One number of an input the picked layers share at the playhead; nil where they differ.
-        public func sharedInput(_ name: String, _ index: Int) -> Double? {
+        public func sharedInput(_ name: String, _ index: Int, at moment: Double? = nil) -> Double? {
             guard let board = filmBoard else { return nil }
-            let t = filmTime, layers = posedLayers
+            let t = moment ?? filmTime, layers = posedLayers
             let values = layers.compactMap { board.descendant($0)?.shaderInput(name, at: t) }.compactMap { index < $0.count ? $0[index] : nil }
             guard values.count == layers.count, let first = values.first, values.allSatisfy({ abs($0 - first) < 1e-6 }) else { return nil }
             return first
@@ -460,9 +505,9 @@ extension WindowsCore {
             }
         }
 
-        public func inputKeyState(_ name: String) -> KeyBead {
+        public func inputKeyState(_ name: String, at moment: Double? = nil) -> KeyBead {
             guard let board = filmBoard else { return .none }
-            let t = filmTime
+            let t = moment ?? filmTime
             var state = KeyBead.none
             for id in posedLayers {
                 guard let track = board.descendant(id)?[track: ShaderFill.inputTrack(name)] else { continue }
@@ -504,9 +549,9 @@ extension WindowsCore {
             property.isCamera ? (board.map { [$0] } ?? []) : posedLayers
         }
 
-        public func keyState(_ name: String) -> KeyBead {
+        public func keyState(_ name: String, at moment: Double? = nil) -> KeyBead {
             guard let property = MotionProperty(rawValue: name), let board = filmBoard else { return .none }
-            let t = filmTime
+            let t = moment ?? filmTime
             var state = KeyBead.none
             for id in targets(of: property) {
                 guard let track = (id == board.id ? board : board.descendant(id))?[track: property] else { continue }
@@ -561,9 +606,11 @@ extension WindowsCore {
         }
 
         /// How what is picked stands at the playhead, over everything of it that moves.
-        public var holdState: KeyBead {
+        public var holdState: KeyBead { holdState(at: filmTime) }
+
+        /// The same at a moment, as the panels show it (`panelTime`).
+        public func holdState(at t: Double) -> KeyBead {
             guard let board = filmBoard else { return .none }
-            let t = filmTime
             var state = KeyBead.none
             for id in keyTargets {
                 guard let node = id == board.id ? board : board.descendant(id) else { continue }
@@ -595,10 +642,12 @@ extension WindowsCore {
 
         /// Whether Delete has keys to take away: some picked in the timeline, or some at the
         /// playhead of what is picked.
-        public var hasKeysToRemove: Bool {
+        public var hasKeysToRemove: Bool { hasKeysToRemove(at: filmTime) }
+
+        /// The same at a moment, as the panels show it (`panelTime`).
+        public func hasKeysToRemove(at t: Double) -> Bool {
             if !pickedKeys.isEmpty { return true }
             guard let board = filmBoard else { return false }
-            let t = filmTime
             return keyTargets.contains { id in
                 (id == board.id ? board : board.descendant(id))?.motion?.values.contains { $0.index(at: t) != nil } == true
             }
@@ -645,9 +694,11 @@ extension WindowsCore {
 
         /// The pace the picked keys share, or those at the playhead, by name; nil when they
         /// differ or there are none.
-        public var sharedEase: String? {
+        public var sharedEase: String? { sharedEase(at: filmTime) }
+
+        /// The same at a moment, as the panels show it (`panelTime`).
+        public func sharedEase(at t: Double) -> String? {
             guard let board = filmBoard else { return nil }
-            let t = filmTime
             var refs = pickedKeys
             if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
             var found: MotionEase?
@@ -703,9 +754,12 @@ extension WindowsCore {
             public var isRest: Bool { x == 0 && y == 0 && zoom == 1 && roll == 0 && tilt == 0 && swing == 0 }
         }
 
-        public var cameraPose: CameraPose? {
+        public var cameraPose: CameraPose? { cameraPose(at: filmTime) }
+
+        /// The same at a moment, as the panels show it (`panelTime`).
+        public func cameraPose(at t: Double) -> CameraPose? {
             guard let board = filmBoard else { return nil }
-            let c = board.camera(at: filmTime)
+            let c = board.camera(at: t)
             return CameraPose(x: c.x, y: c.y, zoom: c.zoom, roll: c.roll, tilt: c.tilt, swing: c.swing)
         }
 
@@ -860,10 +914,11 @@ extension WindowsCore {
             return (count == 3 || count == 4) && name.range(of: "colou?r|tint|hue|ink|paint", options: [.regularExpression, .caseInsensitive]) != nil
         }
 
-        /// An input's colour at the playhead, shared by the picked layers; nil where they differ.
-        public func inputColour(_ name: String) -> WindowsCore.Colour? {
+        /// An input's colour at the playhead, or at a moment, shared by the picked layers; nil where
+        /// they differ.
+        public func inputColour(_ name: String, at moment: Double? = nil) -> WindowsCore.Colour? {
             let count = inputCount(name)
-            let values = (0..<count).map { sharedInput(name, $0) }
+            let values = (0..<count).map { sharedInput(name, $0, at: moment) }
             guard values.allSatisfy({ $0 != nil }), count >= 3 else { return nil }
             let v = values.map { min(max($0!, 0), 1) }
             return WindowsCore.Colour(r: v[0], g: v[1], b: v[2], a: count == 4 ? v[3] : 1)
@@ -876,13 +931,13 @@ extension WindowsCore {
         /// The camera's pad: the film's frame fitted in a pad `size` big with room round it, and
         /// the artboard's sheet as the camera sees it there, ruled in thirds; nil corners for a
         /// sheet that reaches behind the eye.
-        public func pad(size: CGSize) -> (frame: CGRect, sheet: [CGPoint]?, rules: [(CGPoint, CGPoint)])? {
+        public func pad(size: CGSize, at moment: Double? = nil) -> (frame: CGRect, sheet: [CGPoint]?, rules: [(CGPoint, CGPoint)])? {
             guard let board = filmBoard else { return nil }
             let s = board.frame.size
             guard s.width > 0, s.height > 0 else { return nil }
             let fit = min((size.width - 36) / s.width, (size.height - 26) / s.height)
             let frame = CGRect(x: (size.width - s.width * fit) / 2, y: (size.height - s.height * fit) / 2, width: s.width * fit, height: s.height * fit)
-            let map = FilmLens.ground(board.camera(at: filmTime), size: s)
+            let map = FilmLens.ground(board.camera(at: moment ?? filmTime), size: s)
             func seen(_ x: CGFloat, _ y: CGFloat) -> CGPoint? {
                 let at = CGPoint(x: x, y: y)
                 guard map.depth(at: at) > 1e-3 else { return nil }

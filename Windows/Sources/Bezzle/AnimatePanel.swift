@@ -13,6 +13,11 @@ import WinSDK
 extension Inspector {
     private var film: WindowsCore.FilmDesk { session.film }
 
+    // What the cards show of the film at a moment (the pose of what is picked, its shader's inputs,
+    // the camera, the beads beside them) they show at the panels' moment, `FilmDesk.panelTime`,
+    // and each number, bead and summary follows it in place (`Inspector.filmFollowers`): the cards
+    // are made once for what is picked, not again at every step of a hand scrubbing through the film.
+
     func showAnimate() {
         guard film.hasFilm else { return }
         let layers = film.posedLayers
@@ -31,10 +36,11 @@ extension Inspector {
     }
 
     /// Seconds as they are written here.
-    private func seconds(_ t: Double) -> String { Inspector.number(t, places: 2) + " s" }
+    private static func seconds(_ t: Double) -> String { Inspector.number(t, places: 2) + " s" }
 
-    /// A card of this panel: what it is and what it comes to on one line, and its controls under it.
-    private func panelCard(_ title: String, _ summary: String, glyph: [Glyphs.Part], rows: [UIElement]) -> UIElement {
+    /// A card of this panel: what it is and what it comes to on one line, and its controls under
+    /// it. With `follow`, what it comes to is read again as the playhead moves on.
+    private func panelCard(_ title: String, _ summary: String, glyph: [Glyphs.Part], rows: [UIElement], follow: (() -> String)? = nil) -> UIElement {
         let card = Theme.card(radius: 12)
         card.width = Theme.cardWidth
         let stack = StackPanel()
@@ -59,6 +65,19 @@ extension Inspector {
         value.horizontalAlignment = .right
         value.maxWidth = 130
         line.children.append(value)
+        if let follow {
+            var said = summary
+            // The view is held for as long as these cards are (`Inspector.filmFollowers`): held
+            // weakly, it was let go of at once, still on the screen but no longer reached from here.
+            filmFollowers.append {
+                let now = follow()
+                if now != said {
+                    said = now
+                    value.text = now
+                }
+                return true
+            }
+        }
         stack.children.append(line)
         let content = StackPanel()
         content.spacing = 8
@@ -81,13 +100,26 @@ extension Inspector {
 
     /// A property's key at the playhead: a click sets a key here, holding what it is; on a key, it
     /// takes that away.
-    private func keyBead(_ state: WindowsCore.KeyBead, toggle: @escaping @MainActor () -> Void) -> FrameworkElement {
+    private func keyBead(_ state: @escaping () -> WindowsCore.KeyBead, toggle: @escaping @MainActor () -> Void) -> FrameworkElement {
         let press = Pressable(radius: 10, action: toggle)
         press.hoverWash = 0.07
         press.box.width = 20
         press.box.height = 20
-        press.box.child = FilmTimelineView.bead(state: state, size: 9)
-        try? ToolTipService.setToolTip(press.box, Words.t(state == .here ? "A key here. Click to take it away." : "Set a key here"))
+        var shown: WindowsCore.KeyBead?
+        let box = press.box
+        // As the property stands at the panels' moment, and again as the playhead moves on.
+        let paint = {
+            let now = state()
+            guard now != shown else { return }
+            shown = now
+            box.child = FilmTimelineView.bead(state: now, size: 9)
+            try? ToolTipService.setToolTip(box, Words.t(now == .here ? "A key here. Click to take it away." : "Set a key here"))
+        }
+        paint()
+        filmFollowers.append {
+            paint()
+            return true
+        }
         return press.box
     }
 
@@ -117,13 +149,16 @@ extension Inspector {
     }
 
     private func property(_ name: String, _ title: String, fields: [FrameworkElement]) -> UIElement {
-        propertyRow(title, bead: keyBead(film.keyState(name)) { [weak self] in self?.film.toggleKey(name) }, fields: fields)
+        let film = self.film
+        return propertyRow(title, bead: keyBead({ film.keyState(name, at: film.panelTime) }) { [weak self] in self?.film.toggleKey(name) }, fields: fields)
     }
 
     /// One number of the picked layers' pose: what they share, or a dash where they differ.
     private func poseField(_ name: String, _ index: Int, label: String = "", unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
                            times: Double = 1, scrub: Double = 1, decimals: Int = 1, width: Double = 84) -> FrameworkElement {
-        field(label, film.sharedValue(name, index).map { $0 * times }, unit: unit, range: range, scrub: scrub, width: width, decimals: decimals) { [weak self] shown in
+        let film = self.film
+        let value = { film.sharedValue(name, index, at: film.panelTime).map { $0 * times } }
+        return field(label, value(), unit: unit, range: range, scrub: scrub, width: width, decimals: decimals, follow: value) { [weak self] shown in
             self?.film.pose(name, number: index, to: shown / times)
         }
     }
@@ -197,7 +232,8 @@ extension Inspector {
             ]))
             rows.append(property("shape", WindowsCore.FilmDesk.title("shape"), fields: [pointsChip()]))
         }
-        return panelCard(Words.t("Pose"), seconds(film.filmTime), glyph: Glyphs.pose(), rows: rows)
+        let film = self.film
+        return panelCard(Words.t("Pose"), Inspector.seconds(film.panelTime), glyph: Glyphs.pose(), rows: rows) { Inspector.seconds(film.panelTime) }
     }
 
     /// The small arrow between where a line's drawing starts and where it ends.
@@ -248,22 +284,26 @@ extension Inspector {
     /// its numbers, each a change from what the design sets.
     private func shaderCard(_ inputs: [String]) -> UIElement {
         var rows: [UIElement] = []
+        let film = self.film
         for name in inputs {
             let count = film.inputCount(name)
-            let bead = keyBead(film.inputKeyState(name)) { [weak self] in self?.film.toggleInputKey(name) }
+            let bead = keyBead({ film.inputKeyState(name, at: film.panelTime) }) { [weak self] in self?.film.toggleInputKey(name) }
             func number(_ i: Int, _ label: String, _ width: Double) -> FrameworkElement {
-                field(label, film.sharedInput(name, i), scrub: 0.01, width: width, decimals: 3) { [weak self] v in
+                let value = { film.sharedInput(name, i, at: film.panelTime) }
+                return field(label, value(), scrub: 0.01, width: width, decimals: 3, follow: value) { [weak self] v in
                     self?.film.poseInput(name, number: i, to: v)
                 }
             }
             if film.inputIsColour(name) {
-                let colour = film.inputColour(name)
+                let colour = film.inputColour(name, at: film.panelTime)
                 let well = Colours.field(colour, suggestions: [], open: { [weak self] anchor in
                     self?.openColourPanel(below: anchor, start: colour ?? WindowsCore.Colour(r: 0.5, g: 0.5, b: 0.5, a: 1)) { c in
                         self?.film.poseInput(name, colour: c)
                     }
                 }, preview: { _ in }, apply: { [weak self] c in self?.film.poseInput(name, colour: c) })
                 well.width = 150
+                // A colour's field is made for its colour: once that is another, the cards are made again.
+                filmFollowers.append { film.inputColour(name, at: film.panelTime) == colour }
                 rows.append(propertyRow(name, bead: bead, fields: [well], mono: true))
             } else if count <= 2 {
                 let fields = (0..<count).map { number($0, count == 1 ? "" : ["X", "Y"][$0], count == 1 ? 84 : 64) }
@@ -278,7 +318,7 @@ extension Inspector {
                 rows.append(line)
             }
         }
-        return panelCard(Words.t("Shader"), seconds(film.filmTime), glyph: Glyphs.sparkle(), rows: rows)
+        return panelCard(Words.t("Shader"), Inspector.seconds(film.panelTime), glyph: Glyphs.sparkle(), rows: rows) { Inspector.seconds(film.panelTime) }
     }
 
     /// Sends the camera to the picked layers: a key at the playhead that looks at them.
@@ -326,11 +366,13 @@ extension Inspector {
     // MARK: The camera
 
     private func cameraCard() -> UIElement {
-        let pose = film.cameraPose
-        let zoom = pose?.zoom ?? 1
+        // What the panels show is at their moment, which a scrub catches up with thirty times a second.
+        let film = self.film
+        let pose = film.cameraPose(at: film.panelTime)
         func cameraField(_ name: String, _ index: Int, label: String = "", unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
                          scrub: Double = 1, decimals: Int = 1, width: Double = 84) -> FrameworkElement {
-            field(label, film.cameraValue(name, index), unit: unit, range: range, scrub: scrub, width: width, decimals: decimals) { [weak self] v in
+            let value: () -> Double? = { film.cameraValue(name, index, at: film.panelTime) }
+            return field(label, value(), unit: unit, range: range, scrub: scrub, width: width, decimals: decimals, follow: value) { [weak self] v in
                 self?.film.poseCamera(name, number: index, to: v)
             }
         }
@@ -340,14 +382,25 @@ extension Inspector {
         rows.append(property("cameraRoll", WindowsCore.FilmDesk.title("cameraRoll"), fields: [cameraField("cameraRoll", 0, unit: "°", range: -3600...3600)]))
         rows.append(property("cameraTilt", WindowsCore.FilmDesk.title("cameraTilt"), fields: [cameraField("cameraTilt", 0, unit: "°", range: -80...80)]))
         rows.append(property("cameraSwing", WindowsCore.FilmDesk.title("cameraSwing"), fields: [cameraField("cameraSwing", 0, unit: "°", range: -80...80)]))
-        let rest = pose?.isRest ?? true
         let whole = Controls.cardButton(Words.t("See the Whole Artboard"), height: 28) { [weak self] in self?.film.restCamera() }
         whole.horizontalAlignment = .right
-        whole.opacity = rest ? 0.4 : 1
-        whole.isHitTestVisible = !rest
         whole.margin = Theme.inset(0, 2, 0, 0)
+        // Ready only while the camera is somewhere else than at rest.
+        var rested: Bool?
+        let ready = { (rest: Bool) in
+            guard rest != rested else { return }
+            rested = rest
+            whole.opacity = rest ? 0.4 : 1
+            whole.isHitTestVisible = !rest
+        }
+        ready(pose?.isRest ?? true)
+        filmFollowers.append {
+            ready(film.cameraPose(at: film.panelTime)?.isRest ?? true)
+            return true
+        }
         rows.append(whole)
-        return panelCard(Words.t("Camera"), "×" + Inspector.number(zoom, places: 2), glyph: Glyphs.camera(size: 18), rows: rows)
+        let zoomed = { "×" + Inspector.number(film.cameraPose(at: film.panelTime)?.zoom ?? 1, places: 2) }
+        return panelCard(Words.t("Camera"), zoomed(), glyph: Glyphs.camera(size: 18), rows: rows, follow: zoomed)
     }
 
     /// The artboard as the camera sees it, small, in the frame the film has: dragged, the scene
@@ -360,9 +413,13 @@ extension Inspector {
         drawing.isHitTestVisible = false
         well.child = drawing
         let size = CGSize(width: Theme.cardWidth - 24, height: 118)
+        let film = self.film
+        // The camera as it was last drawn here: drawn again only once it is another.
+        var drawn: WindowsCore.FilmDesk.CameraPose?
         func draw() {
+            drawn = film.cameraPose(at: film.panelTime)
             drawing.children.clear()
-            guard let pad = film.pad(size: size) else { return }
+            guard let pad = film.pad(size: size, at: film.panelTime) else { return }
             if let sheet = pad.sheet {
                 var d = PathData()
                 d.move(Double(sheet[0].x), Double(sheet[0].y))
@@ -382,6 +439,10 @@ extension Inspector {
             drawing.children.append(Glyphs.view([Glyphs.Part(data: frame.d, mode: .stroke, width: 1.25)], size: 0, brush: Theme.brush(Theme.pencil)))
         }
         draw()
+        filmFollowers.append {
+            if film.cameraPose(at: film.panelTime) != drawn { draw() }
+            return true
+        }
         well.background = Theme.brush(Theme.well)
         var from: (x: Double, y: Double, pose: WindowsCore.FilmDesk.CameraPose)?
         var turning = false
@@ -509,7 +570,7 @@ extension Inspector {
             rows.append(said)
         }
         rows.append(saveButton(exporting))
-        return panelCard(Words.t("Film"), seconds(film.length), glyph: Glyphs.reel(), rows: rows)
+        return panelCard(Words.t("Film"), Inspector.seconds(film.length), glyph: Glyphs.reel(), rows: rows)
     }
 
     /// Save as Movie…, in pencil; while the movie is being saved, Stop Saving, filling with how

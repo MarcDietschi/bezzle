@@ -44,6 +44,18 @@ final class FilmTimelineView {
     private var shownRows = 4
     private var lastPress: (at: Point, time: DWORD, clicks: Int)?
     private var pressAt: Double?
+    /// The row above as it was last painted, so that what did not change is left as it is.
+    private struct Header: Equatable {
+        var playing: Bool
+        var hold: WindowsCore.KeyBead
+        var inHand: Bool
+        var chosen: String?
+        var once: Bool
+    }
+    private var painted: Header?
+    /// The playhead's line and tab, made once and moved after that.
+    private var playLine: Rectangle?
+    private var playTab: FrameworkElement?
 
     static let rowHeight = 24.0
     static let rulerHeight = 24.0
@@ -77,8 +89,16 @@ final class FilmTimelineView {
             self?.drawShadow()
             self?.refresh()
         }
-        hand.changed = { [weak self] in self?.refresh() }
-        session.listenToFilm { [weak self] in self?.refresh() }
+        hand.changed = { [weak self] in Probe.time("timeline.refresh(hand)") { self?.refresh() } }
+        session.listenToFilm { [weak self] in Probe.time("timeline.refresh(film)") { self?.refresh() } }
+        // A hand scrubbing through the film moves the playhead alone at every step, and the row
+        // above, which shows the panels' moment, no more than thirty times a second: not every
+        // line of the timeline again.
+        session.listenToPlayhead { [weak self] in Probe.time("timeline.playhead(moved)") { self?.movePlayhead() } }
+        session.listenToPanelTime { [weak self] in
+            guard let self, self.root.visibility == .visible, self.session.isFront else { return }
+            Probe.time("timeline.header(panel)") { self.paintHeader() }
+        }
         session.listen { [weak self] in self?.refresh() }
         session.listenToEdits { [weak self] _ in self?.refresh() }
     }
@@ -180,8 +200,21 @@ final class FilmTimelineView {
         DispatchQueue.main.async { MainActor.assumeIsolated { f() } }
     }
 
+    /// The row above, as the film is now, at the panels' moment (`panelTime`); only what changed
+    /// since it was last painted is painted again.
     private func paintHeader() {
-        let playing = desk.playing
+        let t = desk.panelTime
+        let inHand = desk.hasKeysToRemove(at: t)
+        let now = Header(playing: desk.playing, hold: desk.holdState(at: t), inHand: inHand, chosen: inHand ? desk.sharedEase(at: t) : nil, once: desk.once)
+        let was = painted
+        painted = now
+        if was?.playing != now.playing { paintPlay(now.playing) } else { showClock() }
+        if was?.hold != now.hold { paintHold(now.hold) }
+        if was?.inHand != now.inHand || was?.chosen != now.chosen { paintPaces(inHand: now.inHand, chosen: now.chosen) }
+        if was?.once != now.once { paintRound(now.once) }
+    }
+
+    private func paintPlay(_ playing: Bool) {
         playBox.background = playing ? Theme.brush(Theme.pencil) : Theme.brush(Theme.ink, 0.06)
         playGlyph.children.clear()
         let g = Glyphs.view(playing ? Glyphs.pause(size: 12) : Glyphs.play(size: 12), size: 12, brush: playing ? Theme.brush(0xFFFFFF) : Theme.ink(2))
@@ -192,24 +225,26 @@ final class FilmTimelineView {
         try? ToolTipService.setToolTip(playBox, Words.t(playing ? "Stop the film  Space" : "Play the film  Space"))
         clock.foreground = playing ? Theme.brush(Theme.pencil) : Theme.ink(1)
         showClock()
+    }
 
-        let hold = desk.holdState
+    private func paintHold(_ hold: WindowsCore.KeyBead) {
         holdBead.children.clear()
         holdBead.children.append(Self.bead(state: hold, size: 10))
         holdBead.opacity = hold == .none ? 0.3 : 1
         holdBead.isHitTestVisible = hold != .none
         try? ToolTipService.setToolTip(holdBead, Words.t(hold == .here ? "A key here. Click to take it away." : "Hold it here: a key at the playhead  K"))
+    }
 
-        let inHand = desk.hasKeysToRemove
-        let chosen = inHand ? desk.sharedEase : nil
+    private func paintPaces(inHand: Bool, chosen: String?) {
         paces.children.clear()
         for pace in WindowsCore.FilmDesk.paces {
             paces.children.append(paceChip(pace.name, title: pace.title, chosen: chosen == pace.name))
         }
         paces.opacity = inHand ? 1 : 0.3
         paces.isHitTestVisible = inHand
+    }
 
-        let once = desk.once
+    private func paintRound(_ once: Bool) {
         roundBox.background = once ? Theme.clear : Theme.brush(Theme.pencil, Theme.pencilWash)
         let loop = Glyphs.view(Glyphs.loop(size: 14), size: 14, brush: once ? Theme.ink(3) : Theme.brush(Theme.pencil))
         loop.horizontalAlignment = .center
@@ -382,6 +417,8 @@ final class FilmTimelineView {
         let on = session.mode == 3
         root.visibility = on ? .visible : .collapsed
         guard on, session.isFront else { return }
+        painted = nil
+        playLine = nil
         paintHeader()
         let lines = hand.lines()
         shownRows = min(max(lines.count, 4), 7)
@@ -404,26 +441,35 @@ final class FilmTimelineView {
         movePlayhead()
     }
 
-    /// The playhead alone, as the film plays.
+    /// The playhead alone, as the film plays or a hand scrubs through it: its line and tab, made
+    /// once and moved after that, and the clock.
     func movePlayhead() {
         guard root.visibility == .visible else { return }
         showClock()
-        playhead.children.clear()
         let x = Double(hand.x(desk.live))
         let height = Self.rulerHeight + Double(shownRows) * Self.rowHeight
-        let line = Rectangle()
-        line.width = 1.25
-        line.height = height
-        line.fill = Theme.brush(Theme.pencil)
+        if playLine == nil || playTab == nil {
+            playhead.children.clear()
+            let line = Rectangle()
+            line.width = 1.25
+            line.fill = Theme.brush(Theme.pencil)
+            playhead.children.append(line)
+            // The tab drawn about its own middle, laid where the playhead is.
+            var tab = PathData()
+            let r = (x: -5.5, y: 0.0, w: 11.0, h: 12.0)
+            let shoulder = r.y + r.h * 0.5, round = 2.5
+            tab.move(r.x + round, r.y); tab.line(r.x + r.w - round, r.y); tab.quad(r.x + r.w, r.y, r.x + r.w, r.y + round)
+            tab.line(r.x + r.w, shoulder); tab.line(r.x + r.w / 2, r.y + r.h); tab.line(r.x, shoulder); tab.line(r.x, r.y + round)
+            tab.quad(r.x, r.y, r.x + round, r.y); tab.close()
+            let view = Glyphs.view([Glyphs.Part(data: tab.d, mode: .fill)], size: 0, brush: Theme.brush(Theme.pencil))
+            playhead.children.append(view)
+            playLine = line
+            playTab = view
+        }
+        guard let line = playLine, let view = playTab else { return }
+        if line.height != height { line.height = height }
         try? Canvas.setLeft(line, x - 0.625)
-        playhead.children.append(line)
-        var tab = PathData()
-        let r = (x: x - 5.5, y: 0.0, w: 11.0, h: 12.0)
-        let shoulder = r.y + r.h * 0.5, round = 2.5
-        tab.move(r.x + round, r.y); tab.line(r.x + r.w - round, r.y); tab.quad(r.x + r.w, r.y, r.x + r.w, r.y + round)
-        tab.line(r.x + r.w, shoulder); tab.line(r.x + r.w / 2, r.y + r.h); tab.line(r.x, shoulder); tab.line(r.x, r.y + round)
-        tab.quad(r.x, r.y, r.x + round, r.y); tab.close()
-        playhead.children.append(Glyphs.view([Glyphs.Part(data: tab.d, mode: .fill)], size: 0, brush: Theme.brush(Theme.pencil)))
+        try? Canvas.setLeft(view, x)
     }
 
     private func drawNames(_ lines: [WindowsCore.FilmLine]) {

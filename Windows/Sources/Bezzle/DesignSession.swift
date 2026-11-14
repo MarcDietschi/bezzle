@@ -67,6 +67,15 @@ final class DesignSession {
     /// What follows the film on the desk: its playhead, what of it is picked, the camera.
     private var filmListeners: [() -> Void] = []
     func listenToFilm(_ f: @escaping () -> Void) { filmListeners.append(f) }
+    /// What follows the playhead alone, at every step of a hand scrubbing through the film: the
+    /// film on the canvas and the timeline's playhead. Told when nothing else of the desk changed.
+    private var playheadListeners: [() -> Void] = []
+    func listenToPlayhead(_ f: @escaping () -> Void) { playheadListeners.append(f) }
+    /// What shows the film at the panels' moment (`FilmDesk.panelTime`), caught up with the
+    /// playhead no more than thirty times a second while it is dragged: the panel's cards and the
+    /// timeline's row above.
+    private var panelTimeListeners: [() -> Void] = []
+    func listenToPanelTime(_ f: @escaping () -> Void) { panelTimeListeners.append(f) }
 
     /// Starts placing the one selected layer's picture inside it (the Mac's editPicture).
     func placePicture() {
@@ -217,6 +226,16 @@ final class DesignSession {
         }
         film.changed = { [weak self] in self?.filmChanged() }
         film.edited = { [weak self] in self?.filmEdited() }
+        film.moved = { [weak self] in
+            guard let self else { return }
+            guard self.isFront else { self.stale = true; return }
+            for f in self.playheadListeners { f() }
+        }
+        film.panelMoved = { [weak self] in
+            guard let self else { return }
+            guard self.isFront else { self.stale = true; return }
+            for f in self.panelTimeListeners { f() }
+        }
         // The design changed under the film, by an undo or by others: its desk follows, and a
         // shape's points in hand are put down once it is gone.
         listenToEdits { [weak self] _ in

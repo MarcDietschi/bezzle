@@ -6,7 +6,9 @@ import CBezzleHost
 // Film/), each placed where the camera shows it at the playhead (`FilmLens`). Pictures are drawn
 // once and after that only placed: where the Mac's graphics card moves layers, Skia lays the
 // pictures into the frame through each one's 3×3 map (`bz_film_frame`), so posing, scrubbing and
-// playing never draw the design again, only a piece whose own insides move.
+// playing never draw the design again, only a piece whose own insides move, and that only as far
+// as it shows through the frame, as sharp as it shows there. What is placed at every frame is
+// found once (`Node.filmLayers`), not looked for through the artboard for each piece.
 //
 // Only what shows of the artboard in the canvas is laid out, at the screen's pixels. A piece seen
 // larger than its picture holds, or past what the picture covers, has the part that shows drawn
@@ -72,8 +74,8 @@ extension WindowsCore {
     /// the picture is held.
     static func filmPicture(_ subject: FilmPictures.Subject, scale: CGFloat, part: FilmPictures.Part? = nil) -> FilmPictures.Picture? {
         let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
-        let made = FilmPictures.picture(of: subject, scale: scale, assets: assets, part: part)
-        for p in Images.shared.list where p.id >= first { send(p) }
+        let made = Probe.time("picture.draw") { FilmPictures.picture(of: subject, scale: scale, assets: assets, part: part) }
+        Probe.time("picture.send") { for p in Images.shared.list where p.id >= first { send(p) } }
         forget(before: first)
         return made
     }
@@ -100,11 +102,16 @@ extension WindowsCore {
             var picture: FilmPictures.Picture
             /// How many pixels to the point its whole picture has.
             var sharp: CGFloat
+            /// The layer it places, found once with the others (`Node.filmLayers`).
+            var layer: Node?
         }
 
+        /// A picture kept: what it shows, how sharp, of which part when not of all of it (for a
+        /// piece whose insides move), and when it was last on the stage.
         private struct Kept {
             var subject: FilmPictures.Subject
             var scale: CGFloat
+            var part: FilmPictures.Part? = nil
             var picture: FilmPictures.Picture
             var used: Int
         }
@@ -126,11 +133,23 @@ extension WindowsCore {
         }
 
         private var shown: [Shown] = []
+        /// The pieces last worked out, and the layer each places, found in one walk through the
+        /// artboard: kept while only time passes, and not looked for again at every frame.
+        private var pieces: [FilmPiece] = []
+        private var layers: [Node?] = []
         private var kept: [String: Kept] = [:]
         private var sharper: [String: Sharper] = [:]
         private var ground: FilmPictures.Ground?
         private var signature: Signature?
         private var drawnAt = -1.0
+        /// The moment of the frame last put together and the part of the artboard it showed, to
+        /// tell a film that moves from one frame to the next (playing, a hand scrubbing through
+        /// it, the canvas moved or zoomed under it) from one that rests.
+        private var framed: (at: Double, window: CGRect)?
+        /// Whether the frame last put together would show a part sharper than it does: left as
+        /// it was because the moment was moving, and drawn with a frame at the same moment
+        /// (`FilmView` asks for one once the playhead has rested a little).
+        public private(set) var owesParts = false
         private var changing = false
         private var installs = 0
         /// How many pictures and parts have been drawn, for looking at what it costs.
@@ -142,11 +161,15 @@ extension WindowsCore {
         /// Lets every picture go, as when the film leaves the canvas.
         public func reset() {
             shown = []
+            pieces = []
+            layers = []
             kept = [:]
             sharper = [:]
             ground = nil
             signature = nil
             drawnAt = -1
+            framed = nil
+            owesParts = false
             changing = false
         }
 
@@ -163,6 +186,7 @@ extension WindowsCore {
         /// Gives back where the frame lies on the stage, in its points; nil with no film.
         public func draw(_ desk: FilmDesk, zoom: Double, pan: CGPoint, size: CGSize, pixelScale: Double,
                          into fill: (_ width: Int, _ height: Int) -> UnsafeMutableRawPointer?) -> CGRect? {
+            owesParts = false
             guard desk.on, let board = desk.filmBoard, board.frame.width > 0, board.frame.height > 0, zoom > 0, pixelScale > 0 else {
                 reset()
                 return nil
@@ -186,33 +210,51 @@ extension WindowsCore {
                                    step: step, measured: !WindowsCore.inGesture)
             if wanted != signature {
                 signature = wanted
-                prepare(board, at: t, pixels: step, measured: wanted.measured)
+                Probe.time("stage.prepare") { prepare(board, at: t, pixels: step, window: window, screen: CGFloat(k), measured: wanted.measured) }
             } else if changing, t != drawnAt {
-                prepare(board, at: t, pixels: step, again: true)
+                Probe.time("stage.prepareAgain") { prepare(board, at: t, pixels: step, window: window, screen: CGFloat(k), again: true) }
             }
             guard !shown.isEmpty, let pixels = fill(width, height) else { return nil }
+            // A part is drawn here, on the thread that puts the frame together (the Mac draws its
+            // parts away from it), so none is drawn while the film moves from frame to frame or
+            // a hand is on it: a dozen of them at every step were most of what held a scrub up.
+            // They come with the frame that rests.
+            let moving = desk.playing || WindowsCore.inGesture || framed.map { $0.at != t || $0.window != window } == true
+            framed = (t, window)
+            owesParts = false
             let camera = board.camera(at: t)
-            let placements = shown.map { board.placement(of: $0.piece, at: t, camera: camera) }
+            let placements = Probe.time("stage.placements") { shown.map { board.placement(of: $0.piece, layer: $0.layer, at: t, camera: camera) } }
             var pieces: [bz_film_piece] = []
-            for i in board.filmOrder(shown.map(\.piece), placements) {
+            for i in Probe.time("stage.order", { board.filmOrder(shown.map(\.piece), placements) }) {
                 let p = placements[i]
                 // A part drawn sharper, where it covers what shows: drawn now when the film rests.
-                if let part = part(i, p, window: window, pixels: CGFloat(k), playing: desk.playing),
+                if let part = part(i, p, window: window, pixels: CGFloat(k), playing: moving),
                    let piece = WindowsCore.filmPiece(part, p, toFrame: toFrame, window: window) {
                     pieces.append(piece)
                     continue
                 }
                 if let piece = WindowsCore.filmPiece(shown[i].picture, p, toFrame: toFrame, window: window) { pieces.append(piece) }
             }
-            guard WindowsCore.composeFilm(pieces, width: width, height: height, backdrop: board.filmBackdrop, bgra: true, into: pixels) else { return nil }
+            guard Probe.time("stage.compose", { WindowsCore.composeFilm(pieces, width: width, height: height, backdrop: board.filmBackdrop, bgra: true, into: pixels) }) else { return nil }
             return CGRect(x: x0 / pixelScale, y: y0 / pixelScale, width: Double(width) / pixelScale, height: Double(height) / pixelScale)
         }
 
         /// Works out the film's pieces, and draws the pictures that are not kept from before.
-        /// `again` when only time has passed, for the pieces whose insides move.
-        private func prepare(_ board: Node, at t: Double, pixels: CGFloat, measured: Bool = true, again: Bool = false) {
-            let loose = Set(signature?.loose ?? [])
-            let pieces = board.filmPieces(loose: loose)
+        /// `again` when only time has passed, for the pieces whose insides move: the pieces and
+        /// their layers are the ones worked out before, and the others are left as they are.
+        ///
+        /// A piece whose insides move is drawn again at every moment, so it is drawn only as it is
+        /// seen then, as the Mac's stage draws it (`FilmStageView.seenPart`): the part of it that
+        /// shows through `window` (the part of the artboard the frame shows, in its points), as
+        /// sharp as it shows at `screen` pixels to the point, with a little room round it. All of
+        /// it, as sharp as it ever shows, at every step, was most of a scrub's time with a moving
+        /// shader under the whole artboard.
+        private func prepare(_ board: Node, at t: Double, pixels: CGFloat, window: CGRect, screen: CGFloat, measured: Bool = true, again: Bool = false) {
+            if !again || pieces.isEmpty {
+                let loose = Set(signature?.loose ?? [])
+                pieces = board.filmPieces(loose: loose)
+                layers = board.filmLayers(of: pieces)
+            }
             changing = pieces.contains(where: \.changes)
             drawnAt = t
             let ground: FilmPictures.Ground
@@ -221,26 +263,48 @@ extension WindowsCore {
             installs += 1
             var next: [Shown] = []
             let measure = measured && !again
-            for piece in pieces {
+            var was: [String: Shown] = [:]
+            if again { for s in shown { was[s.piece.key] = s } }
+            var camera: FilmCamera?
+            for (index, piece) in pieces.enumerated() {
                 let had = kept[piece.key]
-                if again, !piece.changes, let had, let was = shown.first(where: { $0.piece.key == piece.key }) {
+                if again, !piece.changes, let had, let before = was[piece.key] {
                     kept[piece.key]?.used = installs
-                    next.append(Shown(piece: piece, subject: had.subject, rect: was.rect, reach: was.reach, picture: had.picture, sharp: was.sharp))
+                    next.append(Shown(piece: piece, subject: had.subject, rect: before.rect, reach: before.reach, picture: had.picture, sharp: before.sharp,
+                                      layer: layers[index]))
                     continue
                 }
-                let subject = FilmPictures.subject(of: piece, on: board, ground: ground, at: t)
+                let subject = Probe.time("stage.subject") { FilmPictures.subject(of: piece, on: board, ground: ground, at: t) }
                 let rect = FilmPictures.core(of: subject)
                 guard rect.width > 0, rect.height > 0 else { continue }
+                var picture = had?.picture
+                if piece.changes, window.width > 0, window.height > 0, screen > 0 {
+                    let lens = camera ?? board.camera(at: t)
+                    camera = lens
+                    if let part = Self.seenPart(of: subject, placed: board.placement(of: piece, layer: layers[index], at: t, camera: lens), through: window, screen: screen) {
+                        if let had, had.subject.isDrawn(as: subject), Self.holds(had, part) {
+                            kept[piece.key]?.used = installs
+                        } else {
+                            picture = Probe.time("stage.picture") { WindowsCore.filmPicture(subject, scale: part.scale, part: part) }
+                            picturesMade += 1
+                            if let picture { kept[piece.key] = Kept(subject: subject, scale: part.scale, part: part, picture: picture, used: installs) }
+                        }
+                        guard let picture else { continue }
+                        next.append(Shown(piece: piece, subject: subject, rect: picture.rect,
+                                          reach: FilmPictures.rect(of: subject).union(picture.rect), picture: picture,
+                                          sharp: FilmPictures.sharpness(of: picture), layer: layers[index]))
+                        continue
+                    }
+                }
                 var scale = pixels
-                if measure || had == nil {
-                    scale = pixels * Self.sharpness(for: CGFloat(min(board.filmStretch(of: piece, around: rect), 4)))
-                } else if let had {
+                if let had, had.part == nil, !measure {
                     scale = had.scale
+                } else {
+                    scale = pixels * Self.sharpness(for: CGFloat(min(board.filmStretch(of: piece, around: rect), 4)))
                 }
                 scale = min(scale, FilmPictures.most / max(rect.width, rect.height))
-                var picture = had?.picture
-                if !(had.map { $0.scale >= scale * 0.99 && $0.subject.isDrawn(as: subject) } ?? false) {
-                    picture = WindowsCore.filmPicture(subject, scale: scale)
+                if !(had.map { $0.part == nil && $0.scale >= scale * 0.99 && $0.subject.isDrawn(as: subject) } ?? false) {
+                    picture = Probe.time("stage.picture") { WindowsCore.filmPicture(subject, scale: scale) }
                     picturesMade += 1
                     if let picture { kept[piece.key] = Kept(subject: subject, scale: scale, picture: picture, used: installs) }
                 } else {
@@ -249,7 +313,7 @@ extension WindowsCore {
                 guard let picture else { continue }
                 next.append(Shown(piece: piece, subject: subject, rect: picture.rect,
                                   reach: FilmPictures.rect(of: subject).union(picture.rect), picture: picture,
-                                  sharp: FilmPictures.sharpness(of: picture)))
+                                  sharp: FilmPictures.sharpness(of: picture), layer: layers[index]))
             }
             shown = next
             kept = kept.filter { $0.value.used >= installs - 3 }
@@ -257,6 +321,23 @@ extension WindowsCore {
             var subjects: [String: FilmPictures.Subject] = [:]
             for s in next where here.contains(s.piece.key) { subjects[s.piece.key] = s.subject }
             sharper = sharper.filter { key, held in subjects[key].map { held.subject.isDrawn(as: $0) } ?? false }
+        }
+
+        /// The part to draw of a piece whose insides move, placed so at the moment: what shows of
+        /// it through `window`, as sharp as it shows at `screen` pixels to the artboard's point,
+        /// and a tenth more each way. Nil for one that does not show, or shows blurred: that is
+        /// drawn whole. As the Mac's `FilmStageView.seenPart`.
+        private static func seenPart(of subject: FilmPictures.Subject, placed p: FilmPlacement, through window: CGRect, screen: CGFloat) -> FilmPictures.Part? {
+            let reach = FilmPictures.rect(of: subject)
+            guard p.blur <= 0.05, p.opacity > 0.001, reach.width > 0, reach.height > 0, let seen = p.map.seen(of: reach, through: window) else { return nil }
+            let need = CGFloat(seen.stretch) * screen
+            return FilmPictures.part(for: seen.part, of: reach, need: need, margin: 0.1, around: 2 / max(need, 1e-6))
+        }
+
+        /// Whether a picture kept of a piece holds a part of it as sharp as asked.
+        private static func holds(_ had: Kept, _ part: FilmPictures.Part) -> Bool {
+            let rect = had.part?.rect ?? had.picture.rect
+            return rect.insetBy(dx: -0.01, dy: -0.01).contains(part.rect) && had.scale >= part.scale * 0.99
         }
 
         /// The part of a piece to show in place of its whole picture: one kept that covers what
@@ -277,9 +358,13 @@ extension WindowsCore {
                Double(held.part.scale) >= min(Double(need), most) * (playing ? 0.85 : 0.999) {
                 return held.picture
             }
-            guard !playing, let part = fresh else { return nil }
+            guard let part = fresh else { return nil }
             // A part held back by its size to no sharper than the whole picture is not worth drawing.
             guard part.scale > s.sharp * 1.05 || !within else { return nil }
+            guard !playing else {
+                owesParts = true
+                return nil
+            }
             guard let picture = WindowsCore.filmPicture(s.subject, scale: part.scale, part: part) else { return nil }
             partsMade += 1
             sharper[key] = Sharper(subject: s.subject, part: part, picture: picture)
