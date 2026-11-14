@@ -384,9 +384,6 @@ room's hands and presence, four languages, the icon library in the core, and mem
   of designs and pictures, `cutout-samples`, `import-samples` and about 250 old
   `C:\bezzle\BezzleDesktop-*.log` files are still there.
 
-- **A word nobody reads:** "Twenty-six lessons, about a minute each." is still in
-  `Localizable.xcstrings`; neither platform's tour uses it since it has 28 lessons.
-
 - **Agent branches:** eight branches of finished agents are left (`git branch --list 'worktree-agent-*'`,
   those with no worktree in `git worktree list`). Their worktrees are gone and their commits are on
   main, brought there one by one, which is why `git branch -d` refuses them (checked 2026-11-14:

@@ -52754,29 +52754,6 @@
         }
       }
     },
-    "Twenty-six lessons, about a minute each." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sechsundzwanzig Lektionen, je etwa eine Minute."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vingt-six leçons, environ une minute chacune."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ventisei lezioni, circa un minuto l’una."
-          }
-        }
-      }
-    },
     "Twenty-three lessons, about a minute each." : {
       "extractionState" : "stale",
       "localizations" : {
