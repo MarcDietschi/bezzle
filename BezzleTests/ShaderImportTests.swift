@@ -72,20 +72,22 @@ struct ShaderImportTests {
     }
 
     @Test(.timeLimit(.minutes(5))) func saysWhyACanvasStaysAPicture() async throws {
-        // Drawn into a texture first, which is not drawn again yet.
+        // It reads a cube of pictures, which is not drawn again yet.
         let (read, _) = try await WebTest.read("""
         <canvas id="c" width="64" height="64"></canvas>
         <script>
         const gl = document.getElementById('c').getContext('webgl');
-        const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-        const vs = 'attribute vec2 a; void main() { gl_Position = vec4(a, 0.0, 1.0); }', fs = 'void main() { gl_FragColor = vec4(1.0); }';
+        const vs = 'attribute vec2 a; void main() { gl_Position = vec4(a, 0.0, 1.0); }';
+        const fs = 'precision mediump float; uniform samplerCube u_sky; void main() { gl_FragColor = textureCube(u_sky, vec3(1.0)); }';
         function sh(t, s) { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); return x; }
         const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
         gl.useProgram(p); gl.drawArrays(gl.TRIANGLES, 0, 3);
         </script>
         """)
         #expect(read.assets.scenes.isEmpty)
-        #expect(read.assets.stills.values.contains("framebuffer"))
+        #expect(read.assets.stills.values.contains("cube"))
+        let (_, report) = WebConverter.document([read], source: "test")
+        #expect(report.notes.keys.contains("WebGL drawings Bezzle cannot draw again, as pictures"))
     }
 
     @Test func aFillsShaderComesThroughOlderFilesAndFlips() throws {

@@ -372,14 +372,17 @@ final class WebCapture: NSObject, WKNavigationDelegate {
                 Self.log.notice("A WebGL canvas stays a picture: its scene could not be read: \(String(describing: error), privacy: .public)")
                 continue
             }
-            // Kept only when Bezzle can draw it again.
+            // Kept only when Bezzle can draw it again, and as what drawing it shows it to be.
             let pictures = held.filter { name, _ in textures.values.contains { $0.asset == name } }
-            guard ShaderPainting.builds(fill, pictures: pictures) else {
-                assets.stills[id] = "does not build"
-                Self.log.notice("A WebGL canvas stays a picture: its programs do not build")
+            let settled = ShaderPainting.settled(fill, pictures: pictures)
+            guard let kept = settled.fill else {
+                let why = settled.why ?? "does not build"
+                assets.stills[id] = why
+                Self.log.notice("A WebGL canvas stays a picture: it \(why, privacy: .public)")
                 continue
             }
-            assets.scenes[id] = fill
+            assets.scenes[id] = kept
+            if scene.videos ?? 0 > 0 { assets.videos.insert(id) }
         }
     }
 

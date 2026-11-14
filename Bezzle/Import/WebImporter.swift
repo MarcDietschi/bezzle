@@ -27,6 +27,8 @@ struct WebAssets {
     var scenes: [Int: ShaderFill] = [:]
     /// By the canvas: why what its WebGL draws could not be kept, and it is a picture only.
     var stills: [Int: String] = [:]
+    /// The canvases kept whose WebGL drew a video: its frame as the page was read stands still.
+    var videos: Set<Int> = []
 }
 
 /// One width of a page as it was read, and what its pictures came to.
@@ -380,6 +382,7 @@ struct WebConverter {
             return nodes
         }
         guard let scene = assets.scenes[id] else { return nodes }
+        if assets.videos.contains(id) { report.note("Videos in WebGL drawings, as still pictures") }
         var done = false
         func give(_ n: Node) -> Node {
             guard !done else { return n }

@@ -192,6 +192,13 @@ along one artboard's film. Its keys are changes from the design and never the de
   because the app is told of no key while SwiftUI follows a press, neither its event monitors
   nor whatever has the keyboard, and Escape does not end SwiftUI's drag either (measured
   2026-11-14 on macOS 27.2 in a test copy). Its tests are `FilmMarqueeTests`.
+- **A shader fill that builds on its frames** (feedback, trails, a simulation:
+  `ShaderFill.builds`) shows at a film's moment the step that moment falls in, drawn forward from
+  what the page's textures held when it came in, by steps as often as the page drew (sixty a
+  second, or its timer's rate), each with its inputs as they are at that step's own time. So the
+  same moment is the same picture however the playhead got there. Playing draws one step a
+  frame; going back draws at most 31 steps from a state the engine kept; a jump far forward draws
+  every step between, once (`Packages/Shaders/README.md` › What Bezzle keeps of a page).
 - **Shapes** (paths, and rectangles, ellipses and lines, whose outline is points too) have two
   properties more: Draw, how much of the outline is drawn as a pen draws it, one run after
   another, and Shape, its points and handles each moved from the design's, six numbers to a point

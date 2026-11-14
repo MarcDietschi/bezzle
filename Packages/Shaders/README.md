@@ -119,6 +119,69 @@ order; the canvas may be drawn onto in several of them, cleared again in between
   31 steps from a kept state, or all of them from the start where that state is gone. No target
   scales in a frame with one that keeps: its steps must come out the same at every size.
 
+## What Bezzle keeps of a page
+
+The engine draws frames; the app makes them. Its recorder (`Bezzle/Import/WebPageGL.js`, in the
+page) writes down what each WebGL canvas drew in its last frame and how that moved over the
+frames before, `WebGLScene.swift` reads it, `ShaderFill` (`Bezzle/Model/Shader.swift`) holds it in
+the design, and `ShaderPainting` (`Bezzle/Canvas`) makes a `ShaderFrame` of it for any moment.
+`ShaderPassImportTests` reads a small page for each of these and compares what Bezzle draws with
+the page's own canvas.
+
+- **Passes.** Every run of draws into one framebuffer is a pass, with the textures and
+  renderbuffers it draws into as targets (`drawBuffers`' order) and its depth and stencil buffer.
+  A clear of all of it starts a pass; a clear of a part (in a scissor box, under a `colorMask` or
+  a stencil mask) is kept as a draw that does the same; `blitFramebuffer` as a draw that copies;
+  `generateMipmap` on a target as the pass's `mipmaps`. Passes nothing shown reads are left out.
+- **What a frame takes over from the frame before.** The recorder sees which textures are read
+  before they are drawn into, and reads back what they held at the moment the canvas's picture
+  was taken (`bz-canvas-shot`), up to 12 MB. `ShaderPainting.settled` then finds out by drawing
+  which of them the picture really depends on: it draws three steps small, once from nothing and
+  once from noise. Those keep (`ShaderTarget.keeps`, `contents`); the others are drawn anew every
+  frame. Textures that change places every frame (ping-pong) are told by the frames' shapes:
+  `ShaderFill.turn` says which takes whose place after a step.
+- **Sharp at any size.** In a fill that keeps nothing, a target with the canvas's proportions that
+  no draw reads texel by texel (`NEAREST`) gets `scales`.
+- **Tests that change nothing.** Where a fill has no passes and leaving out its depth test,
+  stencil, faces, masks and scissor box changes no pixel at five moments, they are left out: the
+  fill is then one Bezzle 1.7 draws too.
+- **What moves.** A uniform that ran with time is a clock, one that moved otherwise a recording,
+  each for every draw of its program or, where the draws of a program each had their own (a
+  scene's meshes), for the one draw (`ShaderClock.draw`).
+- **Textures of numbers** from typed arrays are kept as bytes (`ShaderFill.texels`), or, where
+  every texel is opaque RGBA or LUMINANCE in bytes, as a PNG that every Bezzle reads.
+- **WebGL 2 uniform blocks**: the bytes the page gave `bufferData` and `bufferSubData` are read
+  by the block's layout (offsets and strides from `getActiveUniforms`) into its members' numbers.
+- **A video** as a texture stands still: what its texture held when the canvas's picture was taken
+  is read back and kept as a picture, and the import says so. To play it, the design would have to
+  hold the video's file (often a stream or a blob the page alone can read), the engine would need
+  a frame of it for every moment (AVFoundation here, Media Foundation on Windows), and the fill
+  the video's own time at the moment it came in.
+- **preserveDrawingBuffer**: a canvas whose page asked for it and never clears it is kept as a
+  target that keeps, with what the canvas showed, and a last pass that copies it onto the canvas.
+- **How often it steps.** A page that draws on a timer says how often (`setInterval`'s delay):
+  that is the fill's `rate`; a page that draws in animation frames steps sixty times a second.
+  How fast frames really came in the web view that reads a page says nothing: it runs slower
+  than a browser's window.
+
+A fill that builds on its frames (`ShaderFill.builds`) shows step 0 in the design: the frame the
+page would have drawn next. In a film it shows the step its moment falls in, `floor(t * rate)`
+(at most 36,000), drawn forward from what was read back, every step with its inputs (clocks,
+recordings and what the film keys) as they are at that step's own time, `(step + 1) / rate`. So a
+moment looks the same whenever it is drawn, and in whatever order. Playing costs a step a frame;
+going back costs at most 31 steps from a state the engine kept (Passes into textures); a jump far
+forward draws every step between once, a quarter of a millisecond each for a simulation in two
+512 by 512 textures (Measured).
+
+A canvas stays a picture, and the import says "WebGL drawings Bezzle cannot draw again, as
+pictures" (the reason goes to the log, `WebCapture.log`), when its frame has more than 400 draws,
+400,000 vertices or 24 MB of geometry and numbers; samples a cube map; reads a texture that was
+filled in part, compressed, copied from what was drawn (`copyTexImage2D`) or holds a video without
+a frame; draws into a cube face, one smaller copy of a texture, a depth texture alone or a texture
+of a kind not kept (integers); clears one of several outputs alone (`clearBufferfv` on one of
+them); copies from the canvas (`blitFramebuffer`); builds on textures that could not be read back
+or hold more than 12 MB; or does not build or draw here (Direct3D, below).
+
 ## Conventions kept
 
 - **gl_FragCoord** reads drawing-buffer pixels from the bottom left, pixel centres at .5, however
@@ -230,8 +293,8 @@ On Windows, 3 and 4 are:
 - **Targets**: a cube face or one level of a mipmap as a target, 3D and array targets,
   multisampled targets (drawn with one sample), integer formats, RGB565 and its kin (drawn as
   RGBA8, so not dithered or rounded to their bits). In WebGL 1, `gl_FragColor` goes to the first
-  of several outputs alone. A partial clear (inside a scissor box or under a colorMask) is a
-  draw the recorder must make of it; `ShaderPass` clears whole.
+  of several outputs alone. `ShaderPass` clears whole: a partial clear (inside a scissor box or
+  under a colorMask) is a draw, which the app's recorder makes of it.
 - **Transform feedback**, occlusion queries, `readPixels` (what a page computes from what it
   read back is not known).
 - **WebGL 2 textures** other than sampler2D and samplerCube with float results: 3D, array,
@@ -239,10 +302,14 @@ On Windows, 3 and 4 are:
   and `texelFetch` beyond the picture are as Metal does them. A float texture read with a linear
   filter is filtered whether or not the page asked for the extension.
 - **WebGL 2 uniform blocks** are filled member by member from `uniforms`, not from the bytes the
-  page gave `bufferData`: whoever records a page turns the bytes into members.
+  page gave `bufferData`: the app's recorder turns the bytes into members.
 - **preserveDrawingBuffer**: the canvas starts every frame from its first pass's clear, or from
   nothing. A page that keeps drawing onto its canvas is given as a target that keeps and a last
-  pass that copies it onto the canvas.
+  pass that copies it onto the canvas, which is how the app keeps one.
+- **What the app does not record** (What Bezzle keeps of a page): a video plays no further than
+  the frame it showed; a uniform a page counts up frame by frame, not by the clock, runs as
+  slowly as the web view that read the page drew; a page that fills its buffers anew every
+  frame (a batch of sprites) is kept as its last frame, still; cube maps.
 - WebGL 1 rules ES 3.10 no longer has: user functions that overload a built-in with a new
   signature, and the few constants ES 3.00 renamed (`gl_MaxVaryingVectors`).
 

@@ -516,6 +516,9 @@
       // The moment its picture is taken, for its WebGL to be kept as it was then.
       el.setAttribute('data-bz-canvas-at', String(performance.now() / 1000));
       afterwards.push(() => el.removeAttribute('data-bz-canvas-at'));
+      // Said to the recorder at once, which reads back now what the canvas's WebGL builds on:
+      // the textures it drew into, as they are in this picture.
+      try { el.dispatchEvent(new Event('bz-canvas-shot', { composed: true })); } catch (e) {}
       try {
         const data = el.width > 0 && el.height > 0 ? el.toDataURL('image/png') : '';
         if (data.length > 100) {

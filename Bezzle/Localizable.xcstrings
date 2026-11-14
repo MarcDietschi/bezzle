@@ -55898,6 +55898,28 @@
           }
         }
       }
+    },
+    "Videos in WebGL drawings, as still pictures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Videos in WebGL-Zeichnungen, als Standbilder"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vidéos dans des dessins WebGL, en images fixes"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video nei disegni WebGL, come immagini fisse"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
