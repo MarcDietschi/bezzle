@@ -256,10 +256,10 @@ extension Inspector {
     private func shapeFromChip() -> FrameworkElement {
         let picked = film.posedLayers
         let ready = picked.count == 1 && !film.shapesToTake(for: picked[0]).isEmpty
-        let words = Theme.text(Words.t("From…"), size: 11.5, weight: 500)
+        let words = Theme.text(Words.t("From…"), size: 11, weight: 500)
         let ink: Brush = Theme.ink(2)
         words.foreground = ink
-        words.margin = Theme.inset(9, 0, 9, 0)
+        words.margin = Theme.inset(7, 0, 7, 0)
         words.verticalAlignment = .center
         let capsule = Border()
         capsule.cornerRadius = Theme.corners(11)
@@ -308,10 +308,12 @@ extension Inspector {
     private func pointsChip() -> FrameworkElement {
         let motion = session.motion
         let (done, one) = motion.pointsChip
-        let words = Theme.text(Words.t(done ? "Done" : "Edit Points"), size: 11.5, weight: 500)
+        // Two chips share the row since From… came: a little closer set, so that the row's name
+        // stays whole beside them in German and French ("Form", "Von …", "Punkte bearbeiten").
+        let words = Theme.text(Words.t(done ? "Done" : "Edit Points"), size: 11, weight: 500)
         let ink: Brush = done ? Theme.brush(Theme.pencil) : Theme.ink(2)
         words.foreground = ink
-        words.margin = Theme.inset(10, 0, 10, 0)
+        words.margin = Theme.inset(7, 0, 7, 0)
         words.verticalAlignment = .center
         let capsule = Border()
         capsule.cornerRadius = Theme.corners(11)
