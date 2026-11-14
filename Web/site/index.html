@@ -38,6 +38,7 @@
 </main>
 <script type="module">
 import { createBezzle } from './bezzle.mjs'
+import { createFilm } from './film.mjs'
 
 // Where things are when served from the Bezzle repository's root (see Web/README.md).
 const paths = {
@@ -64,6 +65,8 @@ const startMs = Math.round(performance.now() - t0)
 
 const view = document.getElementById('view')
 let boards = [], current = -1, designName = ''
+// An artboard with a film (Animate) can be played, under the artboard: film.mjs.
+const film = createFilm({ CanvasKit: CK, bz })
 
 function show(index) {
   current = index
@@ -77,6 +80,7 @@ function show(index) {
   view.style.width = `${w / scale}px`
   view.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.length), w, h), 0, 0)
   const board = boards.find((b) => b.index === index)
+  film.show(board, view, document.getElementById('stage'))
   say(`<b>${designName}</b> <span>${board?.name ?? ''}, ${board?.frame[2]}×${board?.frame[3]} pt</span>`
     + `<span>Bezzle's renderer in WebAssembly: <b>${Math.round(r.coreMs)} ms</b></span><span>CanvasKit: ${Math.round(r.playMs)} ms</span><span>core started in ${startMs} ms</span>`)
 }
@@ -87,7 +91,7 @@ function list(opened) {
   box.replaceChildren(...boards.map((b) => {
     const el = document.createElement('button')
     el.textContent = b.name; el.dataset.index = b.index
-    el.onclick = () => show(b.index)
+    el.onclick = () => { film.rest(); show(b.index) }
     return el
   }))
   if (boards.length) show(boards[0].index)
@@ -122,8 +126,26 @@ document.getElementById('designs').replaceChildren(...samples.map((s) => {
   el.onclick = () => openSample(s)
   return el
 }))
-const first = samples.find((s) => s.name === (new URLSearchParams(location.search).get('design') ?? 'Wander')) ?? samples[0]
-await openSample(first)
+// ?package=<address of a .bezzle folder> opens that design, its pictures fetched as its drawing
+// asks for them; without it, a sample design (?design=<name>).
+const pkg = new URLSearchParams(location.search).get('package')
+if (pkg) {
+  designName = decodeURIComponent(pkg.replace(/\/$/, '').split('/').pop()).replace(/\.bezzle$/, '')
+  const opened = bz.open(await fetchBytes(pkg.replace(/\/$/, '') + '/document.json'))
+  if (opened.error) say(`Could not open ${designName}: ${opened.error}`)
+  else {
+    list(opened)
+    for (let round = 0, names = bz.missingPictures(); names.length && round < 4; round++, names = bz.missingPictures()) {
+      const came = await Promise.all(names.map(async (n) => { const r = await fetch(`${pkg.replace(/\/$/, '')}/images/${encodeURIComponent(n)}`); return r.ok ? [n, new Uint8Array(await r.arrayBuffer())] : null }))
+      if (!came.some((c) => c)) break
+      bz.addPictures(new Map(came.filter((c) => c)))
+      show(current)
+    }
+  }
+} else {
+  const first = samples.find((s) => s.name === (new URLSearchParams(location.search).get('design') ?? 'Wander')) ?? samples[0]
+  await openSample(first)
+}
 const want = new URLSearchParams(location.search).get('board')
 if (want !== null) show(+want)
 window.bezzleReady = true

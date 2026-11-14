@@ -42,6 +42,7 @@
 </div>
 <script type="module">
 import { createBezzle } from './bezzle.mjs'
+import { createFilm } from './film.mjs'
 import { ShareKeys, SharedRoom, Relay, RELAY, browserSelf, toB64 } from './share.mjs'
 
 // A design shared by link, opened in the browser: the link's secret after the #, as
@@ -63,19 +64,23 @@ const WORDS = {
   en: { opening: 'Opening…', live: 'Live', connecting: 'Connecting…', away: 'Reconnecting…', gone: 'No longer shared', offline: 'Offline', none: 'No design',
     by: (n) => `Shared by ${n}`, incomplete: ['This link is not complete.', 'Ask whoever shared the design for its link again.'],
     ended: ['This design is no longer shared.', 'Whoever shared it has stopped sharing it.'], missing: ['This link does not lead to a design.', 'Ask whoever shared the design for its link again.'],
-    unreachable: ['Bezzle could not reach the design.', 'Check the connection and open the link again.'], empty: ['Nothing to show yet.', 'The design has no artboards.'] },
+    unreachable: ['Bezzle could not reach the design.', 'Check the connection and open the link again.'], empty: ['Nothing to show yet.', 'The design has no artboards.'],
+    play: 'Play the film', stop: 'Stop the film', film: 'Film' },
   de: { opening: 'Wird geöffnet …', live: 'Live', connecting: 'Verbinden …', away: 'Neu verbinden …', gone: 'Nicht mehr geteilt', offline: 'Offline', none: 'Kein Design',
     by: (n) => `Geteilt von ${n}`, incomplete: ['Dieser Link ist unvollständig.', 'Bitte die Person, die das Design geteilt hat, noch einmal um den Link.'],
     ended: ['Dieses Design wird nicht mehr geteilt.', 'Wer es geteilt hat, teilt es nicht mehr.'], missing: ['Dieser Link führt zu keinem Design.', 'Bitte die Person, die das Design geteilt hat, noch einmal um den Link.'],
-    unreachable: ['Bezzle konnte das Design nicht erreichen.', 'Prüfe die Verbindung und öffne den Link noch einmal.'], empty: ['Noch nichts zu sehen.', 'Das Design hat keine Zeichenflächen.'] },
+    unreachable: ['Bezzle konnte das Design nicht erreichen.', 'Prüfe die Verbindung und öffne den Link noch einmal.'], empty: ['Noch nichts zu sehen.', 'Das Design hat keine Zeichenflächen.'],
+    play: 'Den Film abspielen', stop: 'Den Film anhalten', film: 'Film' },
   fr: { opening: 'Ouverture…', live: 'En direct', connecting: 'Connexion…', away: 'Reconnexion…', gone: 'N’est plus partagé', offline: 'Hors ligne', none: 'Aucun design',
     by: (n) => `Partagé par ${n}`, incomplete: ['Ce lien est incomplet.', 'Demande à nouveau le lien à la personne qui a partagé le design.'],
     ended: ['Ce design n’est plus partagé.', 'La personne qui l’a partagé a arrêté de le partager.'], missing: ['Ce lien ne mène à aucun design.', 'Demande à nouveau le lien à la personne qui a partagé le design.'],
-    unreachable: ['Bezzle n’a pas pu atteindre le design.', 'Vérifie la connexion et ouvre à nouveau le lien.'], empty: ['Rien à voir pour l’instant.', 'Le design n’a pas de plan de travail.'] },
+    unreachable: ['Bezzle n’a pas pu atteindre le design.', 'Vérifie la connexion et ouvre à nouveau le lien.'], empty: ['Rien à voir pour l’instant.', 'Le design n’a pas de plan de travail.'],
+    play: 'Lire le film', stop: 'Arrêter le film', film: 'Film' },
   it: { opening: 'Apertura…', live: 'Dal vivo', connecting: 'Connessione…', away: 'Riconnessione…', gone: 'Non più condiviso', offline: 'Offline', none: 'Nessun design',
     by: (n) => `Condiviso da ${n}`, incomplete: ['Questo link è incompleto.', 'Chiedi di nuovo il link a chi ha condiviso il design.'],
     ended: ['Questo design non è più condiviso.', 'Chi l’ha condiviso ha smesso di condividerlo.'], missing: ['Questo link non porta a nessun design.', 'Chiedi di nuovo il link a chi ha condiviso il design.'],
-    unreachable: ['Bezzle non è riuscito a raggiungere il design.', 'Controlla la connessione e apri di nuovo il link.'], empty: ['Ancora niente da vedere.', 'Il design non ha tavole.'] },
+    unreachable: ['Bezzle non è riuscito a raggiungere il design.', 'Controlla la connessione e apri di nuovo il link.'], empty: ['Ancora niente da vedere.', 'Il design non ha tavole.'],
+    play: 'Riproduci il film', stop: 'Ferma il film', film: 'Film' },
 }
 const lang = (navigator.languages ?? [navigator.language]).map((l) => l.slice(0, 2).toLowerCase()).find((l) => WORDS[l]) ?? 'en'
 const t = WORDS[lang]
@@ -159,17 +164,20 @@ function list(next) {
     const el = document.createElement('button')
     el.textContent = b.name
     el.dataset.index = b.index
-    el.onclick = () => draw(b.index)
+    el.onclick = () => { film.rest(); draw(b.index) }
     return el
   }))
   draw(boards.some((b) => b.index === current) ? current : boards[0]?.index ?? -1)
 }
 
+// An artboard with a film (Animate) can be played, under the artboard: film.mjs.
+const film = createFilm({ CanvasKit: CK, bz, words: t, lang, missing: () => fetchPictures() })
+
 let canvas
 function draw(index) {
   current = index
   for (const b of $('boards').children) b.setAttribute('aria-current', String(+b.dataset.index === index))
-  if (index < 0) return note(t.empty)
+  if (index < 0) { film.show(null, null, $('stage')); return note(t.empty) }
   const scale = Math.min(window.devicePixelRatio || 1, 2)
   const img = bz.render(index, scale).image
   const w = img.width(), h = img.height()
@@ -177,6 +185,7 @@ function draw(index) {
   if (!canvas?.isConnected) { canvas = document.createElement('canvas'); $('stage').replaceChildren(canvas) }
   canvas.width = w; canvas.height = h; canvas.style.width = `${w / scale}px`
   canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, px.length), w, h), 0, 0)
+  film.show(boards.find((b) => b.index === index), canvas, $('stage'))
   fetchPictures()
 }
 
