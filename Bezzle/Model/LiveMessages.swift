@@ -126,8 +126,9 @@ nonisolated enum Pencil: Int, CaseIterable, Sendable {
 
     /// The pencil a person would rather have, the same on every Mac.
     static func preferred(_ replica: String) -> Pencil {
-        let hash = SHA256.hash(data: Data(replica.utf8)).prefix(4).reduce(0) { $0 << 8 | Int($1) }
-        return allCases[hash % allCases.count]
+        // Four bytes as a number of 32 bits, for the browser's core too, whose `Int` holds no more.
+        let hash = SHA256.hash(data: Data(replica.utf8)).prefix(4).reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        return allCases[Int(hash % UInt32(allCases.count))]
     }
 
     /// A pencil for each of the people in a room, no two the same while there are enough: in the
@@ -160,7 +161,8 @@ nonisolated enum PencilLoop {
         var s = seed &* 0x9E37_79B9_7F4A_7C15
         func random() -> Double {
             s ^= s >> 12; s ^= s << 25; s ^= s >> 27
-            return Double((s &* 0x2545_F491_4F6C_DD1D) >> 11) / Double(1 << 53)
+            // 2 to the 53rd as a number of 64 bits: the browser's core has an `Int` of 32.
+            return Double((s &* 0x2545_F491_4F6C_DD1D) >> 11) / Double(UInt64(1) << 53)
         }
         let start = -2.3 + random() * 0.6
         let tilt = -0.28 + random() * 0.22

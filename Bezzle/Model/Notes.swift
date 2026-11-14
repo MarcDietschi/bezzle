@@ -206,7 +206,7 @@ nonisolated enum NoteLoop {
         var s = seed &* 0x9E37_79B9_7F4A_7C15 | 1
         func random() -> Double {
             s ^= s >> 12; s ^= s << 25; s ^= s >> 27
-            return Double((s &* 0x2545_F491_4F6C_DD1D) >> 11) / Double(1 << 53)
+            return Double((s &* 0x2545_F491_4F6C_DD1D) >> 11) / Double(UInt64(1) << 53)
         }
         let start = -2.4 + random() * 0.5
         let sweep = 2 * Double.pi + 0.42 + random() * 0.3
