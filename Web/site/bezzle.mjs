@@ -9,6 +9,17 @@
 // pictures, and setting text (`host`). What it draws comes back as a recording of Core Graphics
 // calls, which `play` makes on a CanvasKit canvas, keeping Core Graphics' own rules: its space is y
 // up, a shadow is measured in device pixels, a transparency layer is faded and shadowed whole.
+//
+// An artboard with a film (Animate) can be shown at any of its moments:
+//
+//   const film = bz.film(boards[0].index)                // { length, once, backdrop, size }, or null without one
+//   const frame = bz.filmFrame(1.25, width, height)      // what the frame is made from: pictures and where each shows
+//   bz.filmDraw(canvas, frame, film.backdrop)            // on a CanvasKit canvas of that size
+//
+// Each piece of the film is a picture made once and then only placed, through a 3 by 3 map, which
+// is all that the camera's perspective, a fade or a blur take (Sources/BezzleCore/Film/WebFilm.swift).
+
+import { createShaders } from './shaders.mjs'
 
 export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} }) {
   let instance, memory
@@ -71,6 +82,7 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         case 2: out = f64(image(decoder.decode(Uint8Array.from(new Float64Array(input.buffer))))); break
         case 3: out = encoder.encode(textCall(JSON.parse(decoder.decode(input)))); break
         case 4: console.log('[core]', decoder.decode(input)); out = new Uint8Array(0); break
+        case 6: out = encoder.encode(shaderCall(JSON.parse(decoder.decode(input)))); break
         default: out = new Uint8Array(0)
       }
       pending = out
@@ -115,6 +127,37 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     const img = assets.byName.get(name)
     if (!img) missing.add(name)
     return img ? [img.id, img.image.width(), img.image.height()] : [0]
+  }
+
+  // Shader fills, which the page draws with WebGL where it has it (shaders.mjs). A fill's frame
+  // at a moment becomes one of the page's own pictures, kept until the core lets go of it.
+  const shaderFrames = new Set()
+  const shaders = createShaders({
+    picture(name) {
+      const img = assets.byName.get(name)?.image
+      if (!img) { missing.add(name); return null }
+      const data = img.readPixels(0, 0, { width: img.width(), height: img.height(), colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB })
+      return data ? { width: img.width(), height: img.height(), data } : null
+    },
+  })
+
+  // What the page has spent, in milliseconds, drawing shaders and making pictures: for measuring.
+  const spent = { shaders: 0, pictures: 0 }
+
+  function shaderCall(spec) {
+    if (spec.forget) { shaders.forget(); return '{}' }
+    if (spec.define !== undefined) return JSON.stringify(shaders.define(spec.define, spec.fill))
+    const t0 = performance.now()
+    const drawn = shaders.draw(spec.draw, spec.uniforms, spec.pixels, spec.region)
+    spent.shaders += performance.now() - t0
+    if (!drawn.data) return JSON.stringify(drawn)
+    const made = CK.MakeImage({ width: drawn.width, height: drawn.height, alphaType: drawn.premultiplied ? CK.AlphaType.Premul : CK.AlphaType.Unpremul,
+      colorType: CK.ColorType.RGBA_8888, colorSpace: CK.ColorSpace.SRGB }, drawn.data, drawn.width * 4)
+    if (!made) return '{}'
+    const id = assets.next++
+    assets.byId.set(id, made)
+    shaderFrames.add(id)
+    return JSON.stringify({ asset: id, w: drawn.width, h: drawn.height })
   }
 
   // MARK: Text
@@ -700,7 +743,10 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
 
   // MARK: Pictures, made when first drawn
 
-  function get(id) {
+  // `card`, for a film's picture that is drawn again at every moment: the graphics card's context
+  // it is to be made on, where the frame is drawn there too. Every other picture is made on the
+  // processor, as it can then be drawn anywhere.
+  function get(id, card = null) {
     if (made.has(id)) return made.get(id)
     const d = images.get(id)
     if (!d) return null
@@ -712,7 +758,8 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         // Core Graphics' space: y up from the bottom left.
         canvas.concat([1, 0, 0, 0, -1, d.h, 0, 0, 1])
         play(canvas, Float64Array.from(d.picture))
-      })
+      }, card)
+      if (card && img) onCard.add(id)
     } else if (d.from !== undefined && d.changes.some((ch) => ch.develop)) {
       const from = get(d.from)
       if (from) img = developed(from, d.changes.find((ch) => ch.develop).develop)
@@ -916,14 +963,101 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     return CK.MakeImage({ width: w, height: h, alphaType: CK.AlphaType.Unpremul, colorType: CK.ColorType.RGBA_8888, colorSpace: CK.ColorSpace.SRGB }, out, w * 4) ?? from
   }
 
-  function raster(w, h, draw) {
-    const surface = CK.MakeSurface(Math.max(1, w), Math.max(1, h))
+  // The pictures made on the graphics card: they can be drawn only there.
+  const onCard = new Set()
+
+  function raster(w, h, draw, card = null) {
+    const t0 = performance.now()
+    const surface = (card && CK.MakeRenderTarget(card, Math.max(1, w), Math.max(1, h))) || CK.MakeSurface(Math.max(1, w), Math.max(1, h))
     const canvas = surface.getCanvas()
     canvas.clear(CK.TRANSPARENT)
     draw(canvas)
     const img = surface.makeImageSnapshot()
     surface.delete()
+    spent.pictures += performance.now() - t0
     return img
+  }
+
+  // MARK: Films
+
+  // Pictures of a film the core holds no more: what was made of them is let go. Only a film's
+  // pictures ever are; an artboard drawn as the design keeps its own, as it always has.
+  function forget(ids) {
+    for (const id of ids ?? []) {
+      const d = images.get(id), img = made.get(id)
+      images.delete(id); made.delete(id); mipped.delete(id); onCard.delete(id)
+      if (!d) continue
+      if (d.asset !== undefined) {
+        // One of the design's pictures stays; a shader's frame was made for this picture alone.
+        if (shaderFrames.delete(d.asset)) { assets.byId.get(d.asset)?.delete(); assets.byId.delete(d.asset) }
+        continue
+      }
+      // A photo that could not be developed is shown by the picture it was to be made from.
+      if (img && !img.isDeleted() && img !== made.get(d.from)) img.delete()
+    }
+  }
+
+  // A film's pictures that stay from frame to frame, with smaller copies of themselves, so that
+  // one shown smaller than it was drawn still has every pixel count.
+  const mipped = new Set()
+
+  function filmPicture(piece, card) {
+    // One made on a graphics card that is gone, or for a frame now made on the processor, is made again.
+    if (onCard.has(piece.image) && card !== madeOn) {
+      const stale = made.get(piece.image)
+      made.delete(piece.image); onCard.delete(piece.image)
+      try { stale?.delete() } catch {}
+    }
+    let img = get(piece.image, piece.still ? null : card)
+    if (img && piece.still && !mipped.has(piece.image)) {
+      mipped.add(piece.image)
+      const copies = img.makeCopyWithDefaultMipmaps()
+      if (copies) { img.delete(); img = copies; made.set(piece.image, img) }
+    }
+    return img
+  }
+
+  // A frame of a film on a canvas of the size it was asked for: the backdrop, and over it each
+  // piece's picture, the lowest first, through its map from the picture's pixels to the frame's.
+  // `card` is the graphics card's context when the canvas is drawn there (CanvasKit's
+  // MakeWebGLContext): pieces whose insides move then have their pictures made there too.
+  let madeOn = null
+
+  function compose(canvas, frame, backdrop, card = null) {
+    // The pictures first, so that what making them takes can be told from placing them.
+    const t0 = performance.now()
+    const pictures = frame.pieces.map((piece) => filmPicture(piece, card))
+    madeOn = card
+    const pictureMs = performance.now() - t0
+    canvas.clear(CK.Color4f(backdrop[0], backdrop[1], backdrop[2], 1))
+    frame.pieces.forEach((piece, k) => {
+      const img = pictures[k]
+      if (!img) return
+      const paint = new CK.Paint()
+      paint.setAntiAlias(true)
+      paint.setAlphaf(piece.opacity)
+      // Blurred as it is drawn, before the camera sees it; the blur spreads past its edges.
+      let blur = null
+      if (piece.blur) { blur = CK.ImageFilter.MakeBlur(piece.blur, piece.blur, CK.TileMode.Decal, null); paint.setImageFilter(blur) }
+      canvas.save()
+      canvas.concat(piece.map)
+      if (piece.outline) {
+        // Reaching behind the eye: only its outline in front of it is filled with the picture.
+        const path = new CK.Path()
+        for (let k = 0; k + 1 < piece.outline.length; k += 2) k ? path.lineTo(piece.outline[k], piece.outline[k + 1]) : path.moveTo(piece.outline[k], piece.outline[k + 1])
+        path.close()
+        const shader = img.makeShaderOptions(CK.TileMode.Clamp, CK.TileMode.Clamp, CK.FilterMode.Linear, piece.still ? CK.MipmapMode.Linear : CK.MipmapMode.None)
+        paint.setShader(shader)
+        canvas.drawPath(path, paint)
+        shader.delete(); path.delete()
+      } else {
+        canvas.drawImageOptions(img, 0, 0, CK.FilterMode.Linear, piece.still ? CK.MipmapMode.Linear : CK.MipmapMode.None, paint)
+      }
+      canvas.restore()
+      blur?.delete()
+      paint.delete()
+    })
+    return { pictureMs }
   }
 
   // MARK: The core
@@ -982,6 +1116,54 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       const img = get(r.root)
       return { image: img, coreMs: r.ms, totalMs: performance.now() - t0, playMs: performance.now() - t1 }
     },
+    /** Opens the film of an artboard: { length, once, backdrop, size }, or null when it has none. The film open before is let go. */
+    film(index) {
+      const r = reply(x.bz_film(index))
+      forget(r.drop)
+      return r.error ? null : r
+    },
+    /** What the open film's frame at `t` seconds is made from, for a canvas `width` by `height` pixels:
+        { pieces }, each a picture and where it shows. `playing` leaves sharper parts for when the film rests. */
+    filmFrame(t, width, height, playing = false) {
+      const t0 = performance.now()
+      const r = reply(x.bz_film_frame(t, Math.round(width), Math.round(height), playing ? 1 : 0))
+      if (r.error) throw new Error(r.error)
+      forget(r.drop)
+      for (const d of r.images) images.set(d.id, d)
+      r.coreMs = performance.now() - t0
+      return r
+    },
+    /** Makes one more of the open film's pictures ahead of its playing, for a canvas `width` by `height`
+        pixels (`card` as for filmDraw); answers how many are left to make. So that playing does not wait
+        for a piece that first shows in the middle. */
+    filmWarm(width, height, card = null) {
+      const r = reply(x.bz_film_warm(Math.round(width), Math.round(height)))
+      if (r.error) return 0
+      forget(r.drop)
+      for (const d of r.images) images.set(d.id, d)
+      const img = r.image !== undefined ? filmPicture({ image: r.image, still: true }, null) : null
+      // Handed to the graphics card now too, which takes a moment for a large picture: drawn once, small, out of sight.
+      const aside = img && card ? CK.MakeRenderTarget(card, 4, 4) : null
+      if (aside) {
+        aside.getCanvas().drawImageRectOptions(img, CK.XYWHRect(0, 0, img.width(), img.height()), CK.XYWHRect(0, 0, 4, 4), CK.FilterMode.Linear, CK.MipmapMode.Linear, null)
+        aside.flush()
+        aside.delete()
+      }
+      return r.left
+    },
+    /** Draws a frame on a CanvasKit canvas of the size it was asked for; `card` is the graphics card's context when the canvas is drawn there. */
+    filmDraw(canvas, frame, backdrop, card = null) { return compose(canvas, frame, backdrop, card) },
+    /** A frame of the open film as a CanvasKit image, made on the processor. */
+    filmImage(t, width, height, backdrop, playing = false) {
+      const frame = this.filmFrame(t, width, height, playing)
+      return raster(Math.round(width), Math.round(height), (canvas) => compose(canvas, frame, backdrop))
+    },
+    /** Where the open film's arithmetic has each piece at `t`, for comparing with the Mac's. */
+    filmPlacements(t) { return reply(x.bz_film_placements(t)) },
+    /** Lets the open film go. */
+    filmClose() { forget(reply(x.bz_film_close()).drop) },
+    /** How many pictures the page holds, for seeing that a film lets go of its own. */
+    held() { return { described: images.size, made: made.size, shaderFrames: shaderFrames.size, spent: { ...spent } } },
     texts() { return reply(x.bz_texts()) },
     // Where each letter of a text the core laid (texts()' laid) is set along its line, from the
     // text's left, by where in the words it is from, per line: for comparing with the Mac.
@@ -1027,7 +1209,7 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       x.bz_forget_text()
     },
     /** Pictures that came after the design: name → encoded bytes. */
-    addPictures(pictures) { add(pictures) },
+    addPictures(pictures) { add(pictures); shaders.forgetPictures() },
     /** Names of the pictures drawings asked for that are not here yet. */
     missingPictures() { return [...missing] },
     testEdit() { return reply(x.bz_test_edit()) },
