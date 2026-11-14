@@ -8,6 +8,24 @@ nonisolated(unsafe) private var design: BezzleDocument?
 nonisolated(unsafe) private var assets = Assets(folder: nil)
 /// The film the page is showing, of one artboard of the design (Film/WebFilm.swift).
 nonisolated(unsafe) private var film: WebFilm?
+/// The artboard last drawn as the design, held until the next is drawn or another design is
+/// opened: what the page made for it is the page's to keep that long (`PageKeeps`).
+nonisolated(unsafe) private var lastDrawn: CGImage?
+/// How many texts the core keeps laid out before it forgets the ones longest not asked for
+/// (`TextLayout.trim`): more than the design's own can come to, so that only texts set anew
+/// again and again (one growing in a film, a shared design being changed) are ever forgotten.
+nonisolated(unsafe) private var mostTexts = 1200
+
+/// The design the page now shows.
+private func show(_ doc: BezzleDocument, anew: Bool) {
+    design = doc
+    film = nil
+    if anew {
+        lastDrawn = nil
+        assets = Assets(folder: URL(fileURLWithPath: "/images"))
+    }
+    mostTexts = max(1200, BezzleDocument.layerCount(doc.nodes) * 3)
+}
 
 private func answer(_ s: String) -> Int32 {
     outbox = Array(s.utf8)
@@ -31,6 +49,8 @@ nonisolated func bz_outbox() -> UnsafeRawPointer {
 /// The families and faces of the fonts the page has: {"Avenir Next": ["Regular", "Medium"], …}.
 @_expose(wasm, "bz_fonts")
 nonisolated func bz_fonts(_ p: UnsafeRawPointer, _ n: Int32) {
+    // The page's first call: from here on it is told what it may let go.
+    PageKeeps.listen()
     let data = Data(bytes: p, count: Int(n))
     if let families = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
         NSFontManager.shared.families = families
@@ -60,7 +80,8 @@ nonisolated func bz_forget_text() {
     }
 }
 
-/// Opens a design from its document.json; answers its artboards.
+/// Opens a design from its document.json; answers its artboards, and what the page may let go
+/// of the design shown before.
 @_expose(wasm, "bz_open")
 nonisolated func bz_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
     let data = Data(bytes: p, count: Int(n))
@@ -68,10 +89,8 @@ nonisolated func bz_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
         do {
             var doc = try JSONDecoder().decode(BezzleDocument.self, from: data)
             doc.repairStyles()
-            design = doc
-            film = nil
-            assets = Assets(folder: URL(fileURLWithPath: "/images"))
-            return answer(boardsAnswer(doc))
+            show(doc, anew: true)
+            return answer(boardsAnswer(doc, extra: "," + PageKeeps.gone()))
         } catch {
             return answer("{\"error\":\(quoted("\(error)"))}")
         }
@@ -79,18 +98,21 @@ nonisolated func bz_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
 }
 
 /// Draws one artboard at `scale` pixels to the point with the app's own renderer. Answers the
-/// picture to show and every picture made for it since the last drawing, as `Images` lists them.
+/// picture to show and every picture made for it, as `Images` lists them, with the pictures and
+/// texts the page may let go (`PageKeeps`): the picture drawn before this one is among them, and
+/// what only it drew. So the picture answered is the page's until the next is drawn.
 @_expose(wasm, "bz_render")
 nonisolated func bz_render(_ index: Int32, _ scale: Double) -> Int32 {
     MainActor.assumeIsolated {
         guard let doc = design, Int(index) < doc.nodes.count else { return answer("{\"error\":\"no such artboard\"}") }
-        let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+        lastDrawn = nil
+        TextLayout.trim(over: mostTexts)
         let started = Date()
-        guard let image = Renderer.image(of: doc.nodes[Int(index)], scale: CGFloat(scale), assets: assets) else {
-            return answer("{\"error\":\"nothing drawn\"}")
-        }
+        let (image, images) = PageKeeps.listing { Renderer.image(of: doc.nodes[Int(index)], scale: CGFloat(scale), assets: assets) }
+        guard let image else { return answer("{\"error\":\"nothing drawn\"," + PageKeeps.gone() + "}") }
+        lastDrawn = image
         let ms = Date().timeIntervalSince(started) * 1000
-        return answer("{\"root\":\(image.id),\"ms\":\(ms),\"images\":\(Images.shared.json(from: first))}")
+        return answer("{\"root\":\(image.id),\"ms\":\(ms),\"images\":\(images)," + PageKeeps.gone() + "}")
     }
 }
 
@@ -148,10 +170,8 @@ nonisolated func bz_shared_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
     return MainActor.assumeIsolated {
         let (list, replica) = records(json)
         let (doc, unread) = WebSharing.open(list, replica: replica)
-        design = doc
-        film = nil
-        assets = Assets(folder: URL(fileURLWithPath: "/images"))
-        return answer(boardsAnswer(doc, extra: ",\"unread\":\(unread),\"clock\":\(WebSharing.state.clock.time)"))
+        show(doc, anew: true)
+        return answer(boardsAnswer(doc, extra: ",\"unread\":\(unread),\"clock\":\(WebSharing.state.clock.time)," + PageKeeps.gone()))
     }
 }
 
@@ -162,9 +182,8 @@ nonisolated func bz_shared_receive(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
     return MainActor.assumeIsolated {
         guard let shown = design else { return answer("{\"error\":\"no design\"}") }
         let doc = WebSharing.receive(records(json).records, into: shown)
-        design = doc
-        film = nil
-        return answer(boardsAnswer(doc))
+        show(doc, anew: false)
+        return answer(boardsAnswer(doc, extra: "," + PageKeeps.gone()))
     }
 }
 
@@ -208,8 +227,7 @@ nonisolated func bz_test_edit() -> Int32 {
         doc.update(id) { $0.text = "Edited in a browser"; $0.refit(); $0.frame.origin.x += 10 }
         // As every edit in the app does: groups fit what they hold again.
         doc.fitGroups()
-        design = doc
-        film = nil
+        show(doc, anew: false)
         return answer("{\"id\":\"\(id.uuidString)\"}")
     }
 }
@@ -228,34 +246,34 @@ nonisolated func bz_document() -> Int32 {
 // MARK: Films
 
 /// Opens the film of one artboard, for showing its frames (`bz_film_frame`). Answers how long it
-/// runs, whether it plays once, its backdrop and the artboard's size, with the pictures of a film
-/// shown before that the page may let go; or an error for an artboard without a film.
+/// runs, whether it plays once, its backdrop and the artboard's size, with what the page may let
+/// go of a film shown before (`PageKeeps`); or an error for an artboard without a film.
 @_expose(wasm, "bz_film")
 nonisolated func bz_film(_ index: Int32) -> Int32 {
     MainActor.assumeIsolated {
         film = nil
         guard let doc = design, doc.nodes.indices.contains(Int(index)), doc.nodes[Int(index)].isArtboard, doc.nodes[Int(index)].hasFilm else {
-            return answer("{\"error\":\"no film\",\"drop\":\(WebFilm.takeGone())}")
+            return answer("{\"error\":\"no film\"," + PageKeeps.gone() + "}")
         }
-        WebFilm.listen()
         let reel = WebFilm(doc.nodes[Int(index)], assets: assets)
         film = reel
-        return answer(String(reel.described.dropLast()) + ",\"drop\":\(WebFilm.takeGone())}")
+        return answer(String(reel.described.dropLast()) + "," + PageKeeps.gone() + "}")
     }
 }
 
 /// What the open film's frame at `t` seconds is made from, `width` by `height` pixels: its
 /// pieces, the lowest first, each a picture drawn through a 3 by 3 map, with the pictures drawn
-/// for it since the last frame and those the page may let go. `playing` (not 0) leaves parts
-/// sharper than a piece's whole picture for when the film rests.
+/// for it since the last frame and the pictures and texts the page may let go. `playing` (not 0)
+/// leaves parts sharper than a piece's whole picture for when the film rests.
 @_expose(wasm, "bz_film_frame")
 nonisolated func bz_film_frame(_ t: Double, _ width: Int32, _ height: Int32, _ playing: Int32) -> Int32 {
     MainActor.assumeIsolated {
         guard let film else { return answer("{\"error\":\"no film\"}") }
         let started = Date()
-        let (frame, images) = WebFilm.listing { film.frame(at: t, width: Int(width), height: Int(height), playing: playing != 0) }
+        TextLayout.trim(over: mostTexts)
+        let (frame, images) = PageKeeps.listing { film.frame(at: t, width: Int(width), height: Int(height), playing: playing != 0) }
         let ms = Date().timeIntervalSince(started) * 1000
-        return answer(String(frame.dropLast()) + ",\"ms\":\(ms),\"images\":\(images),\"drop\":\(WebFilm.takeGone())}")
+        return answer(String(frame.dropLast()) + ",\"ms\":\(ms),\"images\":\(images)," + PageKeeps.gone() + "}")
     }
 }
 
@@ -265,8 +283,9 @@ nonisolated func bz_film_frame(_ t: Double, _ width: Int32, _ height: Int32, _ p
 nonisolated func bz_film_warm(_ width: Int32, _ height: Int32) -> Int32 {
     MainActor.assumeIsolated {
         guard let film else { return answer("{\"error\":\"no film\"}") }
-        let (made, images) = WebFilm.listing { film.warm(width: Int(width), height: Int(height)) }
-        return answer(String(made.dropLast()) + ",\"images\":\(images),\"drop\":\(WebFilm.takeGone())}")
+        TextLayout.trim(over: mostTexts)
+        let (made, images) = PageKeeps.listing { film.warm(width: Int(width), height: Int(height)) }
+        return answer(String(made.dropLast()) + ",\"images\":\(images)," + PageKeeps.gone() + "}")
     }
 }
 
@@ -279,12 +298,12 @@ nonisolated func bz_film_placements(_ t: Double) -> Int32 {
     }
 }
 
-/// Lets the open film go; answers the pictures the page may let go with it.
+/// Lets the open film go; answers the pictures and texts the page may let go with it.
 @_expose(wasm, "bz_film_close")
 nonisolated func bz_film_close() -> Int32 {
     MainActor.assumeIsolated {
         film = nil
-        return answer("{\"drop\":\(WebFilm.takeGone())}")
+        return answer("{" + PageKeeps.gone() + "}")
     }
 }
 

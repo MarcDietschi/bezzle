@@ -38,7 +38,9 @@ const [a, b] = [await core(), await core()]
 const work = await mkdtemp(path.join(tmpdir(), 'bezzle-sharing-'))
 
 const pixels = (img) => img.readPixels(0, 0, { width: img.width(), height: img.height(), colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB })
-const samePixels = (x, y) => { const p = pixels(x), q = pixels(y); return p.length === q.length && p.every((v, i) => v === q[i]) }
+// An artboard's pixels, read at once: its picture is the page's only until the next is drawn.
+const drawn = (bz, index) => pixels(bz.render(index, 1).image)
+const samePixels = (p, q) => p.length === q.length && p.every((v, i) => v === q[i])
 const mac = (mode, data) => {
   const i = path.join(work, 'in'), o = path.join(work, 'out')
   return writeFile(i, data).then(() => { execFileSync('swift', [path.join(here, 'lzfse-mac.swift'), mode, i, o]); return readFile(o) })
@@ -66,13 +68,13 @@ for (const name of (await readdir(designs)).filter((n) => n.endsWith('.bezzle'))
 
   // 1. The design as it is, then as its snapshot.
   const opened = a.open(await readFile(path.join(pkg, 'document.json')), pictures)
-  const plain = opened.boards.map((x) => a.render(x.index, 1).image)
+  const plain = opened.boards.map((x) => drawn(a, x.index))
   const original = a.document()
   const { data: snapshot } = a.snapshot()
   const shared = a.openShared([snapshot], 'web-a', pictures)
   check(shared.unread === 0 && shared.boards.length === opened.boards.length, `snapshot opens (${Math.round(Buffer.from(snapshot, 'base64').length / 1024)} KB packed, ${shared.layers} layers)`)
   check(alike(a.document().nodes, original.nodes), 'same layers as the design')
-  check(shared.boards.every((x, k) => samePixels(a.render(x.index, 1).image, plain[k])), 'drawn the same, pixel for pixel')
+  check(shared.boards.every((x, k) => samePixels(drawn(a, x.index), plain[k])), 'drawn the same, pixel for pixel')
 
   // 2. Apple's LZFSE: the Mac unpacks the browser's snapshot, and packs it again for the browser.
   const json = await mac('unpack', Buffer.from(snapshot, 'base64'))

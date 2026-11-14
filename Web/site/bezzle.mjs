@@ -27,12 +27,16 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   const bytes = () => new Uint8Array(memory.buffer)
   const decoder = new TextDecoder(), encoder = new TextEncoder()
 
-  // The design's pictures, read by the page, and every picture the core describes.
+  // The design's pictures, read by the page, and every picture the core describes. A described
+  // picture, and what is made of it, is kept for as long as the core holds it: each answer says
+  // which it holds no more (`took`).
   const assets = { byName: new Map(), byId: new Map(), next: 1 }
   const images = new Map() // id → description from the core
   const made = new Map() // id → CanvasKit Image
+  const lent = new Set() // ids shown by another's CanvasKit Image, which is not theirs to let go
 
   // Text the core has had set: per paragraph, its lines, each a paragraph of its own (`text`).
+  // Kept as the pictures are: until the core says it holds one no more.
   const texts = new Map()
   let nextText = 1
 
@@ -820,6 +824,7 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     } else if (d.from !== undefined && d.changes.some((ch) => ch.develop)) {
       const from = get(d.from)
       if (from) img = developed(from, d.changes.find((ch) => ch.develop).develop)
+      if (img && img === from) lent.add(id)
     } else if (d.from !== undefined) {
       const from = get(d.from)
       if (from) {
@@ -829,7 +834,6 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
           if (ch.blur !== undefined) blur = ch
           if (ch.perspective) matrix = ch.perspective
         }
-        const tiles = blur?.clamp ? CK.TileMode.Clamp : CK.TileMode.Decal
         img = raster(d.w, d.h, (canvas) => {
           canvas.translate(-crop[0], -crop[1])
           if (matrix) canvas.concat(matrix)
@@ -1089,34 +1093,42 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     return img
   }
 
-  // MARK: Films
+  // MARK: Letting go
 
-  // Texts are kept as long as the core keeps its own copies of them (WebText's `kept`): until the
-  // fonts change. A film can have one set anew at every moment (a text that breaks its lines at
-  // its width, growing by a key inside a piece drawn again each time), and each costs CanvasKit
-  // about 0.3 MB. So once a film has had `mostTexts` more set than the page held when it opened,
-  // every text is let go, here and in the core, and the film is opened again: its pictures are
-  // drawn once more, a moment's wait in place of memory that never comes back.
-  const mostTexts = 600
-  let filmOf = -1, textsThen = 0, textsLetGo = 0
+  // What an answer of the core brings: the pictures it made, described, and the pictures and texts
+  // it holds no more, which the page then lets go of too. A picture is held by what draws it (the
+  // artboard last drawn, a film's piece, a blur the core keeps), a text by its layout there and by
+  // every picture that draws it. The descriptions first: one made and let go within the same
+  // answer is then let go here too.
+  let textsLetGo = 0
 
-  function forgetTexts() {
-    for (const t of texts.values()) for (const line of t.lines) line.paragraph?.delete()
-    texts.clear()
-    const fonts = new Set()
-    for (const letters of glyphLines.values()) for (const l of letters) fonts.add(l.font)
-    for (const f of fonts) f.delete()
-    glyphLines.clear()
-    // The core forgets its own, and with them the film, whose pictures were drawn with them.
-    x.bz_forget_text()
-    textsLetGo++
+  function took(r) {
+    for (const d of r.images ?? []) images.set(d.id, d)
+    forget(r.drop)
+    for (const id of r.dropTexts ?? []) {
+      const t = texts.get(id)
+      if (t) {
+        for (const line of t.lines) line.paragraph?.delete()
+        texts.delete(id)
+        textsLetGo++
+        continue
+      }
+      const letters = glyphLines.get(id)
+      if (!letters) continue
+      // A line set for a curve: its letters' fonts, one a run.
+      for (const font of new Set(letters.map((l) => l.font))) font.delete()
+      glyphLines.delete(id)
+      textsLetGo++
+    }
+    // The page's own bookkeeping, not part of what was asked.
+    delete r.drop; delete r.dropTexts
+    return r
   }
 
-  // Pictures of a film the core holds no more: what was made of them is let go. Only a film's
-  // pictures ever are; an artboard drawn as the design keeps its own, as it always has.
+  // Pictures the core holds no more: what was made of them is let go.
   function forget(ids) {
     for (const id of ids ?? []) {
-      const d = images.get(id), img = made.get(id)
+      const d = images.get(id), img = made.get(id), own = !lent.delete(id)
       images.delete(id); made.delete(id); mipped.delete(id); onCard.delete(id)
       if (!d) continue
       if (d.asset !== undefined) {
@@ -1124,10 +1136,13 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         if (shaderFrames.delete(d.asset)) { assets.byId.get(d.asset)?.delete(); assets.byId.delete(d.asset) }
         continue
       }
-      // A photo that could not be developed is shown by the picture it was to be made from.
-      if (img && !img.isDeleted() && img !== made.get(d.from)) img.delete()
+      // A photo that could not be developed is shown by the picture it was to be made from,
+      // which is not its own to let go.
+      if (img && own && !img.isDeleted()) img.delete()
     }
   }
+
+  // MARK: Films
 
   // A film's pictures that stay from frame to frame, with smaller copies of themselves, so that
   // one shown smaller than it was drawn still has every pixel count.
@@ -1214,10 +1229,11 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   // The Mac's families the page has stand-ins for (the open fonts), spaced to the Mac's widths.
   if (fonts.standsIn && x.bz_stand_ins) send(x.bz_stand_ins, JSON.stringify(fonts.standsIn))
 
-  // The design's pictures, decoded once: name → encoded bytes.
+  // The design's pictures, decoded once: name → encoded bytes. A shader's frame stays until the
+  // core lets go of the picture it was made for.
   function take(pictures) {
-    for (const img of assets.byName.values()) img.image.delete()
-    assets.byName.clear(); assets.byId.clear()
+    for (const img of assets.byName.values()) { img.image.delete(); assets.byId.delete(img.id) }
+    assets.byName.clear()
     add(pictures)
   }
 
@@ -1237,39 +1253,29 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   return {
     open(json, pictures = new Map()) {
       take(pictures)
-      return reply(send(x.bz_open, json))
+      return took(reply(send(x.bz_open, json)))
     },
+    /** Draws an artboard: { image }, a CanvasKit image that is the page's own and stays only until the
+        next artboard is drawn, when what was made for this one is let go. Read its pixels at once. */
     render(index, scale = 1) {
       const t0 = performance.now()
-      const r = reply(x.bz_render(index, scale))
+      const r = took(reply(x.bz_render(index, scale)))
       if (r.error) throw new Error(r.error)
-      for (const d of r.images) images.set(d.id, d)
       const t1 = performance.now()
       const img = get(r.root)
       return { image: img, coreMs: r.ms, totalMs: performance.now() - t0, playMs: performance.now() - t1 }
     },
     /** Opens the film of an artboard: { length, once, backdrop, size }, or null when it has none. The film open before is let go. */
     film(index) {
-      const r = reply(x.bz_film(index))
-      forget(r.drop)
-      filmOf = r.error ? -1 : index
-      textsThen = texts.size + glyphLines.size
+      const r = took(reply(x.bz_film(index)))
       return r.error ? null : r
     },
     /** What the open film's frame at `t` seconds is made from, for a canvas `width` by `height` pixels:
         { pieces }, each a picture and where it shows. `playing` leaves sharper parts for when the film rests. */
     filmFrame(t, width, height, playing = false) {
       const t0 = performance.now()
-      if (filmOf >= 0 && texts.size + glyphLines.size - textsThen > mostTexts) {
-        // Too many texts set for its moments: all let go, and the film opened again (see `mostTexts`).
-        forgetTexts()
-        forget(reply(x.bz_film(filmOf)).drop)
-        textsThen = texts.size + glyphLines.size
-      }
-      const r = reply(x.bz_film_frame(t, Math.round(width), Math.round(height), playing ? 1 : 0))
+      const r = took(reply(x.bz_film_frame(t, Math.round(width), Math.round(height), playing ? 1 : 0)))
       if (r.error) throw new Error(r.error)
-      forget(r.drop)
-      for (const d of r.images) images.set(d.id, d)
       r.coreMs = performance.now() - t0
       return r
     },
@@ -1277,10 +1283,8 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         pixels (`card` as for filmDraw); answers how many are left to make. So that playing does not wait
         for a piece that first shows in the middle. */
     filmWarm(width, height, card = null) {
-      const r = reply(x.bz_film_warm(Math.round(width), Math.round(height)))
+      const r = took(reply(x.bz_film_warm(Math.round(width), Math.round(height))))
       if (r.error) return 0
-      forget(r.drop)
-      for (const d of r.images) images.set(d.id, d)
       const img = r.image !== undefined ? filmPicture({ image: r.image, still: true }, null) : null
       // Handed to the graphics card now too, which takes a moment for a large picture: drawn once, small, out of sight.
       const aside = img && card ? CK.MakeRenderTarget(card, 4, 4) : null
@@ -1301,9 +1305,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     /** Where the open film's arithmetic has each piece at `t`, for comparing with the Mac's. */
     filmPlacements(t) { return reply(x.bz_film_placements(t)) },
     /** Lets the open film go. */
-    filmClose() { filmOf = -1; forget(reply(x.bz_film_close()).drop) },
-    /** How many pictures and texts the page holds, and how often a film had its texts let go, for
-        seeing that a film lets go of its own. */
+    filmClose() { took(reply(x.bz_film_close())) },
+    /** How many pictures and texts the page holds, and how many texts it has let go, for seeing that
+        what is drawn no more is let go. */
     held() { return { described: images.size, made: made.size, shaderFrames: shaderFrames.size, texts: texts.size + glyphLines.size, textsLetGo, spent: { ...spent } } },
     texts() { return reply(x.bz_texts()) },
     // Where each letter of a text the core laid (texts()' laid) is set along its line, from the
@@ -1331,9 +1335,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     // Shared designs: records are each record's packed data, base64, as CloudKit gives it.
     openShared(records, replica, pictures = new Map()) {
       take(pictures)
-      return reply(send(x.bz_shared_open, JSON.stringify({ records, replica })))
+      return took(reply(send(x.bz_shared_open, JSON.stringify({ records, replica }))))
     },
-    receive(records) { return reply(send(x.bz_shared_receive, JSON.stringify({ records }))) },
+    receive(records) { return took(reply(send(x.bz_shared_receive, JSON.stringify({ records })))) },
     /** What was changed here since last time, packed for a change record: { data, upTo } or {}. */
     changes() { return reply(x.bz_shared_changes()) },
     snapshot() { return reply(x.bz_shared_snapshot()) },

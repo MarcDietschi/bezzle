@@ -131,37 +131,9 @@ final class WebFilm {
 
     // MARK: Pictures the page may let go
 
-    /// The pictures no longer held here since the page was last told: a film's own, drawn of a
-    /// moment that has passed or for a frame of another size. The page lets go of what it made
-    /// of them. Only a film's pictures are ever let go: those of an artboard drawn as the design
-    /// stay listed (`Images`), as they always have.
-    nonisolated(unsafe) private static var gone: [Int] = []
-    nonisolated(unsafe) private static var listening = false
-
-    /// From now on, a picture nothing holds any more is noted for the page.
-    static func listen() {
-        guard !listening else { return }
-        listening = true
-        CGImage.released = { gone.append($0) }
-    }
-
-    /// The numbers of the pictures let go since this was last asked, as JSON.
-    static func takeGone() -> String {
-        defer { gone = [] }
-        return "[" + gone.map(String.init).joined(separator: ",") + "]"
-    }
-
-    /// Runs what draws a film's pictures, and answers them as the page reads them (`Images.json`).
-    /// They are taken off the list of every picture then, so that each lives only as long as the
-    /// film holds it, or a picture that is made of it.
-    static func listing<T>(_ work: () -> T) -> (T, images: String) {
-        listen()
-        let first = (Images.shared.list.last?.id ?? 0) + 1
-        let result = work()
-        let images = Images.shared.json(from: first)
-        while let last = Images.shared.list.last, last.id >= first { Images.shared.list.removeLast() }
-        return (result, images)
-    }
+    // A picture drawn of a moment that has passed, or for a frame of another size, is held here
+    // no more: the page is told with the next answer, and lets go of what it made of it
+    // (`PageKeeps`, which does the same for an artboard drawn as the design).
 
     /// The frame's size in pixels, taken as the one the pictures are drawn for from here on:
     /// those drawn for a frame of another size are let go.

@@ -132,17 +132,13 @@ card's work. What keeps it quick and true:
   its picture holds is drawn again as sharp as it is seen and laid over it, as on the Mac.
 - **Pictures made ahead**, one every 20 ms from when the artboard is shown, and each put on the
   graphics card then, so playing does not wait for them (`bz_film_warm`).
-- **Nothing kept.** The core says which pictures it has let go (`drop` in every answer), and the
-  page forgets them: after a film none of its pictures is held. A surface on the processor gives
-  its pixels back only to CanvasKit's `dispose`, not `delete` (`raster` in `site/bezzle.mjs`):
-  with `delete`, a film played in Node kept a frame's pixels at every moment, 1.8 GB after 500 and
-  then an abort; now CanvasKit's memory stays at 154 MB over 1200. A text is kept as long as the
-  core keeps its own copy of it, and a film can have one set anew at every moment (a text that
-  breaks its lines at its width, growing by a key inside a piece drawn again), about 0.3 MB each
-  time: 647 MB after 900 moments. So once a film has had 600 more texts set than the page held
-  when it opened, every text is let go on both sides and the film opened again (`mostTexts` in
-  `site/bezzle.mjs`): 319 MB however long it plays, for a wait as at the film's start every 600
-  texts. Frames and the design come out the same to the byte after it.
+- **Nothing kept.** The core says which pictures and texts it has let go (`drop` and `dropTexts`
+  in every answer), and the page forgets them: after a film none of its pictures is held (see
+  What the page keeps, below). A surface on the processor gives its pixels back only to
+  CanvasKit's `dispose`, not `delete` (`raster` in `site/bezzle.mjs`): with `delete`, a film
+  played in Node kept a frame's pixels at every moment, 1.8 GB after 500 and then an abort; now
+  CanvasKit's memory stays at 128 MB over 1800, also for a film that has a text set anew at every
+  moment (a text that breaks its lines at its width, growing by a key inside a piece drawn again).
 - **Shader fills** are drawn with WebGL, which their programs were written for (`site/shaders.mjs`,
   asked through `Web/WebShaderPainting.swift`): in a film, at the film's moment, the part of the
   layer its picture shows. In the design itself, and where there is no WebGL, the fill's picture
@@ -177,6 +173,48 @@ In the page a link opens it was tried through a relay on this Mac (`node tools/r
 with a film> --relay <address> --edit`, then `shared.html?relay=<address>#2.<secret>` in the same
 headless Chromium): the film plays on while the design's edits come in, a film resting at a moment
 stays there, and the button says what it does in the page's four languages.
+
+## What the page keeps
+
+The core only describes: the page makes the pictures (CanvasKit images) and sets the texts
+(paragraphs). It keeps each for as long as the core holds it, and every answer of the core names
+the pictures and texts it holds no more (`drop`, `dropTexts`; `PageKeeps.swift`, `took` in
+`site/bezzle.mjs`):
+
+- **A picture** is held by what draws it: the artboard last drawn as the design, until the next is
+  drawn or another design opened; a film's piece while the film shows it; a blur or a developed
+  photo while the core's cache has it; one of the design's own photographs while the design is
+  open. So the picture `render` answers is the page's until the next drawing: a caller reads its
+  pixels at once, as the pages do.
+- **A text** is held by its layout in the core and by every picture that draws it (`HostTexts`,
+  kept with a recording as the pictures it draws are). The core forgets the layouts longest not
+  asked for once it has more than three for every layer of the design, and 1200 at least
+  (`TextLayout.trim`): a design's own texts are never set twice, and texts set anew again and
+  again (one growing in a film, a shared design changed by others for hours) go.
+- **A paragraph costs little** since all are made from one font collection. Made from the font
+  provider, each had a collection of its own and with it a copy of every weight and optical size
+  of the system font it was set in (0.12 MB a paragraph, a third of it never given back), and a
+  face's leading was read from a typeface made anew from the face's data for every size (0.43 MB
+  each time for Avenir Next Regular, never given back): together the 0.3 MB a text that was
+  measured before.
+
+Measured on 2026-11-14, every artboard of a design drawn twenty times round at 2 pixels a point,
+as a shared design is drawn again at each edit (CanvasKit's memory is what its heap has grown to;
+459 MB of Wander Night's is its photographs, held before anything is drawn):
+
+| | Pictures held and CanvasKit's memory, before | Now |
+|---|---|---|
+| Wander Night, 6 artboards, Node | 270, 1136 MB | 31, 551 MB |
+| The same in a headless Chromium | 270, 1139 MB | 31, 551 MB |
+| The same with an edit before each of 30 rounds, Node | 506, 1529 MB | 31, 551 MB |
+| Adoption Day Sizes, 4 artboards, Node | 161, 2027 MB | 3, 221 MB |
+| Features (below), 8 artboards, Node | 195, 1254 MB | 36, 184 MB |
+| The same in a headless Chromium, its shaders drawn | 274 and 80 shader frames, 1246 MB | 39 and 4, 154 MB |
+| One artboard (Adoption Day) 400 times, Node | 656 MB after 20, 28 MB more a drawing | 184 MB from the 80th on |
+| A film with a text set anew at every moment, 1800 moments, Node | 1230 MB (319 MB with every text let go and the film opened again each 600) | 128 MB, 600 to 1200 texts held, 2405 let go one by one, the film never opened again |
+
+Every drawing came out the same to the byte as the first of its artboard, before and now, and so
+do a frame of the film played long and the design after it.
 
 ## How it is put together
 
