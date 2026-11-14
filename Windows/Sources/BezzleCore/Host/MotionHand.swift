@@ -744,6 +744,9 @@ extension WindowsCore {
             return true
         }
 
+        /// The middle of the film on the canvas, in the view's points: where a test run pinches.
+        public var filmMiddle: CGPoint? { scene.map { CGPoint(x: $0.rect.midX, y: $0.rect.midY) } }
+
         /// No more of a pinch came: what it did to the camera is one step.
         public func pinchEnded() {
             let was = pinched

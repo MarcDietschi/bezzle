@@ -28,6 +28,9 @@ import BezzleCore
 ///                                  the wheel with Shift and two fingers moved sideways do
 ///       whole                      show the whole film again, as two clicks on the stroke under
 ///                                  the lines do
+///       pinch=factor               two fingers pinched on the middle of the film (over 1, apart):
+///                                  the camera's zoom when the camera is picked, one step of
+///                                  undo; writes whose it was, the camera's or the view's
 ///       timeline                   write which part of the film the timeline shows, and where
 ///                                  the playhead is
 ///   BEZZLE_SCRUB_OUT=<file>        where a scrub, a watch or `timeline` writes (else the trace,
@@ -113,6 +116,13 @@ enum AnimateHooks {
             guard let points = Double(rest) else { return }
             session.filmHand.scroll(by: points)
         case "whole": session.filmHand.showWhole()
+        case "pinch":
+            // Two fingers on the film, as the wheel tells of them: in three goes, then no more.
+            guard let factor = Double(rest), factor > 0, let at = session.motion.filmMiddle else { return }
+            var camera = true
+            for _ in 0..<3 { camera = session.motion.pinch(by: pow(factor, 1.0 / 3), at: at) && camera }
+            session.motion.pinchEnded()
+            say("pinch: \(camera ? "the camera's" : "the view's")\n")
         case "timeline":
             let whole = desk.filmWhole
             if let part = desk.shownPart {
