@@ -157,6 +157,74 @@ struct Raster: @unchecked Sendable {
         return Double(middle) / (6 * 0.6745)
     }
 
+    /// How restless the picture is beside its edges, as the spread of its noise in levels of
+    /// 255: measured three to six pixels off its strong edges, where nothing of an edge itself
+    /// is left. A drawn picture is calm there, however thin its lines; one kept as a JPEG rings,
+    /// also where most of it is flat paper and `noise` finds it calm. Nil when the picture has
+    /// too few such places to say.
+    func ringing(_ share: Double = 0.5) -> Double? {
+        guard w >= 16, h >= 16 else { return nil }
+        let p = rgb.p, w = w, h = h
+        @inline(__always) func luma(_ i: Int) -> Int { (Int(p[i * 3]) * 2 + Int(p[i * 3 + 1]) * 5 + Int(p[i * 3 + 2])) }
+        // How far each pixel is from the nearest strong step, in pixels, up to 7.
+        var far = [UInt8](repeating: 7, count: w * h)
+        var any = false
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = y * w + x, l = luma(i)
+                if x < w - 1, abs(l - luma(i + 1)) >= 8 * 40 { far[i] = 0; far[i + 1] = 0; any = true }
+                if y < h - 1, abs(l - luma(i + w)) >= 8 * 40 { far[i] = 0; far[i + w] = 0; any = true }
+            }
+        }
+        guard any else { return nil }
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = y * w + x
+                var d = far[i]
+                if x > 0 { d = min(d, far[i - 1] &+ 1) }
+                if y > 0 {
+                    d = min(d, far[i - w] &+ 1)
+                    if x > 0 { d = min(d, far[i - w - 1] &+ 1) }
+                    if x < w - 1 { d = min(d, far[i - w + 1] &+ 1) }
+                }
+                far[i] = d
+            }
+        }
+        for y in stride(from: h - 1, through: 0, by: -1) {
+            for x in stride(from: w - 1, through: 0, by: -1) {
+                let i = y * w + x
+                var d = far[i]
+                if x < w - 1 { d = min(d, far[i + 1] &+ 1) }
+                if y < h - 1 {
+                    d = min(d, far[i + w] &+ 1)
+                    if x < w - 1 { d = min(d, far[i + w + 1] &+ 1) }
+                    if x > 0 { d = min(d, far[i + w - 1] &+ 1) }
+                }
+                far[i] = d
+            }
+        }
+        var bins = [Int](repeating: 0, count: 2048)
+        var count = 0
+        for y in 1..<(h - 1) {
+            for x in 1..<(w - 1) {
+                let i = y * w + x
+                guard far[i] >= 3, far[i] <= 6 else { continue }
+                let v = luma(i - w - 1) - 2 * luma(i - w) + luma(i - w + 1)
+                    - 2 * luma(i - 1) + 4 * luma(i) - 2 * luma(i + 1)
+                    + luma(i + w - 1) - 2 * luma(i + w) + luma(i + w + 1)
+                bins[min(abs(v) / 8, 2047)] += 1
+                count += 1
+            }
+        }
+        guard count >= 400 else { return nil }
+        var seen = 0, middle = 0
+        for (i, n) in bins.enumerated() {
+            seen += n
+            if Double(seen) >= share * Double(count) { middle = i; break }
+        }
+        return Double(middle) / 6
+    }
+
     /// The picture smaller, each pixel the mean of what it covers of the picture's own, a part
     /// of a pixel counted as that part.
     func resized(_ nw: Int, _ nh: Int) -> Raster {
@@ -270,9 +338,10 @@ struct Raster: @unchecked Sendable {
 
     /// Whether the picture keeps its colour coarser than its light, as a JPEG does: along its
     /// edges the light then steps from one side to the other within a pixel while the colour
-    /// takes two or three, so the pixels of an edge are no plain mix of its two sides.
-    func colorCoarse() -> Bool {
-        guard w >= 8, h >= 8 else { return false }
+    /// takes two or three, so the pixels of an edge are no plain mix of its two sides. Nil when
+    /// it has too few edges between colours to say, as a picture of thin lines has.
+    func colorCoarse() -> Bool? {
+        guard w >= 8, h >= 8 else { return nil }
         let p = rgb.p
         var gaps: [Double] = []
         let step = max(1, h / 300)
@@ -293,7 +362,7 @@ struct Raster: @unchecked Sendable {
                 gaps.append(abs(stepped - turned))
             }
         }
-        guard gaps.count >= 40 else { return false }
+        guard gaps.count >= 40 else { return nil }
         gaps.sort()
         return gaps[gaps.count / 2] >= 0.1
     }

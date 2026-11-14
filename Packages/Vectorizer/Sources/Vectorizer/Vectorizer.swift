@@ -27,6 +27,7 @@ public enum Vectorizer {
         }
         let raster = reading.raster, palette = reading.palette, tints = reading.tints, labels = reading.labels, regions = reading.regions
         let scale = reading.scale, pixelArt = reading.pixelArt, clean = reading.clean, shrink = reading.shrink, detail = reading.detail
+        let wavers = reading.wavers && !pixelArt
 
         var stack = Stack.make(regions, clear: labels.clear, lap: scale)
         guard going(0.65) else { return nil }
@@ -118,6 +119,20 @@ public enum Vectorizer {
                 }
                 var own = fitting
                 if fitting.loose > 1, round > 0, 2 * Double(kept.area[r]) / round < 2.5 * Double(scale) { own.calmer = 3 * scale }
+                // And in any picture that wavers, as thick all along as it is on the whole.
+                if wavers, round > 0, 2 * Double(kept.area[r]) / round < 4.5 * Double(scale) {
+                    let even = own.evened(walks, of: Int32(r))
+                    own.shifts = even.shifts
+                    if even.line {
+                        // A line's two edges are each other's measure, and calm once it is
+                        // even: its outline keeps to them. Let stray as far as from any
+                        // wavering edge, and straightened where it nearly is, each edge would
+                        // go its own way and the line be thick here and thin there.
+                        own.tolerance /= fitting.loose.squareRoot()
+                        own.slack /= fitting.loose
+                        own.loose = 1
+                    }
+                }
                 for walk in walks.sorted(by: { $0.area2 > $1.area2 }) {
                     guard let fitted = own.outline(walk, of: Int32(r)) else { continue }
                     // Never outside the picture: every point lies in it, and a curve's handles
@@ -179,6 +194,8 @@ public enum Vectorizer {
         var pixelArt: Bool
         /// Whether the picture can be taken at its word, pixel by pixel: drawn, and kept as drawn.
         var clean: Bool
+        /// Whether its edges waver: not clean, or kept as a JPEG that left its flat places calm.
+        var wavers: Bool
         /// How many times smaller than the picture `raster` is.
         var shrink: Double
         var noise: Double
@@ -206,13 +223,18 @@ public enum Vectorizer {
         let pixelArt = hard && max(raster.w, raster.h) / raster.blockSize() <= 192
         // A picture kept as a JPEG is calm where it is flat and restless along its edges, where
         // its colour is coarse too: read as a noisy one.
-        let coarse = !hard && raster.colorCoarse()
+        let known = hard ? false : raster.colorCoarse()
+        let coarse = known ?? false
+        // One that is mostly flat paper with thin lines on it has too few edges between colours
+        // to tell how coarse its colour is, but rings beside its lines as a JPEG does: its
+        // colour is then no finer than any JPEG's, though the picture is taken at its word.
+        let rings = !hard && known == nil && (raster.ringing(0.9) ?? 0) >= 0.6
         // A picture scaled up or blurred holds nothing finer than its edges are soft: it is
         // traced at the size its edges would be a drawn picture's, where they are found as
         // exactly, and what wavers along them is evened out.
         let softness = hard ? 1 : raster.softness(0.25)
         let shrink = min(softness / 1.15, 4, Double(min(raster.w, raster.h)) / 48)
-        var mixing = Mixing(coarse: coarse)
+        var mixing = Mixing(coarse: coarse || rings)
         if shrink >= 1.3 {
             raster = raster.resized(Int((Double(raster.w) / shrink).rounded()), Int((Double(raster.h) / shrink).rounded()))
             noise = raster.noise()
@@ -224,7 +246,7 @@ public enum Vectorizer {
         guard going(0.08) else { return .stopped }
 
         let palette = Palette.find(raster, settings: settings, noise: noise, exact: pixelArt, mixing: mixing)
-        let tints = palette.colors.map { Tint(r: UInt8(clamping: $0.x), g: UInt8(clamping: $0.y), b: UInt8(clamping: $0.z)) }
+        let tints = palette.drawn.map { Tint(r: UInt8(clamping: $0.x), g: UInt8(clamping: $0.y), b: UInt8(clamping: $0.z)) }
         guard !palette.colors.isEmpty else { return .nothing(pixelArt: pixelArt) }
         guard going(0.16) else { return .stopped }
 
@@ -268,7 +290,7 @@ public enum Vectorizer {
         }
         guard going(0.55) else { return .stopped }
         return .done(Reading(raster: raster, palette: palette, tints: tints, labels: labels, regions: regions, scale: scale, pixelArt: pixelArt,
-                             clean: clean, shrink: shrink, noise: noise, detail: detail, mixing: mixing))
+                             clean: clean, wavers: !clean || rings, shrink: shrink, noise: noise, detail: detail, mixing: mixing))
     }
 
     /// A figure found in a picture that was made smaller to be traced, at the picture's own size.

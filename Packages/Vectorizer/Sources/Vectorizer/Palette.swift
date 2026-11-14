@@ -7,11 +7,16 @@ struct Palette {
     var colors: [SIMD3<Int32>]
     /// How many pixels are each, about.
     var weights: [Double]
+    /// The colour each is drawn in: its own, but for what is thin in a picture that keeps its
+    /// colour coarser than its light. There `colors` has it as its pixels show it, which is what
+    /// the pixels are held against, and this as it was drawn (`thin`).
+    var drawn: [SIMD3<Int32>]
 
     private struct Cluster {
         var lab: SIMD3<Float>
         var rgb: SIMD3<Double>
         var weight: Double
+        var drawn: SIMD3<Double>?
     }
 
     /// The most a picture is traced in, by how much detail is wanted.
@@ -55,7 +60,7 @@ struct Palette {
                 }
             }
         }
-        guard solid > 0 else { return Palette(colors: [], weights: []) }
+        guard solid > 0 else { return Palette(colors: [], weights: [], drawn: []) }
         // A picture with hardly a calm place, such as a noisy or finely patterned one, is taken whole.
         if flats < solid * 0.05 {
             count = all
@@ -114,17 +119,22 @@ struct Palette {
 
     private static func finished(_ clusters: [Cluster]) -> Palette {
         let sorted = clusters.sorted { $0.weight > $1.weight }
-        var colors: [SIMD3<Int32>] = [], weights: [Double] = []
-        for c in sorted {
-            var v = SIMD3<Int32>(Int32(c.rgb.x.rounded()), Int32(c.rgb.y.rounded()), Int32(c.rgb.z.rounded()))
+        var colors: [SIMD3<Int32>] = [], weights: [Double] = [], drawn: [SIMD3<Int32>] = []
+        func whole(_ c: SIMD3<Double>) -> SIMD3<Int32> {
+            let v = SIMD3<Int32>(Int32(c.x.rounded()), Int32(c.y.rounded()), Int32(c.z.rounded()))
             // Nearly white is white and nearly black is black: what a file's compression moved.
-            if v.x >= 251, v.y >= 251, v.z >= 251 { v = SIMD3(255, 255, 255) }
-            if v.x <= 4, v.y <= 4, v.z <= 4 { v = SIMD3(0, 0, 0) }
+            if v.x >= 251, v.y >= 251, v.z >= 251 { return SIMD3(255, 255, 255) }
+            if v.x <= 4, v.y <= 4, v.z <= 4 { return SIMD3(0, 0, 0) }
+            return v
+        }
+        for c in sorted {
+            let v = whole(c.rgb)
             if colors.contains(v) { continue }
             colors.append(v)
             weights.append(c.weight)
+            drawn.append(c.drawn.map(whole) ?? v)
         }
-        return Palette(colors: colors, weights: weights)
+        return Palette(colors: colors, weights: weights, drawn: drawn)
     }
 
     /// Many colours brought down to `k` by the means of those nearest each other.
@@ -192,8 +202,28 @@ struct Palette {
             guard (v &* v).wrappedSum() > apart * apart / 2 else { return false }
             return Mixing.isBetween(mixing(c, from: a, to: b), within: Double(mixed))
         }
-        var bins: [Int: (sum: SIMD3<Double>, n: Double)] = [:]
+        /// What the seven by seven pixels round one hold more than the ground they lie on, added
+        /// up; nothing where fewer than most of them show that ground. Where a picture keeps
+        /// its colour coarser than its light, a thin line's colour is spread over the pixels
+        /// beside it and its own are left dull, but none of it is lost: this sum has the hue
+        /// the line was drawn in.
+        func around(_ x: Int, _ y: Int, on ground: SIMD3<Int32>) -> SIMD3<Double> {
+            var sum = SIMD3<Double>.zero
+            var calm = 0
+            for dy in -3...3 {
+                let row = min(max(y + dy, 0), h - 1) * w
+                for dx in -3...3 {
+                    let d = color(row + min(max(x + dx, 0), w - 1)) &- ground
+                    sum += SIMD3(Double(d.x), Double(d.y), Double(d.z))
+                    if (d &* d).wrappedSum() <= apart * apart { calm += 1 }
+                }
+            }
+            return calm >= 28 ? sum : .zero
+        }
+        var bins: [Int: (sum: SIMD3<Double>, n: Double, grounds: [Double], around: [SIMD3<Double>])] = [:]
         let steps = [(1, 0), (0, 1), (1, 1), (1, -1)]
+        let none = [Double](repeating: 0, count: known.count)
+        let hueless = [SIMD3<Double>](repeating: .zero, count: mixing.coarse ? known.count : 0)
         for y in 2..<(h - 2) {
             for x in 2..<(w - 2) {
                 let i = y * w + x
@@ -217,35 +247,90 @@ struct Palette {
                     for b in (a + 1)..<known.count where between(c, known[a], known[b]) { mix = true; break }
                 }
                 guard !mix else { continue }
+                // What it lies on: the colours found that show two pixels from it.
+                var grounds = none
+                for (dx, dy) in steps {
+                    for way in [-2, 2] {
+                        let q = color(i + (dy * w + dx) * way)
+                        if let k = known.firstIndex(where: { gap(q, $0) <= mixed * mixed }) { grounds[k] += 1 }
+                    }
+                }
                 let key = (Int(c.x) >> 3) << 10 | (Int(c.y) >> 3) << 5 | Int(c.z) >> 3
-                var bin = bins[key] ?? (.zero, 0)
+                var bin = bins[key] ?? (.zero, 0, none, hueless)
                 bin.sum += SIMD3(Double(c.x), Double(c.y), Double(c.z))
                 bin.n += 1
+                for k in grounds.indices { bin.grounds[k] += grounds[k] }
+                if mixing.coarse, let ground = grounds.indices.max(by: { grounds[$0] < grounds[$1] }), grounds[ground] >= 3 {
+                    bin.around[ground] += around(x, y, on: known[ground])
+                }
                 bins[key] = bin
             }
         }
         let least = max(10, Double(w * h) * 0.00012)
-        var candidates = bins.values.map { bin -> Cluster in
+        struct Thin {
+            var color: Cluster
+            /// Which of the colours found it mostly lies on.
+            var ground: Int?
+            /// What the pixels round its own hold more than that ground (`around`).
+            var around: SIMD3<Double>
+        }
+        var candidates = bins.values.map { bin -> Thin in
             let mean = bin.sum / bin.n
-            return Cluster(lab: Oklab.from(r: mean.x, g: mean.y, b: mean.z), rgb: mean, weight: bin.n)
+            let ground = bin.grounds.indices.max { bin.grounds[$0] < bin.grounds[$1] }.flatMap { bin.grounds[$0] > 0 ? $0 : nil }
+            return Thin(color: Cluster(lab: Oklab.from(r: mean.x, g: mean.y, b: mean.z), rgb: mean, weight: bin.n), ground: ground,
+                        around: ground.flatMap { $0 < bin.around.count ? bin.around[$0] : nil } ?? .zero)
         }
         // The furthest from the colours found first: what is thin is never more its own colour
         // than where it shows most, and all it shows less of lies between that and what is
         // round it.
         func farness(_ c: Cluster) -> Float { found.map { Oklab.distance($0.lab, c.lab) }.min() ?? 0 }
         func whole(_ c: Cluster) -> SIMD3<Int32> { SIMD3(Int32(c.rgb.x), Int32(c.rgb.y), Int32(c.rgb.z)) }
-        candidates.sort { farness($0) > farness($1) }
+        candidates.sort { farness($0.color) > farness($1.color) }
         var taken: [Cluster] = []
         var left = candidates
-        while taken.count < min(room, 6), let first = left.first(where: { $0.weight >= 2 && farness($0) > 0.08 }) {
-            let v = whole(first)
-            func explained(_ c: Cluster) -> Bool {
-                let cv = whole(c)
+        while taken.count < min(room, 6), var first = left.first(where: { $0.color.weight >= 2 && farness($0.color) > 0.08 }) {
+            // And never one that another lies beyond, seen from what both lie on: that is the
+            // other where less of it shows. With a second colour found near, such a one may be
+            // the furthest from both and still nobody's colour.
+            var v = whole(first.color)
+            if let ground = first.ground {
+                let from = known[ground]
+                for _ in 0..<4 {
+                    var beyond: Thin?
+                    var furthest = gap(v, from)
+                    for other in left where other.color.weight >= 2 && other.ground == ground {
+                        let o = whole(other.color)
+                        if gap(o, from) > furthest, between(v, from, o) {
+                            beyond = other
+                            furthest = gap(o, from)
+                        }
+                    }
+                    guard let beyond else { break }
+                    first = beyond
+                    v = whole(first.color)
+                }
+            }
+            func explained(_ c: Thin) -> Bool {
+                let cv = whole(c.color)
                 return gap(cv, v) < apart * apart || known.contains { between(cv, $0, v) }
             }
-            let support = left.filter(explained).reduce(0) { $0 + $1.weight }
+            let support = left.filter(explained).reduce(0) { $0 + $1.color.weight }
             let rest = left.filter { !explained($0) }
-            if support >= least { taken.append(Cluster(lab: first.lab, rgb: first.rgb, weight: support)) }
+            if support >= least {
+                var cluster = Cluster(lab: first.color.lab, rgb: first.color.rgb, weight: support)
+                // Drawn in the hue all its pixels have together, as light or dark as where it
+                // shows most.
+                if mixing.coarse, let ground = first.ground {
+                    let from = SIMD3(Double(known[ground].x), Double(known[ground].y), Double(known[ground].z))
+                    let all = left.filter { explained($0) && $0.ground == ground }.reduce(SIMD3<Double>.zero) { $0 + $1.around }
+                    let light = Mixing.light(first.color.rgb - from), lit = Mixing.light(all)
+                    if abs(light) >= 24, abs(lit) >= 24, (light > 0) == (lit > 0) {
+                        let hue = from + all * (light / lit)
+                        cluster.drawn = SIMD3(min(max(hue.x, 0), 255), min(max(hue.y, 0), 255), min(max(hue.z, 0), 255))
+                    }
+                }
+                taken.append(cluster)
+            }
             if rest.count == left.count { break }
             left = rest
         }

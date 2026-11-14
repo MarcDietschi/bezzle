@@ -171,6 +171,10 @@ struct Fitter {
     /// How many more times a walk is smoothed before curves are fitted to it: for the outline
     /// of something thin in a picture that wavers, whose two edges else waver each its own way.
     var calmer = 0
+    /// How far single steps of a walk are moved from where the edge was found, by the edge of
+    /// the samples' lattice each runs along (`Fitter.edge`): what makes something thin evenly
+    /// thick (`evened`).
+    var shifts: [Int: V2] = [:]
 
     struct Cover: @unchecked Sendable {
         let id: Store<Int32>
@@ -616,6 +620,7 @@ struct Fitter {
                         f = 1 - min(outside / 32, 1)
                     }
                     q += outward * (min(max(f, 0.02), 0.98) - 0.5)
+                    if !shifts.isEmpty, let shift = shifts[Fitter.edge(ix, iy, ox, oy, W)] { q += shift }
                 }
                 steps.append(q)
                 found.append(exact)
