@@ -424,7 +424,13 @@ extension WindowsCore {
         public func pose(_ name: String, number index: Int, to v: Double) {
             guard let property = MotionProperty(rawValue: name), !property.isCamera, index < property.rest.count, v.isFinite else { return }
             let t = filmTime
-            pose(property, of: posedLayers) { n in
+            // Several lying together are tipped and swung as one body, as in the design (`DepthBody`).
+            let ids = posedLayers
+            if property == .tilt || property == .swing, ids.count > 1 {
+                edit { doc in doc.poseInDepth(property, of: ids, at: t) { _ in v } }
+                return
+            }
+            pose(property, of: ids) { n in
                 var now = n.value(of: property, at: t)
                 if property == .scale, index == 0 {
                     let k = v / max(now[0], 0.001)
