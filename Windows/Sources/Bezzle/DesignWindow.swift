@@ -116,6 +116,11 @@ final class DesignWindow {
         try? Grid.setColumn(timeline.root, 2)
         body.children.append(timeline.root)
         canvas.film.frameShown = { [weak self] in Probe.time("timeline.playhead") { self?.timeline.movePlayhead() } }
+        // A spring's bounce in the timeline's header is a number as the panel's cards have them.
+        timeline.bounceField = { [weak self] percent, set in
+            guard let self else { return Border() }
+            return self.inspector.field("", percent, unit: "%", range: 0...100, scrub: 0.5, width: 76, decimals: 0, set: set)
+        }
         // A test run's steps in Animate (BEZZLE_ANIMATE, BEZZLE_FILM), for the first design opened.
         AnimateHooks.attach(session, film: canvas.film)
         // News from other designs, floating at the canvas's top.

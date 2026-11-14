@@ -50,7 +50,7 @@ extension MCPTools {
                        Reads an artboard's film, as Bezzle's Animate mode keeps it: how many seconds it runs and whether it goes round \
                        or plays once, its backdrop when one is set, the camera's keys, and every layer that moves with its keys. \
                        Each property has its own keys in order of time, each a time in seconds, a value, and its pace when one was \
-                       chosen (auto otherwise). Values are changes from the design, never places of their own: move is points right \
+                       chosen (auto otherwise), a spring's with its bounce, how far past the key it goes, 0 to 1. Values are changes from the design, never places of their own: move is points right \
                        and down from where the design has the layer, scale is times its size, turn is degrees clockwise added to its \
                        rotation, fade is times its opacity, lift is points nearer the eye, tilt and swing are degrees tipped back and \
                        swung round, blur is points of blur added. A path, rectangle, ellipse or line also has draw, [from, to], how \
@@ -225,8 +225,10 @@ extension MCPTools {
             if let track = node[track: ShaderFill.inputTrack(name)], !track.keys.isEmpty {
                 fields.append(("keys", .array(track.keys.map { key in
                     let pace: MotionEase? = key.ease.flatMap { $0.kind == .auto ? nil : $0 }
+                    let bounce: Double? = pace?.kind == .spring ? pace?.bounce : nil
                     return .compact([("time", .number(key.t)), ("change", .array(key.v.map { .number($0) })),
-                                     ("pace", pace.map { .string($0.kind.rawValue) }), ("given", key.given == true ? true : nil)])
+                                     ("pace", pace.map { .string($0.kind.rawValue) }), ("bounce", bounce.map { .number($0) }),
+                                     ("given", key.given == true ? true : nil)])
                 })))
             }
             return (name, .compact(fields))

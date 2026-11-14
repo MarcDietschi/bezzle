@@ -682,42 +682,98 @@ extension WindowsCore {
             return kind == .spring ? .spring() : MotionEase(kind: kind)
         }
 
-        /// Sets how the picked keys are come to; with none picked, those at the playhead.
+        /// Sets how the picked keys are come to; with none picked, those at the playhead. A spring
+        /// already among them keeps how far it goes past, and the others spring as far as those
+        /// do, where those agree (the Mac's setPace).
         public func setEase(_ name: String) {
             guard let ease = Self.ease(name) else { return }
             let t = filmTime
             var refs = pickedKeys
             if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
             guard !refs.isEmpty else { return }
+            guard ease.kind == .spring else {
+                edit { doc in
+                    for ref in refs {
+                        doc.update(ref.layer) { $0.setEase(ease, at: ref.time, tracks: tracks(of: ref)) }
+                    }
+                }
+                return
+            }
+            let shared = sharedBounce(at: t) ?? Self.bounce(of: .spring())
             edit { doc in
                 for ref in refs {
-                    doc.update(ref.layer) { $0.setEase(ease, at: ref.time, tracks: tracks(of: ref)) }
+                    doc.update(ref.layer) { n in
+                        for name in self.tracks(of: ref) {
+                            guard var track = n[track: name], let i = track.index(at: ref.time) else { continue }
+                            // A spring keeps its own bounce; what was no spring gets the shared one.
+                            if track.keys[i].ease?.kind != .spring { track.keys[i].ease = .spring(shared) }
+                            track.keys[i].given = nil
+                            n[track: name] = track
+                        }
+                    }
                 }
             }
         }
 
-        /// The pace the picked keys share, or those at the playhead, by name; nil when they
-        /// differ or there are none.
-        public var sharedEase: String? { sharedEase(at: filmTime) }
+        /// How far past a spring goes, 0 to 1: what it says, or the usual where it says nothing.
+        static func bounce(of ease: MotionEase) -> Double { min(max(ease.bounce ?? MotionEase.spring().bounce ?? 0.3, 0), 1) }
 
-        /// The same at a moment, as the panels show it (`panelTime`).
-        public func sharedEase(at t: Double) -> String? {
-            guard let board = filmBoard else { return nil }
+        /// How each key in hand is come to: the picked keys, or with none picked, those at a
+        /// moment of what is picked.
+        private func easesInHand(at t: Double) -> [MotionEase] {
+            guard let board = filmBoard else { return [] }
             var refs = pickedKeys
             if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
-            var found: MotionEase?
-            var any = false
+            var out: [MotionEase] = []
             for ref in refs {
                 guard let node = ref.layer == board.id ? board : board.descendant(ref.layer) else { continue }
                 for name in tracks(of: ref) {
                     guard let track = node[track: name], let i = track.index(at: ref.time) else { continue }
-                    let ease = track.keys[i].ease ?? .auto
-                    if any, found != ease { return nil }
-                    found = ease
-                    any = true
+                    out.append(track.keys[i].ease ?? .auto)
                 }
             }
-            return found?.kind.rawValue
+            return out
+        }
+
+        /// How far past they go that the springs among the keys in hand share, 0 to 1, at a moment
+        /// as the panels show it; nil when they differ, or none of the keys is come to by a spring.
+        public func sharedBounce(at t: Double) -> Double? {
+            let bounces = easesInHand(at: t).filter { $0.kind == .spring }.map(Self.bounce(of:))
+            guard let first = bounces.first, bounces.allSatisfy({ abs($0 - first) < 1e-9 }) else { return nil }
+            return first
+        }
+
+        /// Sets how far past they go of the springs among the picked keys, or with none picked,
+        /// among those at the playhead: 0, not at all, to 1, kept to the hundredth. Keys come to
+        /// any other way are left as they are.
+        public func setBounce(_ bounce: Double) {
+            guard bounce.isFinite else { return }
+            let bounce = (min(max(bounce, 0), 1) * 100).rounded() / 100
+            let t = filmTime
+            var refs = pickedKeys
+            if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
+            guard !refs.isEmpty else { return }
+            edit { doc in
+                for ref in refs {
+                    doc.update(ref.layer) { n in
+                        for name in self.tracks(of: ref) {
+                            guard var track = n[track: name], let i = track.index(at: ref.time), track.keys[i].ease?.kind == .spring else { continue }
+                            track.keys[i].ease = .spring(bounce)
+                            n[track: name] = track
+                        }
+                    }
+                }
+            }
+        }
+
+        /// The kind of pace the picked keys share, or those at the playhead, by name, whatever
+        /// each spring's bounce; nil when they differ or there are none.
+        public var sharedEase: String? { sharedEase(at: filmTime) }
+
+        /// The same at a moment, as the panels show it (`panelTime`).
+        public func sharedEase(at t: Double) -> String? {
+            let kinds = Set(easesInHand(at: t).map(\.kind))
+            return kinds.count == 1 ? kinds.first?.rawValue : nil
         }
 
         /// Moves keys in time, within a drag: `refs` are the keys as the drag began, and `delta`

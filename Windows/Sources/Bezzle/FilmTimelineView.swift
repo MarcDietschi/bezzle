@@ -53,6 +53,12 @@ final class FilmTimelineView {
         var once: Bool
     }
     private var painted: Header?
+    /// How far past their keys the springs in hand go, named beside the paces: its number as
+    /// last painted (nil: no springs in hand), and what makes the number's field, the panel's own
+    /// (`Inspector.field`), given by the window.
+    private let bounceBox = StackPanel()
+    private var paintedBounce: (springs: Bool, bounce: Double?, wide: Bool)?
+    var bounceField: ((_ percent: Double?, _ set: @escaping (Double) -> Void) -> FrameworkElement)?
     /// The playhead's line and tab, made once and moved after that.
     private var playLine: Rectangle?
     private var playTab: FrameworkElement?
@@ -149,6 +155,15 @@ final class FilmTimelineView {
         time.children.append(unit)
         try? Grid.setColumn(time, 1)
         row.children.append(time)
+        // How far past its key a spring goes, while springs are in hand: in the room between the
+        // clock and the paces, so nothing moves as keys come into hand.
+        bounceBox.orientation = .horizontal
+        bounceBox.spacing = 6
+        bounceBox.horizontalAlignment = .right
+        bounceBox.verticalAlignment = .center
+        bounceBox.visibility = .collapsed
+        try? Grid.setColumn(bounceBox, 2)
+        row.children.append(bounceBox)
         // Holding what is picked as it is at the playhead.
         holdBead.width = 26
         holdBead.height = 26
@@ -207,8 +222,48 @@ final class FilmTimelineView {
         painted = now
         if was?.playing != now.playing { paintPlay(now.playing) } else { showClock() }
         if was?.hold != now.hold { paintHold(now.hold) }
-        if was?.inHand != now.inHand || was?.chosen != now.chosen { paintPaces(inHand: now.inHand, chosen: now.chosen) }
+        let springs = now.chosen == "spring"
+        let bounce = springs ? desk.sharedBounce(at: t) : nil
+        if was?.inHand != now.inHand || was?.chosen != now.chosen || (springs && bounce != paintedBounce?.bounce) {
+            paintPaces(inHand: now.inHand, chosen: now.chosen, bounce: bounce)
+        }
         if was?.once != now.once { paintRound(now.once) }
+        paintBounce(springs: springs, bounce: bounce)
+    }
+
+    /// Bounce and its number, 0 to 100 %, beside the paces while the keys in hand are springs.
+    /// Left as it is under a hand dragging its number, and made again once the hand lets go.
+    private func paintBounce(springs: Bool, bounce: Double?) {
+        let wide = sheet.actualWidth >= 600
+        if let was = paintedBounce, was.springs == springs, was.bounce == bounce, was.wide == wide { return }
+        guard !WindowsCore.inGesture else { return bounceSettles() }
+        paintedBounce = (springs, bounce, wide)
+        bounceBox.children.clear()
+        bounceBox.visibility = springs ? .visible : .collapsed
+        guard springs, let make = bounceField else { return }
+        // On a narrow card the number stands alone.
+        if wide {
+            let name = Theme.text(Words.t("Bounce"), size: 11, weight: 500, ink: 3)
+            name.verticalAlignment = .center
+            bounceBox.children.append(name)
+        }
+        bounceBox.children.append(make(bounce.map { ($0 * 100).rounded() }) { [weak self] percent in self?.desk.setBounce(percent / 100) })
+        try? ToolTipService.setToolTip(bounceBox, Words.t("How far a spring goes past its key before it comes to rest"))
+    }
+
+    /// Looks again once the hand on the number has let go.
+    private var bounceWaits = false
+    private func bounceSettles() {
+        guard !bounceWaits else { return }
+        bounceWaits = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.bounceWaits = false
+                guard self.session.mode == 3 else { return }
+                if WindowsCore.inGesture { self.bounceSettles() } else { self.paintHeader() }
+            }
+        }
     }
 
     private func paintPlay(_ playing: Bool) {
@@ -232,10 +287,12 @@ final class FilmTimelineView {
         try? ToolTipService.setToolTip(holdBead, Words.t(hold == .here ? "A key here. Click to take it away." : "Hold it here: a key at the playhead  K"))
     }
 
-    private func paintPaces(inHand: Bool, chosen: String?) {
+    private func paintPaces(inHand: Bool, chosen: String?, bounce: Double?) {
         paces.children.clear()
         for pace in WindowsCore.FilmDesk.paces {
-            paces.children.append(paceChip(pace.name, title: pace.title, chosen: chosen == pace.name))
+            // The chosen Spring chip draws the springs' own bounce.
+            paces.children.append(paceChip(pace.name, title: pace.title, chosen: chosen == pace.name,
+                                           bounce: pace.name == "spring" && chosen == "spring" ? bounce : nil))
         }
         paces.opacity = inHand ? 1 : 0.3
         paces.isHitTestVisible = inHand
@@ -270,16 +327,23 @@ final class FilmTimelineView {
     }
 
     /// A way of coming to a key, as the curve it is: dashed for Auto, which is read from the keys.
-    private func paceChip(_ name: String, title: String, chosen: Bool) -> UIElement {
+    private func paceChip(_ name: String, title: String, chosen: Bool, bounce: Double? = nil) -> UIElement {
         let press = Pressable(radius: 7) { [weak self] in self?.desk.setEase(name) }
         press.box.width = 28
         press.box.height = 26
         if chosen { press.box.background = Theme.brush(Theme.pencil, Theme.pencilWash) }
         var d = PathData()
         let steps = 28, box = (x: 6.0, y: 6.5, w: 16.0, h: 13.0)
+        // A spring's own bounce as the Mac's chip draws it: the same picture as ever at the usual
+        // bounce (drawn with more than a spring usually has, to be seen at this size), a plain
+        // arrival with none, and all of it with all.
+        let drawn = bounce.map { b -> Double in
+            let b = min(max(b, 0), 1), usually = 0.3, usual = 0.55
+            return b <= usually ? b / usually * usual : usual + (b - usually) / (1 - usually) * (1 - usual)
+        } ?? 0.55
         for k in 0...steps {
             let u = Double(k) / Double(steps)
-            let v = WindowsCore.paceProgress(name, u) * (name == "spring" ? 0.8 : 1)
+            let v = WindowsCore.paceProgress(name, u, bounce: drawn) * (name == "spring" ? 0.8 : 1)
             let x = box.x + box.w * u, y = box.y + box.h - box.h * v
             if k == 0 { d.move(x, y) } else { d.line(x, y) }
         }
