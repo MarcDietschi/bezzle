@@ -875,12 +875,42 @@ extension DocumentStore {
         endGesture("Look Straight Down")
     }
 
-    /// Has the camera see the whole artboard, straight on, from the playhead on.
+    /// Has the camera see the whole artboard, straight on, from the playhead on. What it is sharp
+    /// at and how much it blurs stay as they are: those say how it sees, not what.
     func restCamera() {
         guard filmBoard?.hasCamera == true else { return }
         beginGesture()
-        for p in MotionProperty.camera { poseCamera(p, p.rest) }
+        for p in MotionProperty.view { poseCamera(p, p.rest) }
         endGesture("See the Whole Artboard")
+    }
+
+    /// Has the camera be sharp on layers from the playhead on: its focus keyed there to how far
+    /// their middles stand off where it looks (`Node.focus`). Then shows the focus come there
+    /// from where it was before.
+    ///
+    /// A camera that blurs nothing there would show nothing of it, and is given the usual blur:
+    /// one that never blurred for the whole film, so that from one of these to the next the
+    /// focus alone moves, as a lens is turned; one whose blur has keys, a key of it here.
+    func focusCamera(on ids: [UUID]) {
+        guard let board = filmBoard else { return }
+        let t = filmTime
+        guard let focus = board.focus(on: ids, at: t, pieces: board.filmPieces(loose: Set(ids))) else { return }
+        let before = board.keyTimes(MotionProperty.camera).last { $0 < t - 0.0042 } ?? 0
+        let was = board.motion
+        beginGesture()
+        if board.camera(at: t).blur <= 0 {
+            if board[track: .cameraBlur] == nil {
+                edit(MotionProperty.cameraBlur.action) { doc in
+                    doc.update(board.id) { $0.setKey(.cameraBlur, [FilmCamera.usualBlur], at: t) }
+                }
+            } else {
+                poseCamera(.cameraBlur, [FilmCamera.usualBlur])
+            }
+        }
+        poseCamera(.cameraFocus, [focus])
+        endGesture("Focus the Camera Here")
+        // Sharp there already, there is nothing to show.
+        if filmBoard?.motion != was, t > before + 0.05 { showFilm(from: before, to: t, back: t) }
     }
 
     // MARK: Moves made in one go

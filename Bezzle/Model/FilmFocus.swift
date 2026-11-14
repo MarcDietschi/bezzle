@@ -122,6 +122,23 @@ nonisolated extension FilmLens {
     }
 }
 
+nonisolated extension Node {
+    /// Artboards: whether anything in its film ever stands off the page, or is looked at from an
+    /// angle: a layer lifted, tipped or swung, by the design or by its keys, or the camera tipped
+    /// or swung by its own. Where nothing is, everything is as far from the camera as the point
+    /// it looks at, and a focus has nothing to tell apart.
+    var filmHasDepth: Bool {
+        let camera: [MotionProperty] = [.cameraTilt, .cameraSwing], layer: [MotionProperty] = [.lift, .tilt, .swing]
+        func deep(_ n: Node) -> Bool {
+            if layer.contains(where: { n[track: $0] != nil }) { return true }
+            // Pinned by its corners, a layer is a flat picture in the page.
+            if Perspective.inDepth(n), n.transform3D?.pinned != true { return true }
+            return n.children.contains { !$0.hidden && deep($0) }
+        }
+        return camera.contains { self[track: $0] != nil } || children.contains { !$0.hidden && deep($0) }
+    }
+}
+
 extension Node {
     /// Artboards: what the camera's focus has to be at a moment for layers to be sharp: how much
     /// nearer than where the camera looks their middles stand then (`FilmLens.nearness`), to the

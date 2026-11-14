@@ -3,8 +3,9 @@ import AppKit
 
 /// The panel on the right while the design is animated. With nothing picked: moves for the whole
 /// artboard, and the film itself. With layers picked: moves for them, their pose at the playhead
-/// to the number, and the camera sent to look at them. With the camera picked: where it looks and
-/// how. A bead beside every number is its key at the playhead: filled where there is one.
+/// to the number, and the camera sent to look at them or made sharp on them. With the camera
+/// picked: where it looks and how, what it is sharp at and how much it blurs the rest. A bead
+/// beside every number is its key at the playhead: filled where there is one.
 struct AnimateInspector: View {
     let store: DocumentStore
 
@@ -31,6 +32,11 @@ struct AnimateInspector: View {
                             SelectionInspector(store: store, filming: true)
                             FlyCard(store: store, layers: layers)
                                 .transition(.card)
+                            // Only where there is near and far to tell apart.
+                            if board.filmHasDepth {
+                                FocusCard(store: store, layers: layers)
+                                    .transition(.card)
+                            }
                         }
                     }
                     FilmCard(store: store, board: board)
@@ -586,15 +592,68 @@ private struct PoseGlyph: View {
 private struct FlyCard: View {
     let store: DocumentStore
     let layers: [UUID]
+
+    var body: some View {
+        SendCard(title: "Fly the Camera Here",
+                 help: "The camera looks at what is picked from the playhead on, and flies there from where it was before") {
+            store.flyCamera(to: layers)
+        } glyph: {
+            CameraGlyph()
+        }
+    }
+}
+
+/// Has the camera be sharp on the picked layers: a key of its focus at the playhead, at the
+/// distance they stand at. One after another of it, the focus is pulled from one to the next.
+private struct FocusCard: View {
+    let store: DocumentStore
+    let layers: [UUID]
+
+    var body: some View {
+        SendCard(title: "Focus the Camera Here",
+                 help: "The camera is sharp on what is picked from the playhead on, and what stands nearer or further shows blurred") {
+            store.focusCamera(on: layers)
+        } glyph: {
+            FocusGlyph()
+        }
+    }
+}
+
+/// What a camera is sharp at: the corners of a finder, round a point.
+private struct FocusGlyph: View {
+    var body: some View {
+        Canvas { ctx, s in
+            let w = s.width, h = s.height
+            let box = CGRect(x: w * 0.1, y: h * 0.17, width: w * 0.8, height: h * 0.66)
+            let arm = w * 0.2
+            var corners = Path()
+            for (x, y, dx, dy) in [(box.minX, box.minY, 1.0, 1.0), (box.maxX, box.minY, -1.0, 1.0), (box.maxX, box.maxY, -1.0, -1.0), (box.minX, box.maxY, 1.0, -1.0)] {
+                corners.move(to: CGPoint(x: x + arm * dx, y: y))
+                corners.addLine(to: CGPoint(x: x, y: y))
+                corners.addLine(to: CGPoint(x: x, y: y + arm * dy))
+            }
+            ctx.stroke(corners, with: .foreground, style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
+            ctx.fill(Path(ellipseIn: CGRect(x: w / 2 - 1.5, y: h / 2 - 1.5, width: 3, height: 3)), with: .foreground)
+        }
+        .frame(width: 15, height: 15)
+    }
+}
+
+/// A card that is one thing to do with the camera and what is picked: what it does, and an arrow.
+private struct SendCard<Glyph: View>: View {
+    let title: LocalizedStringKey
+    let help: LocalizedStringKey
+    let action: () -> Void
+    @ViewBuilder let glyph: Glyph
     @State private var hovering = false
 
     var body: some View {
-        Button { store.flyCamera(to: layers) } label: {
+        Button(action: action) {
             HStack(spacing: 8) {
-                CameraGlyph()
+                glyph
                     .foregroundStyle(hovering ? Theme.pencil : Theme.ink2)
                     .frame(width: 22, height: 22)
-                Text("Fly the Camera Here")
+                Text(title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                     .lineLimit(1)
@@ -614,14 +673,15 @@ private struct FlyCard: View {
         .buttonStyle(Pressable())
         .onHover { hovering = $0 }
         .animation(Theme.quick, value: hovering)
-        .help("The camera looks at what is picked from the playhead on, and flies there from where it was before")
+        .help(help)
     }
 }
 
 // MARK: - The camera
 
 /// The camera at the playhead: the artboard as it sees it, to tip and swing by hand, and its
-/// numbers under that.
+/// numbers under that: where it looks and how, then what it is sharp at and how much it blurs
+/// what stands nearer or further.
 private struct CameraCard: View {
     let store: DocumentStore
     let board: Node
@@ -651,11 +711,21 @@ private struct CameraCard: View {
             HStack {
                 Spacer(minLength: 0)
                 ChipButton(title: "See the Whole Artboard") { store.restCamera() }
-                    .opacity(camera.isRest ? 0.4 : 1)
-                    .allowsHitTesting(!camera.isRest)
-                    .animation(Theme.quick, value: camera.isRest)
+                    .opacity(camera.seesWhole ? 0.4 : 1)
+                    .allowsHitTesting(!camera.seesWhole)
+                    .animation(Theme.quick, value: camera.seesWhole)
             }
             .padding(.top, 2)
+            Hairline()
+                .padding(.vertical, 2)
+            PropertyRow(store: store, property: .cameraFocus) {
+                field(.cameraFocus, 0)
+                    .help("The camera is sharp this many points nearer than where it looks. Below 0, further away.")
+            }
+            PropertyRow(store: store, property: .cameraBlur) {
+                field(.cameraBlur, 0, range: 0...100, scrub: 0.1)
+                    .help("Points of blur for every hundred points a thing stands off the focus")
+            }
         }
     }
 
@@ -708,6 +778,14 @@ private struct CameraPad: View {
                 }
                 ctx.stroke(rules, with: .color(Theme.ink.opacity(0.12)), lineWidth: 0.75)
                 ctx.stroke(sheet, with: .color(Theme.ink.opacity(0.75)), style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
+            }
+            // Where the sheet lies in the camera's focus, while the camera blurs what does not.
+            if camera.blur > 0, let line = FilmLens.sharpLine(of: CGRect(origin: .zero, size: size), in: map, camera: camera, size: size),
+               let a = seen(line.0.x, line.0.y), let b = seen(line.1.x, line.1.y) {
+                var sharp = Path()
+                sharp.move(to: a)
+                sharp.addLine(to: b)
+                ctx.stroke(sharp, with: .color(Theme.pencil), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [0.5, 3.5]))
             }
             // What the film shows of it.
             ctx.stroke(Path(roundedRect: frame, cornerRadius: 2), with: .color(Theme.pencil), style: StrokeStyle(lineWidth: 1.25))

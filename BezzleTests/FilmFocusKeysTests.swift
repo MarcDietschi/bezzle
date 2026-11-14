@@ -162,6 +162,198 @@ struct FilmFocusKeysTests {
         #expect(keys(.cameraFocus).map(\.t) == [0, 2.5] && keys(.cameraBlur).map(\.t) == [0, 1])
     }
 
+    // MARK: Focus the Camera Here
+
+    private func lifted(_ name: String, _ frame: CGRect, by z: CGFloat) -> Node {
+        var n = CanvasTests.rect(name, frame)
+        n.transform3D = Transform3D(x: 0, y: 0, z: z)
+        return n
+    }
+
+    @Test func aFilmHasNearAndFarOnlyWhereSomethingLeavesThePageOrTheCameraLooksAtAnAngle() {
+        var b = board()
+        #expect(!b.filmHasDepth)
+        // Closer, blurring, and a layer moved across the page: all still as far as the page.
+        b.setKey(.cameraZoom, [2], at: 0)
+        b.setKey(.cameraBlur, [8], at: 0)
+        b.setKey(.cameraFocus, [50], at: 0)
+        b.children[0].setKey(.move, [10, 0], at: 1)
+        #expect(!b.filmHasDepth)
+        for property in [MotionProperty.cameraTilt, .cameraSwing] {
+            var tipped = b
+            tipped.setKey(property, [30], at: 1)
+            #expect(tipped.filmHasDepth)
+        }
+        for property in [MotionProperty.lift, .tilt, .swing] {
+            var up = b
+            up.children[0].setKey(property, [50], at: 1)
+            #expect(up.filmHasDepth)
+        }
+        // Held off the page by the design; hidden, it is not in the film at all.
+        var design = b
+        design.children[0].transform3D = Transform3D(x: 0, y: 0, z: 40)
+        #expect(design.filmHasDepth)
+        design.children[0].hidden = true
+        #expect(!design.filmHasDepth)
+        // Pinned by its corners, a layer is a picture in the page.
+        var pinned = b
+        var corners = Transform3D()
+        corners.corners = [CGPoint(x: 0.1, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
+        pinned.children[0].transform3D = corners
+        #expect(!pinned.filmHasDepth)
+        // However deep it lies in groups.
+        var inner = CanvasTests.rect("In", CGRect(x: 10, y: 10, width: 20, height: 20))
+        inner.setKey(.swing, [20], at: 0)
+        var group = Node(kind: .group, name: "G", frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        group.children = [inner]
+        var held = b
+        held.children.append(group)
+        #expect(held.filmHasDepth)
+    }
+
+    /// On artboard A (400 by 300, the camera resting 800 above it): a card held 120 above the
+    /// page, a badge on it, and a sign 80 behind it.
+    private func depths() -> Bench {
+        let bench = Bench(extra: [lifted("Card", CGRect(x: 40, y: 40, width: 120, height: 80), by: 120),
+                                  CanvasTests.rect("Badge", CGRect(x: 240, y: 180, width: 60, height: 40)),
+                                  lifted("Sign", CGRect(x: 300, y: 20, width: 60, height: 40), by: -80)])
+        bench.step { bench.store.edit("Add") { $0.nodes[1].children = [CanvasTests.rect("Far", CGRect(x: 20, y: 20, width: 50, height: 50))] } }
+        bench.undo.removeAllActions()
+        bench.store.show(.animate)
+        bench.store.glide.stop()
+        return bench
+    }
+
+    @Test func focusingTheCameraOnALayerKeysItsFocusThereAndGivesACameraThatBlursNothingTheUsualBlur() throws {
+        let bench = depths(), store = bench.store
+        func id(_ name: String) -> UUID { bench.node(name)!.id }
+        func keys(_ property: MotionProperty) -> [MotionKey] { store.filmBoard?[track: property]?.keys ?? [] }
+        /// The points of blur a layer's piece has at a point of the frame, at a moment.
+        func blur(_ name: String?, at t: Double, _ p: CGPoint = .zero) -> Double? {
+            let board = bench.a, pieces = board.filmPieces()
+            // The page itself is the first piece.
+            let found = name.map { n in pieces.firstIndex { $0.layers.contains(id(n)) } } ?? 0
+            guard let found, found < pieces.count else { return nil }
+            let piece = pieces[found]
+            return board.placement(of: piece, at: t, camera: board.camera(at: t)).soft?.blur(at: p)
+        }
+        #expect(bench.a.filmHasDepth && blur(nil, at: 0) == nil)
+        // At the start: sharp on the card from the first frame, with the usual blur for the whole
+        // film, and the focus comes home to the page by the film's end. Nothing plays.
+        store.selection = [id("Card")]
+        bench.step { store.focusCamera(on: store.posedLayers) }
+        #expect(!store.film.playing && bench.undo.undoActionName == "Focus the Camera Here")
+        #expect(keys(.cameraBlur) == [MotionKey(t: 0, v: [4])])
+        #expect(keys(.cameraFocus) == [MotionKey(t: 0, v: [120]), MotionKey(t: 2, v: [0], given: true)])
+        // The card is sharp. The page, 120 off, has 4 points of blur for every hundred of that;
+        // the sign, 200 off, has 8 of its own points, and shows 800 / 880 as large for being further.
+        #expect(try #require(blur("Card", at: 0)) < 1e-9)
+        #expect(try abs(#require(blur(nil, at: 0)) - 4.8) < 1e-9)
+        #expect(try abs(#require(blur("Sign", at: 0)) - 8 * 800 / 880) < 1e-9)
+        // By the end the page is sharp, and the card as soft as the page was.
+        #expect(try #require(blur(nil, at: 2)) < 1e-9)
+        #expect(try abs(#require(blur("Card", at: 2)) - 4.8 * 800 / 680) < 1e-9)
+        // Later, on the sign: one more key of the focus, the blur left as it is, and the pull
+        // there shown from the key before.
+        store.selection = [id("Sign")]
+        store.seek(1.5)
+        bench.step { store.focusCamera(on: store.posedLayers) }
+        #expect(store.film.playing && store.film.live == 0)
+        store.pauseFilm()
+        #expect(store.filmTime == 1.5)
+        #expect(keys(.cameraFocus).map(\.t) == [0, 1.5, 2] && keys(.cameraFocus)[1].v == [-80] && keys(.cameraBlur) == [MotionKey(t: 0, v: [4])])
+        #expect(try #require(blur("Sign", at: 1.5)) < 1e-9)
+        // One step to undo, each.
+        bench.undo.undo()
+        #expect(keys(.cameraFocus).map(\.t) == [0, 2])
+        bench.undo.undo()
+        #expect(store.filmBoard?.motion == nil)
+        // Several at different distances: half way between the nearest and the furthest.
+        store.seek(1)
+        bench.step { store.focusCamera(on: [id("Card"), id("Sign")]) }
+        store.pauseFilm()
+        #expect(keys(.cameraFocus) == [MotionKey(t: 0, v: [0], given: true), MotionKey(t: 1, v: [20])])
+        #expect(keys(.cameraBlur) == [MotionKey(t: 1, v: [4])] && store.filmBoard?.camera(at: 0).blur == 4)
+        #expect(try abs(#require(blur("Card", at: 1)) - 4 * 800 / 680) < 1e-9 && abs(#require(blur("Sign", at: 1)) - 4 * 800 / 880) < 1e-9)
+        bench.undo.undo()
+        // On what lies on the page, under a camera that is sharp there already: the blur alone.
+        bench.step { store.focusCamera(on: [id("Badge")]) }
+        store.pauseFilm()
+        #expect(keys(.cameraFocus).isEmpty && keys(.cameraBlur) == [MotionKey(t: 1, v: [4])])
+        // Sharp there already and blurring: nothing to key, and nothing plays.
+        let before = store.doc
+        bench.step { store.focusCamera(on: [id("Badge")]) }
+        #expect(store.doc == before && !store.film.playing)
+        // Layers of another artboard, or none at all, are nothing to be sharp on.
+        bench.step { store.focusCamera(on: [id("Far"), UUID()]); store.focusCamera(on: []) }
+        #expect(store.doc == before)
+    }
+
+    @Test func aCameraWhoseBlurIsKeyedToNothingThereGetsAKeyOfItThere() {
+        let bench = depths(), store = bench.store
+        func keys(_ property: MotionProperty) -> [MotionKey] { store.filmBoard?[track: property]?.keys ?? [] }
+        let a = bench.a.id
+        bench.step {
+            store.edit("Add Key") { doc in
+                doc.update(a) { $0.setKey(.cameraBlur, [6], at: 0); $0.setKey(.cameraBlur, [0], at: 1) }
+            }
+        }
+        // Where it blurs, its blur is its own to say.
+        store.seek(0.5)
+        bench.step { store.focusCamera(on: [bench.node("Card")!.id]) }
+        store.pauseFilm()
+        #expect(keys(.cameraBlur).map(\.t) == [0, 1] && keys(.cameraFocus) == [MotionKey(t: 0, v: [0], given: true), MotionKey(t: 0.5, v: [120])])
+        // Where it blurs nothing, the usual, as one more key.
+        store.seek(1.5)
+        bench.step { store.focusCamera(on: [bench.node("Sign")!.id]) }
+        store.pauseFilm()
+        #expect(keys(.cameraBlur) == [MotionKey(t: 0, v: [6]), MotionKey(t: 1, v: [0]), MotionKey(t: 1.5, v: [4])])
+        #expect(keys(.cameraFocus).map(\.v) == [[0], [120], [-80]])
+    }
+
+    @Test func underACameraTippedBackWhatLiesLowerOnThePageIsNearer() {
+        let bench = depths(), store = bench.store
+        let a = bench.a.id
+        bench.step { store.edit("Add Key") { doc in doc.update(a) { $0.setKey(.cameraTilt, [40], at: 0) } } }
+        // The badge's middle lies 50 below the artboard's, where the camera looks: under a camera
+        // tipped back by 40 degrees that is 50 sin 40 = 32.1 nearer, and its focus is whole points.
+        bench.step { store.focusCamera(on: [bench.node("Badge")!.id]) }
+        #expect(store.filmBoard?.camera(at: 0).focus == 32)
+        bench.undo.undo()
+        // Closer, the same: the focus is counted in the artboard's points from where the camera looks.
+        bench.step { store.edit("Add Key") { doc in doc.update(a) { $0.setKey(.cameraZoom, [3], at: 0) } } }
+        bench.step { store.focusCamera(on: [bench.node("Badge")!.id]) }
+        #expect(store.filmBoard?.camera(at: 0).focus == 32)
+    }
+
+    @Test func seeingTheWholeArtboardLeavesWhatTheCameraIsSharpAt() {
+        let bench = depths(), store = bench.store
+        store.pickCamera()
+        bench.step { store.focusCamera(on: [bench.node("Card")!.id]) }
+        // With nothing but its focus and blur, it sees the whole artboard already.
+        var before = store.doc
+        #expect(store.filmBoard?.camera(at: 0).seesWhole == true && store.filmBoard?.camera(at: 0).isRest == false)
+        bench.step { store.restCamera() }
+        #expect(store.doc == before)
+        store.seek(1)
+        bench.step { store.poseCamera(.cameraZoom, [3]); store.poseCamera(.cameraTilt, [40]) }
+        store.seek(2)
+        before = store.doc
+        bench.step { store.restCamera() }
+        let seen = store.filmBoard!.camera(at: 2)
+        #expect(seen.seesWhole && !store.filmBoard!.camera(at: 1).seesWhole && bench.undo.undoActionName == "See the Whole Artboard")
+        #expect(seen.blur == 4 && seen.focus == 0 && store.filmBoard?[track: .cameraFocus] == before.nodes[0][track: .cameraFocus])
+        #expect(store.filmBoard?[track: .cameraBlur] == before.nodes[0][track: .cameraBlur])
+    }
+
+    @Test func withNoFilmOnTheDeskThereIsNothingToFocus() {
+        let bench = depths(), store = bench.store
+        bench.step { store.edit("Delete") { $0.nodes = [] } }
+        let before = store.doc
+        bench.step { store.focusCamera(on: [UUID()]) }
+        #expect(store.doc == before && store.filmBoard == nil)
+    }
+
     // MARK: The file, and sharing
 
     private func filmed() -> BezzleDocument {

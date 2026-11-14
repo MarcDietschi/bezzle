@@ -22511,6 +22511,28 @@
         }
       }
     },
+    "Focus the Camera Here" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kamera hier scharf stellen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faire la mise au point ici"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Metti a fuoco qui"
+          }
+        }
+      }
+    },
     "Folder" : {
       "localizations" : {
         "de" : {
@@ -37527,6 +37549,28 @@
         }
       }
     },
+    "Points of blur for every hundred points a thing stands off the focus" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Punkte Unschärfe für je hundert Punkte, die etwas vom Fokus entfernt steht"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Points de flou pour chaque centaine de points qui sépare une chose de la mise au point"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Punti di sfocatura per ogni cento punti di distanza dalla messa a fuoco"
+          }
+        }
+      }
+    },
     "Pop-up Button" : {
       "localizations" : {
         "de" : {
@@ -49402,6 +49446,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nel browser non è aperta nessuna pagina."
+          }
+        }
+      }
+    },
+    "The camera is sharp on what is picked from the playhead on, and what stands nearer or further shows blurred" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Kamera stellt ab der Abspielposition auf die Auswahl scharf, und was näher oder weiter weg steht, wird unscharf"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "À partir de la tête de lecture, la caméra fait la mise au point sur la sélection, et ce qui se trouve plus près ou plus loin devient flou"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dalla testina di riproduzione in poi la camera mette a fuoco la selezione, e ciò che sta più vicino o più lontano appare sfocato"
+          }
+        }
+      }
+    },
+    "The camera is sharp this many points nearer than where it looks. Below 0, further away." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "So viele Punkte näher als dort, wo sie hinschaut, ist die Kamera scharf. Unter 0 weiter weg."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La caméra est nette à ce nombre de points en avant de l’endroit qu’elle regarde. En dessous de 0, plus loin."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La camera è a fuoco a questi punti più vicino rispetto a dove guarda. Sotto 0, più lontano."
           }
         }
       }
