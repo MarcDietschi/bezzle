@@ -34,6 +34,7 @@ extension Inspector {
             // A group is one card, unless told that what it holds stands in the scene on its own.
             if d.groups { rows.append(Self.switchRow("Layers keep their depth", d.keepDepth) { change(.keepDepth($0)) }) }
             rows.append(Controls.caption("On the canvas, drag the knob in its middle to aim it. Hold Alt once a layer is moving to bring it nearer or push it away. Just outside a side, a drag turns anything in depth."))
+            rows.append(Controls.caption("Hold Alt and drag beside the layers to look at an artboard from the side."))
             return rows
         })
     }

@@ -52,6 +52,8 @@ extension WindowsCore {
     /// through. A new one belongs here.
     private static func visitState<V: SlotVisitor>(_ v: inout V) {
         v.visit(&designURL)
+        // From where its artboards are looked at, before the design, which is handed them as it is put back.
+        v.visit(&sceneLooks)
         v.visit(&design)
         v.visit(&assets)
         v.visit(&previewBase)

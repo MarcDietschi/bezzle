@@ -22,16 +22,24 @@ public enum WindowsCore {
     }
 
     /// Where an artboard's picture reaches on the canvas: its frame, and when it shows what runs
-    /// past its edges, as far as that paints.
+    /// past its edges, as far as that paints, seen from where the canvas looks at it (`sceneLooks`).
     static func drawn(_ n: Node) -> CGRect {
         guard n.isArtboard, !n.clips else { return n.frame }
         var r = n.frame
-        let eye = Eye.stage(n.frame.size)
+        let eye = Eye.stage(n.frame.size).looking(sceneLooks[n.id])
         for c in n.children where !c.hidden { r = r.union(Renderer.reach(of: c, eye: eye).offsetBy(dx: n.frame.minX, dy: n.frame.minY)) }
         return r.integral
     }
 
-    nonisolated(unsafe) static var design: BezzleDocument? { didSet { designVersion &+= 1 } }
+    nonisolated(unsafe) static var design: BezzleDocument? {
+        didSet {
+            designVersion &+= 1
+            // A design brought back by Undo, shown ahead of a change or come from elsewhere is
+            // looked at as this one is (`sceneLooks`, Host/Looking.swift), as the Mac's store hands on.
+            let looking = sceneLooks.isEmpty ? nil : sceneLooks
+            if design != nil, design?.looks != looking { design?.looks = looking }
+        }
+    }
     /// Counts the changes to `design`, as the Mac's store.version: the live room takes in what
     /// was done here when it moves on.
     nonisolated(unsafe) static var designVersion = 0
@@ -84,6 +92,7 @@ public enum WindowsCore {
         previewBase = nil
         showingVersion = false
         fronts = [:]
+        sceneLooks = [:]
         // A shared design opens as it is shared, which its own file may lag behind.
         design = openShared(folder, file: doc)
         designURL = folder
@@ -103,6 +112,7 @@ public enum WindowsCore {
         timeTable.forget()
         previewBase = nil
         showingVersion = false
+        sceneLooks = [:]
         design = nil
         designURL = nil
         Editing.undos = []
@@ -158,11 +168,27 @@ public enum WindowsCore {
         let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
         // A deck as the post in front of it here.
         let board = seen(doc.nodes[index])
-        guard let image = Renderer.image(of: board, part: part == board.frame ? nil : part, scale: CGFloat(scale), assets: assets) else { return false }
+        guard let image = picture(of: board, part: part == board.frame ? nil : part, scale: CGFloat(scale)) else { return false }
         for picture in Images.shared.list where picture.id >= first { send(picture) }
         defer { forget(before: first) }
         guard let pixels = fill(image.width, image.height) else { return false }
         return bz_picture_read(Int32(image.id), Int32(image.width), Int32(image.height), 1, pixels) == 0
+    }
+
+    /// Artboard `index` as the canvas shows it, for trying it without a window: from where it is
+    /// looked at (`sceneLooks`) and as far as it reaches when it shows what runs past its edges,
+    /// which is the part of the canvas `covers` says. Premultiplied RGBA, rows top first.
+    public static func renderShown(board index: Int, scale: Double) -> (width: Int, height: Int, pixels: [UInt8], covers: CGRect)? {
+        guard let doc = design, index < doc.nodes.count else { return nil }
+        let board = seen(doc.nodes[index])
+        let part = drawn(board)
+        let first = Images.shared.list.last.map { $0.id + 1 } ?? 0
+        guard let image = picture(of: board, part: part == board.frame ? nil : part, scale: CGFloat(scale)) else { return nil }
+        for picture in Images.shared.list where picture.id >= first { send(picture) }
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let done = pixels.withUnsafeMutableBytes { bz_picture_read(Int32(image.id), Int32(image.width), Int32(image.height), 0, $0.baseAddress) }
+        forget(before: first)
+        return done == 0 ? (image.width, image.height, pixels, part) : nil
     }
 
     /// The pictures made for drawings before `first` are let go here, but not the design's own;

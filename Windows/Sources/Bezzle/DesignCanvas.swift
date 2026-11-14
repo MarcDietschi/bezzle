@@ -137,6 +137,8 @@ final class DesignCanvas {
         /// A selected repeat grid's handle, gap or corner: repeating, spacing or turning it. A
         /// layout grid's gutter, margin or baseline, while its card is open.
         case turn, corner, shadow, depth, grid, layout
+        /// Alt on nothing, beside the layers: the artboard there looked at from the side.
+        case look
         /// The canvas itself, moved round with Space held or the wheel pressed, from where it was.
         case pan(start: CGPoint)
         /// Pieces of the shapes being built with, joined or wiped away.
@@ -273,6 +275,14 @@ final class DesignCanvas {
     /// Turning in depth (the shared DepthTurning): the knob of a turned layer, and turning from
     /// just outside the middle of a side.
     let depth = WindowsCore.Depth()
+    /// Looking at an artboard from the side (the shared DepthLook): Alt dragged beside the layers,
+    /// the posts under what stands off the page, and the word that looks from the front again.
+    let looking = WindowsCore.LookHand()
+    private let lookMarks = Canvas()
+    /// Where each word that looks from the front again stands on the stage, and the artboard the
+    /// pointer's is by.
+    private var lookWords: [(board: UUID, rect: CGRect)] = []
+    private var lookHovered: UUID?
     /// Guides (the shared GuideDragging): pulled out of the rulers, moved by their lines and tabs.
     let guideHand = WindowsCore.Guides()
     /// A selected repeat grid (the shared GridHandles): its handles repeat it, its gaps space it.
@@ -1516,6 +1526,7 @@ final class DesignCanvas {
         }
         placeHolds()
         drawDepth()
+        drawLook()
         drawGrids()
         drawOutline()
         drawCurves()
@@ -3107,6 +3118,90 @@ final class DesignCanvas {
         dot(knob, 4, fill: Theme.selection, rim: false)
     }
 
+    // MARK: Looking from the side
+
+    /// The look tool sees the canvas as it is now.
+    private func syncLook() {
+        looking.zoom = CGFloat(zoom)
+        looking.pan = CGPoint(x: Double(pan.x), y: Double(pan.y))
+        looking.focused = session.board
+    }
+
+    /// An artboard is looked at from elsewhere (all of them, with nil): its picture is drawn
+    /// again as far as it reaches now, with what stands off the page, and the marks with it.
+    /// Nothing of the design changed, so nothing else hears of it and nothing is saved.
+    private func lookChanged(_ board: UUID?) {
+        guard let k = board.flatMap(WindowsCore.boardIndex(of:)) else { drawAll(); return }
+        redraw(board: k)
+        place()
+    }
+
+    /// What shows while artboards are looked at from the side, as the Mac's LookTool draws it: a
+    /// post under each corner of what stands off the page (of what is picked alone, when some of
+    /// it is), and by each such artboard's top right corner, in the line its name is in, the
+    /// word that looks at it from the front again. Only while designing.
+    private func drawLook() {
+        if !holds(overlay, lookMarks) {
+            lookMarks.isHitTestVisible = false
+            overlay.children.append(lookMarks)
+        }
+        lookMarks.children.clear()
+        lookWords = []
+        guard session.mode == 0, WindowsCore.lookingFromTheSide else { lookHovered = nil; return }
+        syncLook()
+        // Clear of the rulers, where they show.
+        let ruled = WindowsCore.showsRulers ? Rulers.thickness : 0
+        let view = CGRect(x: ruled, y: ruled, width: max(0, stage.actualWidth - ruled), height: max(0, stage.actualHeight - ruled))
+        let marks = looking.marks(selection: session.selection, size: CGSize(width: stage.actualWidth, height: stage.actualHeight))
+        var posts = PathData(), feet = PathData()
+        for post in marks.posts {
+            posts.move(Double(post.foot.x), Double(post.foot.y))
+            posts.line(Double(post.top.x), Double(post.top.y))
+            feet.rect(Double(post.foot.x) - 1.5, Double(post.foot.y) - 1.5, 3, 3, radius: 1.5)
+        }
+        if let path = markPath(posts) {
+            path.stroke = Theme.brush(Theme.pencil, 0.5)
+            lookMarks.children.append(path)
+        }
+        if let path = markPath(feet, thickness: 0) {
+            path.fill = Theme.brush(Theme.pencil, 0.5)
+            lookMarks.children.append(path)
+        }
+        for board in marks.boards {
+            let label = Theme.text(Words.t("Look from the Front"), size: 11, weight: 600)
+            label.foreground = Theme.brush(0xFFFFFF)
+            label.horizontalAlignment = .center
+            label.verticalAlignment = .center
+            try? label.measure(Size(width: 400, height: 20))
+            let r = WindowsCore.LookHand.wordRect(by: board.frame, words: CGFloat(label.desiredSize.width), in: view)
+            let pill = Border()
+            pill.width = Double(r.width)
+            pill.height = Double(r.height)
+            pill.cornerRadius = Theme.corners(Double(r.height) / 2)
+            // Pointed at, a little darker, as on the Mac.
+            pill.background = Theme.brush(lookHovered == board.id ? Theme.mix(Theme.pencil, 0x000000, 0.12) : Theme.pencil)
+            pill.child = label
+            try? Canvas.setLeft(pill, Double(r.minX))
+            try? Canvas.setTop(pill, Double(r.minY))
+            lookMarks.children.append(pill)
+            lookWords.append((board.id, r))
+        }
+        if let hovered = lookHovered, !lookWords.contains(where: { $0.board == hovered }) { lookHovered = nil }
+    }
+
+    /// The word under `p` on the stage, by the artboard it is of.
+    private func lookWord(at p: CGPoint) -> UUID? {
+        lookWords.first { $0.rect.insetBy(dx: -2, dy: -2).contains(p) }?.board
+    }
+
+    /// The pointer over a word that looks from the front again: it darkens.
+    private func pointLook(at p: CGPoint) {
+        let over = lookWord(at: p)
+        guard over != lookHovered else { return }
+        lookHovered = over
+        drawLook()
+    }
+
     /// The corner dots, the shadow's outline and the measure, as the pointer and the drag have them.
     private func placeHolds() {
         let holding: Grab? = drag?.grab
@@ -3572,6 +3667,12 @@ final class DesignCanvas {
             session.edited(board: nil)
             return
         }
+        // The word by an artboard looked at from the side looks at it from the front again.
+        if session.mode == 0, let board = lookWord(at: p) {
+            lookHovered = nil
+            if WindowsCore.look(at: board, across: 0, down: 0) { lookChanged(board) }
+            return
+        }
         // The row of variants beside a copy picked: a card makes the copy that variant, the round
         // button a new variant of it.
         if session.mode == 0, copyMarks.down(at: p) { return }
@@ -3815,6 +3916,16 @@ final class DesignCanvas {
             drag = (p, session.board ?? -1, false, .move(duplicate: option))
             return
         }
+        // Alt on nothing takes the scene and turns the look: an artboard seen from the side (the
+        // Mac's Control). What is picked stays picked.
+        if option, session.tool == .select, session.mode == 0 {
+            syncLook()
+            if looking.down(at: p) {
+                _ = try? stage.capturePointer(args?.pointer)
+                drag = (p, session.board ?? -1, false, .look)
+                return
+            }
+        }
         // Elsewhere a box is dragged out, adding to the selection with Shift.
         let inside = WindowsCore.board(at: c)
         let base = shift ? session.selection : []
@@ -3849,6 +3960,13 @@ final class DesignCanvas {
             if copyMarks.covers(p) {
                 setHover(nil)
                 showPointer(.pointingHand)
+                return
+            }
+            // The word that looks from the front again takes the arrow, and nothing under it lights.
+            pointLook(at: p)
+            if lookHovered != nil {
+                setHover(nil)
+                showPointer(.arrow)
                 return
             }
         }
@@ -4002,6 +4120,13 @@ final class DesignCanvas {
             session.edited(board: d.board)
             return
         }
+        if case .look = d.grab {
+            syncLook()
+            // The picture is drawn again only when the look has turned; how far says itself by the pointer.
+            if looking.drag(to: p, steps: shift) { lookChanged(looking.board) } else { placeHolds() }
+            drag?.moved = true
+            return
+        }
         if case .outline = d.grab {
             syncOutline()
             outlineHand.drag(to: p, shift: shift, option: option)
@@ -4106,7 +4231,7 @@ final class DesignCanvas {
         case .shadow:
             if first, let id = session.selection.first { WindowsCore.beginShadow(id, at: inDesign(d.from)) }
             WindowsCore.hold(to: inDesign(p), shift: shift, option: option)
-        case .depth, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note, .deck, .picture, .motion:
+        case .depth, .look, .grid, .layout, .pan, .build, .outline, .curve, .develop, .inspect, .flow, .note, .deck, .picture, .motion:
             return
         case .lineEnd(let k):
             guard let id = session.selection.first else { return }
@@ -4229,6 +4354,10 @@ final class DesignCanvas {
                 session.select(depth.selection, on: depth.selection.first.flatMap(WindowsCore.board(of:)) ?? session.board)
             }
             session.edited(board: d.board)
+        case .look:
+            // A click, nothing dragged, looks from the front again.
+            let board = looking.board
+            if looking.up() { lookChanged(board) } else { placeOverlays() }
         case .grid:
             gridHand.up()
             session.edited(board: d.board >= 0 ? d.board : nil)
@@ -4361,6 +4490,8 @@ final class DesignCanvas {
         syncLayout()
         if let across = layoutHand.pointer(at: p) { return across ? .across : .upDown }
         if drag == nil, onOffer(p) || copyButtons.contains(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) { return .pointingHand }
+        // The word that looks from the front again takes the arrow, as on the Mac.
+        if drag == nil, session.mode == 0, lookWord(at: p) != nil { return .arrow }
         if prototyping {
             syncFlow()
             switch flow.pointer(at: p) {
@@ -4457,6 +4588,11 @@ final class DesignCanvas {
             showMarquee(nil)
         case .depth:
             depth.cancel()
+        case .look:
+            // Looked at as before the drag; the design itself was never touched.
+            let board = looking.board
+            if looking.cancel() { lookChanged(board) } else { placeOverlays() }
+            return
         case .grid:
             gridHand.cancel()
         case .layout:
@@ -5681,6 +5817,13 @@ final class DesignCanvas {
             if pen.key(penKey, shift: shift) {
                 args.handled = true
                 penChanged()
+                return
+            }
+            // Escape with nothing picked and nothing in hand: what is looked at from the side,
+            // from the front again, as on the Mac.
+            if penKey == "escape", session.mode == 0, session.selection.isEmpty, WindowsCore.lookFromTheFront() {
+                args.handled = true
+                lookChanged(nil)
                 return
             }
         }

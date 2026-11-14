@@ -117,6 +117,10 @@ final class DesignSession {
     var mode = 0 {
         didSet {
             guard mode != oldValue else { return }
+            // Only while designing is an artboard looked at from the side: seen as a prototype,
+            // inspected or animated, all is from the front again, as on the Mac. Before the film
+            // lays its artboard out, which it does from the design as it is looked at.
+            if mode != 0, WindowsCore.using(slot, { WindowsCore.lookFromTheFront() }) { previewed(board: nil) }
             inspect.on = mode == 2
             flow.on = mode == 1
             if mode != 0 { develop.on = false }
