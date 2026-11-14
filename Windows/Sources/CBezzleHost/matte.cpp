@@ -10,6 +10,7 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <psapi.h>
 
 #include "BezzleHost.h"
 
@@ -92,8 +93,28 @@ extern "C" int32_t bz_matte_memory(int32_t* load, int64_t* available) {
     return asked ? 1 : 0;
 }
 
+namespace {
+
+/// The most memory this process has held since it started (`peak`), and the most it had asked
+/// Windows for (`asked`), in bytes.
+bool heldByProcess(int64_t* peak, int64_t* asked) {
+    PROCESS_MEMORY_COUNTERS counters = {};
+    counters.cb = sizeof(counters);
+    const bool said = K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) != 0;
+    if (peak) *peak = said ? int64_t(counters.PeakWorkingSetSize) : 0;
+    if (asked) *asked = said ? int64_t(counters.PeakPagefileUsage) : 0;
+    return said;
+}
+
+}  // namespace
+
 #if !BEZZLE_ONNX
 
+extern "C" int32_t bz_matte_held(int64_t* peak, int64_t* asked, int64_t* card, int64_t* shared) {
+    if (card) *card = 0;
+    if (shared) *shared = 0;
+    return heldByProcess(peak, asked) ? 1 : 0;
+}
 extern "C" int32_t bz_matte_available(void) { return 0; }
 extern "C" int32_t bz_matte_machine(int64_t* bytes, int32_t* cores, int64_t* dedicated, int32_t* software, char* name, int32_t capacity) {
     if (bytes) *bytes = physicalMemory();
@@ -235,6 +256,29 @@ Adapter adapter(bool software) {
     return software ? warp : best;
 }
 
+/// What this process holds just now on the graphics adapter DirectML runs on, in bytes: of the
+/// card's own memory (`card`) and of the PC's that the graphics share (`shared`).
+void heldOnCard(int64_t* card, int64_t* shared) {
+    if (!card && !shared) return;
+    if (card) *card = 0;
+    if (shared) *shared = 0;
+    const Adapter on = adapter(false);
+    IDXGIFactory1* factory = nullptr;
+    if (on.index < 0 || FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) return;
+    IDXGIAdapter1* a = nullptr;
+    if (factory->EnumAdapters1(UINT(on.index), &a) != DXGI_ERROR_NOT_FOUND) {
+        IDXGIAdapter3* three = nullptr;
+        if (SUCCEEDED(a->QueryInterface(__uuidof(IDXGIAdapter3), reinterpret_cast<void**>(&three)))) {
+            DXGI_QUERY_VIDEO_MEMORY_INFO info = {};
+            if (card && SUCCEEDED(three->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info))) *card = int64_t(info.CurrentUsage);
+            if (shared && SUCCEEDED(three->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &info))) *shared = int64_t(info.CurrentUsage);
+            three->Release();
+        }
+        a->Release();
+    }
+    factory->Release();
+}
+
 struct Matte {
     OrtSession* session = nullptr;
     OrtMemoryInfo* memory = nullptr;
@@ -248,6 +292,8 @@ struct Matte {
     bool alone = false;
     /// The side of the square the graph takes its picture at; 0 where it takes any.
     int32_t side = 0;
+    /// On the processor: made the lean way, which holds the least and takes the longest (`session`).
+    bool lean = false;
 };
 
 /// DirectML on Windows' software adapter (WARP), on a Direct3D 12 device and queue made here, given
@@ -286,7 +332,9 @@ std::string withOwnDevice(OrtSessionOptions* options) {
     return why;
 }
 
-OrtSession* session(const std::wstring& path, const Adapter* on, std::string& why) {
+/// A session for the model at `path`: on the graphics adapter `on`, or without one on the
+/// processor, there the `lean` way when asked.
+OrtSession* session(const std::wstring& path, const Adapter* on, bool lean, std::string& why) {
     OrtSessionOptions* options = nullptr;
     if (why = failed(api->CreateSessionOptions(&options)); !why.empty()) return nullptr;
     OrtSession* made = nullptr;
@@ -294,9 +342,27 @@ OrtSession* session(const std::wstring& path, const Adapter* on, std::string& wh
     // ones the processor has no half-precision kernels for (Gelu), where ONNX Runtime otherwise
     // runs each half-precision node in full precision by casting round it.
     why = failed(api->SetSessionGraphOptimizationLevel(options, on ? ORT_ENABLE_ALL : ORT_ENABLE_BASIC));
-    // On the processor the model needs gigabytes while it runs: given back to Windows after each
-    // picture, rather than kept for the next in ONNX Runtime's arena while Bezzle goes on.
-    if (why.empty() && !on) why = failed(api->DisableCpuMemArena(options));
+    if (why.empty() && !on) {
+        // On the processor ONNX Runtime plans ahead to give a layer's memory, once the layer is
+        // done with, to a later layer whose result is the same size, and holds it until then
+        // (its enable_mem_reuse): with this model 2.6 GB at 1,024 pixels where 1.2 GB is in use
+        // at once, and 10 GB where it is 3.9 GB at 2,048. Its C API has no switch for that, but
+        // its parallel mode plans without. As all of the graph runs on the processor it is one
+        // stream there, whose layers the parallel mode runs one at a time in the very order the
+        // sequential mode does: the matte is the same bit for bit (Scripts/subject-matte/README.md
+        // has the measures). Two threads between layers, the fewest that keep the mode: with
+        // one, ONNX Runtime goes back to the sequential mode and its plan. They wait asleep.
+        why = failed(api->SetSessionExecutionMode(options, ORT_PARALLEL));
+        if (why.empty()) why = failed(api->SetInterOpNumThreads(options, 2));
+        if (why.empty()) why = failed(api->AddSessionConfigEntry(options, "session.inter_op.allow_spinning", "0"));
+        // What a layer lets go is kept in ONNX Runtime's arena for the layers after it, which
+        // then holds 1.7 GB at 1,024 pixels and 6.9 GB at 2,048. Without the arena each layer's
+        // memory is asked of Windows and given back, page by page: no more is held than is in
+        // use (1.2 GB and 3.9 GB), and a matte takes two to three times as long. That is the
+        // lean way, for a PC with little memory left. Either way all of it goes back to Windows
+        // with the session, which is let go after each picture (bz_matte_run).
+        if (why.empty() && lean) why = failed(api->DisableCpuMemArena(options));
+    }
     if (why.empty() && on) {
         // As DirectML needs: one node after another, and no memory planned ahead.
         why = failed(api->DisableMemPattern(options));
@@ -346,6 +412,11 @@ extern "C" int32_t bz_matte_machine(int64_t* bytes, int32_t* cores, int64_t* ded
     return on.index >= 0 ? 1 : 0;
 }
 
+extern "C" int32_t bz_matte_held(int64_t* peak, int64_t* asked, int64_t* card, int64_t* shared) {
+    heldOnCard(card, shared);
+    return heldByProcess(peak, asked) ? 1 : 0;
+}
+
 extern "C" int32_t bz_matte_available(void) {
     std::lock_guard<std::mutex> guard(lock);
     std::string why;
@@ -363,20 +434,21 @@ extern "C" void* bz_matte_open(const char* path, int32_t device, char* error, in
     const std::wstring file = wide(path);
     OrtSession* made = nullptr;
     std::string where;
-    // 0: the graphics card if it can, else the processor; 1: the processor; 2: DirectML on any
-    // adapter, Windows' software one too (for trying it where there is no other); 3: the graphics
-    // card. With 2 and 3 it is the card alone: one that cannot is an error, now and in any run
-    // after, and who asked decides what to take instead (a lighter way, Host/SubjectMatte.swift).
-    const bool alone = device == 2 || device == 3;
+    // 0: the graphics card if it can, else the processor; 1: the processor; 4: the processor,
+    // the lean way; 2: DirectML on any adapter, Windows' software one too (for trying it where
+    // there is no other); 3: the graphics card. With 2 and 3 it is the card alone: one that
+    // cannot is an error, now and in any run after, and who asked decides what to take instead
+    // (a lighter way, Host/SubjectMatte.swift).
+    const bool alone = device == 2 || device == 3, lean = device == 4;
     if (alone && !dml) {
         say(error, capacity, "The ONNX Runtime beside Bezzle has no DirectML.");
         return nullptr;
     }
-    if (device != 1 && dml) {
+    if (device != 1 && device != 4 && dml) {
         const Adapter on = adapter(device == 2);
         if (on.index >= 0) {
             std::string refused;
-            made = session(file, &on, refused);
+            made = session(file, &on, false, refused);
             if (made) {
                 where = "DirectML on " + on.name;
             } else if (alone) {
@@ -391,12 +463,12 @@ extern "C" void* bz_matte_open(const char* path, int32_t device, char* error, in
         }
     }
     if (!made) {
-        made = session(file, nullptr, why);
+        made = session(file, nullptr, lean, why);
         if (!made) {
             say(error, capacity, why);
             return nullptr;
         }
-        if (where.empty()) where = "processor";
+        if (where.empty()) where = lean ? "processor, the lean way" : "processor";
     }
     auto* matte = new Matte;
     matte->session = made;
@@ -404,6 +476,7 @@ extern "C" void* bz_matte_open(const char* path, int32_t device, char* error, in
     matte->where = where;
     matte->onCard = where.rfind("DirectML", 0) == 0;
     matte->alone = alone;
+    matte->lean = lean;
     matte->side = squareSide(made);
     if (why = failed(api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &matte->memory)); !why.empty()) {
         api->ReleaseSession(made);
@@ -437,7 +510,7 @@ extern "C" int32_t bz_matte_run(void* handle, const float* input, int32_t side, 
     OrtValue* out = nullptr;
     // On the processor, a session for each picture, let go once it is done (below): one kept from
     // picture to picture held on to the gigabytes the model needs there, and more with each picture.
-    if (!matte->session) matte->session = session(matte->file, nullptr, why);
+    if (!matte->session) matte->session = session(matte->file, nullptr, matte->lean, why);
     if (!matte->session) {
         api->ReleaseValue(in);
         say(error, capacity, why);
@@ -449,7 +522,7 @@ extern "C" int32_t bz_matte_run(void* handle, const float* input, int32_t side, 
         // Windows' software adapter's is, or the card lost): from now on on the processor. Not
         // where it was opened for the card alone: the error below is the answer then.
         std::string again;
-        if (OrtSession* cpu = session(matte->file, nullptr, again)) {
+        if (OrtSession* cpu = session(matte->file, nullptr, false, again)) {
             api->ReleaseSession(matte->session);
             matte->session = cpu;
             matte->onCard = false;

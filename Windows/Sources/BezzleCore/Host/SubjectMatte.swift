@@ -30,27 +30,33 @@ nonisolated final class SubjectMatte: CutoutMaker.Matting, @unchecked Sendable {
     /// How finely it cuts out, by that size.
     var grade: Grade { side >= 2048 ? .fine : .light }
 
+    /// On the processor: opened for the lean way (`MatteWays.Fit`), which holds the least and
+    /// takes the longest. The matte is the same either way.
+    let lean: Bool
+
     private let handle: UnsafeMutableRawPointer
-    /// Where it runs, in words: "DirectML on …" or "processor".
+    /// Where it runs, in words: "DirectML on …", "processor" or "processor, the lean way".
     var device: String {
         var on = [CChar](repeating: 0, count: 512)
         _ = bz_matte_device(handle, &on, Int32(on.count))
         return String(cString: on)
     }
 
-    /// The graph at `url`, made ready for `route`: on the processor, or on the graphics card and
-    /// there alone (DirectML fits it to the card first, which takes seconds). A card that cannot
-    /// hold it throws, here or at a matte: `SubjectModel` then takes a lighter way. With
-    /// `anyAdapter`, on whatever adapter DirectML runs on, Windows' own on the processor too, for
-    /// trying it where there is no card.
-    init(contentsOf url: URL, route: Route, anyAdapter: Bool = false) throws {
+    /// The graph at `url`, made ready for `route`: on the processor, the `lean` way when asked,
+    /// or on the graphics card and there alone (DirectML fits it to the card first, which takes
+    /// seconds). A card that cannot hold it throws, here or at a matte: `SubjectModel` then takes
+    /// a lighter way. With `anyAdapter`, on whatever adapter DirectML runs on, Windows' own on
+    /// the processor too, for trying it where there is no card.
+    init(contentsOf url: URL, route: Route, anyAdapter: Bool = false, lean: Bool = false) throws {
         var error = [CChar](repeating: 0, count: 1024), on = [CChar](repeating: 0, count: 512)
-        let device: Int32 = route.onCard ? (anyAdapter ? 2 : 3) : 1
+        let lean = lean && !route.onCard
+        let device: Int32 = route.onCard ? (anyAdapter ? 2 : 3) : (lean ? 4 : 1)
         guard let made = bz_matte_open(url.path, device, &error, Int32(error.count), &on, Int32(on.count)) else {
             throw Trouble(description: String(cString: error))
         }
         handle = made
         self.route = route
+        self.lean = lean
         let says = Int(bz_matte_side(made))
         side = says > 0 ? says : route.side
     }
@@ -129,6 +135,10 @@ nonisolated extension MatteMachine {
 ///   the model, as the Mac has with Apple's Vision;
 /// - a way that took Bezzle down with it is remembered, and passed over from then on;
 /// - a way that took far too long here is passed over for a lighter one;
+/// - a way on the processor is taken only while Windows has the memory left that it holds
+///   (`MatteWays.fit`): the fine size is passed over for the light one, and the light size, with
+///   less than it holds left, is made the lean way, which holds less and takes longer for the
+///   same matte;
 /// - the model is let go a while after its last picture, and at once when memory runs short. On
 ///   the processor it is let go after each matte: ONNX Runtime kept hold there of the gigabytes
 ///   a matte took, and of more with each (CBezzleHost/matte.cpp), so only a model loaded ahead
@@ -140,8 +150,11 @@ nonisolated extension MatteMachine {
 /// For trying things: BEZZLE_MATTE_ROUTE takes one way alone (gpu2048, cpu2048, gpu1024,
 /// cpu1024), BEZZLE_MATTE_MACHINE another PC's ways ("16:8", "32:12:8": gigabytes, fast cores,
 /// the card's gigabytes), BEZZLE_MATTE_DEVICE=cpu the processor's ways only (gpu: the card's ways
-/// through DirectML on any adapter, a software one too, the light size at least), and
+/// through DirectML on any adapter, a software one too, the light size at least),
+/// BEZZLE_MATTE_LEAN=1 the processor's lean way whatever memory is left (0: never),
+/// BEZZLE_MATTE_LEFT the ways of a PC with so many gigabytes of memory left ("1.5"), and
 /// BEZZLE_MATTE_MODEL other graphs: a folder of them, or one graph that every way then runs.
+/// After each matte `log` hears how long it took and what Bezzle has held (`held`).
 public nonisolated final class SubjectModel: @unchecked Sendable {
     public static let shared = SubjectModel()
 
@@ -265,7 +278,9 @@ public nonisolated final class SubjectModel: @unchecked Sendable {
     func ways(longest: Int) -> [MatteRoute] {
         let files = self.files
         guard files.isThere else { return [] }
-        var ways = ledger.ways(longest: longest, short: Self.memoryIsShort(), fine: files.hasFine)
+        let memory = Self.memory()
+        var ways = ledger.ways(longest: longest, short: memory.map { MatteWays.memoryIsShort(load: $0.load, available: $0.available) } ?? false,
+                               fine: files.hasFine, available: memory?.available)
         guard ProcessInfo.processInfo.environment["BEZZLE_MATTE_ROUTE"] == nil else { return ways }
         switch Self.asked {
         case .processor: ways.removeAll(where: \.onCard)
@@ -293,10 +308,25 @@ public nonisolated final class SubjectModel: @unchecked Sendable {
     func expecting(longest: Int, key: String) -> [CutoutPace.Step: Double] {
         let routes = ways(longest: longest)
         guard let route = routes.first else { return [:] }
-        let wanted = grade(by: routes)
-        let (has, ready) = state.withLock { (kept.matte(of: key, atLeast: wanted) != nil, loaded?.route == route ? ran : nil) }
+        let wanted = grade(by: routes), lean = isLean(route)
+        let (has, ready) = state.withLock { (kept.matte(of: key, atLeast: wanted) != nil, loaded?.route == route && loaded?.lean == lean ? ran : nil) }
         guard !has else { return [.load: 0, .matte: 0] }
-        return ledger.expecting(route, loading: ready == nil, cold: ready != true)
+        return ledger.expecting(route, loading: ready == nil, cold: ready != true, lean: lean)
+    }
+
+    /// What BEZZLE_MATTE_LEAN asks for: every matte on the processor the lean way (1) or none (0).
+    private static let askedLean: Bool? = switch ProcessInfo.processInfo.environment["BEZZLE_MATTE_LEAN"] {
+    case "1": true
+    case "0": false
+    default: nil
+    }
+
+    /// Whether `route` is made the lean way just now: on the processor, where the quick way
+    /// asks more memory than Windows has left to hand out (`MatteWays.fit`).
+    private func isLean(_ route: MatteRoute) -> Bool {
+        guard !route.onCard else { return false }
+        if let asked = Self.askedLean { return asked }
+        return MatteWays.fit(route, available: Self.memory()?.available) != .quick
     }
 
     /// The matting for one cut of the picture called `key`, which `told` hears the steps of; nil
@@ -349,8 +379,9 @@ public nonisolated final class SubjectModel: @unchecked Sendable {
             let files = self.files
             guard let route = ways(longest: longest).first, let url = files.url(for: route), busy.try() else { return }
             defer { busy.unlock() }
-            guard state.withLock({ loaded?.route }) != route else { return }
-            _ = try? load(url, route)
+            let lean = isLean(route)
+            guard state.withLock({ loaded?.route != route || loaded?.lean != lean }) else { return }
+            _ = try? load(url, route, lean: lean)
             letGo(after: route)
         }
     }
@@ -369,18 +400,22 @@ public nonisolated final class SubjectModel: @unchecked Sendable {
         var trouble: Swift.Error = CutoutMaker.Failure.unreadable
         for route in routes {
             guard let url = files.url(for: route) else { continue }
-            let ready = state.withLock { loaded?.route == route ? loaded : nil }
+            // By what is left now: a way that failed before this one may have taken memory with it.
+            let free = Self.memory()?.available, lean = isLean(route)
+            let ready = state.withLock { loaded?.route == route && loaded?.lean == lean ? loaded : nil }
             let cold = ready == nil || !state.withLock { ran }
-            told(CutoutMaker.Progress(step: ready == nil ? .load : .matte, expecting: ledger.expecting(route, loading: ready == nil, cold: cold)))
+            told(CutoutMaker.Progress(step: ready == nil ? .load : .matte, expecting: ledger.expecting(route, loading: ready == nil, cold: cold, lean: lean)))
             do {
-                let model = try ready ?? load(url, route)
+                let model = try ready ?? load(url, route, lean: lean)
                 if ready == nil { told(CutoutMaker.Progress(step: .matte)) }
                 let began = WindowsCore.now
                 ledger.mark(route, running: true)
                 defer { ledger.mark(route, running: false) }
                 let matte = try model.matte(of: picture)
-                ledger.remember(matte: WindowsCore.now - began, by: route, cold: cold)
+                let took = WindowsCore.now - began
+                ledger.remember(matte: took, by: route, cold: cold, lean: lean)
                 let grade = model.grade, device = "\(route) on \(model.device)"
+                Self.log?("subject matte: \(device), made in \(String(format: "%.2f", took)) s\(Self.held(before: free, onCard: route.onCard))")
                 state.withLock {
                     ran = true
                     kept.keep(matte, of: key, grade: grade)
@@ -405,9 +440,9 @@ public nonisolated final class SubjectModel: @unchecked Sendable {
         throw trouble
     }
 
-    /// The model made ready for `route`, any other let go first: two at once would hold both
-    /// their memory.
-    private func load(_ url: URL, _ route: MatteRoute) throws -> SubjectMatte {
+    /// The model made ready for `route`, on the processor the `lean` way when asked; any other
+    /// let go first: two at once would hold both their memory.
+    private func load(_ url: URL, _ route: MatteRoute, lean: Bool) throws -> SubjectMatte {
         state.withLock {
             loaded = nil
             ran = false
@@ -417,7 +452,7 @@ public nonisolated final class SubjectModel: @unchecked Sendable {
         defer { ledger.mark(route, running: false) }
         let model: SubjectMatte
         do {
-            model = try SubjectMatte(contentsOf: url, route: route, anyAdapter: route.onCard && Self.asked == .anyAdapter)
+            model = try SubjectMatte(contentsOf: url, route: route, anyAdapter: route.onCard && Self.asked == .anyAdapter, lean: lean)
         } catch {
             state.withLock { lastTrouble = "\(error)" }
             throw error
@@ -479,11 +514,37 @@ public nonisolated final class SubjectModel: @unchecked Sendable {
         }
     }
 
+    /// What BEZZLE_MATTE_LEFT says Windows has left to hand out, in gigabytes ("1.5"): for trying
+    /// here what Bezzle does on a PC whose memory is nearly all in use.
+    private static let askedLeft: UInt64? = ProcessInfo.processInfo.environment["BEZZLE_MATTE_LEFT"]
+        .flatMap { Double($0) }.map { UInt64(max($0, 0) * MatteMachine.gigabyte) }
+
+    /// What Windows says of memory just now: the share in use, in percent, and the bytes it can
+    /// still hand out. Nothing where it does not say.
+    static func memory() -> (load: Int, available: UInt64)? {
+        var load: Int32 = 0, available: Int64 = 0
+        guard bz_matte_memory(&load, &available) != 0 else { return nil }
+        return (Int(load), askedLeft ?? UInt64(max(available, 0)))
+    }
+
     /// Whether Windows says memory is short just now.
     static func memoryIsShort() -> Bool {
-        var load: Int32 = 0, available: Int64 = 0
-        guard bz_matte_memory(&load, &available) != 0 else { return false }
-        return MatteWays.memoryIsShort(load: Int(load), available: UInt64(max(available, 0)))
+        memory().map { MatteWays.memoryIsShort(load: $0.load, available: $0.available) } ?? false
+    }
+
+    /// For the trace, after a matte: the most memory Bezzle has held since it started and the
+    /// most it had asked Windows for, what the graphics card holds for it now, and what was
+    /// `free` before the matte. Measuring a way on a PC is reading this line
+    /// (Scripts/subject-matte/README.md, Measuring a graphics card).
+    private static func held(before free: UInt64?, onCard: Bool) -> String {
+        var peak: Int64 = 0, asked: Int64 = 0, card: Int64 = 0, shared: Int64 = 0
+        // The card is asked only after a matte made on it: asking takes Direct3D a moment.
+        guard (onCard ? bz_matte_held(&peak, &asked, &card, &shared) : bz_matte_held(&peak, &asked, nil, nil)) != 0 else { return "" }
+        let gigabytes = { (bytes: Int64) in String(format: "%.2f GB", Double(bytes) / MatteMachine.gigabyte) }
+        var said = "; Bezzle has held \(gigabytes(peak)) at most and asked Windows for \(gigabytes(asked))"
+        if onCard { said += "; the graphics card holds \(gigabytes(card)) of its own for it now and \(gigabytes(shared)) of the PC's" }
+        if let free { said += "; \(gigabytes(Int64(free))) were free before" }
+        return said
     }
 
     /// Bezzle is quitting: a matte cut short by that is no matte that took Bezzle down.

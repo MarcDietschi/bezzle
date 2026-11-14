@@ -41,19 +41,20 @@ nonisolated struct MatteRoute: Hashable, Sendable, CustomStringConvertible {
     /// The model's graph for this size, in Bezzle.resources: both read BiRefNet.weights beside them.
     var graph: String { "BiRefNet-\(side).onnx" }
 
-    /// The memory it holds while it runs, in bytes. On the processor as measured in the test VM
-    /// (Windows 11 for Arm, 8 cores, 12 GB; 2026-11-10): Bezzle's whole working set at its peak,
-    /// about 2 GB at either size, as ONNX Runtime uses what one layer leaves for the next. On the
-    /// card guesses from what the Mac's GPU holds, until measured on a real one. Only their order
-    /// is used, to tell which of two ways asked the most of the PC.
+    /// The memory the model holds while it makes a matte, in bytes. On the processor as measured
+    /// in the test VM (Windows 11 for Arm, 8 cores, 12 GB; 2026-11-14,
+    /// Scripts/subject-matte/README.md): the most the model had in memory at once, made the quick
+    /// way (`MatteWays.Fit`), 6.9 GB at 2,048 pixels and 1.7 GB at 1,024. The lean way holds
+    /// 3.9 GB and 1.2 GB. On the card guesses from what the Mac's GPU holds, until measured on a
+    /// real one.
     var holds: UInt64 {
-        let megabytes: UInt64 = switch (side >= 2048, onCard) {
-        case (true, true): 9_000
-        case (true, false): 2_000
-        case (false, true): 3_000
-        case (false, false): 1_900
+        let gigabytes = switch (side >= 2048, onCard) {
+        case (true, true): 8.4
+        case (true, false): 7.0
+        case (false, true): 2.8
+        case (false, false): 1.7
         }
-        return megabytes * 1_000_000
+        return UInt64(gigabytes * MatteMachine.gigabyte)
     }
 
     /// How many seconds loading the model and making a matte take on a PC nothing is known of
@@ -125,12 +126,45 @@ nonisolated enum MatteWays {
     /// Gigabytes of memory below which the card is left alone: DirectML keeps as much of the
     /// model in the PC's memory as on the card (a PC sold with 8).
     static let memoryForCard = 7.5
-    /// Gigabytes of memory, and fast cores, the fine size on the processor needs. Time is what it
-    /// asks: 2 GB while it runs, as the light size, but four times as long, 45 s and more with 8
-    /// cores (the test VM) and about 25 s with 16, which is as long as anyone waits (`patience`).
-    /// So only a processor of 16 fast cores takes it, in a PC sold with 16 GB at least.
+    /// Gigabytes of memory, and fast cores, the fine size on the processor needs. It asks both:
+    /// 7 GB while it runs, and four times as long as the light size, 45 s and more with 8 cores
+    /// (the test VM) and about 25 s with 16, which is as long as anyone waits (`patience`). So
+    /// only a processor of 16 fast cores takes it, in a PC sold with 16 GB at least, and only
+    /// while it has that much left to hand out (`fit`).
     static let memoryForFine = 15.5
     static let coresForFine = 16
+
+    /// How a way on the processor is made, by the memory the PC has left. The matte is the same
+    /// bit for bit by either.
+    enum Fit: Sendable {
+        /// As quickly as it can be: what a layer is done with is kept for the layers after it.
+        case quick
+        /// Holding no more than the model has in use at once, each layer's memory asked of
+        /// Windows and given back: two to three times as long (`leanSlower`).
+        case lean
+        /// Not at all: it asks more than is left.
+        case notAtAll
+    }
+
+    /// Gigabytes a cut needs beside the model while the matte is made: the picture as it is
+    /// worked on and as the model sees it, and a little left for Windows.
+    static let beside = 0.5
+    /// How many times as long a matte is expected to take the lean way: in the test VM 47 to
+    /// 50 s for 16 to 21 s at 1,024 pixels, and 190 s for 95 s at 2,048.
+    static let leanSlower = 3.0
+
+    /// How `route` is made with `available` bytes of memory left to hand out. The quick way
+    /// where what it holds fits beside the rest of a cut. Where it does not, the fine size is
+    /// not made at all: the lean way would take it far longer than anyone waits, and the light
+    /// size is there. The light size, the last way of every PC, is made however little is left,
+    /// the lean way then: Windows has no way without the model. The card's ways have their own
+    /// measure (`memoryIsShort`); nothing known of what is left, a way is quick.
+    static func fit(_ route: MatteRoute, available: UInt64?) -> Fit {
+        guard !route.onCard, let available else { return .quick }
+        if Double(available) >= Double(route.holds) + beside * MatteMachine.gigabyte { return .quick }
+        return route == .light ? .lean : .notAtAll
+    }
+
     /// Memory is short while this share of it is in use, in percent, or fewer than this many
     /// bytes are left to hand out: the card is left alone then, and a model kept is let go.
     static let shortLoad = 90
@@ -183,7 +217,10 @@ nonisolated final class MatteLedger: @unchecked Sendable {
 
     private enum Key {
         static let running = "subjectMatte.running", avoided = "subjectMatte.avoided"
-        static func seconds(_ route: MatteRoute, cold: Bool) -> String { "subjectMatte.seconds.\(route).\(cold ? "cold" : "warm")" }
+        /// The lean way's times are kept apart: it takes several times as long as the quick way.
+        static func seconds(_ route: MatteRoute, cold: Bool, lean: Bool = false) -> String {
+            "subjectMatte.seconds.\(route)\(lean ? ".lean" : "").\(cold ? "cold" : "warm")"
+        }
         static func loading(_ route: MatteRoute) -> String { "subjectMatte.loading.\(route)" }
     }
 
@@ -212,9 +249,11 @@ nonisolated final class MatteLedger: @unchecked Sendable {
 
     /// The ways to make a matte of a picture `longest` pixels long here and now, the first to
     /// take first: this PC's, without those that took Bezzle down or took too long, without the
-    /// card while memory is `short`, and without the fine size where its graph is not there
-    /// (`fine`). The lightest way is never passed over.
-    func ways(longest: Int, short: Bool = false, fine: Bool = true) -> [MatteRoute] {
+    /// card while memory is `short`, without a way on the processor that asks more than the
+    /// `available` bytes Windows can still hand out (`MatteWays.fit`; nothing known, none is left
+    /// out for it), and without the fine size where its graph is not there (`fine`). The lightest
+    /// way is never passed over.
+    func ways(longest: Int, short: Bool = false, fine: Bool = true, available: UInt64? = nil) -> [MatteRoute] {
         if let forced { return MatteRoute.all.filter { $0.description == forced } }
         let avoided = defaults.dictionary(forKey: Key.avoided) as? [String: String] ?? [:]
         return MatteWays.routes(longest: longest, on: machine).filter { route in
@@ -222,14 +261,15 @@ nonisolated final class MatteLedger: @unchecked Sendable {
             if route.grade == .fine && !fine { return false }
             if route.onCard && short { return false }
             if avoided["\(route)"] == version { return false }
+            if MatteWays.fit(route, available: available) == .notAtAll { return false }
             return took(route) <= MatteWays.patience
         }
     }
 
     /// How long a matte took by `route` here, the longer of its first after loading and those
-    /// after it; nothing if it never made one.
-    func took(_ route: MatteRoute) -> Double {
-        max(defaults.double(forKey: Key.seconds(route, cold: false)), defaults.double(forKey: Key.seconds(route, cold: true)))
+    /// after it; nothing if it never made one. The `lean` way's times are its own.
+    func took(_ route: MatteRoute, lean: Bool = false) -> Double {
+        max(defaults.double(forKey: Key.seconds(route, cold: false, lean: lean)), defaults.double(forKey: Key.seconds(route, cold: true, lean: lean)))
     }
 
     /// Says on disk whether `route` is running, so that Bezzle, started again after going down
@@ -252,17 +292,25 @@ nonisolated final class MatteLedger: @unchecked Sendable {
 
     /// How long loading the model and making the matte are expected to take by `route`: as long
     /// as they took here before, or by what is known of this PC. `loading` when the model is not
-    /// loaded yet; `cold` when the matte is the model's first since it was.
-    func expecting(_ route: MatteRoute, loading: Bool, cold: Bool) -> [CutoutPace.Step: Double] {
+    /// loaded yet; `cold` when the matte is the model's first since it was; `lean` when it is
+    /// made the lean way, which takes its own time.
+    func expecting(_ route: MatteRoute, loading: Bool, cold: Bool, lean: Bool = false) -> [CutoutPace.Step: Double] {
         let first = route.first(cores: machine.cores)
         let load = defaults.double(forKey: Key.loading(route))
-        var matte = defaults.double(forKey: Key.seconds(route, cold: cold))
-        if matte <= 0 { matte = defaults.double(forKey: Key.seconds(route, cold: !cold)) }
+        var matte = defaults.double(forKey: Key.seconds(route, cold: cold, lean: lean))
+        if matte <= 0 { matte = defaults.double(forKey: Key.seconds(route, cold: !cold, lean: lean)) }
+        // Never made the lean way here: so many times the quick way's, known or supposed.
+        if matte <= 0, lean {
+            let quick = max(defaults.double(forKey: Key.seconds(route, cold: true)), defaults.double(forKey: Key.seconds(route, cold: false)))
+            matte = (quick > 0 ? quick : first.matte) * MatteWays.leanSlower
+        }
         return [.load: loading ? (load > 0 ? load : first.load) : 0, .matte: matte > 0 ? matte : first.matte]
     }
 
-    /// A matte took `seconds` by `route`.
-    func remember(matte seconds: Double, by route: MatteRoute, cold: Bool) { remember(seconds, for: Key.seconds(route, cold: cold)) }
+    /// A matte took `seconds` by `route`, made the `lean` way or the quick one.
+    func remember(matte seconds: Double, by route: MatteRoute, cold: Bool, lean: Bool = false) {
+        remember(seconds, for: Key.seconds(route, cold: cold, lean: lean))
+    }
 
     /// Loading the model for `route` took `seconds`.
     func remember(loading seconds: Double, for route: MatteRoute) { remember(seconds, for: Key.loading(route)) }

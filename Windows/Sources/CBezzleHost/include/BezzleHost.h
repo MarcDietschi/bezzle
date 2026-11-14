@@ -270,7 +270,14 @@ int32_t bz_matte_machine(int64_t *bytes, int32_t *cores, int64_t *dedicated, int
 /// How short memory is just now: the share of it in use, in percent, in `load`, and the bytes
 /// Windows can still hand out in `available`. Returns 1 when Windows said, else 0. On any thread.
 int32_t bz_matte_memory(int32_t *load, int64_t *available);
-/// Opens the model at `path`: `device` 1 on the processor; 3 on the graphics card; 2 through
+/// What Bezzle has held, for measuring a way: the most memory since it started in `peak` and the
+/// most it had asked Windows for in `asked`, and what the graphics adapter a matte runs on holds
+/// for it just now, of its own memory in `card` and of the PC's in `shared`; all in bytes.
+/// Returns 1 when Windows said, else 0. Asks Direct3D, so not for the main thread.
+int32_t bz_matte_held(int64_t *peak, int64_t *asked, int64_t *card, int64_t *shared);
+/// Opens the model at `path`: `device` 1 on the processor; 4 on the processor the lean way, which
+/// holds no more than the model has in use at once and takes several times as long, for the same
+/// matte; 3 on the graphics card; 2 through
 /// DirectML on any adapter, Windows' software one too (for trying it where there is no card).
 /// With 2 and 3 a card that cannot is an error, here and in any run after. 0 is the graphics card
 /// if it can be, else the processor, a card that gives up in a run followed by the processor.
