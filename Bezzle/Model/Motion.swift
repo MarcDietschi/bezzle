@@ -669,12 +669,21 @@ nonisolated struct FilmCamera: Equatable, Sendable {
     var roll = 0.0
     var tilt = 0.0
     var swing = 0.0
+    /// What it is sharp at: so many points nearer the eye than the point of the artboard's sheet
+    /// it looks at, along its line of sight (`FilmLens.nearness`). Nothing is the sheet there.
+    var focus = 0.0
+    /// How much what stands off its focus is blurred: so many points of blur for every hundred
+    /// points nearer or further, measured as a layer's own blur is (`FilmSoft`). Nothing is
+    /// sharp throughout.
+    var blur = 0.0
 
     static let rest = FilmCamera()
 
     var isRest: Bool { self == .rest }
     /// Whether it sees the artboard at an angle, so that what is lifted off it shows its height.
     var inDepth: Bool { tilt != 0 || swing != 0 }
+    /// Whether it sees the whole artboard, straight on, whatever it is sharp at.
+    var seesWhole: Bool { x == 0 && y == 0 && zoom == 1 && roll == 0 && tilt == 0 && swing == 0 }
 
     subscript(property: MotionProperty) -> [Double] {
         get {

@@ -409,6 +409,9 @@ nonisolated struct FilmPlacement: Equatable, Sendable {
     /// A layer's piece as it stands in the scene, turned and all: the faces of a body turned as
     /// one are ordered as the design orders them (`DepthOrder.nearness`).
     var face: DepthOrder.Face?
+    /// How much it is blurred for standing off the camera's focus, across the frame; nil under
+    /// a camera that blurs nothing.
+    var soft: FilmSoft?
 }
 
 nonisolated extension Node {
@@ -420,6 +423,14 @@ nonisolated extension Node {
     /// The same, for a piece whose layer has been found already (`filmLayers`): what is placed
     /// frame after frame is not looked for through the whole artboard each time.
     func placement(of piece: FilmPiece, layer: Node?, at t: Double, camera: FilmCamera) -> FilmPlacement {
+        var placed = stood(piece, layer: layer, at: t, camera: camera)
+        // Where it stands says how far it is off the camera's focus (`FilmSoft`).
+        if camera.blur > 0 { placed.soft = FilmLens.soft(of: placed.map, camera: camera, size: frame.size) }
+        return placed
+    }
+
+    /// Where a piece stands and shows at a moment, before the camera's focus is asked.
+    private func stood(_ piece: FilmPiece, layer: Node?, at t: Double, camera: FilmCamera) -> FilmPlacement {
         guard piece.kind == .layer, let layer else {
             // A run of layers lying in a group that keeps depth lies in the group's plane, where that stands.
             if piece.kind == .run, let stand = piece.stand {
