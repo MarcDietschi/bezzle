@@ -198,18 +198,22 @@ nonisolated enum FilmLens {
     /// A posed layer as the camera shows it: from its drawing at rest, in the artboard's points,
     /// to the frame's. `center` is its middle on the artboard and `rotation` how far the design
     /// has it turned, about which it grows. `depth` is how the design has it turned in depth, for
-    /// one whose drawing was made lying flat, which the film then turns in its own space.
-    static func layer(center: CGPoint, rotation: Double, depth: Transform3D? = nil, pose: MotionPose, camera: FilmCamera, size: CGSize) -> FilmMap {
+    /// one whose drawing was made lying flat, which the film then turns in its own space. One
+    /// lying in a group that keeps its layers' depth stands where the group puts it (`FilmStand`):
+    /// its middle at `stands`, and turned in its own plane by `twist` besides.
+    static func layer(center: CGPoint, rotation: Double, depth: Transform3D? = nil, pose: MotionPose, camera: FilmCamera, size: CGSize,
+                      twist: Double = 0, stands: CGPoint? = nil) -> FilmMap {
         let c = V(x: Double(center.x), y: Double(center.y))
         // A point of the drawing, measured from the layer's middle, grown along its own sides.
         func own(_ p: V) -> V {
             var q = turn(p, -rotation)
             q = V(x: q.x * Double(pose.scale.x), y: q.y * Double(pose.scale.y), z: q.z)
-            q = turn(q, rotation + pose.turn)
+            q = turn(q, rotation + pose.turn + twist)
             q = swing(q, pose.swing + (depth?.y ?? 0))
             return tilt(q, pose.tilt + (depth?.x ?? 0))
         }
-        let place = V(x: c.x + Double(pose.move.x), y: c.y + Double(pose.move.y), z: pose.lift + Double(depth?.z ?? 0))
+        let at = stands.map { V(x: Double($0.x), y: Double($0.y)) } ?? c
+        let place = V(x: at.x + Double(pose.move.x), y: at.y + Double(pose.move.y), z: pose.lift + Double(depth?.z ?? 0))
         let u = own(V(x: 1)), v = own(V(y: 1))
         // The drawing's origin is the artboard's: its middle is `c` from there.
         let o = own(V(x: -c.x, y: -c.y))
@@ -237,8 +241,36 @@ nonisolated struct FilmPiece: Equatable, Hashable, Sendable {
     var changes = false
     /// Drawn lying flat though the design has it turned in depth, for the film to turn.
     var flat = false
+    /// Taken out of a group that keeps its layers' depth: where the group's turn and height put it.
+    var stand: FilmStand?
 
     var key: String { ([kind.rawValue] + layers.map(\.uuidString)).joined(separator: "/") + (flat ? "/flat" : "") }
+}
+
+/// Where a piece taken out of a group that keeps its layers' depth (`Node.opensInDepth`) stands in
+/// the artboard's scene, turned and lifted by the group and by every such group about that one:
+/// what the film turns its flat drawing by, in place of the layer's own turn. For a layer, its
+/// middle; for a run of layers lying in the group, where the group's own points begin.
+nonisolated struct FilmStand: Equatable, Hashable, Sendable {
+    var middle: CGPoint
+    var tip = 0.0, swing = 0.0, twist = 0.0, height = 0.0
+
+    var depth: Transform3D { Transform3D(x: tip, y: swing, z: CGFloat(height)) }
+
+    /// A layer seen from `eye`, where what holds it is seen from, that beginning at `origin` on the
+    /// artboard; nil for a run. Nil outside any group that keeps depth.
+    init?(_ layer: Node?, eye: Eye, origin: CGPoint) {
+        guard let space = eye.space else { return nil }
+        let t = layer?.transform3D.flatMap { $0.pinned ? nil : $0 }
+        let spin = t.map { space.spin.after(Spin($0)) } ?? space.spin
+        let stood = space(ScenePoint(x: Double(layer?.frame.midX ?? 0), y: Double(layer?.frame.midY ?? 0), z: Double(t?.z ?? 0)))
+        let angles = spin.angles()
+        middle = CGPoint(x: origin.x + CGFloat(stood.x), y: origin.y + CGFloat(stood.y))
+        tip = angles.tip
+        swing = angles.swing
+        twist = angles.twist
+        height = stood.z
+    }
 }
 
 nonisolated extension Node {
@@ -254,12 +286,16 @@ nonisolated extension Node {
     func filmPieces(loose: Set<UUID> = []) -> [FilmPiece] {
         var out = [FilmPiece(kind: .ground)]
         func holdsLoose(_ n: Node) -> Bool { n.children.contains { loose.contains($0.id) || holdsLoose($0) } }
-        func walk(_ nodes: [Node], origin: CGPoint, holders: [UUID]) {
+        func walk(_ nodes: [Node], origin: CGPoint, holders: [UUID], eye: Eye) {
             var run: [UUID] = []
             func flush() {
-                if !run.isEmpty { out.append(FilmPiece(kind: .run, layers: run, origin: origin, holders: holders)) }
+                if !run.isEmpty {
+                    out.append(FilmPiece(kind: .run, layers: run, origin: origin, holders: holders, stand: FilmStand(nil, eye: eye, origin: origin)))
+                }
                 run = []
             }
+            // In a group that keeps its layers' depth, every piece stands where the group puts it.
+            let stood = eye.space != nil
             for n in nodes where !n.hidden {
                 // A shader that moves is drawn again at every moment, as a layer whose insides move.
                 let own = n.isAnimated || loose.contains(n.id) || n.shaderMoves
@@ -269,13 +305,20 @@ nonisolated extension Node {
                 // lift in its own space, which sees it from where the design does (`Eye.stage`).
                 // A screen pinned into a photo keeps the look it has.
                 let deep = Perspective.inDepth(n) && n.transform3D?.pinned != true
-                if own || deep {
+                if !own, n.opensInDepth, !n.children.isEmpty {
+                    // A group that keeps its layers' depth, with no keys of its own, comes apart
+                    // into the scene: each of its layers a piece where the group puts it, so the
+                    // film orders them among everything else and the camera sees between them.
+                    flush()
+                    walk(n.children, origin: CGPoint(x: origin.x + n.frame.minX, y: origin.y + n.frame.minY), holders: holders + [n.id], eye: eye.within(n))
+                } else if own || deep || (stood && inside) {
                     flush()
                     out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders,
-                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes, flat: deep))
+                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes,
+                                         flat: deep || (stood && n.transform3D?.pinned != true), stand: FilmStand(n, eye: eye, origin: origin)))
                 } else if inside, n.comesApart {
                     flush()
-                    walk(n.children, origin: CGPoint(x: origin.x + n.frame.minX, y: origin.y + n.frame.minY), holders: holders + [n.id])
+                    walk(n.children, origin: CGPoint(x: origin.x + n.frame.minX, y: origin.y + n.frame.minY), holders: holders + [n.id], eye: eye.within(n))
                 } else if inside {
                     // Masked, faded or the like as a whole: drawn again as what it holds moves.
                     flush()
@@ -287,7 +330,7 @@ nonisolated extension Node {
             }
             flush()
         }
-        walk(children, origin: .zero, holders: [])
+        walk(children, origin: .zero, holders: [], eye: Eye.stage(frame.size))
         return out
     }
 
@@ -333,20 +376,35 @@ nonisolated extension Node {
     /// frame after frame is not looked for through the whole artboard each time.
     func placement(of piece: FilmPiece, layer: Node?, at t: Double, camera: FilmCamera) -> FilmPlacement {
         guard piece.kind == .layer, let layer else {
+            // A run of layers lying in a group that keeps depth lies in the group's plane, where that stands.
+            if piece.kind == .run, let stand = piece.stand {
+                let map = FilmLens.layer(center: piece.origin, rotation: 0, depth: stand.depth, pose: .rest, camera: camera, size: frame.size,
+                                         twist: stand.twist, stands: stand.middle)
+                var face: DepthOrder.Face?
+                if stand.tip != 0 || stand.swing != 0 {
+                    // All of the plane: whatever of the group stands over it is ordered as a body's faces are.
+                    face = DepthOrder.Face(middle: ScenePoint(x: Double(stand.middle.x), y: Double(stand.middle.y), z: stand.height),
+                                           size: CGSize(width: 100_000, height: 100_000), rotation: stand.twist,
+                                           turn: Spin.tip(stand.tip).after(.swing(stand.swing)))
+                }
+                return FilmPlacement(map: map, height: stand.height, face: face)
+            }
             return FilmPlacement(map: FilmLens.ground(camera, size: frame.size))
         }
         let pose = layer.pose(at: t)
         let center = CGPoint(x: piece.origin.x + layer.frame.midX, y: piece.origin.y + layer.frame.midY)
-        let depth = piece.flat ? layer.transform3D : nil
-        let map = FilmLens.layer(center: center, rotation: layer.isGroup ? 0 : layer.rotation, depth: depth, pose: pose, camera: camera, size: frame.size)
+        let depth = piece.stand?.depth ?? (piece.flat ? layer.transform3D : nil)
+        let twist = piece.stand?.twist ?? 0, stands = piece.stand?.middle ?? center
+        let map = FilmLens.layer(center: center, rotation: layer.isGroup ? 0 : layer.rotation, depth: depth, pose: pose, camera: camera, size: frame.size,
+                                 twist: twist, stands: piece.stand?.middle)
         let height = pose.lift + Double(depth?.z ?? 0)
         // Tipped or swung, by the design or its keys: where it stands, for the order.
         let tip = pose.tilt + (depth?.x ?? 0), swing = pose.swing + (depth?.y ?? 0)
         var face: DepthOrder.Face?
         if tip != 0 || swing != 0 {
-            face = DepthOrder.Face(middle: ScenePoint(x: Double(center.x + pose.move.x), y: Double(center.y + pose.move.y), z: height),
+            face = DepthOrder.Face(middle: ScenePoint(x: Double(stands.x + pose.move.x), y: Double(stands.y + pose.move.y), z: height),
                                    size: CGSize(width: layer.frame.width * pose.scale.x, height: layer.frame.height * pose.scale.y),
-                                   rotation: (layer.isGroup ? 0 : layer.rotation) + pose.turn, turn: Spin.tip(tip).after(.swing(swing)))
+                                   rotation: (layer.isGroup ? 0 : layer.rotation) + pose.turn + twist, turn: Spin.tip(tip).after(.swing(swing)))
         }
         return FilmPlacement(map: map, opacity: pose.fade, blur: pose.blur, height: height, face: face)
     }
