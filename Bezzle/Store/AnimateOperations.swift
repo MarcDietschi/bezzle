@@ -34,6 +34,9 @@ final class FilmDesk {
     var going = false
     /// How many seconds apart several layers are given a move, one after another.
     var apart = 0.06
+    /// The part of the film the timeline shows, when it is looked at closer than whole. The
+    /// viewer's own, as the canvas's zoom is: never in the design.
+    var window: FilmWindow?
     /// How far saving the film as a movie has come, 0 to 1, while it is being saved.
     var exporting: Double?
 
@@ -68,6 +71,7 @@ extension DocumentStore {
             writingNote = nil
             flowPreview = nil
             focusFilm()
+            fitFilmWindow()
             frameFilm()
         } else {
             pauseFilm()
@@ -102,6 +106,8 @@ extension DocumentStore {
         self.film.board = id
         self.film.keys = []
         self.film.camera = false
+        // Another film is seen whole first.
+        if self.film.window != nil { self.film.window = nil }
         self.film.time = 0
         self.film.shown = 0
         self.film.live = 0
@@ -115,9 +121,18 @@ extension DocumentStore {
     func filmDesignChanged() {
         if let id = film.board, let board = doc.node(id), board.isArtboard, !board.hidden {
             if !film.playing, let length = filmBoard?.filmLength, max(film.time, film.live) > length + 1e-9 { seek(length) }
+            fitFilmWindow()
         } else {
             focusFilm()
         }
+    }
+
+    /// A timeline looked at closer shows no more than there is of a film that got shorter,
+    /// while it was worked on or while the design was seen another way.
+    private func fitFilmWindow() {
+        guard let window = film.window else { return }
+        let fitted = window.fitted(to: filmWhole)
+        if fitted != window { film.window = fitted }
     }
 
     /// Glides the view so the film's artboard lies whole above the timeline: it is what is worked
@@ -203,8 +218,10 @@ extension DocumentStore {
 
     // MARK: The playhead
 
-    /// Puts the playhead at a moment, and stops the film there.
-    func seek(_ t: Double) {
+    /// Puts the playhead at a moment, and stops the film there. A timeline looked at closer is
+    /// moved along to show it, unless `following` is false: under a hand that drags the playhead
+    /// the timeline moves by that hand alone, and a film only stopped stays as it is looked at.
+    func seek(_ t: Double, following: Bool = true) {
         // Only when it changes: each time it is set, all that watches it is drawn again, and a
         // hand scrubbing through the film sets the playhead many times a second.
         if film.playing { film.playing = false }
@@ -216,6 +233,7 @@ extension DocumentStore {
         if film.time != to { film.time = to }
         if film.live != to { film.live = to }
         film.head = to
+        if following, film.window != nil { showInTimeline(to, length: length) }
         catchUpPanels()
     }
 
@@ -249,7 +267,7 @@ extension DocumentStore {
         let rest = film.pass?.back ?? film.live
         film.playing = false
         film.pass = nil
-        seek(rest)
+        seek(rest, following: false)
     }
 
     func toggleFilm() {
@@ -290,8 +308,39 @@ extension DocumentStore {
             // Round and round, with a breath at the end before it begins again.
             film.head = min(t.truncatingRemainder(dividingBy: length + FilmDesk.breath), length)
         }
+        // Playing out of the part a timeline looked at closer shows, it takes the timeline along:
+        // a page at a time, as moving it with every frame would draw every line again each frame.
+        // One moved away from the playhead by hand is left where it was put.
+        if let window = film.window, window.holds(film.live), !window.holds(film.head) {
+            showInTimeline(film.head, ahead: true, length: length)
+        }
         film.live = film.head
         return true
+    }
+
+    // MARK: The timeline, looked at closer
+
+    /// The seconds the film's whole sheet shows: the film, and a little past its end.
+    var filmWhole: Double { FilmScale.span(for: filmBoard?.filmLength ?? MotionTiming.shortest) }
+
+    /// Where moments lie along a sheet this wide: the whole film, or the part of it looked at.
+    func filmScale(width: CGFloat) -> FilmScale {
+        FilmScale(width: width, length: filmBoard?.filmLength ?? MotionTiming.shortest, window: film.window)
+    }
+
+    /// Has the timeline show what a scale shows: a part of the film, or all of it. Set only when
+    /// it changes, as every line of the timeline is drawn again each time.
+    func lookAtFilm(_ scale: FilmScale) {
+        let window = scale.window(of: filmWhole)
+        if film.window != window { film.window = window }
+    }
+
+    /// Moves a timeline looked at closer along so that a moment shows.
+    private func showInTimeline(_ t: Double, ahead: Bool = false, length: Double) {
+        guard let window = film.window else { return }
+        let whole = FilmScale.span(for: length)
+        let to = window.fitted(to: whole)?.showing(t, ahead: ahead, whole: whole)
+        if film.window != to { film.window = to }
     }
 
     /// The moments anything picked has a key at, or with nothing picked, anything in the film:

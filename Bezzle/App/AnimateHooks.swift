@@ -28,6 +28,18 @@ import AppKit
 ///                                  showing it in the Finder; how it ended is written to
 ///                                  BEZZLE_MOVIE_OUT (or the log). A sandboxed copy can only be
 ///                                  checked with "ask": the panel is what lets it write there.
+///       pinch=x,y:a,a,…            two fingers pinched at a point of the window, each step by so much
+///                                  (0.2 a fifth closer, -0.2 a fifth further off), then lifted
+///       tap2=x,y                   a double tap with two fingers there
+///       wheel=x,y:dx,dy[:keys]     the wheel turned there once, with command, option, control or shift held
+///       swipe=x,y:dx,dy:steps      two fingers moved there, by so much at each of so many steps, then lifted
+///                                  These four go into the app's own queue of events made as the
+///                                  window server makes them, so they arrive as a trackpad's do
+///                                  wherever the app's events are listened to, as the timeline does.
+///                                  They name no window, so no view is sent them: the canvas is not
+///                                  reached this way.
+///       timeline                   writes which part of the film the timeline shows, to
+///                                  BEZZLE_SCRUB_OUT (or the log)
 enum AnimateHooks {
     static func attach(_ store: DocumentStore, env: [String: String], after: (Double, @escaping @MainActor () -> Void) -> Void) {
         if let s = env["BEZZLE_ANIMATE"].flatMap(Double.init) { after(s) { store.animating = true } }
@@ -138,6 +150,66 @@ enum AnimateHooks {
 
     private static func numbers(_ s: String) -> [Double] { s.split(separator: ",").compactMap { Double($0) } }
 
+    // MARK: Two fingers and the wheel
+
+    /// A point of the window, measured from its top left as a picture of it shows, where the
+    /// window server would say it is: on the screens, counted from the top of the first.
+    private static func onScreen(_ xy: [Double], _ store: DocumentStore) -> CGPoint? {
+        guard xy.count == 2, let window = store.canvas?.window, let content = window.contentView, let first = NSScreen.screens.first else { return nil }
+        let p = window.convertPoint(toScreen: CGPoint(x: xy[0], y: Double(content.bounds.height) - xy[1]))
+        return CGPoint(x: p.x, y: first.frame.maxY - p.y)
+    }
+
+    /// Two fingers' doing as the window server tells an app of it: a pinch by so much, or a
+    /// double tap. (The fields are the ones AppKit reads a pinch from; they have no public names.)
+    private static func fingers(pinch: Double?, phase: Int64, at p: CGPoint) -> NSEvent? {
+        guard let cg = CGEvent(source: nil), let gesture = CGEventType(rawValue: 29),
+              let which = CGEventField(rawValue: 110), let amount = CGEventField(rawValue: 113), let stage = CGEventField(rawValue: 132) else { return nil }
+        cg.type = gesture
+        // 8 is a pinch, 22 a double tap with two fingers.
+        cg.setIntegerValueField(which, value: pinch == nil ? 22 : 8)
+        cg.setDoubleValueField(amount, value: pinch ?? 0)
+        // 1 as they are put down, 2 as they move, 4 as they are lifted.
+        cg.setIntegerValueField(stage, value: phase)
+        cg.location = p
+        return NSEvent(cgEvent: cg)
+    }
+
+    /// The wheel, or two fingers moving: by so many points, with keys held; `phase` as above for
+    /// fingers, and 0 for a wheel, which has no beginning or end.
+    private static func wheel(dx: Double, dy: Double, keys: String, phase: Int64, at p: CGPoint) -> NSEvent? {
+        guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else { return nil }
+        var flags: CGEventFlags = []
+        if keys.contains("command") { flags.insert(.maskCommand) }
+        if keys.contains("option") { flags.insert(.maskAlternate) }
+        if keys.contains("control") { flags.insert(.maskControl) }
+        if keys.contains("shift") { flags.insert(.maskShift) }
+        cg.flags = flags
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        cg.location = p
+        return NSEvent(cgEvent: cg)
+    }
+
+    /// Sends events one after another, a frame apart, through the app's own queue.
+    private static func send(_ events: [NSEvent?]) {
+        Task { @MainActor in
+            for event in events {
+                if let event { NSApp.postEvent(event, atStart: false) }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    private static func say(_ line: String) {
+        if let path = ProcessInfo.processInfo.environment["BEZZLE_SCRUB_OUT"], !path.isEmpty {
+            let url = URL(fileURLWithPath: path)
+            let had = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            try? (had + line + "\n").write(to: url, atomically: true, encoding: .utf8)
+        } else {
+            NSLog("%@", line)
+        }
+    }
+
     private static func run(_ step: String, _ store: DocumentStore) {
         let halves = step.split(separator: "=", maxSplits: 1).map(String.init)
         let word = halves[0], rest = halves.count > 1 ? halves[1] : ""
@@ -190,6 +262,30 @@ enum AnimateHooks {
             Scrubber.run(store, from: n[0], to: n[1], seconds: n[2])
         case "watch": Scrubber.run(store, from: 0, to: nil, seconds: Double(rest) ?? 5)
         case "movie": movie(rest, store)
+        case "pinch":
+            guard fields.count == 2, let p = onScreen(numbers(fields[0]), store) else { return }
+            let amounts = numbers(fields[1])
+            send(amounts.enumerated().map { fingers(pinch: $0.element, phase: $0.offset == 0 ? 1 : 2, at: p) } + [fingers(pinch: 0, phase: 4, at: p)])
+        case "tap2":
+            guard let p = onScreen(numbers(rest), store) else { return }
+            send([fingers(pinch: nil, phase: 0, at: p)])
+        case "wheel":
+            guard fields.count >= 2, let p = onScreen(numbers(fields[0]), store) else { return }
+            let by = numbers(fields[1])
+            guard by.count == 2 else { return }
+            send([wheel(dx: by[0], dy: by[1], keys: fields.count > 2 ? fields[2] : "", phase: 0, at: p)])
+        case "swipe":
+            guard fields.count == 3, let p = onScreen(numbers(fields[0]), store), let steps = Int(fields[2]), steps > 0 else { return }
+            let by = numbers(fields[1])
+            guard by.count == 2 else { return }
+            send((0..<steps).map { wheel(dx: by[0], dy: by[1], keys: "", phase: $0 == 0 ? 1 : 2, at: p) } + [wheel(dx: 0, dy: 0, keys: "", phase: 4, at: p)])
+        case "timeline":
+            let whole = store.filmWhole
+            if let part = store.film.window?.fitted(to: whole) {
+                say(String(format: "timeline: from %.3f s, %.3f s of %.3f; playhead %.3f", part.start, part.span, whole, store.filmTime))
+            } else {
+                say(String(format: "timeline: whole, %.3f s; playhead %.3f", whole, store.filmTime))
+            }
         default: break
         }
     }

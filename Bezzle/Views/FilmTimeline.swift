@@ -10,14 +10,22 @@ import AppKit
 /// playhead, which catches on keys as it passes them; a bead dragged moves its key, a line's band
 /// dragged moves its whole motion, and the flag at the end sets how long the film runs. While
 /// something is dragged the seconds hold still under it; let go, the film fits the card again.
+///
+/// A pinch looks at the film closer, about the moment under the pointer, and two fingers then
+/// move it along; a double tap with two fingers, or pinching back out, shows the whole film
+/// again. The wheel does the same with Command, Option or Control held, as on the canvas, and
+/// with Shift moves it along (`FilmFingers`). How close it is looked at is the viewer's own.
 struct FilmTimeline: View {
     let store: DocumentStore
     @Environment(MenuHost.self) private var menus
     @State private var hand: FilmHand
+    @State private var fingers: FilmFingers
 
     init(store: DocumentStore) {
         self.store = store
-        _hand = State(initialValue: FilmHand(store: store))
+        let hand = FilmHand(store: store)
+        _hand = State(initialValue: hand)
+        _fingers = State(initialValue: FilmFingers(hand: hand))
     }
 
     static let rowHeight: CGFloat = 24
@@ -29,6 +37,11 @@ struct FilmTimeline: View {
     /// with the room under it: what the film's artboard is kept clear of.
     static func foot(lines: Int) -> CGFloat { 44 + rulerHeight + CGFloat(shown(of: lines)) * rowHeight + 6 + 14 }
 
+    /// How wide the names are beside a sheet, of a card this wide inside.
+    static func names(in width: CGFloat) -> CGFloat { min(150, max(104, width * 0.22)) }
+    /// How wide the sheet is beside them: where the moments lie.
+    static func sheet(in width: CGFloat) -> CGFloat { max(width - names(in: width), 60) }
+
     var body: some View {
         let board = store.filmBoard
         let rows = board.map { FilmRow.rows(of: $0, open: store.film.open) } ?? []
@@ -38,17 +51,24 @@ struct FilmTimeline: View {
             FilmHeader(store: store, once: board?.film?.once == true)
             Hairline()
             GeometryReader { geo in
-                let names = min(150, max(104, geo.size.width * 0.22))
-                let scale = FilmScale(width: max(geo.size.width - names, 60), span: hand.held ?? FilmScale.span(for: length))
+                let names = Self.names(in: geo.size.width)
+                let scale = hand.scale(width: Self.sheet(in: geo.size.width))
                 sheet(rows, board: board, length: length, names: names, scale: scale, shown: shown)
             }
             .frame(height: Self.rulerHeight + CGFloat(shown) * Self.rowHeight + 6)
+            // Where two fingers and the wheel are the timeline's.
+            .background { FilmGround(fingers: fingers) }
         }
         .frame(maxWidth: 1040)
         .card(radius: 18, lifted: true)
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .animation(Theme.spring, value: shown)
         .onChange(of: store.film.board) { hand.held = nil }
+        .onAppear {
+            fingers.menus = menus
+            fingers.watch()
+        }
+        .onDisappear { fingers.rest() }
     }
 
     // MARK: The sheet
@@ -58,7 +78,7 @@ struct FilmTimeline: View {
         let still = hand.drag != nil
         return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
-                FilmRuler(span: scale.span, length: length, fixed: board?.film?.length != nil, hot: hand.hot.end || hand.drag?.kind == .length)
+                FilmRuler(scale: scale, length: length, fixed: board?.film?.length != nil, hot: hand.hot.end || hand.drag?.kind == .length)
                     .frame(width: scale.width, height: Self.rulerHeight)
                     .contentShape(Rectangle())
                     .onContinuousHover { phase in
@@ -91,11 +111,21 @@ struct FilmTimeline: View {
                 .scrollIndicators(.never)
                 .frame(height: tall)
             }
+            // Within the sheet: moved along, a film looked at closer takes the playhead out of sight.
             FilmPlayhead(store: store, scale: scale, height: Self.rulerHeight + tall)
+                .frame(width: scale.width, height: Self.rulerHeight + tall, alignment: .topLeading)
+                .clipped()
                 .offset(x: names)
                 .allowsHitTesting(false)
+            // Which part of the film shows, while not all of it does.
+            FilmThumb(scale: scale, whole: FilmScale.span(for: length), shown: hand.zoomed)
+                .frame(width: scale.width, height: 3)
+                .offset(x: names, y: Self.rulerHeight + tall + 1.5)
+                .allowsHitTesting(false)
         }
-        .animation(still ? nil : Theme.spring, value: scale.span)
+        // Whatever shows other seconds glides there, but under a hand: a drag holds the seconds
+        // still, and two fingers move them with nothing gliding (`FilmHand.look`).
+        .animation(still ? nil : Theme.spring, value: [scale.span, scale.start])
     }
 
     private func tracks(_ rows: [FilmRow], scale: FilmScale, length: Double, least: CGFloat, still: Bool) -> some View {
@@ -336,9 +366,25 @@ private struct Bead: View {
 
 /// How each key of a property is come to, drawn between it and the one before: flat where it
 /// waits, steep where it hurries.
-private struct PaceLines: View {
+private struct PaceLines: View, Animatable {
     let marks: [FilmRow.Mark]
-    let scale: FilmScale
+    /// As the ruler has them (`FilmRuler`), so the lines glide with the beads they join.
+    var perSecond: CGFloat
+    var origin: CGFloat
+
+    init(marks: [FilmRow.Mark], scale: FilmScale) {
+        self.marks = marks
+        perSecond = scale.perSecond
+        origin = scale.x(0)
+    }
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(perSecond, origin) }
+        set {
+            perSecond = newValue.first
+            origin = newValue.second
+        }
+    }
 
     var body: some View {
         Canvas { ctx, size in
@@ -346,13 +392,17 @@ private struct PaceLines: View {
             let rise: CGFloat = 7
             for i in 1..<marks.count {
                 guard let pace = marks[i].pace else { continue }
-                let a = scale.x(marks[i - 1].t) + 5, b = scale.x(marks[i].t) - 5
-                guard b - a > 10 else { continue }
+                let a = origin + CGFloat(marks[i - 1].t) * perSecond + 5, b = origin + CGFloat(marks[i].t) * perSecond - 5
+                // Only what is in sight: a film looked at closer has long stretches out of it.
+                guard b - a > 10, b > 0, a < size.width else { continue }
                 var path = Path()
-                let steps = max(8, Int((b - a) / 3))
+                // The part of the stretch in sight, a point for every three across it.
+                let from = max(a, -3), to = min(b, size.width + 3)
+                let steps = max(8, Int((to - from) / 3))
                 for s in 0...steps {
-                    let u = Double(s) / Double(steps)
-                    let p = CGPoint(x: a + (b - a) * CGFloat(u), y: size.height / 2 + rise / 2 - rise * CGFloat(PaceChip.progress(pace, u)))
+                    let x = from + (to - from) * CGFloat(s) / CGFloat(steps)
+                    let u = Double((x - a) / (b - a))
+                    let p = CGPoint(x: x, y: size.height / 2 + rise / 2 - rise * CGFloat(PaceChip.progress(pace, u)))
                     if s == 0 { path.move(to: p) } else { path.addLine(to: p) }
                 }
                 ctx.stroke(path, with: .color(Theme.ink.opacity(0.34)), style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
@@ -385,53 +435,83 @@ private struct Ruled: View {
 
 /// The seconds along the top, and the flag where the film ends: hollow while the film is as long
 /// as its keys, filled once its length was set.
-private struct FilmRuler: View, Animatable {
-    var span: Double
+struct FilmRuler: View, Animatable {
+    /// How wide a second is, and where the film's start lies along the ruler: what a change of
+    /// the seconds shown glides between, each stroke moving as the beads under it do.
+    var perSecond: CGFloat
+    var origin: CGFloat
     let length: Double
     let fixed: Bool
     let hot: Bool
 
-    var animatableData: Double {
-        get { span }
-        set { span = newValue }
+    init(scale: FilmScale, length: Double, fixed: Bool, hot: Bool) {
+        perSecond = scale.perSecond
+        origin = scale.x(0)
+        self.length = length
+        self.fixed = fixed
+        self.hot = hot
+    }
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(perSecond, origin) }
+        set {
+            perSecond = newValue.first
+            origin = newValue.second
+        }
     }
 
     /// The seconds between numbered strokes, and how many parts each is ruled in, so the numbers
-    /// stand clear of each other.
+    /// stand clear of each other: fewer of them as the film is looked at from further off, and
+    /// more, down to twentieths of a second, as it is looked at closer. The strokes between
+    /// come down to hundredths, a key's finest step, once those are wide enough to tell apart.
     static func step(_ perSecond: CGFloat) -> (Double, Int) {
-        let steps: [(Double, Int)] = [(0.1, 2), (0.2, 4), (0.5, 5), (1, 10), (2, 4), (5, 5), (10, 10), (20, 4), (30, 6), (60, 6), (120, 4), (300, 5)]
-        return steps.first { CGFloat($0.0) * perSecond >= 52 } ?? (600, 10)
+        let steps: [(Double, Int)] = [(0.05, 5), (0.1, 2), (0.2, 4), (0.5, 5), (1, 10), (2, 4), (5, 5), (10, 10), (20, 4), (30, 6), (60, 6), (120, 4), (300, 5)]
+        let (major, parts) = steps.first { CGFloat($0.0) * perSecond >= 52 } ?? (600, 10)
+        // Tenths are halved into twentieths, where a key steps; closer still, into hundredths.
+        if major == 0.1, perSecond >= 600 { return (major, 10) }
+        return (major, parts)
+    }
+
+    /// The strokes a ruler this wide draws: the first stroke's number, counted in parts from
+    /// the film's start, and one past the last. Only those in sight, with the numbered one
+    /// before them whose number may still reach in, however long the film and however close.
+    static func strokes(perSecond: CGFloat, origin: CGFloat, width: CGFloat) -> (first: Int, end: Int, major: Double, parts: Int) {
+        let (major, parts) = step(perSecond)
+        let part = CGFloat(major / Double(parts)) * perSecond
+        guard part > 0, part.isFinite, origin.isFinite else { return (0, 0, major, parts) }
+        var first = max(Int(((-origin) / part).rounded(.down)), 0)
+        first = first / parts * parts
+        // As before: none on the last two points, where its number would have no room.
+        let end = max(Int(((width - 2 - origin) / part).rounded(.down)) + 1, first)
+        return (first, end, major, parts)
     }
 
     var body: some View {
         Canvas { ctx, size in
-            let scale = FilmScale(width: size.width, span: span)
-            let (major, parts) = Self.step(scale.perSecond)
-            let minor = major / Double(parts)
+            let rule = Self.strokes(perSecond: perSecond, origin: origin, width: size.width)
+            let minor = rule.major / Double(rule.parts)
             var strokes = Path(), fine = Path()
-            var i = 0
-            while true {
+            for i in rule.first..<rule.end {
                 let t = Double(i) * minor
-                let x = scale.x(t)
+                let x = origin + CGFloat(t) * perSecond
                 if x > size.width - 2 { break }
-                let whole = i % parts == 0
+                let whole = i % rule.parts == 0
                 let past = t > length + 0.0001
                 var tick = Path()
                 tick.move(to: CGPoint(x: x, y: size.height - (whole ? 7 : 3.5)))
                 tick.addLine(to: CGPoint(x: x, y: size.height))
                 if past { fine.addPath(tick) } else { strokes.addPath(tick) }
                 if whole {
-                    let label = ctx.resolve(Text(verbatim: Self.label(t))
+                    let label = ctx.resolve(Text(verbatim: Self.label(t, step: rule.major))
                         .font(.system(size: 9.5, weight: .medium).monospacedDigit())
                         .foregroundStyle(Theme.ink.opacity(past ? 0.22 : 0.46)))
                     ctx.draw(label, at: CGPoint(x: x + 3.5, y: size.height - 12), anchor: .leading)
                 }
-                i += 1
             }
             ctx.stroke(strokes, with: .color(Theme.ink.opacity(0.3)), lineWidth: 1)
             ctx.stroke(fine, with: .color(Theme.ink.opacity(0.14)), lineWidth: 1)
             // The film's end.
-            let x = scale.x(length)
+            let x = origin + CGFloat(length) * perSecond
             var pole = Path()
             pole.move(to: CGPoint(x: x, y: 5))
             pole.addLine(to: CGPoint(x: x, y: size.height))
@@ -449,12 +529,38 @@ private struct FilmRuler: View, Animatable {
         .help("Where the film ends. Drag to set its length; double click to let it follow the keys.")
     }
 
-    static func label(_ t: Double) -> String {
-        if t >= 60 {
+    /// A stroke's number: seconds, and from a minute on, minutes and seconds; with the parts of
+    /// a second where the strokes are closer than a second apart.
+    static func label(_ t: Double, step: Double = 1) -> String {
+        guard t >= 60 else { return t.formatted(.number.precision(.fractionLength(0...2))) }
+        guard step < 1 else {
             let s = Int(t.rounded())
             return String(format: "%d:%02d", s / 60, s % 60)
         }
-        return t.formatted(.number.precision(.fractionLength(0...2)))
+        let hundredths = Int((t * 100).rounded())
+        let rest = Double(hundredths % 6000) / 100
+        return "\(hundredths / 6000):" + rest.formatted(.number.precision(.integerAndFractionLength(integerLimits: 2...2, fractionLimits: 0...2)))
+    }
+}
+
+/// Which part of the film a sheet looked at closer shows: a stroke under the lines, as long
+/// against the sheet as that part is against the film. Not there while the whole film shows.
+private struct FilmThumb: View {
+    let scale: FilmScale
+    let whole: Double
+    let shown: Bool
+
+    var body: some View {
+        let room = max(scale.width - FilmScale.inset * 2, 1)
+        let long = max(room * CGFloat(min(scale.span / whole, 1)), 18)
+        let along = whole > scale.span ? CGFloat(scale.start / (whole - scale.span)) : 0
+        Capsule()
+            .fill(Theme.ink.opacity(0.2))
+            .frame(width: long, height: 3)
+            .offset(x: FilmScale.inset + (room - long) * min(max(along, 0), 1))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(shown ? 1 : 0)
+            .animation(Theme.quick, value: shown)
     }
 }
 

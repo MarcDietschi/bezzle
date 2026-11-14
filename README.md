@@ -131,6 +131,23 @@ along one artboard's film. Its keys are changes from the design and never the de
   with `BEZZLE_SCRUB_OUT=<file>` drags the playhead through a film 120 times a second and writes
   how many steps the app kept up with; run it on an optimized copy (see Speed, above) of a copy
   of a real design, and `sample <pid>` meanwhile.
+- **The timeline looked at closer:** which part of the film shows is `store.film.window`, the
+  viewer's own and no part of the design (nil is the whole film, and each film is seen whole
+  first). Where a moment lies is `FilmScale` with its `start`, and looking closer, moving along
+  and the limits are its plain functions beside `FilmWindow` in `Bezzle/Model/FilmKeys.swift`
+  (shared, for Windows to use): no closer than `FilmWindow.closest` points a second, where a
+  hundredth of a second is a dozen points, and no further out than the whole film, where a
+  pinch catches. `FilmHand` holds what the hand does (`zoom`, `scroll`, `smartZoom`, and `creep`,
+  which moves the sheet along under a playhead or a key dragged past its end);
+  `Bezzle/Views/FilmFingers.swift` hears the pinch, the double tap with two fingers and the wheel
+  for it, through one monitor of the app's events, since SwiftUI tells of no scrolling: a pinch
+  or two fingers that begin over the lines are the timeline's until lifted, sideways moves it
+  along, up and down stays the lines' own scrolling, and Command, Option or Control with the
+  wheel looks closer as on the canvas. The playhead is kept in sight by the store: `seek` brings
+  the part along (not under a hand on the playhead, which creeps instead), and a film playing
+  out of it turns the page, so the window changes once a page and never at every frame. The
+  ruler (`FilmRuler.step`, `strokes`) draws only the strokes in sight. Its tests are
+  `FilmZoomTests`.
 - **Shapes** (paths, and rectangles, ellipses and lines, whose outline is points too) have two
   properties more: Draw, how much of the outline is drawn as a pen draws it, one run after
   another, and Shape, its points and handles each moved from the design's, six numbers to a point
@@ -149,6 +166,9 @@ along one artboard's film. Its keys are changes from the design and never the de
   `BezzleDocument.repairMotion()`.
 - **Driving a copy:** `BEZZLE_ANIMATE` and `BEZZLE_FILM` (`Bezzle/App/AnimateHooks.swift`) pick,
   pose, play, press and scrub. Their clock starts when the hook does, well after launch: photograph late.
+  `pinch=`, `tap2=`, `wheel=` and `swipe=` send the timeline the events a trackpad or a wheel
+  would, through the app's own queue, and `timeline` writes which part of the film shows into
+  `BEZZLE_SCRUB_OUT`: the way to see the gestures arrive without a hand on a trackpad.
 - **Its words** are in the catalog in all four languages; `AnimateWordsTests` fails when one is
   missing, so a new property, pace or move brings its words along.
 

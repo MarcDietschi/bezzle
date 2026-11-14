@@ -13,6 +13,11 @@ final class FilmHand {
     var drag: Drag?
     /// The seconds the card shows, held as they were while something is dragged.
     var held: Double?
+    /// Where the press last was, and on how wide a sheet: what a drag goes on from when the
+    /// sheet moves under a pointer that holds still.
+    @ObservationIgnored private var last: (p: CGPoint, dx: CGFloat, width: CGFloat, flags: NSEvent.ModifierFlags)?
+    @ObservationIgnored private var creeper: Timer?
+    @ObservationIgnored private var crept: CFTimeInterval = 0
 
     init(store: DocumentStore) {
         self.store = store
@@ -30,6 +35,8 @@ final class FilmHand {
         var x: CGFloat = 0
         /// On the flag at the film's end.
         var end = false
+        /// On the ruler, rather than on the lines under it.
+        var ruler = false
     }
 
     /// What a press has in hand.
@@ -40,12 +47,28 @@ final class FilmHand {
         var refs: [FilmKeyRef] = []
         /// The moment of the one under the pointer, which is what catches on others.
         var anchor = 0.0
+        /// The moment the pointer was at when it took them: they keep their distance from it,
+        /// however the sheet is moved along or looked at meanwhile.
+        var grip = 0.0
         var moved = false
         var caught: Double?
     }
 
     func picked(_ row: FilmRow) -> Bool {
         row.camera ? store.film.camera : store.selection.contains(row.layer)
+    }
+
+    // MARK: The sheet
+
+    /// Whether the card shows a part of the film, looked at closer, rather than all of it.
+    var zoomed: Bool { store.film.window?.fitted(to: store.filmWhole) != nil }
+
+    /// Where moments lie along a sheet this wide, as the card shows it now: the part of the
+    /// film looked at; or the whole film, held as it was while something is dragged.
+    func scale(width: CGFloat) -> FilmScale {
+        var scale = store.filmScale(width: width)
+        if let held, !zoomed { scale.span = held }
+        return scale
     }
 
     // MARK: Pointing
@@ -67,7 +90,22 @@ final class FilmHand {
     }
 
     func pointRuler(_ p: CGPoint, scale: FilmScale, length: Double) -> Hot {
-        Hot(x: p.x, end: abs(p.x - scale.x(length)) <= 8)
+        Hot(x: p.x, end: abs(p.x - scale.x(length)) <= 8, ruler: true)
+    }
+
+    /// What the pointer is on, found again where it rests: after the sheet has moved under it.
+    func pointAgain(width: CGFloat) {
+        guard drag == nil, let board = store.filmBoard else { return }
+        let scale = scale(width: width)
+        var now = hot
+        if hot.ruler {
+            now = pointRuler(CGPoint(x: hot.x, y: 0), scale: scale, length: board.filmLength)
+        } else if let id = hot.row {
+            let rows = FilmRow.rows(of: board, open: store.film.open)
+            guard let i = rows.firstIndex(where: { $0.id == id }) else { return }
+            now = point(CGPoint(x: hot.x, y: (CGFloat(i) + 0.5) * FilmTimeline.rowHeight), rows: rows, scale: scale)
+        }
+        if now != hot { hot = now }
     }
 
     /// Picks what a line is of: its layer, or the camera.
@@ -98,7 +136,7 @@ final class FilmHand {
                 keys = [ref]
             }
             store.film.keys = keys
-            drag = keys.contains(ref) ? Drag(kind: .keys, refs: Array(keys), anchor: ref.time) : Drag(kind: .nothing)
+            drag = keys.contains(ref) ? Drag(kind: .keys, refs: Array(keys), anchor: ref.time, grip: scale.t(p.x)) : Drag(kind: .nothing)
         } else if let row, clicks >= 2 {
             // Twice on a line holds it there: a key where there was none.
             pick(row)
@@ -110,7 +148,7 @@ final class FilmHand {
             pick(row)
             let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, at: $0.t) }
             store.film.keys = Set(refs)
-            drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0)
+            drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0, grip: scale.t(p.x))
         } else {
             if !store.film.keys.isEmpty { store.film.keys = [] }
             drag = Drag(kind: .scrub)
@@ -138,11 +176,16 @@ final class FilmHand {
     func dragged(to p: CGPoint, by dx: CGFloat, rows: [FilmRow], scale: FilmScale, length: Double, flags: NSEvent.ModifierFlags = []) {
         guard var d = drag else { return }
         let free = flags.contains(.command), fine = flags.contains(.option)
+        // On a sheet looked at closer, what is dragged past either end of the part shown waits
+        // at that end, in sight, while the sheet moves along under it (`creep`).
+        let zoomed = zoomed
+        last = (p, dx, scale.width, flags)
         switch d.kind {
         case .nothing:
             break
         case .scrub:
-            store.seek(moment(p.x, scale, rows, free: free, fine: fine, caught: &d.caught, length: length))
+            // The sheet is moved along by this hand alone, not to wherever the playhead lands.
+            store.seek(moment(p.x, scale, rows, free: free, fine: fine, caught: &d.caught, length: length), following: false)
         case .keys, .band:
             if !d.moved {
                 guard abs(dx) >= 3 else { break }
@@ -150,7 +193,10 @@ final class FilmHand {
                 held = scale.span
                 store.beginGesture()
             }
-            var to = d.anchor + Double(dx / scale.perSecond)
+            // As far from where they were as the pointer is from the moment it took them at.
+            var at = scale.t(p.x)
+            if zoomed { at = min(max(at, scale.start), scale.start + scale.span) }
+            var to = d.anchor + at - d.grip
             if !free {
                 // The one in hand catches on the others' moments and on the playhead; between them
                 // it steps by twentieths of a second, with Option by hundredths.
@@ -190,17 +236,20 @@ final class FilmHand {
                     t = (t / grid).rounded() * grid
                 }
             }
-            t = min(max(t, 0.25), scale.span)
+            t = min(max(t, 0.25), scale.start + scale.span)
             store.setFilm("Film Length") { $0.length = MotionTiming.time(t) }
         }
         // Only when it changed: the timeline is drawn again each time it is set.
         if drag != d { drag = d }
+        creepIfNeeded()
     }
 
     /// The press let go.
     func ended(scale: FilmScale, flags: NSEvent.ModifierFlags = []) {
         guard let d = drag else { return }
         drag = nil
+        last = nil
+        creepIfNeeded()
         switch d.kind {
         case .keys:
             // A bead only clicked is where the playhead goes.
@@ -218,12 +267,120 @@ final class FilmHand {
         withAnimation(Theme.spring) { held = nil }
     }
 
+    /// The drag gone on from where the pointer rests, after the sheet has moved under it.
+    private func again() {
+        guard drag != nil, let last, let board = store.filmBoard else { return }
+        dragged(to: last.p, by: last.dx, rows: FilmRow.rows(of: board, open: store.film.open), scale: scale(width: last.width),
+                length: board.filmLength, flags: last.flags)
+    }
+
+    // MARK: Past the ends of a sheet looked at closer
+
+    /// How fast the sheet moves along under a pointer that drags something past the first or the
+    /// last moment it shows, in points a second: slowly just past it, faster the further out.
+    /// Nothing within the sheet.
+    static func creepRate(at x: CGFloat, width: CGFloat) -> CGFloat {
+        let near = FilmScale.inset, far = width - FilmScale.inset
+        let past = x < near ? x - near : x > far ? x - far : 0
+        guard past != 0 else { return 0 }
+        return (past < 0 ? -1 : 1) * min(40 + abs(past) * 12, 1600)
+    }
+
+    /// Moves a sheet looked at closer along under what is dragged past either end of the part
+    /// it shows, as far as it goes in `seconds`, and has the drag go on from there: the playhead,
+    /// the keys or the film's end stay at that end of the sheet, and the film runs by under
+    /// them. False where nothing moved: nothing in hand, the whole film showing, the pointer
+    /// within the sheet, or the film's own end reached.
+    @discardableResult
+    func creep(_ seconds: Double) -> Bool {
+        guard let d = drag, d.kind != .nothing, let last, zoomed else { return false }
+        let rate = Self.creepRate(at: last.p.x, width: last.width)
+        guard rate != 0 else { return false }
+        let before = scale(width: last.width)
+        let to = before.scrolled(by: -rate * CGFloat(seconds), whole: store.filmWhole)
+        guard to != before else { return false }
+        store.lookAtFilm(to)
+        again()
+        return true
+    }
+
+    /// Keeps the sheet creeping while it has reason to, a step with every frame.
+    private func creepIfNeeded() {
+        let wanted = drag != nil && drag?.kind != .nothing && zoomed && last.map { Self.creepRate(at: $0.p.x, width: $0.width) != 0 } == true
+        if !wanted {
+            creeper?.invalidate()
+            creeper = nil
+        } else if creeper == nil {
+            crept = CACurrentMediaTime()
+            let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let now = CACurrentMediaTime()
+                    self.creep(min(now - self.crept, 0.1))
+                    self.crept = now
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            creeper = timer
+        }
+    }
+
+    // MARK: Two fingers, and the wheel
+
+    /// The sheet looked at closer, or from further off, about the moment at `x`: a pinch, or the
+    /// wheel turned with Command, Option or Control held as on the canvas. It follows the fingers
+    /// with nothing gliding; `gliding`, it settles there. Back out as far as the whole film it
+    /// catches there, and the trackpad ticks.
+    func zoom(by factor: Double, at x: CGFloat, scale: FilmScale, gliding: Bool = false) {
+        let whole = store.filmWhole
+        let to = scale.zoomed(by: factor, at: x, whole: whole)
+        let caught = zoomed && to.window(of: whole) == nil
+        look(at: to, gliding: gliding)
+        if caught { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+    }
+
+    /// The sheet moved along by so many points, as two fingers move it, or the wheel: only while
+    /// it is looked at closer, as the whole film has nowhere to go.
+    func scroll(by dx: CGFloat, scale: FilmScale) {
+        look(at: scale.scrolled(by: dx, whole: store.filmWhole), gliding: false)
+    }
+
+    /// A double tap with two fingers: back out to the whole film; or, from the whole film,
+    /// four times closer where the pointer is.
+    func smartZoom(at x: CGFloat, scale: FilmScale) {
+        let whole = store.filmWhole
+        if zoomed {
+            look(at: FilmScale(width: scale.width, span: whole), gliding: true)
+        } else {
+            look(at: scale.zoomed(by: 4, at: x, whole: whole), gliding: true)
+        }
+    }
+
+    /// Has the card show what a scale shows, at once or gliding there.
+    private func look(at scale: FilmScale, gliding: Bool) {
+        let whole = store.filmWhole
+        guard scale.window(of: whole) != store.film.window?.fitted(to: whole) else { return }
+        if gliding {
+            withAnimation(Theme.spring) { store.lookAtFilm(scale) }
+        } else {
+            // Under the fingers, nothing springs: the sheet is where they put it.
+            var now = Transaction()
+            now.disablesAnimations = true
+            withTransaction(now) { store.lookAtFilm(scale) }
+        }
+        // What was under the pointer has moved away from it: found again once the fingers rest
+        // (`pointAgain`), as finding it takes every line.
+        if hot.key != nil || hot.band != nil || hot.end { hot = Hot(row: hot.row, x: hot.x, ruler: hot.ruler) }
+        again()
+    }
+
     private func snapped(_ t: Double) -> Double { max((t / 0.05).rounded() * 0.05, 0) }
 
     /// The moment under the pointer for the playhead: a key's when one is within reach, else
     /// the nearest twentieth of a second.
     private func moment(_ x: CGFloat, _ scale: FilmScale, _ rows: [FilmRow], free: Bool, fine: Bool, caught: inout Double?, length: Double) -> Double {
-        let t = min(max(scale.t(x), 0), length)
+        // Within the film, and within what of it the sheet shows.
+        let t = min(max(scale.t(x), max(scale.start, 0)), min(length, scale.start + scale.span))
         guard !free else { return t }
         var stops = [0, length]
         for row in rows { stops.append(contentsOf: row.marks.map(\.t)) }
