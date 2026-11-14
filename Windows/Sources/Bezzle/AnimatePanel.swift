@@ -740,7 +740,15 @@ private final class MoveChip {
             let seen = max(cos(80 * .pi / 180 * min(abs(a), 1)), 0.08)
             r = (r.x + r.w * 0.06 * a, r.y + r.h * (1 - seen) / 2, r.w * (1 - 0.12 * a), r.h * seen)
             opacity = faded
-        case "focus": opacity = 1 - 0.75 * (1 - faded)
+        case "focus":
+            // Out of focus as far as it is away, as the Mac's chip blurs its card (3.2 points
+            // when all the way).
+            opacity = 1 - 0.75 * (1 - faded)
+            if a > 0.02 {
+                drawing.children.append(Self.soft(r, radius: 2.5, blur: 3.2 * a, opacity: 0.82 * max(min(opacity, 1), 0)))
+                clipDrawing()
+                return
+            }
         case "draw":
             // A line drawn on as a pen draws it, over where it belongs.
             let drawn = min(max(1 - away, 0), 1)
@@ -760,6 +768,42 @@ private final class MoveChip {
         let shape = Glyphs.view([Glyphs.Part(data: card.d, mode: .fill)], size: 0, brush: Theme.brush(Theme.ink, 0.82 * max(min(opacity, 1), 0)))
         drawing.children.append(shape)
         clipDrawing()
+    }
+
+    /// A rounded card out of focus: what a blur of `blur` points (a Gaussian's sigma, as the
+    /// Mac's) makes of it. XAML has no blur for a shape, so the card is laid as rounded rectangles
+    /// one in another, from two and a half blurs outside its edge to as far inside, each adding
+    /// what the blurred edge gains there: across a straight edge the blur's own curve, to within
+    /// a step of fourteen. In ink.
+    private static func soft(_ r: (x: Double, y: Double, w: Double, h: Double), radius: Double, blur: Double, opacity: Double) -> Canvas {
+        let holder = Canvas()
+        holder.isHitTestVisible = false
+        holder.opacity = opacity
+        let steps = 14, reach = 2.5 * blur
+        // How much of the card shows at a distance outside its edge (inside, below nought).
+        func shows(_ d: Double) -> Double { 0.5 * erfc(d / (blur * 2.0.squareRoot())) }
+        // No further in than the card's middle.
+        let deepest = min(reach, min(r.w, r.h) / 2 - 0.25)
+        let width = (reach + deepest) / Double(steps)
+        var under = 0.0
+        for k in 0..<steps {
+            // This rectangle's edge, and what shows between it and the next one in.
+            let out = reach - Double(k) * width
+            let seen = k == steps - 1 ? shows(-deepest) : shows(out - width / 2)
+            let add = under >= 1 ? 0 : 1 - (1 - seen) / (1 - under)
+            under = seen
+            guard add > 0.002 else { continue }
+            let box = Rectangle()
+            box.width = max(r.w + 2 * out, 0.5)
+            box.height = max(r.h + 2 * out, 0.5)
+            box.radiusX = max(radius + out, 0.5)
+            box.radiusY = max(radius + out, 0.5)
+            box.fill = Theme.brush(Theme.ink, min(add, 1))
+            try? Canvas.setLeft(box, r.x - out)
+            try? Canvas.setTop(box, r.y - out)
+            holder.children.append(box)
+        }
+        return holder
     }
 
     private func clipDrawing() {
