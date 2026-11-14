@@ -126,6 +126,11 @@ file was made (2026-11-14): look before starting on one.
 
 ## Housekeeping
 
+- **The VM's disk is nearly full** (11.8 GB free of 127 on 2026-11-14, and a working copy with
+  its build takes 5): the source folders of agents finished on 2026-11-13 are still in `C:\src`
+  (`win-shaders`, `win-browser`, `win-shapes`, `win-animate`, `win-vectorize` and their small
+  side folders, about 22 GB; their work is on main).
+
 - **A word nobody reads:** "Twenty-six lessons, about a minute each." is still in
   `Localizable.xcstrings`; neither platform's tour uses it since it has 28 lessons.
 
