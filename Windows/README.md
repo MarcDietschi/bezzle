@@ -292,7 +292,10 @@ taken away there (a click on the outline, Delete), with the shared pen through
 `Host/FilmPoints.swift`, the Mac's FilmPoints, which the canvas hand takes in hand with a double
 click and the Pose card's Edit Points, and puts down as `Host/FilmPointRules.swift` says. Where a
 click would add a point the pen's pale point shows on the outline; the pointer stays the arrow,
-where the Mac's is its pen with a plus.
+where the Mac's is its pen with a plus. The Pose card's From… chip gives the shape another's
+outline at the playhead (`FilmDesk.takeShape` in `Host/FilmPoints.swift`, the Mac's
+`DocumentStore.takeShape`); a shape pointed at in its menu lights in the layers list, where the Mac
+outlines it on the canvas, as the film's canvas hand draws only what its own pointer is on.
 The Draw move's chip draws its line part of the way with `Host/DrawnLine.swift`, as WinUI cannot
 cut a curve short. Both rule files ask Windows nothing, so `swift test --package-path Windows/Tests`
 checks them on a Mac (with Xcode's developer directory, whose Swift has the testing macros). The film is drawn as the Mac draws it:

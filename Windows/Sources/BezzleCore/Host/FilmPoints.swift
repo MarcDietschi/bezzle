@@ -179,4 +179,33 @@ extension WindowsCore.FilmDesk {
         WindowsCore.edit { doc in doc.update(id) { $0.poseShape(outline, at: t) } }
         if WindowsCore.design != before { edited() }
     }
+
+    // MARK: Another shape's outline (the Mac's AnimateOperations)
+
+    /// The Pose card's chip that gives a shape another's outline, in the Mac's words for it,
+    /// which its catalog keeps under a name of their own.
+    public static var shapeFromTitle: String { String(localized: "animate.shape.from", defaultValue: "From…") }
+
+    /// The shapes whose outline a shape can take at the playhead: the others on the film's
+    /// artboard, the one in front first (`Node.shapesToTake`), each by its id and its name. None
+    /// for a layer that is locked, or has no outline itself.
+    public func shapesToTake(for id: UUID) -> [(id: UUID, name: String)] {
+        guard let board = filmBoard else { return [] }
+        return board.shapesToTake(for: id).map { ($0.id, $0.name) }
+    }
+
+    /// Gives a shape the outline another has at the playhead, about its own middle: a key of its
+    /// Shape there, which it then goes into and comes from as from any other. One step. False,
+    /// with nothing changed, when the other has no outline to give there or this one cannot take
+    /// it: the panel beeps.
+    @discardableResult
+    public func takeShape(of other: UUID, for id: UUID) -> Bool {
+        guard let board = filmBoard, let layer = board.descendant(id), !layer.locked else { return false }
+        let t = filmTime
+        guard let outline = board.outline(of: other, for: id, at: t), layer.shapeValue(of: outline) != nil else { return false }
+        let before = WindowsCore.design
+        WindowsCore.edit { doc in doc.update(id) { $0.poseShape(taking: outline, at: t) } }
+        if WindowsCore.design != before { edited() }
+        return true
+    }
 }

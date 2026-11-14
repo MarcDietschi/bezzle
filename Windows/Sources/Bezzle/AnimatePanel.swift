@@ -232,7 +232,7 @@ extension Inspector {
                 rightArrow(),
                 poseField("draw", 1, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 70),
             ]))
-            rows.append(property("shape", WindowsCore.FilmDesk.title("shape"), fields: [pointsChip()]))
+            rows.append(property("shape", WindowsCore.FilmDesk.title("shape"), fields: [shapeFromChip(), pointsChip()]))
         }
         let film = self.film
         return panelCard(Words.t("Pose"), Inspector.seconds(film.panelTime), glyph: Glyphs.pose(), rows: rows) { Inspector.seconds(film.panelTime) }
@@ -248,8 +248,63 @@ extension Inspector {
         return arrow
     }
 
+    /// Gives the picked shape the outline of another shape on the artboard at the playhead, as the
+    /// Mac's ShapeFromChip: a key of its Shape that holds that outline, which it goes into and
+    /// comes from like any other. The menu names the other shapes, the one in front first, and
+    /// each is the layer pointed at while its name is (`DesignSession.hovered`: its line in the
+    /// layers list lights). Dimmed unless one shape is picked and there is another to take from.
+    private func shapeFromChip() -> FrameworkElement {
+        let picked = film.posedLayers
+        let ready = picked.count == 1 && !film.shapesToTake(for: picked[0]).isEmpty
+        let words = Theme.text(WindowsCore.FilmDesk.shapeFromTitle, size: 11.5, weight: 500)
+        let ink: Brush = Theme.ink(2)
+        words.foreground = ink
+        words.margin = Theme.inset(9, 0, 9, 0)
+        words.verticalAlignment = .center
+        let capsule = Border()
+        capsule.cornerRadius = Theme.corners(11)
+        capsule.background = Theme.brush(Theme.ink, 0.045)
+        capsule.child = words
+        // The menu hangs from the capsule, which the press keeps hold of for it.
+        let press = Pressable(radius: 11) { [weak self] in
+            guard let self, let menus = self.menus else { return }
+            let film = self.film, session = self.session
+            let picked = film.posedLayers
+            guard picked.count == 1 else { return }
+            let id = picked[0]
+            let others = film.shapesToTake(for: id)
+            guard !others.isEmpty else { return }
+            let entries = others.map { other in
+                MenuHost.Entry.item(other.name, preview: { on in
+                    if on { session.hovered = other.id } else if session.hovered == other.id { session.hovered = nil }
+                }) {
+                    // One step: the other's outline placed for this shape, then its Shape posed
+                    // to take it. Where either gives nothing, nothing changes and it beeps.
+                    if !film.takeShape(of: other.id, for: id) { session.motion.beep() }
+                }
+            }
+            menus.show(below: capsule, width: 200, entries: entries, closed: {
+                if let lit = session.hovered, others.contains(where: { $0.id == lit }) { session.hovered = nil }
+            })
+            // The key is set where the playhead rests: a film that plays stops there, as on the
+            // Mac. After the menu is up, since stopping makes these cards again, its anchor with them.
+            film.pause()
+        }
+        press.hoverWash = 0.035
+        press.box.height = 22
+        press.box.child = capsule
+        press.box.verticalAlignment = .center
+        press.box.opacity = ready ? 1 : 0.4
+        press.box.isHitTestVisible = ready
+        press.box.pointerEntered.addHandler { _, _ in words.foreground = Theme.ink(1) }
+        press.box.pointerExited.addHandler { _, _ in words.foreground = ink }
+        try? ToolTipService.setToolTip(press.box, Words.t("Give it the outline of another shape at the playhead"))
+        return press.box
+    }
+
     /// Takes the picked shape's points in hand on the canvas, or puts them down, as the Mac's
-    /// PointsChip: moved there, they give it another shape at the playhead, a key of its Shape.
+    /// PointsChip: moved there, added or taken away, they give it another shape at the playhead,
+    /// a key of its Shape.
     private func pointsChip() -> FrameworkElement {
         let motion = session.motion
         let (done, one) = motion.pointsChip
