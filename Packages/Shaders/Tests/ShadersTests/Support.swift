@@ -6,6 +6,15 @@ import Foundation
 
 let renderer = ShaderRenderer.shared!
 
+/// Whether this platform's back end draws passes into textures, depth and stencil, instances and
+/// textures of numbers (README, What WebGL does that this does not): the Mac's does, Direct3D's
+/// not yet, and refuses such a frame by name.
+#if os(Windows)
+let drawsPasses = false
+#else
+let drawsPasses = true
+#endif
+
 /// A picture's pixels, top row first, RGBA premultiplied, 0 to 255.
 struct Pixels {
     let width: Int
@@ -101,9 +110,10 @@ func frame(_ width: Int, _ height: Int, _ fragment: String, uniforms: [String: [
     return ShaderFrame(size: CGSize(width: width, height: height), draws: [draw], antialias: antialias)
 }
 
-func draw(_ frame: ShaderFrame, scale: Double = 1, region: CGRect? = nil) throws -> Pixels {
+func draw(_ frame: ShaderFrame, scale: Double = 1, region: CGRect? = nil,
+          earlier: ((Int) throws -> ShaderFrame)? = nil) throws -> Pixels {
     let area = region ?? CGRect(origin: .zero, size: frame.size)
     let image = try renderer.image(of: frame, pixels: CGSize(width: area.width * scale, height: area.height * scale),
-                                   region: region)
+                                   region: region, earlier: earlier)
     return Pixels(image)
 }

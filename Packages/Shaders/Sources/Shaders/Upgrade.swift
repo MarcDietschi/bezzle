@@ -18,7 +18,9 @@ import Foundation
 /// - The page's `main` is called from one of Bezzle's, which maps `gl_Position` from the
 ///   drawing buffer's clip space onto the output (`bezzle_clip`), scales `gl_PointSize`, and
 ///   gives the fragment stage `gl_FragCoord` in drawing-buffer pixels from the bottom left
-///   (`bezzle_fragCoord`). `dFdy` is turned round, since Metal's y runs down.
+///   (`bezzle_fragCoord`). `dFdy` is turned round where the output's rows run down, as the
+///   canvas's do; a target's run up from WebGL's bottom row, where `gl_PointCoord` is turned over
+///   instead. Which it is, the sign of `bezzle_fragCoord`'s y says.
 /// - A depth written (`gl_FragDepth`, `gl_FragDepthEXT`) goes to a plain variable: no depth
 ///   buffer is kept, and Metal will not build a shader that writes depth without one.
 /// - Globals may start from uniforms and other globals, as browsers allow in WebGL 1.
@@ -90,16 +92,17 @@ enum Upgrade {
         let fragDepth = fragment && (words.contains("gl_FragDepth") || (!webGL2 && words.contains("gl_FragDepthEXT")))
         if fragDepth { renames["gl_FragDepth"] = "bezzle_FragDepth" }
         let fragCoord = fragment && words.contains("gl_FragCoord")
-        let wraps = !fragment || fragCoord
-        if fragCoord { renames["gl_FragCoord"] = "bezzle_FragCoord" }
-        if fragment && words.contains("dFdy") { renames["dFdy"] = "bezzle_dFdy" }
-        if wraps { renames["main"] = "bezzle_main" }
         let pointCoord = fragment && words.contains("gl_PointCoord")
         let pointSize = !fragment && words.contains("gl_PointSize")
-        if sprites != nil {
-            if pointCoord { renames["gl_PointCoord"] = "bezzle_PointCoord" }
-            if pointSize { renames["gl_PointSize"] = "bezzle_PointSize" }
-        }
+        let turnsY = fragment && words.contains("dFdy")
+        // The back end's own point coordinate, turned over where a target is drawn into.
+        let turnsPoints = pointCoord && sprites == nil
+        let wraps = !fragment || fragCoord || turnsPoints
+        if fragCoord { renames["gl_FragCoord"] = "bezzle_FragCoord" }
+        if turnsY { renames["dFdy"] = "bezzle_dFdy" }
+        if wraps { renames["main"] = "bezzle_main" }
+        if pointCoord { renames["gl_PointCoord"] = "bezzle_PointCoord" }
+        if sprites != nil, pointSize { renames["gl_PointSize"] = "bezzle_PointSize" }
 
         // Pass two: the rewritten body.
         var body = [UInt8]()
@@ -127,8 +130,14 @@ enum Upgrade {
             """
         var footer = "\n"
         if fragment {
+            if fragCoord || turnsY || turnsPoints {
+                header += "uniform highp vec4 bezzle_fragCoord;\n"
+            }
             if fragCoord {
-                header += "uniform highp vec4 bezzle_fragCoord;\nhighp vec4 bezzle_FragCoord;\n"
+                header += "highp vec4 bezzle_FragCoord;\n"
+            }
+            if turnsPoints {
+                header += "highp vec2 bezzle_PointCoord;\n"
             }
             if fragDepth {
                 header += "highp float bezzle_FragDepth;\n"
@@ -144,17 +153,18 @@ enum Upgrade {
             }
             if words.contains("dFdy") {
                 for type in ["float", "vec2", "vec3", "vec4"] {
-                    header += "highp \(type) bezzle_dFdy(highp \(type) v) { return -dFdy(v); }\n"
+                    header += "highp \(type) bezzle_dFdy(highp \(type) v) { return bezzle_fragCoord.y < 0.0 ? -dFdy(v) : dFdy(v); }\n"
                 }
             }
-            if fragCoord {
-                footer += """
-                    void main() {
-                        bezzle_FragCoord = vec4(gl_FragCoord.xy * bezzle_fragCoord.xy + bezzle_fragCoord.zw, gl_FragCoord.zw);
-                        bezzle_main();
-                    }
-
-                    """
+            if wraps {
+                footer += "void main() {\n"
+                if fragCoord {
+                    footer += "    bezzle_FragCoord = vec4(gl_FragCoord.xy * bezzle_fragCoord.xy + bezzle_fragCoord.zw, gl_FragCoord.zw);\n"
+                }
+                if turnsPoints {
+                    footer += "    bezzle_PointCoord = bezzle_fragCoord.y < 0.0 ? gl_PointCoord : vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y);\n"
+                }
+                footer += "    bezzle_main();\n}\n"
             }
         } else {
             header += "uniform highp vec4 bezzle_clip;\n"

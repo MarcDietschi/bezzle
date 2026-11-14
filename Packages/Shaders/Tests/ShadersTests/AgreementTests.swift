@@ -17,6 +17,14 @@ import Testing
         var region: CGRect? = nil
         /// How far the two may part, and why, where more than the rounding of a colour.
         var tolerance = Tolerance.close
+        /// The frames of the steps before, where the frame builds on them.
+        var earlier: ((Int) -> ShaderFrame)? = nil
+    }
+
+    /// The samples this platform's back end draws: all of them on the Mac; on Windows, those
+    /// with nothing Direct3D refuses yet.
+    static var drawn: [Sample] {
+        samples.filter { drawsPasses || $0.frame.beyondPlainDraws == nil }
     }
 
     /// The largest difference in any channel, the mean difference over all channels, and the
@@ -38,8 +46,8 @@ import Testing
     func writeReferences() throws {
         let folder = URL(fileURLWithPath: Self.environment["SHADERS_WRITE_REFERENCES"]!, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        for sample in Self.samples {
-            let pixels = try draw(sample.frame, scale: sample.scale, region: sample.region)
+        for sample in Self.drawn {
+            let pixels = try draw(sample.frame, scale: sample.scale, region: sample.region, earlier: sample.earlier)
             try PNG.data(pixels).write(to: folder.appendingPathComponent(sample.name + ".png"))
         }
     }
@@ -50,10 +58,13 @@ import Testing
         let out = URL(fileURLWithPath: Self.environment["SHADERS_COMPARED"] ?? NSTemporaryDirectory(), isDirectory: true)
         try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
         var report = ["sample\tsize\tlargest\tmean\tbeyond 2\tbeyond 8\tallowed"]
-        for sample in Self.samples {
+        for sample in Self.samples where !drawsPasses {
+            if let what = sample.frame.beyondPlainDraws { report.append("\(sample.name)\tnot drawn here yet: \(what)") }
+        }
+        for sample in Self.drawn {
             let data = try Data(contentsOf: references.appendingPathComponent(sample.name + ".png"))
             let reference = try #require(PNG.pixels(data), "\(sample.name): the reference does not read")
-            let drawn = try draw(sample.frame, scale: sample.scale, region: sample.region)
+            let drawn = try draw(sample.frame, scale: sample.scale, region: sample.region, earlier: sample.earlier)
             try PNG.data(drawn).write(to: out.appendingPathComponent(sample.name + ".png"))
             #expect(drawn.width == reference.width && drawn.height == reference.height, "\(sample.name): size")
             guard drawn.width == reference.width, drawn.height == reference.height else { continue }
@@ -431,6 +442,207 @@ import Testing
         let toy = frame(320, 180, RealWorldTests.shadertoy, uniforms: ["iResolution": [320, 180, 1], "iTime": [1.5]])
         list.append(Sample(name: "shadertoy", frame: toy))
         list.append(Sample(name: "shadertoy-tile-three-times", frame: toy, scale: 3, region: CGRect(x: 130, y: 60, width: 40, height: 30)))
+        return list + passes
+    }
+
+    /// Passes into textures and WebGL's tests and masks.
+    static var passes: [Sample] {
+        var list: [Sample] = []
+        // A picture drawn small into a texture, blurred across into a second and down onto the canvas.
+        let blur = """
+            precision highp float;
+            uniform sampler2D u_from;
+            uniform vec2 u_resolution;
+            uniform vec2 u_step;
+            void main() {
+                vec2 uv = gl_FragCoord.xy / u_resolution;
+                vec4 sum = texture2D(u_from, uv) * 0.4;
+                sum += (texture2D(u_from, uv + u_step) + texture2D(u_from, uv - u_step)) * 0.2;
+                sum += (texture2D(u_from, uv + u_step * 2.0) + texture2D(u_from, uv - u_step * 2.0)) * 0.1;
+                gl_FragColor = sum;
+            }
+            """
+        func chain(scales: Bool) -> ShaderFrame {
+            var first = ShaderDraw.fullSurface(fragment: sampling, uniforms: ["u_resolution": [48, 36], "u_repeat": [1.6, 1.6]],
+                                               textures: ["u_image": photo])
+            first.sampling["u_image"] = .init(wrapS: .repeat, wrapT: .mirroredRepeat)
+            var across = ShaderDraw.fullSurface(fragment: blur, uniforms: ["u_resolution": [48, 36], "u_step": [1.5 / 48, 0]])
+            across.targets["u_from"] = 0
+            var down = ShaderDraw.fullSurface(fragment: blur, uniforms: ["u_resolution": [48, 36], "u_step": [0, 1.5 / 36]])
+            down.targets["u_from"] = 1
+            var frame = ShaderFrame(size: CGSize(width: 48, height: 36), draws: [], antialias: false)
+            frame.targets = [ShaderTarget(width: 48, height: 36, scales: scales), ShaderTarget(width: 48, height: 36, scales: scales)]
+            frame.passes = [ShaderPass(colors: [0], clearColor: [0, 0, 0, 0], draws: [first]),
+                            ShaderPass(colors: [1], clearColor: [0, 0, 0, 0], draws: [across]),
+                            ShaderPass(clearColor: [0, 0, 0, 0], draws: [down])]
+            return frame
+        }
+        list.append(Sample(name: "target-blur-chain", frame: chain(scales: true)))
+        list.append(Sample(name: "target-blur-chain-tile-three-times", frame: chain(scales: true), scale: 3,
+                           region: CGRect(x: 10, y: 8, width: 20, height: 16)))
+        list.append(Sample(name: "target-blur-chain-its-own-size-twice", frame: chain(scales: false), scale: 2))
+
+        // A triangle, a point and a derivative in a texture: the right way up, the right way round.
+        let facing = """
+            #extension GL_OES_standard_derivatives : enable
+            precision mediump float;
+            void main() { gl_FragColor = vec4(gl_FrontFacing ? 1.0 : 0.2, dFdy(gl_FragCoord.y) > 0.0 ? 1.0 : 0.2, gl_FragCoord.y / 24.0, 1.0); }
+            """
+        var triangle = shape([-0.9, -0.9, 0.9, -0.9, -0.9, 0.9], fragment: facing)
+        triangle.cull = .back
+        var spot = ShaderDraw(vertex: pointVertex, fragment: pointFragment,
+                              attributes: ["a_position": .init(components: 2, values: [0.45, 0.45, -0.5, 0.75]),
+                                           "a_size": .init(components: 1, values: [9, 6])], mode: .points, count: 2)
+        spot.viewport = nil
+        var shown = TargetsTests.showing(0, 24, 24, nearest: true)
+        shown.blend = .premultipliedOver
+        var turned = ShaderFrame(size: CGSize(width: 24, height: 24), draws: [], antialias: false)
+        turned.targets = [ShaderTarget(width: 24, height: 24)]
+        turned.passes = [ShaderPass(colors: [0], clearColor: [0, 0, 0, 0], draws: [triangle, spot]),
+                         ShaderPass(clearColor: [0.1, 0.1, 0.3, 1], draws: [shown])]
+        list.append(Sample(name: "target-the-right-way-up", frame: turned))
+
+        // Feedback: the fifth step of two textures drawn into in turn, and of one blended onto.
+        list.append(Sample(name: "target-feedback", frame: TargetsTests.pingPong(step: 5, recording: 9001),
+                           earlier: { TargetsTests.pingPong(step: $0, recording: 9001) }))
+
+        // Several outputs, a float target read beyond 1, smaller copies of a target.
+        let outputs = """
+            #extension GL_EXT_draw_buffers : require
+            precision mediump float;
+            uniform vec2 u_resolution;
+            void main() {
+                vec2 uv = gl_FragCoord.xy / u_resolution;
+                gl_FragData[0] = vec4(uv, 0.0, 1.0);
+                gl_FragData[1] = vec4(4.0 * uv.y, 8.0 * uv.x, 2.0, 1.0);
+            }
+            """
+        var left = TargetsTests.showing(0, 32, 16), right = ShaderDraw.fullSurface(fragment: """
+            precision highp float;
+            uniform sampler2D u_from;
+            uniform vec2 u_resolution;
+            void main() { gl_FragColor = vec4(texture2D(u_from, gl_FragCoord.xy / u_resolution).rgb / 8.0, 1.0); }
+            """, uniforms: ["u_resolution": [32, 16]])
+        right.targets["u_from"] = 1
+        left.viewport = CGRect(x: 0, y: 0, width: 16, height: 16)
+        left.uniforms["u_resolution"] = [16, 16]
+        right.viewport = CGRect(x: 16, y: 0, width: 16, height: 16)
+        var several = ShaderFrame(size: CGSize(width: 32, height: 16), draws: [], antialias: false)
+        several.targets = [ShaderTarget(width: 16, height: 16), ShaderTarget(width: 16, height: 16, format: .rgba16Float)]
+        several.passes = [ShaderPass(colors: [0, 1], clearColor: [0, 0, 0, 0],
+                                     draws: [ShaderDraw.fullSurface(fragment: outputs, uniforms: ["u_resolution": [16, 16]])]),
+                          ShaderPass(clearColor: [0, 0, 0, 0], draws: [left, right])]
+        list.append(Sample(name: "target-several-outputs-and-floats", frame: several))
+
+        let board = "precision mediump float; void main() { gl_FragColor = vec4(vec3(mod(floor(gl_FragCoord.x / 2.0) + floor(gl_FragCoord.y / 2.0), 2.0)), 1.0); }"
+        var far = TargetsTests.showing(0, 16, 16)
+        far.sampling["u_from"] = .init(minify: .linear, mipmap: .linear)
+        var copies = ShaderFrame(size: CGSize(width: 16, height: 16), draws: [], antialias: false)
+        copies.targets = [ShaderTarget(width: 64, height: 64, mipmapped: true)]
+        copies.passes = [ShaderPass(colors: [0], clearColor: [0, 0, 0, 0], draws: [ShaderDraw.fullSurface(fragment: board)], mipmaps: [0]),
+                         ShaderPass(clearColor: [0, 0, 0, 0], draws: [far])]
+        list.append(Sample(name: "target-smaller-copies", frame: copies))
+
+        // Depth: two walls that cross, tested, in a tile and with four samples a pixel.
+        let slanted = "attribute vec3 a_position; varying float v_z; void main() { v_z = a_position.z; gl_Position = vec4(a_position, 1.0); }"
+        func wall(_ z0: Float, _ z1: Float, _ color: String) -> ShaderDraw {
+            var draw = ShaderDraw(vertex: slanted,
+                                  fragment: "precision mediump float; varying float v_z; void main() { gl_FragColor = vec4(\(color), 1.0) * (0.6 + 0.4 * v_z); }",
+                                  attributes: ["a_position": .init(components: 3, values: [-0.9, -0.8, z0, 0.9, -0.8, z1, -0.9, 0.8, z0,
+                                                                                           -0.9, 0.8, z0, 0.9, -0.8, z1, 0.9, 0.8, z1])],
+                                  count: 6)
+            draw.depth = .init()
+            return draw
+        }
+        var offset = wall(-0.1, -0.1, "0.2, 0.9, 0.3")
+        offset.viewport = CGRect(x: 8, y: 4, width: 16, height: 10)
+        offset.depth = .init(compare: .lessEqual, writes: false)
+        offset.offset = .init(factor: -1, units: -2)
+        let crossing = [wall(-0.6, 0.8, "1.0, 0.3, 0.2"), wall(0.7, -0.5, "0.2, 0.4, 1.0"), offset]
+        var deep = canvas(40, 24, [], antialias: false)
+        deep.passes = [ShaderPass(clearColor: [0, 0, 0, 0], clearDepth: 1, draws: crossing)]
+        list.append(Sample(name: "depth-test", frame: deep))
+        var deepSmooth = deep
+        deepSmooth.antialias = true
+        list.append(Sample(name: "depth-test-antialiased-tile-twice", frame: deepSmooth, scale: 2, region: CGRect(x: 12, y: 4, width: 20, height: 16)))
+        var deepTarget = ShaderFrame(size: CGSize(width: 40, height: 24), draws: [], antialias: false)
+        deepTarget.targets = [ShaderTarget(width: 40, height: 24, scales: true)]
+        deepTarget.passes = [ShaderPass(colors: [0], depth: 0, clearColor: [0, 0, 0, 0], clearDepth: 1, draws: crossing),
+                             ShaderPass(clearColor: [0, 0, 0, 0], draws: [TargetsTests.showing(0, 40, 24, nearest: true)])]
+        list.append(Sample(name: "depth-test-in-a-target", frame: deepTarget))
+
+        // The stencil: a triangle written into it, a gradient drawn where it is and where it is not.
+        var mask = shape([-0.8, -0.8, 0.8, -0.6, 0.0, 0.9])
+        mask.channels = []
+        mask.stencil = .init(front: .init(compare: .always, reference: 1, pass: .replace), back: .init(compare: .always, reference: 1, pass: .replace))
+        var inside = ShaderDraw.fullSurface(fragment: ConventionsTests.gradient, uniforms: ["u_resolution": [32, 32]])
+        inside.stencil = .init(front: .init(compare: .equal, reference: 1), back: .init(compare: .equal, reference: 1))
+        var outside = ShaderDraw.fullSurface(fragment: "precision mediump float; void main() { gl_FragColor = vec4(0.1, 0.1, 0.4, 0.5); }")
+        outside.stencil = .init(front: .init(compare: .notEqual, reference: 1), back: .init(compare: .notEqual, reference: 1))
+        var cut = canvas(32, 32, [], antialias: false)
+        cut.passes = [ShaderPass(clearColor: [0, 0, 0, 0], clearStencil: 0, draws: [mask, inside, outside])]
+        list.append(Sample(name: "stencil", frame: cut))
+        list.append(Sample(name: "stencil-tile-twice", frame: cut, scale: 2, region: CGRect(x: 8, y: 8, width: 16, height: 16)))
+
+        // Faces left out, colorMask and the scissor box.
+        var kept = shape([-0.9, -0.9, -0.1, -0.9, -0.9, 0.9, 0.9, -0.9, 0.1, -0.9, 0.9, 0.9],
+                         fragment: "precision mediump float; void main() { gl_FragColor = vec4(1.0, 0.8, 0.4, 1.0); }")
+        kept.cull = .back
+        var band = ShaderDraw.fullSurface(fragment: white)
+        band.channels = [.green, .alpha]
+        band.scissor = CGRect(x: 4, y: 6, width: 20, height: 5)
+        list.append(Sample(name: "cull-mask-scissor", frame: canvas(32, 24, [kept, band])))
+        list.append(Sample(name: "cull-mask-scissor-tile-uneven", frame: canvas(32, 24, [kept, band]), scale: 2.5,
+                           region: CGRect(x: 2, y: 10, width: 16, height: 12)))
+
+        // Instances: a small square drawn nine times, each with its own place and colour.
+        var places: [Float] = [], colours: [Float] = []
+        for i in 0..<9 {
+            places += [Float(i % 3) * 0.6 - 0.6, Float(i / 3) * 0.6 - 0.6]
+            colours += [Float(i % 3) / 2, Float(i / 3) / 2, 1 - Float(i) / 8]
+        }
+        var squares = ShaderDraw(vertex: """
+            attribute vec2 a_position;
+            attribute vec2 a_offset;
+            attribute vec3 a_color;
+            varying vec3 v_color;
+            void main() { v_color = a_color; gl_Position = vec4(a_position * 0.22 + a_offset, 0.0, 1.0); }
+            """, fragment: "precision mediump float; varying vec3 v_color; void main() { gl_FragColor = vec4(v_color, 1.0); }",
+            attributes: ["a_position": ShaderDraw.fullSurfacePositions,
+                         "a_offset": .init(components: 2, values: places, divisor: 1),
+                         "a_color": .init(components: 3, values: colours, divisor: 1)], count: 6)
+        squares.instances = 9
+        list.append(Sample(name: "instances", frame: canvas(36, 36, [squares], antialias: true)))
+
+        // Textures of numbers: floats beyond 1, and LUMINANCE with ALPHA.
+        var numbers: [Float] = []
+        for y in 0..<4 { for x in 0..<4 { numbers += [Float(x) * 1.5, Float(y) * 1.5, Float(x * y) / 2, 1] } }
+        let floats = ShaderData(width: 4, height: 4, format: .rgba32Float, bytes: numbers.withUnsafeBytes { Array($0) })!
+        var reads = ShaderDraw.fullSurface(fragment: """
+            precision highp float;
+            uniform sampler2D u_data;
+            uniform sampler2D u_grey;
+            uniform vec2 u_resolution;
+            void main() {
+                vec2 uv = gl_FragCoord.xy / u_resolution;
+                gl_FragColor = vec4(texture2D(u_data, uv).rgb / 4.5, 1.0) * texture2D(u_grey, uv);
+            }
+            """, uniforms: ["u_resolution": [32, 32]])
+        reads.data["u_data"] = floats
+        reads.data["u_grey"] = ShaderData(width: 2, height: 2, format: .luminanceAlpha8, bytes: [255, 255, 128, 255, 255, 128, 64, 255])!
+        reads.sampling["u_data"] = .init(magnify: .nearest, minify: .nearest)
+        list.append(Sample(name: "textures-of-numbers", frame: canvas(32, 32, [reads])))
+
+        // The canvas drawn onto in two passes, the second without a clear, and a picture read as sRGB.
+        var linear = ShaderDraw.fullSurface(fragment: sampling, uniforms: ["u_resolution": [32, 24], "u_repeat": [1, 1]], textures: ["u_image": photo])
+        linear.decodes = ["u_image"]
+        linear.viewport = CGRect(x: 0, y: 0, width: 16, height: 24)
+        var over = shape([0, -0.5, 0.9, -0.5, 0.45, 0.8], fragment: "precision mediump float; void main() { gl_FragColor = vec4(0.5, 0.0, 0.5, 0.5); }",
+                         blend: .premultipliedOver)
+        over.viewport = nil
+        var twice = canvas(32, 24, [], antialias: true)
+        twice.passes = [ShaderPass(clearColor: [0.9, 0.9, 0.8, 1], draws: [linear]), ShaderPass(draws: [over])]
+        list.append(Sample(name: "canvas-passes-and-srgb", frame: twice))
         return list
     }
 }

@@ -17,12 +17,28 @@ struct DrawPlan {
         var x: Int, y: Int, width: Int, height: Int
     }
 
-    /// A sampler's slot, its picture (nil: none bound, which reads opaque black) and how it reads it.
+    /// What a sampler reads: nothing bound (which reads opaque black), a picture, numbers the page
+    /// gave, or one of the frame's targets.
+    enum Source {
+        case none
+        case picture(ShaderPicture)
+        case data(ShaderData)
+        case target(Int)
+    }
+
+    /// A sampler's slot, what it reads and how it reads it.
     struct Texture {
         var slot: Int
-        var picture: ShaderPicture?
+        var source: Source
         var sampling: ShaderDraw.Sampling
         var cube: Bool
+        /// Kept as sRGB and read as light.
+        var decodes = false
+
+        var picture: ShaderPicture? {
+            if case .picture(let picture) = source { return picture }
+            return nil
+        }
     }
 
     var vertexBuffers: [(Int, [UInt8])]
@@ -36,6 +52,7 @@ struct DrawPlan {
     var flipsTextures: Bool
     var premultipliesTextures: Bool
     var blendColor: [Float]?
+    var instances: Int
 }
 
 /// What maps the drawing buffer onto the output.
@@ -43,6 +60,32 @@ struct Geometry {
     var size: (width: Double, height: Double)        // the drawing buffer
     var region: (x: Double, y: Double, width: Double, height: Double) // of it, top-left origin
     var output: (width: Double, height: Double)
+    /// Drawn the other way up: a target, whose first row is t = 0, WebGL's bottom, where the
+    /// canvas's first row is its top. Its triangles then turn the other way round too.
+    var flipped = false
+
+    /// All of a target `width` by `height`, drawn `scale` times as large.
+    init(target width: Int, _ height: Int, scale: Int) {
+        size = (Double(width), Double(height))
+        region = (0, 0, Double(width), Double(height))
+        output = (Double(width * scale), Double(height * scale))
+        flipped = true
+    }
+
+    /// A box in drawing-buffer pixels from the bottom left, as WebGL gives a viewport and a
+    /// scissor, in the output's pixels from its top left, rounded and kept inside it.
+    func box(_ x: Double, _ y: Double, _ width: Double, _ height: Double) -> (x0: Double, y0: Double, x1: Double, y1: Double) {
+        let (rx, ry, rw, rh) = region
+        let (w, h) = output
+        let x0 = max(0, min(w, ((x - rx) * w / rw).rounded()))
+        let x1 = max(0, min(w, ((x + width - rx) * w / rw).rounded()))
+        if flipped {
+            return (x0, max(0, min(h, (y * h / rh).rounded())), x1, max(0, min(h, ((y + height) * h / rh).rounded())))
+        }
+        let y0 = max(0, min(h, ((size.height - y - height - ry) * h / rh).rounded()))
+        let y1 = max(0, min(h, ((size.height - y - ry) * h / rh).rounded()))
+        return (x0, y0, x1, y1)
+    }
 
     /// `region` of a frame (nil: all of it) drawn into an output `width` by `height` pixels.
     init(_ frame: ShaderFrame, region: CGRect?, output width: Int, _ height: Int) throws {
@@ -67,6 +110,8 @@ struct AttributeLayout: Hashable {
     var stride: Int
     /// The same value for every vertex: a disabled array, or an attribute never given.
     var constant: Bool
+    /// vertexAttribDivisor: a value every so many instances; 0 for a value a vertex.
+    var divisor = 0
 }
 
 /// The vertex buffers and their layout for a draw: arrays per vertex, disabled arrays and
@@ -76,6 +121,8 @@ struct VertexLayout {
     var buffers: [(Int, [UInt8])] = []
     /// How many vertices the arrays hold; nil without arrays.
     var vertices: Int?
+    /// How many instances the arrays read once every few instances hold values for; nil without.
+    var instances: Int?
 
     /// The buffers from `firstBuffer` on, one an input in the order of their locations.
     init(_ draw: ShaderDraw, _ program: ProgramLayout, firstBuffer: Int) {
@@ -85,12 +132,17 @@ struct VertexLayout {
             if let attribute = draw.attributes[input.name], attribute.constant == nil, attribute.components > 0 {
                 let components = attribute.components
                 let vertices = attribute.values.count / components
-                self.vertices = min(self.vertices ?? vertices, vertices)
+                let divisor = max(0, attribute.divisor)
+                if divisor > 0 {
+                    instances = min(instances ?? vertices * divisor, vertices * divisor)
+                } else {
+                    self.vertices = min(self.vertices ?? vertices, vertices)
+                }
                 let width = columns > 1 ? rows : min(4, components)
                 for column in 0..<columns {
                     attributes.append(AttributeLayout(location: input.location + column, base: input.base, width: width,
                                                       buffer: buffer, offset: column * rows * 4, stride: components * 4,
-                                                      constant: false))
+                                                      constant: false, divisor: divisor))
                 }
                 buffers.append((buffer, Packing.bytes(attribute.values, input.base)))
             } else {
@@ -117,7 +169,8 @@ extension DrawPlan {
     /// an array, or a viewport that misses the region. `layout` is its vertex layout, made first
     /// so that a back end could make what the program needs before.
     init?(_ draw: ShaderDraw, program: ProgramLayout, layout: VertexLayout, geometry: Geometry) {
-        guard draw.count > 0, draw.first >= 0 else { return nil }
+        guard draw.count > 0, draw.first >= 0, draw.instances > 0 else { return nil }
+        if let held = layout.instances, draw.instances > held { return nil }
 
         // What WebGL would refuse to draw (reading past an array) draws nothing.
         if let indices = draw.indices {
@@ -173,18 +226,28 @@ extension DrawPlan {
         let vw = Double(viewport?.width ?? CGFloat(W)), vh = Double(viewport?.height ?? CGFloat(H))
         guard vw > 0, vh > 0 else { return nil }
         // Clip space of the viewport onto clip space of the output; outside the viewport is cut.
-        let clip: [Float] = [Float(vw / rw), Float(vh / rh), Float((2 * (vx - rx) + vw) / rw - 1),
-                             Float(1 + (2 * vy + vh - 2 * (H - ry)) / rh)]
-        let x0 = max(0, min(w, ((vx - rx) * w / rw).rounded()))
-        let x1 = max(0, min(w, ((vx + vw - rx) * w / rw).rounded()))
-        let y0 = max(0, min(h, ((H - vy - vh - ry) * h / rh).rounded()))
-        let y1 = max(0, min(h, ((H - vy - ry) * h / rh).rounded()))
+        // A target is drawn the other way up, its first row WebGL's bottom.
+        let clip: [Float] = geometry.flipped
+            ? [Float(vw / W), Float(-vh / H), Float((2 * vx + vw) / W - 1), Float(1 - (2 * vy + vh) / H)]
+            : [Float(vw / rw), Float(vh / rh), Float((2 * (vx - rx) + vw) / rw - 1),
+               Float(1 + (2 * vy + vh - 2 * (H - ry)) / rh)]
+        var (x0, y0, x1, y1) = geometry.box(vx, vy, vw, vh)
+        if let box = draw.scissor?.standardized {
+            let cut = geometry.box(Double(box.minX), Double(box.minY), Double(box.width), Double(box.height))
+            x0 = max(x0, cut.x0)
+            y0 = max(y0, cut.y0)
+            x1 = min(x1, cut.x1)
+            y1 = min(y1, cut.y1)
+        }
         guard x1 > x0, y1 > y0 else { return nil }
         scissor = Scissor(x: Int(x0), y: Int(y0), width: Int(x1 - x0), height: Int(y1 - y0))
-        // gl_FragCoord from the output's pixels, top-left origin, to the drawing buffer's, bottom-left.
+        // gl_FragCoord from the output's pixels to the drawing buffer's, from the bottom left: the
+        // canvas's rows run down from its top, a target's up from its bottom. The sign of its y
+        // also tells the shaders which way up they draw (dFdy, gl_PointCoord).
         let own: [String: [Float]] = [
             "bezzle_clip": clip,
-            "bezzle_fragCoord": [Float(rw / w), Float(-rh / h), Float(rx), Float(H - ry)],
+            "bezzle_fragCoord": geometry.flipped ? [Float(W / w), Float(H / h), 0, 0]
+                                                 : [Float(rw / w), Float(-rh / h), Float(rx), Float(H - ry)],
             "bezzle_pointScale": [Float((w / rw + h / rh) / 2)],
         ]
         let values = Uniforms(draw.uniforms, own: own)
@@ -196,6 +259,7 @@ extension DrawPlan {
         flipsTextures = draw.flipsTextures
         premultipliesTextures = draw.premultipliesTextures
         blendColor = draw.blend?.color
+        instances = draw.instances
     }
 
     /// Each sampler's picture by its name, or an array's element's, and how it is read.
@@ -204,9 +268,21 @@ extension DrawPlan {
         for texture in list {
             for element in 0..<max(1, texture.count) {
                 let name = texture.count > 1 ? "\(texture.name)[\(element)]" : texture.name
-                let image = draw.textures[name] ?? (element == 0 ? draw.textures[texture.name] ?? draw.textures["\(texture.name)[0]"] : nil)
+                /// By the element's own name, or for the first by the array's.
+                func given<Value>(_ list: [String: Value]) -> Value? {
+                    list[name] ?? (element == 0 ? list[texture.name] ?? list["\(texture.name)[0]"] : nil)
+                }
+                var source = Source.none
+                if let target = given(draw.targets), !texture.cube {
+                    source = .target(target)
+                } else if let data = given(draw.data), !texture.cube {
+                    source = .data(data)
+                } else if let image = given(draw.textures) {
+                    source = .picture(image)
+                }
                 let sampling = draw.sampling[name] ?? draw.sampling[texture.name] ?? ShaderDraw.Sampling()
-                bound.append(Texture(slot: texture.index + element, picture: image, sampling: sampling, cube: texture.cube))
+                bound.append(Texture(slot: texture.index + element, source: source, sampling: sampling, cube: texture.cube,
+                                     decodes: draw.decodes.contains(name) || draw.decodes.contains(texture.name)))
             }
         }
         return bound

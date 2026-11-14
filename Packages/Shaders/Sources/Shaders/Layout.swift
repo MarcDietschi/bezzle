@@ -49,6 +49,8 @@ struct ProgramLayout: Sendable {
     let inputs: [Input]
     let vertex: Stage
     let fragment: Stage
+    /// Which of drawBuffers' outputs the fragment stage writes: 0 alone for gl_FragColor.
+    let outputs: Set<Int>
 
     /// From the translation's reflection, `original` naming back what the upgrade renamed.
     init(reflection json: String, original: [String: String]) throws {
@@ -105,6 +107,11 @@ struct ProgramLayout: Sendable {
         }
         vertex = try stage(reflection.vertex)
         fragment = try stage(reflection.fragment)
+        var outputs = Set<Int>()
+        for output in reflection.fragment.outputs where output.location >= 0 {
+            for element in 0..<max(1, output.count) { outputs.insert(output.location + element) }
+        }
+        self.outputs = outputs
         inputs = try reflection.vertex.inputs.sorted { $0.location < $1.location }.map { input in
             Input(name: name(input.name), location: input.location, base: try base(input.base), rows: input.rows,
                   columns: input.columns)

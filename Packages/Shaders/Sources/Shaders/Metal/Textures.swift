@@ -12,10 +12,12 @@ final class Textures: @unchecked Sendable {
         var premultiply: Bool
         var mipmaps: Bool
         var cube: Bool
+        /// Kept as sRGB and read as light (WebGL 2's SRGB8_ALPHA8).
+        var decodes = false
     }
 
     private struct Entry {
-        var image: CGImage // held, so no other picture takes its identity while it is here
+        var image: AnyObject // held, so no other picture takes its identity while it is here
         var texture: MTLTexture
     }
 
@@ -25,17 +27,89 @@ final class Textures: @unchecked Sendable {
     private let cache = OnceCache<Key, Entry>(capacity: 48, budget: 512 << 20, keepsFailures: false,
                                               cost: { $0.texture.allocatedSize })
     private let blanks = OnceCache<Bool, MTLTexture>(capacity: 2)
+    private let nothing = OnceCache<Bool, MTLTexture>(capacity: 1)
 
     init(device: MTLDevice, queue: MTLCommandQueue) {
         self.device = device
         self.queue = queue
     }
 
-    func texture(_ image: CGImage, flip: Bool, premultiply: Bool, mipmaps: Bool, cube: Bool) throws -> MTLTexture {
-        let key = Key(image: ObjectIdentifier(image), flip: flip, premultiply: premultiply, mipmaps: mipmaps, cube: cube)
+    func texture(_ image: CGImage, flip: Bool, premultiply: Bool, mipmaps: Bool, cube: Bool,
+                 decodes: Bool = false) throws -> MTLTexture {
+        let key = Key(image: ObjectIdentifier(image), flip: flip, premultiply: premultiply, mipmaps: mipmaps, cube: cube,
+                      decodes: decodes)
         return try cache.value(key) {
-            Entry(image: image, texture: try upload(image, flip: flip, premultiply: premultiply, mipmaps: mipmaps, cube: cube))
+            Entry(image: image, texture: try upload(image, flip: flip, premultiply: premultiply, mipmaps: mipmaps, cube: cube,
+                                                    decodes: decodes))
         }.texture
+    }
+
+    /// Numbers a page gave as a texture, as they are: the first row is t = 0.
+    func texture(_ data: ShaderData, mipmaps: Bool, decodes: Bool) throws -> MTLTexture {
+        let key = Key(image: ObjectIdentifier(data), flip: false, premultiply: false, mipmaps: mipmaps, cube: false,
+                      decodes: decodes)
+        return try cache.value(key) {
+            Entry(image: data, texture: try upload(data, mipmaps: mipmaps, decodes: decodes))
+        }.texture
+    }
+
+    /// What a target that nothing was drawn into reads: nought everywhere.
+    func empty() throws -> MTLTexture {
+        try nothing.value(true) {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 1, height: 1, mipmapped: false)
+            descriptor.storageMode = storageMode
+            guard let texture = device.makeTexture(descriptor: descriptor) else { throw ShaderError("Metal: no texture.") }
+            var clear: [UInt8] = [0, 0, 0, 0]
+            texture.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: &clear, bytesPerRow: 4)
+            return texture
+        }
+    }
+
+    /// The Metal format that holds a format's texels, and how its channels are read where WebGL
+    /// reads them otherwise (LUMINANCE, ALPHA).
+    static func format(_ format: ShaderData.Format, decodes: Bool = false) -> (MTLPixelFormat, MTLTextureSwizzleChannels?) {
+        switch format {
+        case .rgba8: (decodes ? .rgba8Unorm_srgb : .rgba8Unorm, nil)
+        case .rg8: (.rg8Unorm, nil)
+        case .r8: (.r8Unorm, nil)
+        case .luminance8: (.r8Unorm, MTLTextureSwizzleChannels(red: .red, green: .red, blue: .red, alpha: .one))
+        case .alpha8: (.r8Unorm, MTLTextureSwizzleChannels(red: .zero, green: .zero, blue: .zero, alpha: .red))
+        case .luminanceAlpha8: (.rg8Unorm, MTLTextureSwizzleChannels(red: .red, green: .red, blue: .red, alpha: .green))
+        case .rgba16Float: (.rgba16Float, nil)
+        case .rg16Float: (.rg16Float, nil)
+        case .r16Float: (.r16Float, nil)
+        case .rgba32Float: (.rgba32Float, nil)
+        case .rg32Float: (.rg32Float, nil)
+        case .r32Float: (.r32Float, nil)
+        }
+    }
+
+    private func upload(_ data: ShaderData, mipmaps: Bool, decodes: Bool) throws -> MTLTexture {
+        let (format, swizzle) = Self.format(data.format, decodes: decodes)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: data.width, height: data.height,
+                                                                  mipmapped: mipmaps)
+        descriptor.storageMode = storageMode
+        descriptor.usage = [.shaderRead]
+        if let swizzle { descriptor.swizzle = swizzle }
+        guard let texture = device.makeTexture(descriptor: descriptor) else { throw ShaderError("Metal: no texture.") }
+        let row = data.width * data.format.bytesPerTexel
+        data.bytes.withUnsafeBytes { bytes in
+            texture.replace(region: MTLRegionMake2D(0, 0, data.width, data.height), mipmapLevel: 0, withBytes: bytes.baseAddress!,
+                            bytesPerRow: row)
+        }
+        try makeMipmaps(texture, when: mipmaps)
+        return texture
+    }
+
+    private func makeMipmaps(_ texture: MTLTexture, when mipmaps: Bool) throws {
+        guard mipmaps, texture.mipmapLevelCount > 1 else { return }
+        guard let commands = queue.makeCommandBuffer(), let blit = commands.makeBlitCommandEncoder() else {
+            throw ShaderError("Metal: no command buffer.")
+        }
+        blit.generateMipmaps(for: texture)
+        blit.endEncoding()
+        commands.commit()
+        commands.waitUntilCompleted()
     }
 
     /// What WebGL samples where no texture is bound: opaque black.
@@ -57,7 +131,8 @@ final class Textures: @unchecked Sendable {
 
     private var storageMode: MTLStorageMode { device.hasUnifiedMemory ? .shared : .managed }
 
-    private func upload(_ image: CGImage, flip: Bool, premultiply: Bool, mipmaps: Bool, cube: Bool) throws -> MTLTexture {
+    private func upload(_ image: CGImage, flip: Bool, premultiply: Bool, mipmaps: Bool, cube: Bool,
+                        decodes: Bool) throws -> MTLTexture {
         let width = image.width
         // A cube's six faces stacked top to bottom; any other picture serves every face.
         let stacked = cube && image.height == width * 6
@@ -66,9 +141,10 @@ final class Textures: @unchecked Sendable {
         guard width > 0, faceHeight > 0, width <= 16384, faceHeight <= 16384 else {
             throw ShaderError("A picture too large or empty for a texture (\(width) by \(image.height)).")
         }
+        let format: MTLPixelFormat = decodes ? .rgba8Unorm_srgb : .rgba8Unorm
         let descriptor = cube
-            ? MTLTextureDescriptor.textureCubeDescriptor(pixelFormat: .rgba8Unorm, size: size, mipmapped: mipmaps)
-            : MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: faceHeight,
+            ? MTLTextureDescriptor.textureCubeDescriptor(pixelFormat: format, size: size, mipmapped: mipmaps)
+            : MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: faceHeight,
                                                        mipmapped: mipmaps)
         descriptor.storageMode = storageMode
         descriptor.usage = [.shaderRead]
@@ -101,15 +177,7 @@ final class Textures: @unchecked Sendable {
                                 withBytes: rows, bytesPerRow: width * 4, bytesPerImage: width * faceHeight * 4)
             }
         }
-        if mipmaps, texture.mipmapLevelCount > 1 {
-            guard let commands = queue.makeCommandBuffer(), let blit = commands.makeBlitCommandEncoder() else {
-                throw ShaderError("Metal: no command buffer.")
-            }
-            blit.generateMipmaps(for: texture)
-            blit.endEncoding()
-            commands.commit()
-            commands.waitUntilCompleted()
-        }
+        try makeMipmaps(texture, when: mipmaps)
         return texture
     }
 }

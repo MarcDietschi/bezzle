@@ -54,4 +54,77 @@ import Testing
         try time("shadertoy", shadertoy, scale: 1)
         print(lines.map { "MEASURED " + $0 }.joined(separator: "\n"))
     }
+
+    /// Passes into textures: a chain within a frame, and the steps a frame that builds on the
+    /// frames before it is drawn through.
+    @Test(.enabled(if: drawsPasses)) func passesAndSteps() throws {
+        var lines: [String] = []
+        // Grain into a texture, then twice from texture to texture, then onto the canvas.
+        let copy = """
+            precision highp float;
+            uniform sampler2D u_from;
+            uniform vec2 u_resolution;
+            void main() {
+                vec2 uv = gl_FragCoord.xy / u_resolution;
+                gl_FragColor = (texture2D(u_from, uv) + texture2D(u_from, uv + 1.5 / u_resolution)) * 0.5;
+            }
+            """
+        func through(_ from: Int) -> ShaderDraw {
+            var draw = ShaderDraw.fullSurface(fragment: copy, uniforms: ["u_resolution": [1440, 900]])
+            draw.targets["u_from"] = from
+            return draw
+        }
+        var chain = ShaderFrame(size: CGSize(width: 1440, height: 900), draws: [], antialias: false)
+        chain.targets = [ShaderTarget(width: 1440, height: 900, scales: true), ShaderTarget(width: 1440, height: 900, scales: true)]
+        chain.passes = [
+            ShaderPass(colors: [0], clearColor: [0, 0, 0, 0],
+                       draws: [ShaderDraw.fullSurface(fragment: RealWorldTests.grain, uniforms: ["u_time": [1], "u_resolution": [1440, 900]])]),
+            ShaderPass(colors: [1], clearColor: [0, 0, 0, 0], draws: [through(0)]),
+            ShaderPass(colors: [0], clearColor: [0, 0, 0, 0], draws: [through(1)]),
+            ShaderPass(clearColor: [0, 0, 0, 0], draws: [through(0)]),
+        ]
+        for scale in [1.0, 2.0] {
+            let pixels = CGSize(width: 1440 * scale, height: 900 * scale)
+            _ = try renderer.image(of: chain, pixels: pixels)
+            let start = Date()
+            for _ in 0..<10 { _ = try renderer.image(of: chain, pixels: pixels) }
+            lines.append(String(format: "three passes into textures and one onto the canvas at %.0f by %.0f: %.1f ms a frame",
+                                pixels.width, pixels.height, Date().timeIntervalSince(start) / 10 * 1000))
+        }
+        // A simulation's two float textures of 512 by 512, each step reading one into the other.
+        let recording = Int.random(in: 1_000_000..<2_000_000)
+        func step(_ k: Int) -> ShaderFrame {
+            let grow = """
+                precision highp float;
+                uniform sampler2D u_before;
+                void main() {
+                    vec2 uv = gl_FragCoord.xy / 512.0;
+                    vec4 around = texture2D(u_before, uv + vec2(1.0 / 512.0, 0.0)) + texture2D(u_before, uv - vec2(1.0 / 512.0, 0.0))
+                        + texture2D(u_before, uv + vec2(0.0, 1.0 / 512.0)) + texture2D(u_before, uv - vec2(0.0, 1.0 / 512.0));
+                    gl_FragColor = mix(texture2D(u_before, uv), around * 0.25, 0.5) + vec4(0.001);
+                }
+                """
+            var draw = ShaderDraw.fullSurface(fragment: grow)
+            draw.targets["u_before"] = k % 2
+            var frame = ShaderFrame(size: CGSize(width: 512, height: 512), draws: [], antialias: false)
+            frame.targets = [ShaderTarget(width: 512, height: 512, format: .rgba16Float, keeps: true),
+                             ShaderTarget(width: 512, height: 512, format: .rgba16Float, keeps: true)]
+            frame.passes = [ShaderPass(colors: [1 - k % 2], draws: [draw]),
+                            ShaderPass(clearColor: [0, 0, 0, 1], draws: [TargetsTests.showing(1 - k % 2, 512, 512)])]
+            frame.identity = .init(recording: recording, moment: k)
+            return frame
+        }
+        func time(_ label: String, _ k: Int) throws {
+            let start = Date()
+            _ = try renderer.image(of: step(k), pixels: CGSize(width: 512, height: 512), earlier: step)
+            lines.append(String(format: "%@: %.1f ms", label, Date().timeIntervalSince(start) * 1000))
+        }
+        _ = try renderer.image(of: step(0), pixels: CGSize(width: 512, height: 512), earlier: step) // built once
+        try time("the next step of a simulation in two 512 by 512 float textures", 1)
+        try time("300 steps on, drawn through from where it was", 301)
+        try time("gone back to step 290: from the state kept at 288", 290)
+        try time("gone back one step, to 289", 289)
+        try time("the same step again", 289)
+        print(lines.map { "MEASURED " + $0 }.joined(separator: "\n"))
+    }
 }

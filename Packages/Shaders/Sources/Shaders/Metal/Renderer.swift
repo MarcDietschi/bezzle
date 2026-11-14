@@ -6,17 +6,24 @@ import Metal
 ///
 /// Programs (their translation, Metal functions and pipeline states), pictures uploaded as
 /// textures and sampler states are kept by what they are made of, so the tiles of one frame
-/// and the frames after it make each once.
+/// and the frames after it make each once. What a frame's passes draw into targets is drawn once
+/// for all its tiles (`Drawn`), and what its targets keep for the frame after is kept step by
+/// step (`Timelines`).
 public final class ShaderRenderer: @unchecked Sendable {
     /// nil where Metal is not available.
     public static let shared: ShaderRenderer? = ShaderRenderer()
 
     public let device: MTLDevice
     private let queue: MTLCommandQueue
-    private let programs = OnceCache<ProgramKey, Program>(capacity: 64)
+    private let programs = OnceCache<ProgramKey, Program>(capacity: 256)
     private let samplers = OnceCache<ShaderDraw.Sampling, MTLSamplerState>(capacity: 64)
     private let finishers = OnceCache<FinisherKey, MTLRenderPipelineState>(capacity: 16)
+    private let depthStates = OnceCache<DepthKey, MTLDepthStencilState>(capacity: 128)
     private let textures: Textures
+    private let pool: TexturePool
+    private let timelines = Timelines()
+    /// What the passes of the frames drawn last left in their targets, at most 512 MB of it.
+    private let drawn = OnceCache<DrawnKey, Drawn>(capacity: 32, budget: 512 << 20, keepsFailures: false, cost: { $0.cost })
     private let memoryless: Bool
 
     private struct ProgramKey: Hashable {
@@ -24,11 +31,22 @@ public final class ShaderRenderer: @unchecked Sendable {
         var fragment: String
     }
 
+    private struct DrawnKey: Hashable {
+        var identity: ShaderFrame.Identity
+        var scale: Int
+    }
+
+    private struct DepthKey: Hashable {
+        var depth: ShaderDraw.Depth?
+        var stencil: ShaderDraw.Stencil?
+    }
+
     public init?(device: MTLDevice? = MTLCreateSystemDefaultDevice()) {
         guard let device, let queue = device.makeCommandQueue() else { return nil }
         self.device = device
         self.queue = queue
         textures = Textures(device: device, queue: queue)
+        pool = TexturePool(device: device)
         memoryless = device.hasUnifiedMemory && device.supportsFamily(.apple1)
     }
 
@@ -39,13 +57,22 @@ public final class ShaderRenderer: @unchecked Sendable {
         try program(vertex, fragment).interface
     }
 
-    /// Throws when a program does not translate or build.
+    /// Throws when a program does not translate or build, or the frame's passes name what it
+    /// does not have.
     public func check(_ frame: ShaderFrame) throws {
+        if let fault = frame.fault() { throw ShaderError(fault) }
         let samples = sampleCount(frame)
-        for draw in frame.draws {
-            let program = try program(draw.vertex, draw.fragment)
-            _ = try program.pipeline(pipelineKey(vertexLayout(draw, program), pixelFormat: .rgba8Unorm, samples: samples,
-                                                 blend: draw.blend), device: device)
+        let canvasDepth = frame.canvasTestsDepth
+        for pass in frame.everyPass {
+            let formats: [MTLPixelFormat] = pass.ontoCanvas ? [.rgba8Unorm] : pass.colors.map { Textures.format(frame.targets[$0].format).0 }
+            let opaque = pass.ontoCanvas ? [false] : pass.colors.map { frame.targets[$0].opaque }
+            for draw in pass.draws {
+                let program = try program(draw.vertex, draw.fragment)
+                let key = pipelineKey(vertexLayout(draw, program), program, draw, formats: formats, opaque: opaque,
+                                      depth: pass.ontoCanvas ? canvasDepth : pass.depth != nil,
+                                      samples: pass.ontoCanvas ? samples : 1)
+                _ = try program.pipeline(key, device: device)
+            }
         }
     }
 
@@ -54,7 +81,13 @@ public final class ShaderRenderer: @unchecked Sendable {
     /// sixteen bits to a colour and not eight, for a picture a movie is made of: a glow then
     /// keeps what lies between eight bits' steps. Drawn as a canvas draws in every other way,
     /// each value kept between none and one as it is written.
-    public func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect? = nil, deep: Bool = false) throws -> CGImage {
+    ///
+    /// A frame whose targets keep is step `identity.moment` of its recording: `earlier` gives the
+    /// frame of a step before it, for the steps between the nearest one kept and this to be
+    /// drawn first (their passes into targets alone). Without it, every step is taken to draw
+    /// as this one does.
+    public func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect? = nil, deep: Bool = false,
+                      earlier: ((Int) throws -> ShaderFrame)? = nil) throws -> CGImage {
         let width = Int(pixels.width.rounded()), height = Int(pixels.height.rounded())
         guard width > 0, height > 0, width <= 16384, height <= 16384 else {
             throw ShaderError("No picture can be \(width) by \(height) pixels.")
@@ -69,7 +102,7 @@ public final class ShaderRenderer: @unchecked Sendable {
               let commands = queue.makeCommandBuffer() else {
             throw ShaderError("Metal: out of memory for a picture of \(width) by \(height).")
         }
-        try encode(frame, into: target, region: region, commands: commands)
+        try encode(frame, into: target, region: region, commands: commands, earlier: earlier)
         guard let blit = commands.makeBlitCommandEncoder() else { throw ShaderError("Metal: no blit encoder.") }
         blit.copy(from: target, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(),
                   sourceSize: MTLSize(width: width, height: height, depth: 1), to: buffer, destinationOffset: 0,
@@ -99,11 +132,11 @@ public final class ShaderRenderer: @unchecked Sendable {
     /// from `device`), for the film's stage and movies. Encodes into `commandBuffer`; the caller
     /// commits it. Throws before encoding anything when a program does not translate or build.
     public func draw(_ frame: ShaderFrame, into texture: MTLTexture, region: CGRect? = nil,
-                     commandBuffer: MTLCommandBuffer) throws {
+                     commandBuffer: MTLCommandBuffer, earlier: ((Int) throws -> ShaderFrame)? = nil) throws {
         guard texture.textureType == .type2D, texture.usage.contains(.renderTarget) else {
             throw ShaderError("The texture to draw into is not a 2D render target.")
         }
-        try encode(frame, into: texture, region: region, commands: commandBuffer)
+        try encode(frame, into: texture, region: region, commands: commandBuffer, earlier: earlier)
     }
 
     // MARK: Encoding
@@ -118,25 +151,56 @@ public final class ShaderRenderer: @unchecked Sendable {
         }
     }
 
-    private func encode(_ frame: ShaderFrame, into target: MTLTexture, region: CGRect?, commands: MTLCommandBuffer) throws {
+    /// What a pass draws into and reads, for its draws to be made ready.
+    private struct Setting {
+        var geometry: Geometry
+        var formats: [MTLPixelFormat]
+        /// For each thing drawn into: its alpha is never written (an RGB target).
+        var opaque: [Bool]
+        var depth: Bool
+        var samples: Int
+        /// What each of the frame's targets holds now.
+        var seen: [Held?]
+        /// The targets being drawn into, which a draw cannot read meanwhile.
+        var written: Set<Int> = []
+    }
+
+    private func encode(_ frame: ShaderFrame, into target: MTLTexture, region: CGRect?, commands: MTLCommandBuffer,
+                        earlier: ((Int) throws -> ShaderFrame)?) throws {
+        if let fault = frame.fault() { throw ShaderError(fault) }
         let geometry = try Geometry(frame, region: region, output: target.width, target.height)
         let samples = sampleCount(frame)
+        let passes = frame.everyPass
+        let depth = frame.canvasTestsDepth
+
+        // What the passes into targets left, drawn once for every tile of the frame.
+        var seen: [Int: [Held?]] = [:]
+        var keep: [AnyObject] = []
+        if !frame.targets.isEmpty {
+            let across = max(geometry.output.width / geometry.region.width, geometry.output.height / geometry.region.height)
+            let drawn = try targets(of: frame, scale: targetScale(across, for: frame), earlier: earlier)
+            seen = drawn.seen
+            keep.append(drawn)
+            // Another queue's commands may run before ours have drawn them.
+            if commands.commandQueue !== queue { drawn.commands?.waitUntilCompleted() }
+        }
+
         // Everything made first, so a program that does not build throws before anything is encoded.
-        var prepared: [Prepared] = []
-        for draw in frame.draws {
-            if let ready = try prepare(draw, geometry: geometry, pixelFormat: target.pixelFormat, samples: samples) {
-                prepared.append(ready)
-            }
+        var canvas: [(pass: ShaderPass, draws: [Prepared])] = []
+        for (index, pass) in passes.enumerated() where pass.ontoCanvas {
+            let setting = Setting(geometry: geometry, formats: [target.pixelFormat], opaque: [false], depth: depth,
+                                  samples: samples, seen: seen[index] ?? [])
+            canvas.append((pass, try pass.draws.compactMap { try prepare($0, in: setting) }))
         }
         let finishing: [MTLRenderPipelineState] = try {
-            if !frame.alpha { return [try finisher(.opaque, target.pixelFormat, samples)] }
-            if !frame.premultipliedAlpha { return [try finisher(.premultiply, target.pixelFormat, samples)] }
+            if !frame.alpha { return [try finisher(.opaque, target.pixelFormat, samples, depth)] }
+            if !frame.premultipliedAlpha { return [try finisher(.premultiply, target.pixelFormat, samples, depth)] }
             return []
         }()
+        if canvas.isEmpty { canvas = [(ShaderPass(clearColor: [0, 0, 0, 0], draws: []), [])] }
+        let single = canvas.count == 1
 
-        let pass = MTLRenderPassDescriptor()
-        let color = pass.colorAttachments[0]!
-        var keep: [AnyObject] = []
+        var multisampled: MTLTexture?
         if samples > 1 {
             let descriptor = MTLTextureDescriptor()
             descriptor.textureType = .type2DMultisample
@@ -145,42 +209,95 @@ public final class ShaderRenderer: @unchecked Sendable {
             descriptor.height = target.height
             descriptor.sampleCount = samples
             descriptor.usage = [.renderTarget]
-            descriptor.storageMode = memoryless ? .memoryless : .private
-            guard let multisampled = device.makeTexture(descriptor: descriptor) else {
+            // Kept from one pass to the next where the canvas is drawn onto in several.
+            descriptor.storageMode = memoryless && single ? .memoryless : .private
+            guard let texture = device.makeTexture(descriptor: descriptor) else {
                 throw ShaderError("Metal: out of memory for the frame's samples.")
             }
-            color.texture = multisampled
-            color.resolveTexture = target
-            color.storeAction = .multisampleResolve
-            keep.append(multisampled)
-        } else {
-            color.texture = target
-            color.storeAction = .store
+            multisampled = texture
+            keep.append(texture)
         }
-        color.loadAction = .clear
-        let clear = (frame.clear ?? []) + [0, 0, 0, 0]
-        color.clearColor = MTLClearColor(red: Double(clear[0]), green: Double(clear[1]), blue: Double(clear[2]),
-                                         alpha: Double(clear[3]))
-        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
-            throw ShaderError("Metal: no render encoder.")
-        }
-        encoder.setViewport(MTLViewport(originX: 0, originY: 0, width: geometry.output.width,
-                                        height: geometry.output.height, znear: 0, zfar: 1))
-        encoder.setFrontFacing(.counterClockwise)
-        encoder.setCullMode(.none)
-        for draw in prepared {
-            draw.encode(encoder)
-            keep.append(contentsOf: draw.resources)
-        }
-        if !finishing.isEmpty {
-            encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: target.width, height: target.height))
-            for pipeline in finishing {
-                encoder.setRenderPipelineState(pipeline)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        var depthBuffer: MTLTexture?
+        if depth {
+            let descriptor = MTLTextureDescriptor()
+            descriptor.textureType = samples > 1 ? .type2DMultisample : .type2D
+            descriptor.pixelFormat = Program.depthFormat
+            descriptor.width = target.width
+            descriptor.height = target.height
+            descriptor.sampleCount = samples
+            descriptor.usage = [.renderTarget]
+            descriptor.storageMode = memoryless && single ? .memoryless : .private
+            guard let texture = device.makeTexture(descriptor: descriptor) else {
+                throw ShaderError("Metal: out of memory for the frame's depth.")
             }
+            depthBuffer = texture
+            keep.append(texture)
         }
-        encoder.endEncoding()
-        // Keeps what the encoder points at until the GPU is done, whatever the caller's buffer retains.
+
+        for (index, (pass, draws)) in canvas.enumerated() {
+            let first = index == 0, last = index == canvas.count - 1
+            let descriptor = MTLRenderPassDescriptor()
+            let color = descriptor.colorAttachments[0]!
+            if let multisampled {
+                color.texture = multisampled
+                if last {
+                    color.resolveTexture = target
+                    color.storeAction = .multisampleResolve
+                } else {
+                    color.storeAction = .store
+                }
+            } else {
+                color.texture = target
+                color.storeAction = .store
+            }
+            // The canvas starts every frame with nothing on it.
+            if let clear = pass.clearColor ?? (first ? [0, 0, 0, 0] : nil) {
+                let c = clear + [0, 0, 0, 0]
+                color.loadAction = .clear
+                color.clearColor = MTLClearColor(red: Double(c[0]), green: Double(c[1]), blue: Double(c[2]), alpha: Double(c[3]))
+            } else {
+                color.loadAction = .load
+            }
+            if let depthBuffer {
+                descriptor.depthAttachment.texture = depthBuffer
+                descriptor.stencilAttachment.texture = depthBuffer
+                if let clear = pass.clearDepth ?? (first ? 1 : nil) {
+                    descriptor.depthAttachment.loadAction = .clear
+                    descriptor.depthAttachment.clearDepth = Double(clear)
+                } else {
+                    descriptor.depthAttachment.loadAction = .load
+                }
+                if let clear = pass.clearStencil ?? (first ? 0 : nil) {
+                    descriptor.stencilAttachment.loadAction = .clear
+                    descriptor.stencilAttachment.clearStencil = UInt32(truncatingIfNeeded: clear)
+                } else {
+                    descriptor.stencilAttachment.loadAction = .load
+                }
+                descriptor.depthAttachment.storeAction = last ? .dontCare : .store
+                descriptor.stencilAttachment.storeAction = last ? .dontCare : .store
+            }
+            guard let encoder = commands.makeRenderCommandEncoder(descriptor: descriptor) else {
+                throw ShaderError("Metal: no render encoder.")
+            }
+            for draw in draws {
+                draw.encode(encoder)
+                keep.append(contentsOf: draw.resources)
+            }
+            if last, !finishing.isEmpty {
+                encoder.setViewport(MTLViewport(originX: 0, originY: 0, width: geometry.output.width,
+                                                height: geometry.output.height, znear: 0, zfar: 1))
+                encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: target.width, height: target.height))
+                encoder.setCullMode(.none)
+                encoder.setDepthBias(0, slopeScale: 0, clamp: 0)
+                if depth { encoder.setDepthStencilState(try depthState(nil, nil)) }
+                for pipeline in finishing {
+                    encoder.setRenderPipelineState(pipeline)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+                }
+            }
+            encoder.endEncoding()
+        }
+        // Keeps what the encoders point at until the GPU is done, whatever the caller's buffer retains.
         let kept = Kept(keep)
         commands.addCompletedHandler { _ in withExtendedLifetime(kept) {} }
     }
@@ -189,6 +306,170 @@ public final class ShaderRenderer: @unchecked Sendable {
     private final class Kept: @unchecked Sendable {
         let objects: [AnyObject]
         init(_ objects: [AnyObject]) { self.objects = objects }
+    }
+
+    // MARK: Passes into targets
+
+    /// What a frame's passes into targets leave, drawn once for a frame that says which it is.
+    private func targets(of frame: ShaderFrame, scale: Int, earlier: ((Int) throws -> ShaderFrame)?) throws -> Drawn {
+        let make: () throws -> Drawn = { [self] in
+            var held = [Held?](repeating: nil, count: frame.targets.count)
+            let step = max(0, frame.identity?.moment ?? 0)
+            if frame.keeps {
+                if let identity = frame.identity {
+                    held = try timelines.state(recording: identity.recording, step: step, first: { try first(frame) }) { k, state in
+                        let before = try earlier?(k) ?? frame
+                        guard before.targets.count == frame.targets.count, before.fault() == nil else {
+                            throw ShaderError("Step \(k) of the recording draws into other targets than step \(step).")
+                        }
+                        let left = try run(before, from: state, scale: 1, shows: false)
+                        // The graphics card is not given more steps than it has drawn a few of.
+                        if k % 16 == 15 { left.commands?.waitUntilCompleted() }
+                        return Self.kept(left.left, of: frame)
+                    }
+                } else {
+                    held = try first(frame)
+                }
+            }
+            let result = try run(frame, from: held, scale: scale, shows: true)
+            if frame.keeps, let identity = frame.identity {
+                timelines.keep(Self.kept(result.left, of: frame), recording: identity.recording, step: step + 1)
+            }
+            return result
+        }
+        guard let identity = frame.identity else { return try make() }
+        return try drawn.value(DrawnKey(identity: identity, scale: scale), make: make)
+    }
+
+    /// Of what a frame left in its targets, what the frame after finds there.
+    private static func kept(_ left: [Held?], of frame: ShaderFrame) -> [Held?] {
+        left.enumerated().map { frame.targets[$0.offset].keeps ? $0.element : nil }
+    }
+
+    /// What the targets that keep hold before the first step.
+    private func first(_ frame: ShaderFrame) throws -> [Held?] {
+        try frame.targets.map { target in
+            guard target.keeps, let contents = target.contents else { return nil }
+            let held = try pool.texture(width: target.width, height: target.height, format: Textures.format(target.format).0,
+                                        mipmapped: target.mipmapped)
+            let bytes = contents.bytes(as: target.format)
+            bytes.withUnsafeBytes { raw in
+                held.texture.replace(region: MTLRegionMake2D(0, 0, target.width, target.height), mipmapLevel: 0,
+                                     withBytes: raw.baseAddress!, bytesPerRow: target.width * target.format.bytesPerTexel)
+            }
+            return held
+        }
+    }
+
+    /// Draws a frame's passes into targets, in order, from what the targets hold; what they held
+    /// is left as it was, each pass drawing into a texture of its own unless it made it itself.
+    private func run(_ frame: ShaderFrame, from held: [Held?], scale: Int, shows: Bool) throws -> Drawn {
+        var current = held
+        // Made here and seen by no pass onto the canvas yet: these may be drawn into again.
+        var own = Set<ObjectIdentifier>()
+        var seen: [Int: [Held?]] = [:]
+        var depths: [Int: Held] = [:]
+        var keep: [AnyObject] = held.compactMap { $0 }
+        var commands: MTLCommandBuffer?
+
+        for (index, pass) in frame.everyPass.enumerated() {
+            if pass.ontoCanvas {
+                if shows {
+                    seen[index] = current
+                    own.removeAll()
+                }
+                continue
+            }
+            let first = frame.targets[pass.colors[0]]
+            let factor = first.scales ? scale : 1
+            let width = first.width * factor, height = first.height * factor
+            let setting = Setting(geometry: Geometry(target: first.width, first.height, scale: factor),
+                                  formats: pass.colors.map { Textures.format(frame.targets[$0].format).0 },
+                                  opaque: pass.colors.map { frame.targets[$0].opaque }, depth: pass.depth != nil, samples: 1,
+                                  seen: current, written: Set(pass.colors))
+            let draws = try pass.draws.compactMap { try prepare($0, in: setting) }
+            if commands == nil { commands = queue.makeCommandBuffer() }
+            guard let commands else { throw ShaderError("Metal: no command buffer.") }
+
+            let descriptor = MTLRenderPassDescriptor()
+            for (slot, number) in pass.colors.enumerated() {
+                let target = frame.targets[number]
+                let attachment = descriptor.colorAttachments[slot]!
+                let old = current[number].flatMap { $0.texture.width == width && $0.texture.height == height ? $0 : nil }
+                let mine = old.map { own.contains(ObjectIdentifier($0)) } ?? false
+                let texture: Held
+                if let old, mine {
+                    texture = old
+                } else {
+                    texture = try pool.texture(width: width, height: height, format: setting.formats[slot],
+                                               mipmapped: target.mipmapped)
+                }
+                if let clear = pass.clearColor {
+                    let c = clear + [0, 0, 0, 0]
+                    attachment.loadAction = .clear
+                    attachment.clearColor = MTLClearColor(red: Double(c[0]), green: Double(c[1]), blue: Double(c[2]),
+                                                          alpha: target.opaque ? 1 : Double(c[3]))
+                } else if let old {
+                    if !mine {
+                        // What it held stays for those who read it; this pass draws over a copy.
+                        guard let blit = commands.makeBlitCommandEncoder() else { throw ShaderError("Metal: no blit encoder.") }
+                        blit.copy(from: old.texture, to: texture.texture)
+                        blit.endEncoding()
+                    }
+                    attachment.loadAction = .load
+                } else {
+                    attachment.loadAction = .clear
+                    attachment.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: target.opaque ? 1 : 0)
+                }
+                attachment.texture = texture.texture
+                attachment.storeAction = .store
+                current[number] = texture
+                own.insert(ObjectIdentifier(texture))
+                keep.append(texture)
+            }
+            if let number = pass.depth {
+                let old = depths[number].flatMap { $0.texture.width == width && $0.texture.height == height ? $0 : nil }
+                let buffer = try old ?? pool.texture(width: width, height: height, format: Program.depthFormat, mipmapped: false)
+                depths[number] = buffer
+                keep.append(buffer)
+                descriptor.depthAttachment.texture = buffer.texture
+                descriptor.stencilAttachment.texture = buffer.texture
+                if let clear = pass.clearDepth ?? (old == nil ? 1 : nil) {
+                    descriptor.depthAttachment.loadAction = .clear
+                    descriptor.depthAttachment.clearDepth = Double(clear)
+                } else {
+                    descriptor.depthAttachment.loadAction = .load
+                }
+                if let clear = pass.clearStencil ?? (old == nil ? 0 : nil) {
+                    descriptor.stencilAttachment.loadAction = .clear
+                    descriptor.stencilAttachment.clearStencil = UInt32(truncatingIfNeeded: clear)
+                } else {
+                    descriptor.stencilAttachment.loadAction = .load
+                }
+                descriptor.depthAttachment.storeAction = .store
+                descriptor.stencilAttachment.storeAction = .store
+            }
+            guard let encoder = commands.makeRenderCommandEncoder(descriptor: descriptor) else {
+                throw ShaderError("Metal: no render encoder.")
+            }
+            for draw in draws {
+                draw.encode(encoder)
+                keep.append(contentsOf: draw.resources)
+            }
+            encoder.endEncoding()
+            let copies = pass.mipmaps.compactMap { current[$0] }.filter { $0.texture.mipmapLevelCount > 1 }
+            if !copies.isEmpty {
+                guard let blit = commands.makeBlitCommandEncoder() else { throw ShaderError("Metal: no blit encoder.") }
+                for texture in copies { blit.generateMipmaps(for: texture.texture) }
+                blit.endEncoding()
+            }
+        }
+        if let commands {
+            let kept = Kept(keep)
+            commands.addCompletedHandler { _ in withExtendedLifetime(kept) {} }
+            commands.commit()
+        }
+        return Drawn(seen: seen, left: current, commands: commands)
     }
 
     // MARK: One draw
@@ -210,22 +491,40 @@ public final class ShaderRenderer: @unchecked Sendable {
         var vertexBuffers: [(Int, VertexData)]
         var vertexTextures: [(Int, MTLTexture, MTLSamplerState)]
         var fragmentTextures: [(Int, MTLTexture, MTLSamplerState)]
+        var viewport: MTLViewport
         var scissor: MTLScissorRect
         var primitive: MTLPrimitiveType
         var call: Call
+        var instances: Int
         var blendColor: [Float]?
+        var winding: MTLWinding
+        var cull: MTLCullMode
+        var depthState: MTLDepthStencilState?
+        var references: (front: UInt32, back: UInt32)
+        var offset: ShaderDraw.Offset?
+        /// What the textures it reads are held by, where a pass drew them.
+        var held: [AnyObject]
 
         var resources: [AnyObject] {
             var objects: [AnyObject] = [pipeline]
             for (_, data) in vertexBuffers { if case .buffer(let buffer) = data { objects.append(buffer) } }
             if case .indexed(let buffer, _, _) = call { objects.append(buffer) }
             for (_, texture, sampler) in vertexTextures + fragmentTextures { objects += [texture, sampler] }
-            return objects
+            if let depthState { objects.append(depthState) }
+            return objects + held
         }
 
         func encode(_ encoder: MTLRenderCommandEncoder) {
             encoder.setRenderPipelineState(pipeline)
+            encoder.setViewport(viewport)
             encoder.setScissorRect(scissor)
+            encoder.setFrontFacing(winding)
+            encoder.setCullMode(cull)
+            encoder.setDepthBias(offset?.units ?? 0, slopeScale: offset?.factor ?? 0, clamp: 0)
+            if let depthState {
+                encoder.setDepthStencilState(depthState)
+                encoder.setStencilReferenceValues(front: references.front, back: references.back)
+            }
             if let blendColor {
                 let c = blendColor + [0, 0, 0, 0]
                 encoder.setBlendColor(red: c[0], green: c[1], blue: c[2], alpha: c[3])
@@ -254,10 +553,10 @@ public final class ShaderRenderer: @unchecked Sendable {
             }
             switch call {
             case .arrays(let start, let count):
-                encoder.drawPrimitives(type: primitive, vertexStart: start, vertexCount: count)
+                encoder.drawPrimitives(type: primitive, vertexStart: start, vertexCount: count, instanceCount: instances)
             case .indexed(let buffer, let offset, let count):
                 encoder.drawIndexedPrimitives(type: primitive, indexCount: count, indexType: .uint32, indexBuffer: buffer,
-                                              indexBufferOffset: offset)
+                                              indexBufferOffset: offset, instanceCount: instances)
             }
         }
     }
@@ -266,19 +565,29 @@ public final class ShaderRenderer: @unchecked Sendable {
         VertexLayout(draw, program.layout, firstBuffer: Program.firstVertexBuffer)
     }
 
-    private func pipelineKey(_ layout: VertexLayout, pixelFormat: MTLPixelFormat, samples: Int,
-                             blend: ShaderDraw.Blend?) -> Program.PipelineKey {
-        Program.PipelineKey(attributes: layout.attributes, pixelFormat: pixelFormat.rawValue, sampleCount: samples,
-                            blend: blend.map(Program.BlendKey.init))
+    private func pipelineKey(_ layout: VertexLayout, _ program: Program, _ draw: ShaderDraw, formats: [MTLPixelFormat],
+                             opaque: [Bool], depth: Bool, samples: Int) -> Program.PipelineKey {
+        var mask: MTLColorWriteMask = []
+        if draw.channels.contains(.red) { mask.insert(.red) }
+        if draw.channels.contains(.green) { mask.insert(.green) }
+        if draw.channels.contains(.blue) { mask.insert(.blue) }
+        if draw.channels.contains(.alpha) { mask.insert(.alpha) }
+        // An output the fragment stage does not write leaves what is there.
+        let writes = formats.indices.map { slot -> UInt in
+            guard program.layout.outputs.contains(slot) else { return 0 }
+            return (opaque[slot] ? mask.subtracting(.alpha) : mask).rawValue
+        }
+        return Program.PipelineKey(attributes: layout.attributes, pixelFormats: formats.map(\.rawValue), writes: writes,
+                                   depth: depth, sampleCount: samples, blend: draw.blend.map(Program.BlendKey.init))
     }
 
-    private func prepare(_ draw: ShaderDraw, geometry: Geometry, pixelFormat: MTLPixelFormat,
-                         samples: Int) throws -> Prepared? {
+    private func prepare(_ draw: ShaderDraw, in setting: Setting) throws -> Prepared? {
         let program = try program(draw.vertex, draw.fragment)
         let layout = vertexLayout(draw, program)
-        let pipeline = try program.pipeline(pipelineKey(layout, pixelFormat: pixelFormat, samples: samples, blend: draw.blend),
-                                            device: device)
-        guard let plan = DrawPlan(draw, program: program.layout, layout: layout, geometry: geometry) else { return nil }
+        let key = pipelineKey(layout, program, draw, formats: setting.formats, opaque: setting.opaque, depth: setting.depth,
+                              samples: setting.samples)
+        let pipeline = try program.pipeline(key, device: device)
+        guard let plan = DrawPlan(draw, program: program.layout, layout: layout, geometry: setting.geometry) else { return nil }
 
         let primitive: MTLPrimitiveType = switch plan.primitive {
         case .triangle: .triangle
@@ -287,6 +596,8 @@ public final class ShaderRenderer: @unchecked Sendable {
         case .lineStrip: .lineStrip
         case .point: .point
         }
+        // With both faces left out, no triangle is drawn; lines and points still are.
+        if draw.cull == .both, primitive == .triangle || primitive == .triangleStrip { return nil }
         let call: Call
         switch plan.call {
         case .arrays(let start, let count):
@@ -311,22 +622,57 @@ public final class ShaderRenderer: @unchecked Sendable {
                 vertexBuffers.append((index, .buffer(buffer)))
             }
         }
+        var held: [AnyObject] = []
+        let vertexTextures = try bind(plan.vertexTextures, plan, setting, &held)
+        let fragmentTextures = try bind(plan.fragmentTextures, plan, setting, &held)
+        // A target is drawn the other way up, so its triangles turn the other way round.
+        let clockwise = draw.clockwiseFront != setting.geometry.flipped
+        let cull: MTLCullMode = switch draw.cull {
+        case .front: .front
+        case .back: .back
+        default: .none
+        }
+        let near = Double(max(0, min(1, draw.depth?.near ?? 0))), far = Double(max(0, min(1, draw.depth?.far ?? 1)))
         return Prepared(pipeline: pipeline,
                         vertexUniforms: plan.vertexUniforms,
                         fragmentUniforms: plan.fragmentUniforms,
                         vertexBuffers: vertexBuffers,
-                        vertexTextures: try bind(plan.vertexTextures, plan),
-                        fragmentTextures: try bind(plan.fragmentTextures, plan),
-                        scissor: scissor, primitive: primitive, call: call,
-                        blendColor: plan.blendColor)
+                        vertexTextures: vertexTextures,
+                        fragmentTextures: fragmentTextures,
+                        viewport: MTLViewport(originX: 0, originY: 0, width: setting.geometry.output.width,
+                                              height: setting.geometry.output.height, znear: near, zfar: far),
+                        scissor: scissor, primitive: primitive, call: call, instances: plan.instances,
+                        blendColor: plan.blendColor,
+                        winding: clockwise ? .clockwise : .counterClockwise, cull: cull,
+                        depthState: setting.depth ? try depthState(draw.depth, draw.stencil) : nil,
+                        references: (UInt32(truncatingIfNeeded: draw.stencil?.front.reference ?? 0),
+                                     UInt32(truncatingIfNeeded: draw.stencil?.back.reference ?? 0)),
+                        offset: draw.offset, held: held)
     }
 
-    private func bind(_ list: [DrawPlan.Texture], _ plan: DrawPlan) throws -> [(Int, MTLTexture, MTLSamplerState)] {
+    private func bind(_ list: [DrawPlan.Texture], _ plan: DrawPlan, _ setting: Setting,
+                      _ held: inout [AnyObject]) throws -> [(Int, MTLTexture, MTLSamplerState)] {
         try list.map { texture in
-            let metal = try texture.picture.map {
-                try textures.texture($0, flip: plan.flipsTextures, premultiply: plan.premultipliesTextures,
-                                     mipmaps: texture.sampling.mipmap != nil, cube: texture.cube)
-            } ?? textures.blank(cube: texture.cube)
+            let metal: MTLTexture
+            switch texture.source {
+            case .none:
+                metal = try textures.blank(cube: texture.cube)
+            case .picture(let picture):
+                metal = try textures.texture(picture, flip: plan.flipsTextures, premultiply: plan.premultipliesTextures,
+                                             mipmaps: texture.sampling.mipmap != nil, cube: texture.cube, decodes: texture.decodes)
+            case .data(let data):
+                metal = try textures.texture(data, mipmaps: texture.sampling.mipmap != nil, decodes: texture.decodes)
+            case .target(let number):
+                // A target cannot be read while it is drawn into; one nothing drew into reads nought.
+                if setting.written.contains(number) {
+                    metal = try textures.blank(cube: false)
+                } else if setting.seen.indices.contains(number), let target = setting.seen[number] {
+                    metal = target.texture
+                    held.append(target)
+                } else {
+                    metal = try textures.empty()
+                }
+            }
             return (texture.slot, metal, try sampler(texture.sampling))
         }
     }
@@ -361,6 +707,62 @@ public final class ShaderRenderer: @unchecked Sendable {
         }
     }
 
+    /// The depth and stencil tests of a draw in a pass that has the buffer; with neither, every
+    /// fragment passes and nothing is written.
+    private func depthState(_ depth: ShaderDraw.Depth?, _ stencil: ShaderDraw.Stencil?) throws -> MTLDepthStencilState {
+        var key = DepthKey(depth: depth, stencil: stencil)
+        // The range is the viewport's, not the test's.
+        key.depth?.near = 0
+        key.depth?.far = 1
+        return try depthStates.value(key) {
+            func compare(_ compare: ShaderDraw.Compare) -> MTLCompareFunction {
+                switch compare {
+                case .never: .never
+                case .less: .less
+                case .equal: .equal
+                case .lessEqual: .lessEqual
+                case .greater: .greater
+                case .notEqual: .notEqual
+                case .greaterEqual: .greaterEqual
+                case .always: .always
+                }
+            }
+            func operation(_ operation: ShaderDraw.Stencil.Operation) -> MTLStencilOperation {
+                switch operation {
+                case .keep: .keep
+                case .zero: .zero
+                case .replace: .replace
+                case .increment: .incrementClamp
+                case .incrementWrap: .incrementWrap
+                case .decrement: .decrementClamp
+                case .decrementWrap: .decrementWrap
+                case .invert: .invert
+                }
+            }
+            func face(_ face: ShaderDraw.Stencil.Face) -> MTLStencilDescriptor {
+                let descriptor = MTLStencilDescriptor()
+                descriptor.stencilCompareFunction = compare(face.compare)
+                descriptor.stencilFailureOperation = operation(face.fail)
+                descriptor.depthFailureOperation = operation(face.depthFail)
+                descriptor.depthStencilPassOperation = operation(face.pass)
+                descriptor.readMask = face.readMask
+                descriptor.writeMask = face.writeMask
+                return descriptor
+            }
+            let descriptor = MTLDepthStencilDescriptor()
+            descriptor.depthCompareFunction = depth.map { compare($0.compare) } ?? .always
+            descriptor.isDepthWriteEnabled = depth?.writes ?? false
+            if let stencil {
+                descriptor.frontFaceStencil = face(stencil.front)
+                descriptor.backFaceStencil = face(stencil.back)
+            }
+            guard let state = device.makeDepthStencilState(descriptor: descriptor) else {
+                throw ShaderError("Metal: no depth state.")
+            }
+            return state
+        }
+    }
+
     // MARK: Finishing
 
     private enum Finishing: Hashable { case opaque, premultiply }
@@ -369,6 +771,7 @@ public final class ShaderRenderer: @unchecked Sendable {
         var kind: Finishing
         var pixelFormat: UInt
         var samples: Int
+        var depth: Bool
     }
 
     private static let finishingSource = """
@@ -386,13 +789,18 @@ public final class ShaderRenderer: @unchecked Sendable {
 
     /// A pass over the whole output after the draws: alpha made 1 (`alpha: false`), or the
     /// colours multiplied by it (`premultipliedAlpha: false`), by blending alone.
-    private func finisher(_ kind: Finishing, _ pixelFormat: MTLPixelFormat, _ samples: Int) throws -> MTLRenderPipelineState {
-        try finishers.value(FinisherKey(kind: kind, pixelFormat: pixelFormat.rawValue, samples: samples)) {
+    private func finisher(_ kind: Finishing, _ pixelFormat: MTLPixelFormat, _ samples: Int,
+                          _ depth: Bool) throws -> MTLRenderPipelineState {
+        try finishers.value(FinisherKey(kind: kind, pixelFormat: pixelFormat.rawValue, samples: samples, depth: depth)) {
             let library = try device.makeLibrary(source: Self.finishingSource, options: nil)
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = library.makeFunction(name: "bezzle_cover")
             descriptor.fragmentFunction = library.makeFunction(name: "bezzle_opaque")
             descriptor.rasterSampleCount = samples
+            if depth {
+                descriptor.depthAttachmentPixelFormat = Program.depthFormat
+                descriptor.stencilAttachmentPixelFormat = Program.depthFormat
+            }
             let color = descriptor.colorAttachments[0]!
             color.pixelFormat = pixelFormat
             switch kind {

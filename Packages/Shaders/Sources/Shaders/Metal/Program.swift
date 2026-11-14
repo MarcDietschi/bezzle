@@ -67,10 +67,17 @@ final class Program: @unchecked Sendable {
 
     struct PipelineKey: Hashable {
         var attributes: [AttributeLayout]
-        var pixelFormat: UInt
+        /// What is drawn into, attachment by attachment, and which channels of each are written.
+        var pixelFormats: [UInt]
+        var writes: [UInt]
+        /// Whether a depth and stencil buffer is attached (`Program.depthFormat`).
+        var depth = false
         var sampleCount: Int
         var blend: BlendKey?
     }
+
+    /// The one kind of depth and stencil buffer passes test against.
+    static let depthFormat = MTLPixelFormat.depth32Float_stencil8
 
     struct BlendKey: Hashable {
         var source: UInt, destination: UInt, sourceAlpha: UInt, destinationAlpha: UInt
@@ -148,20 +155,35 @@ final class Program: @unchecked Sendable {
             vertexDescriptor.attributes[attribute.location].offset = attribute.offset
             let layout = vertexDescriptor.layouts[attribute.buffer]!
             layout.stride = attribute.stride
-            layout.stepFunction = attribute.constant ? .constant : .perVertex
-            layout.stepRate = attribute.constant ? 0 : 1
+            if attribute.constant {
+                layout.stepFunction = .constant
+                layout.stepRate = 0
+            } else if attribute.divisor > 0 {
+                layout.stepFunction = .perInstance
+                layout.stepRate = attribute.divisor
+            } else {
+                layout.stepFunction = .perVertex
+                layout.stepRate = 1
+            }
         }
         descriptor.vertexDescriptor = vertexDescriptor
-        let color = descriptor.colorAttachments[0]!
-        color.pixelFormat = MTLPixelFormat(rawValue: key.pixelFormat)!
-        if let blend = key.blend {
-            color.isBlendingEnabled = true
-            color.sourceRGBBlendFactor = MTLBlendFactor(rawValue: blend.source)!
-            color.destinationRGBBlendFactor = MTLBlendFactor(rawValue: blend.destination)!
-            color.sourceAlphaBlendFactor = MTLBlendFactor(rawValue: blend.sourceAlpha)!
-            color.destinationAlphaBlendFactor = MTLBlendFactor(rawValue: blend.destinationAlpha)!
-            color.rgbBlendOperation = MTLBlendOperation(rawValue: blend.equation)!
-            color.alphaBlendOperation = MTLBlendOperation(rawValue: blend.equationAlpha)!
+        for (index, format) in key.pixelFormats.enumerated() {
+            let color = descriptor.colorAttachments[index]!
+            color.pixelFormat = MTLPixelFormat(rawValue: format)!
+            color.writeMask = MTLColorWriteMask(rawValue: key.writes[index])
+            if let blend = key.blend {
+                color.isBlendingEnabled = true
+                color.sourceRGBBlendFactor = MTLBlendFactor(rawValue: blend.source)!
+                color.destinationRGBBlendFactor = MTLBlendFactor(rawValue: blend.destination)!
+                color.sourceAlphaBlendFactor = MTLBlendFactor(rawValue: blend.sourceAlpha)!
+                color.destinationAlphaBlendFactor = MTLBlendFactor(rawValue: blend.destinationAlpha)!
+                color.rgbBlendOperation = MTLBlendOperation(rawValue: blend.equation)!
+                color.alphaBlendOperation = MTLBlendOperation(rawValue: blend.equationAlpha)!
+            }
+        }
+        if key.depth {
+            descriptor.depthAttachmentPixelFormat = Self.depthFormat
+            descriptor.stencilAttachmentPixelFormat = Self.depthFormat
         }
         do {
             let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)

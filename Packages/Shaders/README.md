@@ -16,7 +16,7 @@ let tile = try renderer.image(of: frame, pixels: CGSize(width: 512, height: 512)
 try renderer.draw(frame, into: texture, region: nil, commandBuffer: commands)   // the caller commits
 ```
 
-A frame is what a page drew between two clears:
+A frame is what a page drew for one picture on its canvas. The plain kind is a clear and draws:
 
 ```swift
 let draw = ShaderDraw(vertex: vertexSource, fragment: fragmentSource,
@@ -28,11 +28,26 @@ let draw = ShaderDraw(vertex: vertexSource, fragment: fragmentSource,
 let frame = ShaderFrame(size: CGSize(width: 1440, height: 900), clear: [0, 0, 0, 0], draws: [draw])
 ```
 
+A page that draws into textures first (post-processing, a blur chain, a simulation) gives its
+frame `targets` and `passes` instead (Passes into textures, below):
+
+```swift
+var blur = ShaderDraw.fullSurface(fragment: blurSource)
+blur.targets["u_scene"] = 0                         // the sampler reads target 0
+var frame = ShaderFrame(size: CGSize(width: 1440, height: 900), draws: [])
+frame.targets = [ShaderTarget(width: 1440, height: 900, scales: true)]
+frame.passes = [ShaderPass(colors: [0], depth: 0, clearColor: [0, 0, 0, 0], clearDepth: 1, draws: scene),
+                ShaderPass(clearColor: [0, 0, 0, 0], draws: [blur])]      // no colors: onto the canvas
+```
+
 On Windows the API is the same but for its pictures: `ShaderPicture`, which on the Mac is `CGImage`,
 is there a picture's premultiplied RGBA pixels, rows top first (as Core Graphics keeps a picture on
 the Mac), and `image(of:)` returns one; there is no `draw(into:)`. `ShaderRenderer.shared` draws on
 the graphics card, or with WARP, Windows' own Direct3D on the processor, where there is none
-(`adapter` says which); `ShaderRenderer(software: true)` takes WARP anyway.
+(`adapter` says which); `ShaderRenderer(software: true)` takes WARP anyway. Direct3D draws the
+plain kind of frame alone: one with passes, targets, or any of the state from `depth` down in the
+table below makes `check` and `image(of:)` throw there, naming what it is, so the app shows the
+canvas's picture (What WebGL does that this does not).
 
 For a page that draws a fragment shader alone, `ShaderDraw.fullSurface(fragment:uniforms:textures:)`
 draws it over everything with `ShaderDraw.fullSurfaceVertex` (`attribute vec2 a_position`) and its
@@ -49,11 +64,60 @@ two triangles, `ShaderDraw.fullSurfacePositions`.
 | `textures`, `sampling` | Sampler uniform name to its picture and to how WebGL's `texParameteri` left its texture (wrap, filters, mipmaps). Missing sampling is clamped and linear without mipmaps, which is what pages nearly always set, not WebGL's default. A samplerCube takes its six faces stacked top to bottom (+X, -X, +Y, -Y, +Z, -Z). A sampler without a picture reads opaque black |
 | `flipsTextures`, `premultipliesTextures` | UNPACK_FLIP_Y_WEBGL and UNPACK_PREMULTIPLY_ALPHA_WEBGL |
 | `blend` | blendFuncSeparate, blendEquationSeparate and blendColor; nil for no blending |
-| `viewport` | In drawing-buffer pixels from the bottom left, as WebGL's; nil for all of it |
+| `viewport` | In drawing-buffer pixels from the bottom left, as WebGL's; nil for all of it. In a pass into targets, in the target's pixels |
+| `targets` | Sampler uniform name to the number of the frame's target it reads, as the pass before left it |
+| `data` | Sampler uniform name to a `ShaderData`: texels a page gave from a typed array, as they are and never premultiplied or flipped, the first row at t = 0. RGBA, RG and R in bytes, half floats and floats, and LUMINANCE, ALPHA and LUMINANCE_ALPHA, which read as WebGL reads them |
+| `decodes` | The samplers whose picture or bytes are kept as sRGB and read as light (WebGL 2's SRGB8_ALPHA8) |
+| `depth` | The depth test: depthFunc, depthMask and depthRange; nil for none. The canvas gets a depth and stencil buffer when a draw onto it tests either; a pass into targets tests against the buffer its `depth` names |
+| `stencil` | stencilFuncSeparate, stencilOpSeparate and stencilMaskSeparate for front and back faces; nil for none |
+| `cull`, `clockwiseFront` | cullFace (front, back or both) and frontFace(CW) |
+| `channels` | colorMask |
+| `scissor` | The scissor box, in the pixels of what is drawn into, from the bottom left |
+| `offset` | polygonOffset's factor and units |
+| `instances` | How often drawArraysInstanced or drawElementsInstanced draws; an attribute's `divisor` says for how many instances each of its values is (0: per vertex). In WebGL 2, `gl_InstanceID` counts them |
 
 `ShaderFrame` also carries the context's attributes: `alpha` (false makes the result opaque),
 `premultipliedAlpha` (false has the colours multiplied by their alpha before they are handed on)
 and `antialias` (four samples on the edges of triangles, lines and points), each as WebGL's default.
+
+## Passes into textures
+
+A `ShaderTarget` is a texture the page drew into through a framebuffer: its size, its format
+(RGBA, RG or R in bytes, half floats or floats), `opaque` for an RGB texture, `mipmapped`. A
+`ShaderPass` is what the page drew into one framebuffer in a row: the targets it draws into
+(`colors`, up to four, in drawBuffers' order; none for the canvas), the depth and stencil buffer
+it tests against (`depth`, a number the passes of one framebuffer share), what it is cleared to
+first (`clearColor`, `clearDepth`, `clearStencil`, each nil to keep what is there) and the targets
+whose smaller copies are made after it (`mipmaps`, generateMipmap). A frame's passes are drawn in
+order; the canvas may be drawn onto in several of them, cleared again in between or not.
+
+- **The right way up.** A target's row 0 is t = 0, the bottom of what WebGL drew, so a later draw
+  reads it by the page's own texture coordinates. Clip space, gl_FragCoord, `dFdy`,
+  `gl_PointCoord` and which way a triangle faces are WebGL's in a target as on the canvas.
+- **What a draw reads** is what the passes before it left. A pass that draws onto the canvas reads
+  each target as it was when the page drew that pass, also in a tile drawn later and when a later
+  pass draws into the target again (a filter's texture used twice in a frame). A target read by
+  the pass that draws into it reads nothing, as WebGL leaves undefined.
+- **Tiles.** The passes into targets are drawn once for a frame and kept (by `ShaderFrame.identity`,
+  for the 32 frames last drawn and up to 512 MB), and only the passes onto the canvas are drawn for
+  each tile. A frame without an identity draws its targets again for every picture asked for.
+- **Sharp at any size.** A page sizes its textures to its canvas. A target with `scales` is drawn
+  larger when the output is: by the next power of two at or above the output's scale, up to 16 and
+  no side beyond 8192, its viewports and scissor boxes with it, so a blur chain or a
+  post-processing pass is as sharp as the canvas at any zoom, and what it reads by gl_FragCoord or
+  by texture coordinates lands where it did. Its blur keeps its width in the page's pixels. A
+  target without `scales` keeps its size: a lookup table, a simulation's state.
+- **Frames that build on the frames before them** (feedback, ping-pong, a simulation). A target
+  with `keeps` holds what the frame before left in it; `contents` is what it held before the first
+  frame (nothing: nought everywhere). Such a frame is step `identity.moment` of the recording
+  `identity.recording`, and the closure `earlier` gives the frame of any step before it:
+  `image(of:pixels:region:earlier:)` draws the steps from the nearest state it has up to this one
+  (their passes into targets alone), so the same step is the same picture whenever and in
+  whatever order it is asked for. It keeps the state after the last step drawn and after every
+  32nd on the way, for 192 MB a recording and 384 MB in all, the oldest going first; with none
+  left it starts again from `contents`. So the next step costs one step; going back costs at most
+  31 steps from a kept state, or all of them from the start where that state is gone. No target
+  scales in a frame with one that keeps: its steps must come out the same at every size.
 
 ## Conventions kept
 
@@ -69,6 +133,8 @@ and `antialias` (four samples on the edges of triangles, lines and points), each
 - **Textures** sample as WebGL's: without UNPACK_FLIP_Y_WEBGL, t = 0 is the picture's top row;
   with it, the picture is turned upside down on upload. Colours are taken in sRGB and, unless
   UNPACK_PREMULTIPLY_ALPHA_WEBGL, not premultiplied.
+- **Targets** keep WebGL's conventions too (Passes into textures): drawn bottom row first, they
+  are read back by the texture coordinates the page used.
 - **The result** is a CGImage, top row first, RGBA in sRGB, premultiplied as the canvas
   composites it: with `premultipliedAlpha` (WebGL's default) what the shaders wrote is taken as
   premultiplied as it is, exactly as the browser takes it, so colours brighter than their alpha
@@ -100,7 +166,9 @@ the C++ target `ShaderDirect3D`.
    `register`...: `keptByTheBackEnds`, found by building each with both and tested so, values
    and all), on both platforms alike. lowp and mediump become highp, as Metal computes in 32
    bits anyway. The page's `main` is called from one of Bezzle's, which maps clip space and
-   gl_FragCoord as above. A depth written goes to a plain variable, as no depth buffer is kept.
+   gl_FragCoord as above (a uniform says which way up what is drawn into is, the canvas or a
+   target, and `dFdy` and `gl_PointCoord` follow it). A depth written (`gl_FragDepth`) goes to a
+   plain variable.
    Globals may start from uniforms and other globals, which is not GLSL ES but which browsers
    take in WebGL 1 (glslang's `GL_EXT_shader_non_constant_global_initializers`).
 2. **GLSL to SPIR-V** (`Bridge/GLSL.cpp`): glslang under relaxed Vulkan rules, as
@@ -113,12 +181,17 @@ the C++ target `ShaderDirect3D`.
    array and matrix stride, read before SPIRV-Cross renames anything, so a uniform keeps its
    page's name) goes back to Swift as JSON (`Bridge/Cross.cpp`). The C API
    (`include/ShaderCompiler.h`) is plain C; calls into glslang and SPIRV-Cross are serialised inside.
-4. **Metal** (`Program.swift`, `Renderer.swift`): the MSL is compiled with safe math, pipeline
-   states are made per vertex layout, pixel format, sample count and blending. A draw's uniforms
-   are packed into each stage's blocks by name. Programs, pipeline states, uploaded pictures
-   (at most 48 and 512 MB) and sampler states are kept by what they are made of, made once
-   however many threads ask for them at the same moment, so the tiles of one frame share them.
-   `image(of:)` and `draw(into:)` may be called from any thread, many at once.
+4. **Metal** (`Program.swift`, `Renderer.swift`, `Passes.swift`): the MSL is compiled with safe
+   math, pipeline states are made per vertex layout (instances' arrays step per instance), the
+   pixel formats and colorMask of what is drawn into, depth buffer or none, sample count and
+   blending. A draw's uniforms are packed into each stage's blocks by name. Programs, pipeline
+   states, uploaded pictures and texels (at most 48 and 512 MB), sampler and depth-stencil states
+   are kept by what they are made of, made once however many threads ask for them at the same
+   moment, so the tiles of one frame share them. Each pass is one Metal render pass; targets and
+   depth buffers (32-bit depth with 8 bits of stencil) come from a pool and go back to it, a
+   target drawn into again after the canvas read it is drawn into a copy, and the frame's passes
+   into targets are encoded once and waited for by the tiles that read them. `image(of:)` and
+   `draw(into:)` may be called from any thread, many at once.
 
 On Windows, 3 and 4 are:
 
@@ -146,34 +219,49 @@ On Windows, 3 and 4 are:
 
 ## What WebGL does that this does not (yet)
 
-- **Framebuffers and render to texture**: a frame is what was drawn to the canvas; passes into
-  textures that later draws read (feedback, blur chains, ping-pong simulations) are not drawn.
-- **Depth and stencil**: no depth or stencil buffer, so no depth test (WebGL's is off by
-  default) and `gl_FragDepth` has no effect. No face culling, `colorMask`, scissor test,
-  `polygonOffset`, `sampleCoverage` or `lineWidth` other than 1.
-- **Instanced drawing**, transform feedback, `drawBuffers` beyond the first output, multiple
-  clears within a frame (only the first, as `clear`).
+- **Direct3D** draws none of what came on 2026-11-14: passes into textures, several passes onto
+  the canvas, depth, stencil, faces left out, `colorMask`, the scissor box, `polygonOffset`,
+  instances, textures of numbers and sRGB textures. It refuses such a frame by name
+  (`ShaderFrame.beyondPlainDraws`), and the app shows the canvas's picture. The shared code
+  (`DrawPlan`, the upgrade) already works them out for it.
+- **Depth**: `gl_FragDepth` has no effect, and a depth texture cannot be read by a later draw
+  (shadow maps, depth-aware post-processing): a pass's depth buffer is only tested against.
+  No `sampleCoverage`, no `lineWidth` other than 1.
+- **Targets**: a cube face or one level of a mipmap as a target, 3D and array targets,
+  multisampled targets (drawn with one sample), integer formats, RGB565 and its kin (drawn as
+  RGBA8, so not dithered or rounded to their bits). In WebGL 1, `gl_FragColor` goes to the first
+  of several outputs alone. A partial clear (inside a scissor box or under a colorMask) is a
+  draw the recorder must make of it; `ShaderPass` clears whole.
+- **Transform feedback**, occlusion queries, `readPixels` (what a page computes from what it
+  read back is not known).
 - **WebGL 2 textures** other than sampler2D and samplerCube with float results: 3D, array,
-  shadow and integer samplers make `interface` and `check` throw. Textures come from pictures,
-  so data textures uploaded from typed arrays (float textures, LUMINANCE, ALPHA) need the app
-  to make a picture of them. Texture LOD clamps, anisotropy and `texelFetch` beyond the picture
-  are as Metal does them.
+  shadow and integer samplers make `interface` and `check` throw. Texture LOD clamps, anisotropy
+  and `texelFetch` beyond the picture are as Metal does them. A float texture read with a linear
+  filter is filtered whether or not the page asked for the extension.
 - **WebGL 2 uniform blocks** are filled member by member from `uniforms`, not from the bytes the
-  page gave `bufferData`.
-- **preserveDrawingBuffer**: every frame starts from its clear.
+  page gave `bufferData`: whoever records a page turns the bytes into members.
+- **preserveDrawingBuffer**: the canvas starts every frame from its first pass's clear, or from
+  nothing. A page that keeps drawing onto its canvas is given as a target that keeps and a last
+  pass that copies it onto the canvas.
 - WebGL 1 rules ES 3.10 no longer has: user functions that overload a built-in with a new
   signature, and the few constants ES 3.00 renamed (`gl_MaxVaryingVectors`).
 
 ## Agreement
 
-`AgreementTests` draws 51 frames that cover what the two back ends could part on: gl_FragCoord at
+`AgreementTests` draws 68 frames that cover what the two back ends could part on: gl_FragCoord at
 two and four times and in uneven regions, depth, w and perspective, derivatives, faces, the
 viewport, points (sized, with gl_PointCoord, cut by a tile, antialiased), lines, fans, antialiased
 edges, pictures (nearest, linear, flipped, premultiplied, repeated, mirrored, mipmapped, cubes),
 every blend factor and equation and the constant, the canvas not premultiplied and opaque,
 indices, matrices, attributes, uniforms of every kind and WebGL 2 blocks, and the real-world
 shaders whole and in tiles. `Windows/VM/shader-agreement.sh` draws them with Metal here, then with
-Direct3D in the VM, and compares.
+Direct3D in the VM, and compares. The last 17 are passes into textures (a blur chain whole, in a
+tile and at its own size, a target's way up, feedback, several outputs with floats, smaller
+copies), the depth test (on the canvas, antialiased in a tile, in a target), the stencil, faces
+left out with colorMask and the scissor box, instances, textures of numbers, and a canvas drawn
+onto twice with an sRGB picture: Direct3D draws none of these yet, and the comparison lists them
+as not drawn there instead of failing. On the Mac the first 51 come out to the byte as they did
+before passes were built (2026-11-14, against the engine of 1.7).
 
 On 2026-11-13 (WARP in the VM against an M5 Pro), of 255: 31 samples alike to the byte; 16 at most
 1 or 2 apart (linear filtering weighs texels its own way, blending rounds); the gradient mesh at
@@ -194,6 +282,12 @@ On an M5 Pro, 2026-11-13 (`swift test --filter MeasureTests` prints them):
 | A typical program, after that | GLSL to MSL 1 to 3 ms, Metal's compiler 7 to 25 ms (a grain shader 8 ms, a gradient mesh with simplex noise 24 ms) |
 | A 1440 by 900 frame, into a CGImage | 0.4 to 0.8 ms for full-surface shaders, 1.7 ms for a 2,400 triangle mesh with noise in its vertex shader; 2880 by 1800, 2.2 ms |
 
+Passes, the same day on a Mac busy with other builds (`passesAndSteps`): three full-size passes
+into textures and one onto the canvas, 1.6 ms at 1440 by 900 and 5.9 ms at 2880 by 1800. A
+simulation in two 512 by 512 half-float textures: the next step 1.7 ms with its picture, 300
+steps on from where it was 73 ms (a quarter of a millisecond a step), back ten steps 1.6 ms
+from the state kept at the 32nd before, the same step again 1 ms.
+
 On Windows, in the test VM (WARP on the processor, 8 Arm cores shared with other builds,
 2026-11-13): GLSL to HLSL 2 to 5 ms, Direct3D's compiler 5 to 9 ms (the gradient mesh 50 to
 120 ms); a 1440 by 900 frame 2 to 9 ms for the grain, 9 to 20 ms for the Shadertoy, 7 to 10 ms
@@ -212,8 +306,11 @@ texture; `Windows/VM/shader-agreement.sh` compares the two.
 
 The tests check pixels: WebGL's conventions (`ConventionsTests`), GLSL as pages write it
 (`LanguageTests`), WebGL's state (`DrawingTests`, sixteen tiles drawn at once among them),
-shaders as sites write them for hero backgrounds (`RealWorldTests`) and the two back ends
-against each other (`AgreementTests`).
+passes into textures within a frame and from the frames before (`TargetsTests`), depth, stencil,
+faces, masks, instances and textures of numbers (`StateTests`; these two suites are off on
+Windows until Direct3D draws them, `drawsPasses` in `Support.swift`), shaders as sites write them
+for hero backgrounds (`RealWorldTests`) and the two back ends against each other
+(`AgreementTests`).
 
 ## Vendored
 

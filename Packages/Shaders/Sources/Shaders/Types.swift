@@ -149,11 +149,14 @@ public struct ShaderDraw: Sendable {
         public var values: [Float]
         /// A disabled array's constant (vertexAttrib4f and its kin), used instead when set.
         public var constant: [Float]?
+        /// vertexAttribDivisor: 0 for a value a vertex, n for one every n instances.
+        public var divisor: Int
 
-        public init(components: Int, values: [Float], constant: [Float]? = nil) {
+        public init(components: Int, values: [Float], constant: [Float]? = nil, divisor: Int = 0) {
             self.components = components
             self.values = values
             self.constant = constant
+            self.divisor = divisor
         }
 
         /// A disabled array: every vertex reads `value`.
@@ -216,6 +219,83 @@ public struct ShaderDraw: Sendable {
         }
     }
 
+    /// depthFunc's and stencilFunc's comparisons.
+    public enum Compare: Sendable, Hashable { case never, less, equal, lessEqual, greater, notEqual, greaterEqual, always }
+
+    /// The depth test, as enable(DEPTH_TEST), depthFunc, depthMask and depthRange left it.
+    public struct Depth: Sendable, Hashable {
+        public var compare: Compare
+        /// depthMask: whether what passes is written.
+        public var writes: Bool
+        /// depthRange's near and far.
+        public var near: Float, far: Float
+
+        public init(compare: Compare = .less, writes: Bool = true, near: Float = 0, far: Float = 1) {
+            self.compare = compare
+            self.writes = writes
+            self.near = near
+            self.far = far
+        }
+    }
+
+    /// The stencil test, as enable(STENCIL_TEST), stencilFuncSeparate, stencilOpSeparate and
+    /// stencilMaskSeparate left it, for the faces that look at the viewer and those that look away.
+    public struct Stencil: Sendable, Hashable {
+        public enum Operation: Sendable, Hashable {
+            case keep, zero, replace, increment, incrementWrap, decrement, decrementWrap, invert
+        }
+
+        public struct Face: Sendable, Hashable {
+            public var compare: Compare
+            public var reference: Int
+            /// stencilFunc's mask, which both the reference and what is there are cut with.
+            public var readMask: UInt32
+            /// stencilMask: which bits may be written.
+            public var writeMask: UInt32
+            public var fail: Operation, depthFail: Operation, pass: Operation
+
+            public init(compare: Compare = .always, reference: Int = 0, readMask: UInt32 = 0xFF, writeMask: UInt32 = 0xFF,
+                        fail: Operation = .keep, depthFail: Operation = .keep, pass: Operation = .keep) {
+                self.compare = compare
+                self.reference = reference
+                self.readMask = readMask
+                self.writeMask = writeMask
+                self.fail = fail
+                self.depthFail = depthFail
+                self.pass = pass
+            }
+        }
+
+        public var front: Face, back: Face
+
+        public init(front: Face = Face(), back: Face? = nil) {
+            self.front = front
+            self.back = back ?? front
+        }
+    }
+
+    /// cullFace, with enable(CULL_FACE).
+    public enum Cull: Sendable, Hashable { case front, back, both }
+
+    /// polygonOffset, with enable(POLYGON_OFFSET_FILL).
+    public struct Offset: Sendable, Hashable {
+        public var factor: Float, units: Float
+
+        public init(factor: Float, units: Float) {
+            self.factor = factor
+            self.units = units
+        }
+    }
+
+    /// colorMask: which of red, green, blue and alpha a draw writes.
+    public struct Channels: OptionSet, Sendable, Hashable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let red = Channels(rawValue: 1), green = Channels(rawValue: 2), blue = Channels(rawValue: 4)
+        public static let alpha = Channels(rawValue: 8)
+        public static let all: Channels = [.red, .green, .blue, .alpha]
+    }
+
     /// GLSL as the page gave it: WebGL 1 (GLSL ES 1.00) or WebGL 2 (`#version 300 es`).
     public var vertex: String
     public var fragment: String
@@ -245,6 +325,29 @@ public struct ShaderDraw: Sendable {
     public var blend: Blend?
     /// In drawing-buffer pixels, bottom-left origin as WebGL's; nil: all of it.
     public var viewport: CGRect?
+    /// Sampler uniform name to the frame's target it reads (`ShaderFrame.targets`): what an
+    /// earlier pass drew there, or what the frame before left.
+    public var targets: [String: Int] = [:]
+    /// Sampler uniform name to the numbers the page gave as a texture.
+    public var data: [String: ShaderData] = [:]
+    /// Samplers whose picture or numbers are kept as sRGB and read as light (WebGL 2's
+    /// SRGB8_ALPHA8).
+    public var decodes: Set<String> = []
+    /// The depth test; nil: off, and nothing is written to the depth buffer.
+    public var depth: Depth?
+    /// The stencil test; nil: off.
+    public var stencil: Stencil?
+    /// Which faces are left out; nil: none.
+    public var cull: Cull?
+    /// frontFace(CW): clockwise triangles face the front.
+    public var clockwiseFront = false
+    /// colorMask.
+    public var channels: Channels = .all
+    /// The scissor box, in drawing-buffer pixels from the bottom left; nil: no scissor test.
+    public var scissor: CGRect?
+    public var offset: Offset?
+    /// drawArraysInstanced's and drawElementsInstanced's instances.
+    public var instances = 1
 
     public init(vertex: String, fragment: String, uniforms: [String: [Float]] = [:],
                 attributes: [String: Attribute] = [:], indices: [UInt32]? = nil, mode: Mode = .triangles,
@@ -287,13 +390,37 @@ public struct ShaderDraw: Sendable {
     }
 }
 
-/// What one frame of a WebGL canvas drew.
+/// What one frame of a WebGL canvas drew: onto the canvas alone (`clear` and `draws`), or pass
+/// by pass, into textures of its own that later passes read and onto the canvas (`targets` and
+/// `passes`, see Targets.swift).
 public struct ShaderFrame: Sendable {
+    /// Which frame of which recording this is, for a frame with passes into targets: the tiles of
+    /// one frame draw those passes once, and a frame whose targets keep what the frame before
+    /// left there finds it.
+    public struct Identity: Hashable, Sendable {
+        /// What tells the recording from every other.
+        public var recording: Int
+        /// What tells this frame from the recording's others. Where targets keep, its step: 0
+        /// is drawn from the targets' `contents`, each step after from what the step before left.
+        public var moment: Int
+
+        public init(recording: Int, moment: Int) {
+            self.recording = recording
+            self.moment = moment
+        }
+    }
+
     /// The drawing buffer, in pixels.
     public var size: CGSize
-    /// The RGBA it is cleared to first; nil: transparent.
+    /// The RGBA it is cleared to first; nil: transparent. With `passes`, they say it.
     public var clear: [Float]?
+    /// What it draws onto the canvas. With `passes`, they hold every draw and this is empty.
     public var draws: [ShaderDraw]
+    /// The textures its passes draw into, by their place.
+    public var targets: [ShaderTarget] = []
+    /// Everything it drew, in order, when that is more than one pass onto the canvas.
+    public var passes: [ShaderPass] = []
+    public var identity: Identity?
     /// The context's `alpha`: false makes the canvas opaque, whatever alpha the draws leave.
     public var alpha: Bool
     /// The context's `premultipliedAlpha`: false has the canvas take its colours as not
