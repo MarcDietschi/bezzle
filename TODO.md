@@ -32,8 +32,11 @@ file was made (2026-11-14): look before starting on one.
 - **Not built** *(from notes, 2026-11-13)*: zooming the timeline with a pinch, a control for a
   spring's bounce, depth of field, animating looks (colour, corner, border), a lesson in the
   welcome tour.
-- **Unchecked:** saving a movie from the sandboxed Release build (1.7 is the first release with
-  Animate).
+- **Unchecked:** a movie saved from the sandboxed build onto another disk, where it is copied into
+  place instead of renamed. (Checked 2026-11-14 with a sandboxed copy of the Debug build and
+  `BEZZLE_FILM` › `movie=`: a new movie through the save panel, one replacing another, and a place
+  the sandbox refuses, which is said and leaves nothing behind. The save panel brings the copy to
+  the front, so `movie=ask` is for when Erik is not at the Mac.)
 - **The browser viewer** keeps a film's keys and shows the design without its film.
 
 ### Windows

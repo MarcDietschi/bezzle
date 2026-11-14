@@ -23,6 +23,11 @@ import AppKit
 ///                                  hand on the timeline would, 120 times a second; how often the
 ///                                  app found the time to is written to BEZZLE_SCRUB_OUT (or the log)
 ///       watch=seconds              the same without moving the playhead, while the film plays
+///       movie=path | movie=ask[:folder]   save the film as a movie there, or where the save panel
+///                                  says (opened in a folder), as Save as Movie… does but without
+///                                  showing it in the Finder; how it ended is written to
+///                                  BEZZLE_MOVIE_OUT (or the log). A sandboxed copy can only be
+///                                  checked with "ask": the panel is what lets it write there.
 enum AnimateHooks {
     static func attach(_ store: DocumentStore, env: [String: String], after: (Double, @escaping @MainActor () -> Void) -> Void) {
         if let s = env["BEZZLE_ANIMATE"].flatMap(Double.init) { after(s) { store.animating = true } }
@@ -184,8 +189,40 @@ enum AnimateHooks {
             guard n.count == 3 else { return }
             Scrubber.run(store, from: n[0], to: n[1], seconds: n[2])
         case "watch": Scrubber.run(store, from: 0, to: nil, seconds: Double(rest) ?? 5)
+        case "movie": movie(rest, store)
         default: break
         }
+    }
+
+    /// Saves the film as a movie, as large and as quick as the render sheet is set, and writes
+    /// how it ended.
+    private static func movie(_ spec: String, _ store: DocumentStore) {
+        func say(_ line: String) {
+            if let path = ProcessInfo.processInfo.environment["BEZZLE_MOVIE_OUT"], !path.isEmpty {
+                let url = URL(fileURLWithPath: path)
+                let had = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+                try? (had + line + "\n").write(to: url, atomically: true, encoding: .utf8)
+            } else {
+                NSLog("%@", line)
+            }
+        }
+        guard let board = store.filmBoard else { return say("movie: no film") }
+        let place: URL?
+        if spec == "ask" || spec.hasPrefix("ask:") {
+            let folder = spec.dropFirst(4)
+            place = store.askFilmPlace(for: board, in: folder.isEmpty ? nil : URL(fileURLWithPath: String(folder), isDirectory: true))
+        } else {
+            place = URL(fileURLWithPath: spec)
+        }
+        guard let place else { return say("movie: nowhere") }
+        let defaults = UserDefaults.standard
+        let scale = defaults.object(forKey: "film.movie.scale") as? Int ?? 2, fps = defaults.object(forKey: "film.movie.fps") as? Int ?? 60
+        let began = ContinuousClock.now
+        let started = store.writeFilm(to: place, scale: CGFloat(scale), fps: fps) { failure in
+            let took = began.duration(to: .now)
+            say(failure.map { "movie: failed after \(took): \($0)" } ?? "movie: saved \(place.path) in \(took)")
+        }
+        if !started { say("movie: not started") }
     }
 }
 #endif

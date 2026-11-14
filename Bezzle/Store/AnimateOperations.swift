@@ -772,12 +772,20 @@ extension DocumentStore {
         pauseFilm()
         // A film too long for a movie is said before asking where, not after.
         do { try FilmExport.check(board) } catch { NSAlert(error: error).runModal(); return }
+        guard let url = askFilmPlace(for: board) else { return }
+        writeFilm(to: url, scale: scale, fps: fps)
+    }
+
+    /// Asks where the film of `board` is to be saved as a movie; nil when the answer is nowhere.
+    /// `folder` is where the asking begins, for a test run; left out, where the person last was.
+    func askFilmPlace(for board: Node, in folder: URL? = nil) -> URL? {
         let panel = NSSavePanel()
         panel.title = String(localized: "Save the Film as a Movie")
         panel.nameFieldStringValue = board.name + ".mp4"
         panel.allowedContentTypes = [.mpeg4Movie]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        writeFilm(to: url, scale: scale, fps: fps)
+        if let folder { panel.directoryURL = folder }
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
     /// Saves the film at a place as a movie, while the desk tells how far it is. A film that
