@@ -178,6 +178,39 @@ import Testing
         texture.getBytes(&bgra, bytesPerRow: 64 * 4, from: MTLRegionMake2D(63, 0, 1, 1), mipmapLevel: 0)
         #expect(near(bgra.map(Int.init), [0, 251, 253, 255]))  // top right: red and green, in BGRA
     }
+
+    /// A picture for a movie, with sixteen bits to a colour, keeps what lies between eight
+    /// bits' steps: a glow as dark as they come is a ramp, not five bands.
+    @Test func aDeepPictureKeepsWhatLiesBetweenEightBitsSteps() throws {
+        let fragment = """
+            precision highp float;
+            uniform vec2 u_resolution;
+            void main() { gl_FragColor = vec4(gl_FragCoord.x / u_resolution.x * 0.02, 0.0, 0.0, 1.0); }
+            """
+        let size = CGSize(width: 512, height: 4)
+        let plain = try renderer.image(of: frame(512, 4, fragment), pixels: size)
+        let deep = try renderer.image(of: frame(512, 4, fragment), pixels: size, deep: true)
+        #expect(plain.bitsPerComponent == 8 && deep.bitsPerComponent == 16)
+        // The top row's reds, each from none to one.
+        func reds(_ image: CGImage) -> [Float] {
+            var values = [Float](repeating: 0, count: 512 * 4 * 4)
+            values.withUnsafeMutableBytes { raw in
+                let context = CGContext(data: raw.baseAddress, width: 512, height: 4, bitsPerComponent: 32, bytesPerRow: 512 * 16,
+                                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.floatComponents.rawValue
+                                            | CGBitmapInfo.byteOrder32Little.rawValue)!
+                context.setBlendMode(.copy)
+                context.draw(image, in: CGRect(origin: .zero, size: size))
+            }
+            return (0..<512).map { values[$0 * 4] }
+        }
+        let coarse = reds(plain), fine = reds(deep)
+        #expect(Set(coarse).count <= 7 && Set(fine).count >= 500, "\(Set(coarse).count), \(Set(fine).count)")
+        for x in 0..<512 {
+            let exact = (Float(x) + 0.5) / 512 * 0.02
+            #expect(abs(fine[x] - exact) < 0.0001 && abs(coarse[x] - exact) < 0.5 / 255 + 0.0001, "at \(x): \(fine[x]), \(coarse[x]) for \(exact)")
+        }
+    }
     #endif
 
     @Test func opaqueAndUnpremultipliedCanvases() throws {

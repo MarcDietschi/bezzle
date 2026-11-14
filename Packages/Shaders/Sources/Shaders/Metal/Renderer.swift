@@ -50,17 +50,20 @@ public final class ShaderRenderer: @unchecked Sendable {
     }
 
     /// `region` (drawing-buffer pixels, top-left origin; nil: all of it) drawn `pixels` big.
-    /// Top row first, RGBA premultiplied as the canvas composites it, in sRGB.
-    public func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect? = nil) throws -> CGImage {
+    /// Top row first, RGBA premultiplied as the canvas composites it, in sRGB. `deep`, with
+    /// sixteen bits to a colour and not eight, for a picture a movie is made of: a glow then
+    /// keeps what lies between eight bits' steps. Drawn as a canvas draws in every other way,
+    /// each value kept between none and one as it is written.
+    public func image(of frame: ShaderFrame, pixels: CGSize, region: CGRect? = nil, deep: Bool = false) throws -> CGImage {
         let width = Int(pixels.width.rounded()), height = Int(pixels.height.rounded())
         guard width > 0, height > 0, width <= 16384, height <= 16384 else {
             throw ShaderError("No picture can be \(width) by \(height) pixels.")
         }
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height,
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: deep ? .rgba16Unorm : .rgba8Unorm, width: width, height: height,
                                                                   mipmapped: false)
         descriptor.usage = [.renderTarget]
         descriptor.storageMode = .private
-        let bytesPerRow = width * 4
+        let bytesPerRow = width * (deep ? 8 : 4)
         guard let target = device.makeTexture(descriptor: descriptor),
               let buffer = device.makeBuffer(length: bytesPerRow * height, options: .storageModeShared),
               let commands = queue.makeCommandBuffer() else {
@@ -83,9 +86,10 @@ public final class ShaderRenderer: @unchecked Sendable {
                                             releaseData: { info, _, _ in
                                                 if let info { Unmanaged<AnyObject>.fromOpaque(info).release() }
                                             }),
-            let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+            let image = CGImage(width: width, height: height, bitsPerComponent: deep ? 16 : 8, bitsPerPixel: deep ? 64 : 32,
                                 bytesPerRow: bytesPerRow, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue
+                                    | (deep ? CGBitmapInfo.byteOrder16Little.rawValue : 0)),
                                 provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
         else { throw ShaderError("The frame's picture could not be made.") }
         return image
