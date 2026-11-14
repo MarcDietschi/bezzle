@@ -153,12 +153,35 @@ file was made (2026-11-14): look before starting on one.
 - **For Erik:** the glow layer of the Lawsearch AI design was recorded before the recorder was
   fixed (2026-11-13); importing it again gives the fixed recording.
 
-## Vectorize *(from notes, 2026-11-10)*
+## Vectorize
 
-- Thin lines in wavering pictures come out whole, but their thickness still wavers.
-- Textured pictures make more shapes than vectorizer.ai's.
-- Gradients become bands of flat colour (`Blend` is unused).
-- 10 point text loses pieces.
+Worked on 2026-11-14 (`Packages/Vectorizer/README.md` has the measures): colours that run become
+gradient fills, thin lines come out evenly thick, small text keeps most of its pieces, textured
+pictures make fewer shapes. What is still open:
+
+- **Thin lines:** a line a pixel thick in a picture that wavers comes out about a fifth too thick
+  (1.15 to 1.25); its two edges are found each on its own.
+- **Textured pictures** still make more shapes than vectorizer.ai's where long thin lines along
+  edges break up (243 to their 193, 113 to 87), and nothing is taken away in pictures traced at a
+  smaller size than their own (129 to 105).
+- **Gradients:** colours that run round a point, along a bend or outward in ovals stay bands of
+  flat colour; so does a faint run in a noisy picture. The Vector card's colours
+  (`Tracing.palette`) list a run's bands, not its gradient. In a JPEG the edge of a shape beside
+  a run keeps a notch here and there, and the ground of the gradients sample comes out in two
+  halves.
+- **10 point text** loses strokes and gaps thinner than a pixel (6 of 140 pieces, 10 of 46
+  counters closed, 14 letters run together); a dot on the corner of four pixels reads up to three
+  times too large.
+- **Large pictures:** one of more than about 1.6 megapixels is read with one sample to a pixel
+  and its outlines may lie 0.6 px off (0.2 in a small picture); a circle there is not always
+  known for an ellipse.
+- **Time:** last measured on a calm Mac for the state of c03f41f's content; the three later
+  commits only on a busy one. A photograph's time has not been measured since 2026-11-10.
+- **Never looked at in a window** with the new engine, on the Mac or Windows.
+- **Windows:** the vectorize tool's description in `Windows/Sources/BezzleCore/MCP/MCPDefinitions.swift`
+  still says every layer is flat in colour; gradient layers were not built or looked at in the
+  VM (they come through the shared `Bezzle/Model/Vectorizing.swift`, round ones with
+  `Gradient.across`).
 
 ## Remove Background on Windows
 
