@@ -78,6 +78,20 @@ struct ShaderKeyTests {
         #expect(f.store.posedInputs.isEmpty)
     }
 
+    @Test func thePlayheadStepsToAnInputsKeys() {
+        let f = FilmBench(Self.painted)
+        f.edit { $0.update(f.id("Card")) { $0.poseInput("u_strength", [0.5], at: 1.2) } }
+        f.edit { $0.update(f.id("Badge")) { $0.pose(.fade, [0], at: 0.6) } }
+        // With nothing picked, every key in the film is a stop; with the card, its own.
+        #expect(f.store.filmStops == [0, 0.6, 1.2])
+        f.step { f.store.selection = [f.id("Card")] }
+        #expect(f.store.filmStops == [0, 1.2])
+        f.step { f.store.stepToKey(forward: true) }
+        #expect(f.store.filmTime == 1.2)
+        f.step { f.store.stepToKey(forward: false) }
+        #expect(f.store.filmTime == 0)
+    }
+
     @Test func theTimelineShowsInputsOnLinesOfTheirOwn() {
         let f = FilmBench(Self.painted)
         f.edit { $0.update(f.id("Card")) { $0.poseInput("u_strength", [0.5], at: 1) } }

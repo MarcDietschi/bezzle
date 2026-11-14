@@ -360,13 +360,13 @@ extension DocumentStore {
         if film.camera {
             add(board.keyTimes(MotionProperty.camera))
         } else if !picked.isEmpty {
-            for id in picked { add(board.descendant(id)?.keyTimes() ?? []) }
+            for id in picked { add(board.descendant(id).map { $0.keyTimes(tracks: $0.layerTracks) } ?? []) }
         } else {
             add(board.keyTimes(MotionProperty.camera))
             // As the timeline has them: nothing of a hidden layer, nor of what it holds.
             func walk(_ n: Node) {
                 guard !n.hidden else { return }
-                add(n.keyTimes())
+                add(n.keyTimes(tracks: n.layerTracks))
                 n.children.forEach(walk)
             }
             board.children.forEach(walk)
