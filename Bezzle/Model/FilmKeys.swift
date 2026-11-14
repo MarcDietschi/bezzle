@@ -140,6 +140,9 @@ struct FilmScale: Equatable {
     var width: CGFloat
     /// The seconds the width shows.
     var span: Double
+    /// The moment at its left end: the film's start, unless the sheet is looked at closer and
+    /// has been moved along.
+    var start = 0.0
 
     /// Room either side, so a bead at the start or the end is whole.
     static let inset: CGFloat = 14
@@ -148,8 +151,81 @@ struct FilmScale: Equatable {
     static func span(for length: Double) -> Double { max(length / 0.9, 0.5) }
 
     var perSecond: CGFloat { max(width - Self.inset * 2, 1) / CGFloat(span) }
-    func x(_ t: Double) -> CGFloat { Self.inset + CGFloat(t) * perSecond }
-    func t(_ x: CGFloat) -> Double { Double((x - Self.inset) / perSecond) }
+    func x(_ t: Double) -> CGFloat { Self.inset + CGFloat(t - start) * perSecond }
+    func t(_ x: CGFloat) -> Double { start + Double((x - Self.inset) / perSecond) }
+}
+
+// MARK: - The sheet looked at closer
+
+/// The part of a film the timeline shows when it does not show all of it: so many seconds, from
+/// a moment on. Each viewer's own, as the canvas's zoom is, and never part of the design.
+struct FilmWindow: Equatable {
+    var start: Double
+    var span: Double
+
+    var end: Double { start + span }
+
+    /// How close the sheet can be looked at: until a second is this many points wide, a
+    /// hundredth of a second then a dozen, which is as fine as a key steps.
+    static let closest: CGFloat = 1200
+
+    /// The window as a film shows it whose whole sheet is `whole` seconds: no wider than that,
+    /// and not past either end. Nil where that is all of it.
+    func fitted(to whole: Double) -> FilmWindow? {
+        guard span.isFinite, start.isFinite, span > 0, span < whole - 1e-9 else { return nil }
+        return FilmWindow(start: min(max(start, 0), whole - span), span: span)
+    }
+
+    /// Whether a moment shows in it.
+    func holds(_ t: Double) -> Bool { t >= start - 1e-9 && t <= end + 1e-9 }
+
+    /// The window moved so that a moment shows: left alone where it shows already; else the
+    /// moment in its middle, or with `ahead`, as when a film plays out of it, an eighth in from
+    /// its left, with the rest still to come.
+    func showing(_ t: Double, ahead: Bool = false, whole: Double) -> FilmWindow {
+        guard !holds(t) else { return self }
+        let to = FilmWindow(start: t - span * (ahead ? 0.125 : 0.5), span: span)
+        return to.fitted(to: whole) ?? to
+    }
+}
+
+extension FilmScale {
+    /// The whole sheet of a film this long, or the part of it a window shows.
+    init(width: CGFloat, length: Double, window: FilmWindow?) {
+        let whole = Self.span(for: length)
+        let part = window?.fitted(to: whole)
+        self.init(width: width, span: part?.span ?? whole, start: part?.start ?? 0)
+    }
+
+    /// What it shows, as a window; nil where that is the whole sheet of `whole` seconds.
+    func window(of whole: Double) -> FilmWindow? { FilmWindow(start: start, span: span).fitted(to: whole) }
+
+    /// The fewest seconds a sheet this wide shows, of a film whose whole sheet is `whole`.
+    func least(of whole: Double) -> Double {
+        min(Double(max(width - Self.inset * 2, 1) / FilmWindow.closest), whole)
+    }
+
+    /// The sheet looked at `factor` times closer (or, under 1, from further off), with the
+    /// moment at `x` staying where it is: until a second is `FilmWindow.closest` points wide one
+    /// way, and until the whole sheet of `whole` seconds shows the other. At either end of the
+    /// film the sheet stops, and the moment gives way.
+    func zoomed(by factor: Double, at x: CGFloat, whole: Double) -> FilmScale {
+        guard factor.isFinite, factor > 0 else { return self }
+        let wide = max(width - Self.inset * 2, 1)
+        let x = min(max(x, Self.inset), Self.inset + wide)
+        let moment = t(x)
+        let to = min(max(span / factor, least(of: whole)), whole)
+        guard to < whole - 1e-9 else { return FilmScale(width: width, span: whole) }
+        let start = moment - Double((x - Self.inset) / wide) * to
+        return FilmScale(width: width, span: to, start: min(max(start, 0), whole - to))
+    }
+
+    /// The sheet moved along by so many points, as two fingers move it: with them, so the
+    /// moments under them stay under them, and not past either end of the film.
+    func scrolled(by dx: CGFloat, whole: Double) -> FilmScale {
+        guard dx.isFinite, span < whole - 1e-9 else { return self }
+        return FilmScale(width: width, span: span, start: min(max(start - Double(dx / perSecond), 0), whole - span))
+    }
 }
 
 // MARK: - The camera, sent somewhere
