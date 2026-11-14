@@ -40,6 +40,8 @@ struct AnimateWordsTests {
         "See the Whole Artboard", "Turn the Scene", "Look Straight Down",
         "Drag to tip the scene back and swing it round under the camera. Double click to look straight down.",
         "Edit Points", "Done", "Move its points on the canvas to give it another shape at the playhead",
+        "animate.shape.from", "Give it the outline of another shape at the playhead",
+        "Add Point", "Delete Point", "Delete Points", "Move Points",
     ]
 
     /// The values a string takes, in order: `%@`, `%lld` and the like.

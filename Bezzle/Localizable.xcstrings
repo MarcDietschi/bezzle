@@ -7783,6 +7783,35 @@
         }
       }
     },
+    "animate.shape.from" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "From…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Da…"
+          }
+        }
+      }
+    },
     "animate.swing" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -22315,6 +22344,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dalle un nome"
+          }
+        }
+      }
+    },
+    "Give it the outline of another shape at the playhead" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gib ihm an der Abspielposition den Umriss einer anderen Form"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donnez-lui le contour d’une autre forme à la tête de lecture"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dagli il contorno di un’altra forma alla testina di riproduzione"
           }
         }
       }

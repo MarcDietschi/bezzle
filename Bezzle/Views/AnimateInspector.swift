@@ -363,6 +363,7 @@ private struct PoseCard: View {
                     field(.draw, 1, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 70)
                 }
                 PropertyRow(store: store, property: .shape) {
+                    ShapeFromChip(store: store, layers: layers)
                     PointsChip(store: store, layers: layers)
                 }
             }
@@ -380,8 +381,50 @@ private struct PoseCard: View {
     }
 }
 
-/// Takes the picked shape's points in hand on the canvas, or puts them down: moved there, they
-/// give it another shape at the playhead, a key of its Shape.
+/// Gives the picked shape the outline of another shape on the artboard at the playhead: a key of
+/// its Shape that holds that outline, which it goes into and comes from like any other. The
+/// menu names the other shapes, and shows each on the canvas while it is pointed at.
+private struct ShapeFromChip: View {
+    let store: DocumentStore
+    let layers: [UUID]
+    @Environment(MenuHost.self) private var menus
+    @State private var hovering = false
+    static let id = "animate-shape-from"
+
+    var body: some View {
+        let others = layers.count == 1 ? store.shapesToTake(for: layers[0]) : []
+        let ready = !others.isEmpty
+        Button {
+            guard let id = layers.first else { return }
+            store.pauseFilm()
+            menus.toggle(Self.id, width: 200, entries: others.map { other in
+                MenuEntry(title: other.name, preview: { store.hovered = $0 ? other.id : nil }) {
+                    store.hovered = nil
+                    store.takeShape(of: other.id, for: id)
+                }
+            })
+        } label: {
+            Text(verbatim: String(localized: "animate.shape.from", defaultValue: "From…"))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(hovering && ready ? Theme.ink : Theme.ink2)
+                .lineLimit(1)
+                .padding(.horizontal, 9)
+                .frame(height: 22)
+                .background(Capsule().fill(Theme.ink.opacity(hovering && ready ? 0.08 : 0.045)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(Pressable())
+        .menuAnchor(Self.id)
+        .opacity(ready ? 1 : 0.4)
+        .allowsHitTesting(ready)
+        .onHover { hovering = $0 }
+        .animation(Theme.quick, value: hovering)
+        .help("Give it the outline of another shape at the playhead")
+    }
+}
+
+/// Takes the picked shape's points in hand on the canvas, or puts them down: moved there, added
+/// or taken away, they give it another shape at the playhead, a key of its Shape.
 private struct PointsChip: View {
     let store: DocumentStore
     let layers: [UUID]

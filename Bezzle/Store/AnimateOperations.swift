@@ -452,6 +452,24 @@ extension DocumentStore {
         poseCamera(property, now)
     }
 
+    // MARK: Another shape's outline
+
+    /// The shapes whose outline a shape can take at the playhead: the others on the film's
+    /// artboard, the one in front first (`Node.shapesToTake`).
+    func shapesToTake(for id: UUID) -> [Node] { filmBoard?.shapesToTake(for: id) ?? [] }
+
+    /// Gives a shape the outline another has at the playhead, about its own middle: a key of its
+    /// Shape there, which it then goes into and comes from as from any other.
+    func takeShape(of other: UUID, for id: UUID) {
+        guard let board = filmBoard, let layer = board.descendant(id), !layer.locked else { return }
+        let t = filmTime
+        guard let outline = board.outline(of: other, for: id, at: t), layer.shapeValue(of: outline) != nil else {
+            NSSound.beep()
+            return
+        }
+        edit(MotionProperty.shape.action) { doc in doc.update(id) { $0.poseShape(taking: outline, at: t) } }
+    }
+
     // MARK: Shader inputs
 
     /// The inputs of the shader every picked layer has, by name: those a person may set and key.

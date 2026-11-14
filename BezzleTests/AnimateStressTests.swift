@@ -66,7 +66,13 @@ struct AnimateStressTests {
                     if !(key.t >= 0 && key.t.isFinite) || key.t != MotionTiming.time(key.t) { out.append("\(n.name).\(raw): a key at \(key.t)") }
                     if i > 0, key.t - track.keys[i - 1].t < 0.0042 { out.append("\(n.name).\(raw): keys at \(track.keys[i - 1].t) and \(key.t)") }
                     let count = p == .shape ? n.shapeRest.count : p.rest.count
-                    if key.v.count != count || key.v != p.clamped(key.v) { out.append("\(n.name).\(raw): a key of \(key.v)") }
+                    // A Shape's key may hold an outline of its own: behind a nought for every number the design's points have.
+                    var fits = key.v.count == count
+                    if !fits, p == .shape, let own = BezierPath(key: key.v) {
+                        fits = key.v.count == count + 1 + 6 * (own.subpaths.count + own.anchorCount) && key.v.prefix(count).allSatisfy { $0 == 0 }
+                            && own.subpaths.allSatisfy { $0.anchors.count >= 2 }
+                    }
+                    if !fits || key.v != p.clamped(key.v) { out.append("\(n.name).\(raw): a key of \(key.v)") }
                     if key.ease?.kind == .auto { out.append("\(n.name).\(raw): no pace kept as a pace") }
                     if let bounce = key.ease?.bounce, !bounce.isFinite { out.append("\(n.name).\(raw): a spring of \(bounce)") }
                 }
@@ -121,6 +127,13 @@ struct AnimateStressTests {
                     out.append("\(n.name) posed as \(pose)")
                 }
                 if pose.fade < 0 || pose.fade > 1 || pose.blur < 0 || pose.scale.x <= 0 || pose.scale.y <= 0 { out.append("\(n.name) shows as \(pose)") }
+            }
+            // Every shape whose outline changes has a whole one then, and a frame to draw it in.
+            func shapes(_ n: Node) -> [Node] { (n.reshapes ? [n] : []) + n.children.flatMap(shapes) }
+            for n in board.children.flatMap(shapes) {
+                let drawn = n.reshaped(at: store.film.live)
+                let numbers = (n.outline(at: store.film.live)?.numbers ?? [.nan]) + [drawn.frame.minX, drawn.frame.minY, drawn.frame.width, drawn.frame.height].map { Double($0) }
+                if !numbers.allSatisfy(\.isFinite) { out.append("\(n.name) has no whole outline at \(store.film.live)") }
             }
         }
         return out
@@ -200,11 +213,45 @@ struct AnimateStressTests {
                 bench.step { store.edit("Show") { $0.update(hidden.id) { $0.hidden = false } } }
                 return
             }
-            switch whole(0...29) {
+            switch whole(0...32) {
             case 0, 1:
                 let t = moment()
                 did("seek \(t)")
                 store.seek(t)
+            case 30, 31:
+                // A shape given an outline with other points at the playhead: a point more on
+                // it, one fewer, or one drawn anew, open or closed, in one run or two.
+                let what = whole(0...3), turn = number(0...6.28), points = whole(2...9), far = one([4.0, 30, 120])
+                did("pose another outline \(what) of \(points)")
+                let t = store.filmTime
+                bench.step {
+                    store.pose(.shape, of: store.posedLayers) { n in
+                        guard var outline = n.outline(at: t), !outline.subpaths.isEmpty else { return n.shapeRest }
+                        switch what {
+                        case 0:
+                            let run = points % outline.subpaths.count
+                            if outline.subpaths[run].segmentCount > 0 { outline.insert(run, segment: points % outline.subpaths[run].segmentCount, t: 0.4) }
+                        case 1:
+                            let run = points % outline.subpaths.count
+                            outline.remove([PathPoint(subpath: run, index: points % outline.subpaths[run].anchors.count)])
+                        default:
+                            var anchors: [BezierPath.Anchor] = []
+                            for k in 0..<points {
+                                let a = turn + Double(k) / Double(points) * 6.283, r = k % 2 == 0 ? far : far * 0.6
+                                let p = CGPoint(x: 20 + cos(a) * r, y: 20 + sin(a) * r)
+                                anchors.append(k % 3 == 0 ? BezierPath.Anchor(p, in: CGPoint(x: p.x - 3, y: p.y + 2), out: CGPoint(x: p.x + 3, y: p.y - 2)) : BezierPath.Anchor(p))
+                            }
+                            outline = BezierPath(subpaths: [BezierPath.Subpath(anchors: anchors, closed: what == 2)])
+                            if points > 5 { outline.subpaths.append(BezierPath.Subpath(anchors: [BezierPath.Anchor(.zero), BezierPath.Anchor(CGPoint(x: far, y: 5))], closed: false)) }
+                        }
+                        return n.shapeValue(of: outline) ?? n.shapeRest
+                    }
+                }
+            case 32:
+                // A shape given the outline another has at the playhead.
+                guard let id = store.posedLayers.first, let other = store.shapesToTake(for: id).randomElement(using: &dice) else { return }
+                did("take the outline of \(other.name)")
+                bench.step { store.takeShape(of: other.id, for: id) }
             case 2:
                 var picked: [UUID] = []
                 for _ in 0..<whole(0...3) { picked.append(one(layers + boards)) }

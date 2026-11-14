@@ -482,6 +482,69 @@ struct MotionOutlineKeyTests {
         #expect(n.shapeValue(taking: BezierPath(), at: 2) == nil)
     }
 
+    // MARK: Another shape's outline
+
+    @Test func aShapeGivenAnothersOutlineHasItAboutItsOwnMiddleNumberedToComeFromItsOwn() throws {
+        // A square, and a circle elsewhere, half as large again and turned.
+        let square = CanvasTests.rect("Square", CGRect(x: 40, y: 40, width: 100, height: 100))
+        var circle = Node(kind: .ellipse, name: "Circle", frame: CGRect(x: 220, y: 60, width: 150, height: 150))
+        circle.rotation = 45
+        var star = path("M 50 0 L 62 38 L 100 38 L 69 60 L 81 100 L 50 76 L 19 100 L 31 60 L 0 38 L 38 38 Z", name: "Star")
+        star.frame.origin = CGPoint(x: 20, y: 180)
+        var text = Node(kind: .text, name: "Words", frame: CGRect(x: 300, y: 10, width: 50, height: 20))
+        text.text = "Hi"
+        let film = FilmBench([square, circle, star, text])
+        let id = film.id("Square")
+        // What it can take: the other shapes on the artboard, the one in front first; no words.
+        #expect(film.store.shapesToTake(for: id).map(\.name) == ["Star", "Circle"])
+        #expect(film.store.shapesToTake(for: film.id("Words")).isEmpty)
+        film.store.seek(1)
+        film.fresh()
+        let design = film.design
+        film.step { film.store.takeShape(of: film.id("Circle"), for: id) }
+        #expect(film.design == design)
+        #expect(film.undo.undoActionName == MotionProperty.shape.title)
+        var now = film.node("Square")
+        #expect(film.keys("Square", .shape).map(\.t) == [0, 1])
+        // The circle, as large as it is, about the square's own middle.
+        let round = try #require(now.outline(at: 1))
+        #expect(round.subpaths.count == 1 && round.subpaths[0].closed)
+        let r = round.anchorPoints.map { hypot($0.x - 50, $0.y - 50) }
+        #expect(r.allSatisfy { abs($0 - 75) < 0.5 }, "\(r)")
+        // Each of its points comes from the square's nearest corner or side: none goes more than
+        // a short way, and none round the shape.
+        let half = try #require(now.outline(at: 0.5))
+        let (from, to) = BezierPath.matched(try #require(now.ownOutline), round)
+        let far = zip(from.anchorPoints, to.anchorPoints).map { hypot($0.x - $1.x, $0.y - $1.y) }.max() ?? 0
+        #expect(far < 40, "\(far)")
+        #expect(CGRect(x: -26, y: -26, width: 152, height: 152).contains(box(half)))
+        // The star next, a second later: it comes from the circle, and the circle's key is as it was.
+        film.store.seek(2)
+        film.step { film.store.takeShape(of: film.id("Star"), for: id) }
+        now = film.node("Square")
+        #expect(film.keys("Square", .shape).map(\.t) == [0, 1, 2])
+        #expect(now.outline(at: 1) == round)
+        // The star as it is: its ten points, and at most a point more on its outline where the
+        // circle's first point and the star's meet between two of them.
+        let pointed = try #require(now.outline(at: 2))
+        let own = try #require(film.node("Star").ownOutline)
+        #expect(own.anchorPoints.allSatisfy { p in pointed.anchorPoints.contains { near($0, p) } }, "\(pointed.anchorPoints)")
+        #expect(pointed.anchorCount >= 10 && pointed.anchorCount <= 12)
+        #expect(pointed.anchorPoints.allSatisfy { p in own.nearest(to: p).map { hypot($0.point.x - p.x, $0.point.y - p.y) < 0.01 } == true })
+        #expect(close(box(pointed), CGRect(x: 0, y: 0, width: 100, height: 100)))
+        // One step each.
+        film.undo.undo()
+        #expect(film.keys("Square", .shape).map(\.t) == [0, 1])
+        film.undo.undo()
+        #expect(film.node("Square").motion == nil)
+        // A locked shape takes none.
+        film.edit { $0.update(id) { $0.locked = true } }
+        #expect(film.store.shapesToTake(for: id).isEmpty)
+        let was = film.store.doc
+        film.step { film.store.takeShape(of: film.id("Star"), for: id) }
+        #expect(film.store.doc == was)
+    }
+
     // MARK: The movie
 
     @Test func theMovieShowsTheOutlineOnItsWay() throws {

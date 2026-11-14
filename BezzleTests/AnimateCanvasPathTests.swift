@@ -3,8 +3,8 @@ import AppKit
 @testable import Bezzle
 
 /// Animate's canvas with a shape's points in hand: taken up with a double click or Return,
-/// dragged to pose its Shape at the playhead, only moved, never added or taken away, and put
-/// down again; the design's outline untouched throughout.
+/// dragged to pose its Shape at the playhead, added and taken away there, and put down again;
+/// the design's outline untouched throughout.
 @MainActor
 struct AnimateCanvasPathTests {
     /// On artboard A: a triangle, its tip at the bottom, and a card well away from it.
@@ -53,24 +53,100 @@ struct AnimateCanvasPathTests {
         #expect(film.node("Tri").motion == nil)
     }
 
-    @Test func pointsAreOnlyMovedHereNeverAddedOrTakenAway() throws {
+    @Test func aPointAddedAtThePlayheadIsAKeyThatHoldsTheOutlineAndTheDesignKeepsItsOwn() throws {
         let film = inHand()
         film.fresh()
-        // A click on the outline, halfway along the top, adds nothing.
+        let design = film.design
+        // A click on the outline, halfway along the top, puts a point there at the playhead.
         film.click(film.view(150, 60))
+        var tri = film.node("Tri")
+        #expect(film.design == design)
+        #expect(tri.ownOutline?.anchorCount == 3)
+        let keys = film.keys("Tri", .shape)
+        #expect(keys.map(\.t) == [0, 1])
+        #expect(keys.first?.given == true)
+        // The key holds the outline, four points; the design's three are what the film starts from.
+        #expect(BezierPath(key: keys[1].v)?.anchorCount == 4)
+        let there = try #require(tri.outline(at: 1)).anchorPoints
+        #expect(there.count == 4 && near(there[1], CGPoint(x: 50, y: 0)), "\(there)")
+        #expect(tri.outline(at: 0)?.anchorCount == 3)
+        // The four are in hand on the canvas, the new one picked.
+        let shown = try #require(film.tool.points.pen.overlay().anchors.map(\.point))
+        #expect(shown.count == 4 && near(shown[1], CGPoint(x: 100 + 150, y: 100 + 60)), "\(shown)")
+        #expect(film.store.selectedPoints == [PathPoint(subpath: 0, index: 1)])
+        #expect(film.undo.undoActionName == String(localized: "Add Point"))
+        // Pulled up, it is where it was pulled to, and the others where they were.
+        film.drag(film.view(150, 60), film.view(150, 20), flags: [.command])
+        tri = film.node("Tri")
+        let pulled = try #require(tri.outline(at: 1)).anchorPoints
+        #expect(pulled.count == 4 && near(pulled[1], CGPoint(x: 50, y: -40)) && near(pulled[0], there[0]) && near(pulled[3], there[3]), "\(pulled)")
+        #expect(film.keys("Tri", .shape).count == 2)
+        // On the way there the triangle grows its tip: nothing jumps at either end.
+        let early = try #require(tri.outline(at: 0.01)).anchorPoints, late = try #require(tri.outline(at: 0.99)).anchorPoints
+        #expect(early.allSatisfy { p in p.y > -2 }, "\(early)")
+        #expect(late.contains { near($0, CGPoint(x: 50, y: -40), 1.5) }, "\(late)")
+        // What is drawn then holds the tip: its frame has grown to it.
+        let drawn = tri.reshaped(at: 1)
+        #expect(abs(drawn.frame.minY - (60 - 40)) < 0.01 && abs(drawn.frame.height - 120) < 0.01, "\(drawn.frame)")
+        // Each step undoes alone, down to no motion at all.
+        #expect(film.design == design)
+        film.undo.undo()
+        #expect(film.node("Tri").outline(at: 1)?.anchorPoints.count == 4)
+        film.undo.undo()
         #expect(film.node("Tri").motion == nil)
-        #expect(film.node("Tri").ownOutline?.anchorCount == 3)
-        // A point picked and Delete pressed takes nothing away.
+    }
+
+    @Test func aPointPickedAndDeletedIsTakenAwayAtThePlayheadOnly() throws {
+        let film = inHand()
+        film.fresh()
+        let design = film.design
         film.click(film.view(100, 60))
         #expect(film.store.selectedPoints.count == 1)
         film.key(51)
-        #expect(film.node("Tri").ownOutline?.anchorCount == 3)
-        #expect(film.node("Tri").motion == nil)
-        // The arrows move the picked point, a key at the playhead.
+        // Two points are left at the playhead, a line; the design has its three.
+        var tri = film.node("Tri")
+        #expect(film.design == design)
+        let there = try #require(tri.outline(at: 1))
+        #expect(there.anchorCount == 2 && near(there.anchorPoints[0], CGPoint(x: 100, y: 0)), "\(there.anchorPoints)")
+        #expect(film.store.selectedPoints.isEmpty)
+        #expect(film.undo.undoActionName == String(localized: "Delete Point"))
+        // One more cannot go: an outline needs two.
+        film.click(film.view(200, 60))
+        #expect(film.store.selectedPoints.count == 1)
+        film.key(51)
+        tri = film.node("Tri")
+        #expect(tri.outline(at: 1)?.anchorCount == 2)
+        // The arrows move the picked point, in the key's own outline.
         film.arrow(124, flags: [.shift])
         let moved = try #require(film.node("Tri").outline(at: 1)).anchorPoints[0]
-        let was = try #require(film.node("Tri").ownOutline).anchorPoints[0]
-        #expect(near(moved, CGPoint(x: was.x + 10, y: was.y)), "\(moved)")
+        #expect(near(moved, CGPoint(x: 110, y: 0)), "\(moved)")
+        // Each step undoes alone, down to no motion at all.
+        film.undo.undo()
+        film.undo.undo()
+        #expect(film.node("Tri").motion == nil)
+    }
+
+    @Test func pointsChangedBetweenTwoKeysAreAKeyOfTheOutlineAsItIsThen() throws {
+        let film = inHand()
+        film.fresh()
+        // A point added at one second, then the playhead halfway there.
+        film.click(film.view(150, 60))
+        film.drag(film.view(150, 60), film.view(150, 20), flags: [.command])
+        film.store.seek(0.5)
+        let between = try #require(film.node("Tri").outline(at: 0.5))
+        // Its points are in hand as they are then, and one moved there is a key there.
+        let shown = try #require(film.tool.points.pen.overlay().anchors.map(\.point))
+        #expect(shown.count == between.anchorCount)
+        film.click(film.view(150, 140))
+        film.arrow(125, flags: [.shift])
+        let keys = film.keys("Tri", .shape)
+        #expect(keys.map(\.t) == [0, 0.5, 1])
+        let then = try #require(film.node("Tri").outline(at: 0.5))
+        #expect(then.anchorCount == between.anchorCount)
+        #expect(then.anchorPoints.contains { near($0, CGPoint(x: 50, y: 90)) }, "\(then.anchorPoints)")
+        // The keys either side say what they said.
+        #expect(film.node("Tri").outline(at: 0)?.anchorCount == 3)
+        #expect(film.node("Tri").outline(at: 1)?.anchorCount == 4)
     }
 
     @Test func returnAndEscapePutThePointsDownAndLeavingAnimateDoesToo() {
