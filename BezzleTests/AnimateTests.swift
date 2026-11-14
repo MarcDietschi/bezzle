@@ -355,9 +355,9 @@ struct AnimateTests {
         let hand = FilmHand(store: store)
         let (rows, scale, length) = sheet
         let before = store.doc
-        // On the bare line under the card's, well away from any bead.
-        let from = at(1.6, line: 3, scale)
-        hand.press(at: from, rows: rows, scale: scale)
+        // On the ruler, well away from any bead's moment.
+        let from = CGPoint(x: scale.x(1.6), y: 10)
+        hand.pressRuler(at: from, scale: scale, length: length)
         hand.dragged(to: from, by: 0, rows: rows, scale: scale, length: length)
         #expect(store.filmTime == 1.6)
         hand.dragged(to: CGPoint(x: scale.x(0.73) + 4, y: from.y), by: 0, rows: rows, scale: scale, length: length)

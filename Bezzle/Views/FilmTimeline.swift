@@ -6,10 +6,13 @@ import AppKit
 /// moves, each key a bead on it. A bead is filled where the layer is away from the design and
 /// hollow where it is as designed, so a line reads as what it does: out, and home again.
 ///
-/// Everything is taken by hand (`FilmHand`). A press on the ruler or on bare sheet moves the
-/// playhead, which catches on keys as it passes them; a bead dragged moves its key, a line's band
-/// dragged moves its whole motion, and the flag at the end sets how long the film runs. While
-/// something is dragged the seconds hold still under it; let go, the film fits the card again.
+/// Everything is taken by hand (`FilmHand`). A press on the ruler, or on the playhead's line
+/// down the sheet, moves the playhead, which catches on keys as it passes them; a bead dragged
+/// moves its key, a line's band dragged moves its whole motion, and the flag at the end sets how
+/// long the film runs. While something is dragged the seconds hold still under it; let go, the
+/// film fits the card again. Bare sheet only clicked puts the playhead there; dragged, it draws a
+/// marquee that picks the keys under it, with Shift adding to those picked and letting go of
+/// those among them it catches again, and Escape gives back what was picked before.
 ///
 /// A pinch looks at the film closer, about the moment under the pointer, and two fingers then
 /// move it along; a double tap with two fingers, or pinching back out, shows the whole film
@@ -24,6 +27,7 @@ struct FilmTimeline: View {
     init(store: DocumentStore) {
         self.store = store
         let hand = FilmHand(store: store)
+        hand.escapeDown = FilmHand.escapeOnKeyboard
         _hand = State(initialValue: hand)
         _fingers = State(initialValue: FilmFingers(hand: hand))
     }
@@ -152,6 +156,7 @@ struct FilmTimeline: View {
                         .transition(.opacity)
                 }
             }
+            FilmMarqueeMark(hand: hand, scale: scale, tall: tall)
         }
         .frame(width: scale.width, height: tall, alignment: .topLeading)
         .clipped()
@@ -453,6 +458,33 @@ private struct PaceLines: View, Animatable {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// The marquee dragged over the keys, as the canvas draws its own. A view of its own, as it
+/// changes with every step of the drag: the lines under it are drawn again only as keys come
+/// into it or leave it.
+private struct FilmMarqueeMark: View {
+    let hand: FilmHand
+    let scale: FilmScale
+    /// How tall the lines are in all.
+    let tall: CGFloat
+
+    var body: some View {
+        if let marquee = hand.marquee {
+            // No further than just past the sheet's sides, where it is cut off: a sheet looked
+            // at closer has moments far out of sight, and nothing here is laid out by them.
+            let r = marquee.rect(on: scale).intersection(CGRect(x: -2, y: -2, width: scale.width + 4, height: tall + 4))
+            if !r.isNull {
+                Rectangle()
+                    .fill(Theme.pencil.opacity(0.08))
+                    .overlay { Rectangle().strokeBorder(Theme.pencil.opacity(0.8), lineWidth: 1) }
+                    .frame(width: r.width, height: r.height)
+                    .offset(x: r.minX, y: r.minY)
+                    .allowsHitTesting(false)
+                    .transition(.identity)
+            }
+        }
     }
 }
 

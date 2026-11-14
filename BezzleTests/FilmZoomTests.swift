@@ -362,8 +362,8 @@ struct FilmZoomTests {
     @Test func thePlayheadGoesToTheMomentUnderThePointerAndWaitsAtTheEndOfWhatShows() {
         zoom(4, about: 1)
         let (rows, scale) = (rows, scale)
-        let p = at(1.1, line: 2)
-        hand.press(at: p, rows: rows, scale: scale)
+        let p = CGPoint(x: scale.x(1.1), y: 10)
+        hand.pressRuler(at: p, scale: scale, length: length)
         hand.dragged(to: p, by: 0, rows: rows, scale: scale, length: length)
         #expect(store.filmTime == 1.1)
         hand.dragged(to: CGPoint(x: scale.x(0.93), y: p.y), by: 0, rows: rows, scale: scale, length: length, flags: .option)
@@ -387,8 +387,8 @@ struct FilmZoomTests {
     @Test func theSheetCreepsAlongUnderAPlayheadDraggedPastItsEnd() {
         zoom(4, about: 0.6)
         let began = scale
-        let p = at(0.7, line: 2)
-        hand.press(at: p, rows: rows, scale: scale)
+        let p = CGPoint(x: scale.x(0.7), y: 10)
+        hand.pressRuler(at: p, scale: scale, length: length)
         hand.dragged(to: p, by: 0, rows: rows, scale: scale, length: length, flags: .command)
         // Within the sheet nothing creeps.
         #expect(!hand.creep(0.1) && scale == began)
@@ -417,7 +417,7 @@ struct FilmZoomTests {
         #expect(!hand.creep(0.1))
         // Nor does a whole film ever.
         store.film.window = nil
-        hand.press(at: p, rows: rows, scale: scale)
+        hand.pressRuler(at: p, scale: scale, length: length)
         hand.dragged(to: out, by: out.x - p.x, rows: rows, scale: scale, length: length)
         #expect(!hand.creep(0.1) && store.film.window == nil)
         hand.ended(scale: scale)

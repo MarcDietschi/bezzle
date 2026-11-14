@@ -168,7 +168,7 @@ along one artboard's film. Its keys are changes from the design and never the de
   (shared, for Windows to use): no closer than `FilmWindow.closest` points a second, where a
   hundredth of a second is a dozen points, and no further out than the whole film, where a
   pinch catches. `FilmHand` holds what the hand does (`zoom`, `scroll`, `smartZoom`, and `creep`,
-  which moves the sheet along under a playhead or a key dragged past its end);
+  which moves the sheet along under a playhead, a key or a marquee dragged past its end);
   `Bezzle/Views/FilmFingers.swift` hears the pinch, the double tap with two fingers and the wheel
   for it, through one monitor of the app's events, since SwiftUI tells of no scrolling: a pinch
   or two fingers that begin over the lines are the timeline's until lifted, sideways moves it
@@ -178,6 +178,20 @@ along one artboard's film. Its keys are changes from the design and never the de
   out of it turns the page, so the window changes once a page and never at every frame. The
   ruler (`FilmRuler.step`, `strokes`) draws only the strokes in sight. Its tests are
   `FilmZoomTests`.
+- **A marquee over keys:** on the timeline's sheet the ruler moves the playhead, and so does the
+  playhead's own line down the sheet, taken within `FilmHand.headReach`. A bead, a bar and the
+  film's end are taken as before. Bare sheet clicked puts the playhead there and lets go of the
+  picked keys (with Shift it changes nothing); bare sheet dragged three points or more draws a
+  rectangle that picks the keys it touches as it grows, with their layers or the camera, since
+  keys are only ever picked of what is picked. With Shift it picks what it catches that was not
+  picked and lets go of what was. The rectangle is kept in moments and in points down the lines
+  (`FilmMarquee`, with what it catches, in `Bezzle/Model/FilmKeys.swift`, shared, for Windows to
+  use), so it keeps what it caught where the sheet creeps along under it. Escape gives back what
+  was picked before (`FilmHand.cancel`). The hand asks the keyboard whether Escape is down
+  (`heed`: at every step of the drag and sixty times a second while a marquee is in hand),
+  because the app is told of no key while SwiftUI follows a press, neither its event monitors
+  nor whatever has the keyboard, and Escape does not end SwiftUI's drag either (measured
+  2026-11-14 on macOS 27.2 in a test copy). Its tests are `FilmMarqueeTests`.
 - **Shapes** (paths, and rectangles, ellipses and lines, whose outline is points too) have two
   properties more: Draw, how much of the outline is drawn as a pen draws it, one run after
   another, and Shape, its points and handles each moved from the design's, six numbers to a point

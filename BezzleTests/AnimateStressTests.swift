@@ -103,7 +103,10 @@ struct AnimateStressTests {
         if store.film.camera, !store.selection.allSatisfy({ $0 == store.film.board }) { out.append("the camera and layers are picked at once") }
         if !Set(store.pickedKeys).isSubset(of: store.film.keys) { out.append("keys count as picked that are not") }
         if store.gestureBefore != nil { out.append("a gesture was left open") }
-        if hand.drag != nil || hand.held != nil { out.append("the timeline's hand still holds something") }
+        if hand.drag != nil || hand.held != nil || hand.marquee != nil { out.append("the timeline's hand still holds something") }
+        if !store.film.keys.allSatisfy({ $0.layer == store.film.board || store.selection.contains($0.layer) }) {
+            out.append("keys are picked of a layer that is not")
+        }
         if hand.creep(0.1) { out.append("the timeline creeps along with nothing dragged") }
         if store.animating, let part = store.film.window {
             if part.fitted(to: store.filmWhole) != part { out.append("the timeline shows \(part) of a film \(store.filmWhole) long") }
@@ -323,15 +326,20 @@ struct AnimateStressTests {
                 let p = spot(rows, scale), held = flags(), clicks = chance(0.15) ? 2 : 1
                 var to: [CGFloat] = []
                 for _ in 0..<whole(0...4) { to.append(chance(0.3) ? p.x + CGFloat(number(-4...4)) : CGFloat(number(-40...660))) }
-                did("sheet press \(p) \(held.rawValue) x\(clicks) to \(to)")
+                // As often as not up and down the lines too, which from bare sheet is a marquee
+                // over the keys; and now and then Escape before it is let go.
+                let across = chance(0.5), escaped = chance(0.15)
+                did("sheet press \(p) \(held.rawValue) x\(clicks) to \(to)\(across ? " across the lines" : "")\(escaped ? ", escaped" : "")")
                 bench.step {
                     hand.press(at: p, rows: rows, scale: scale, flags: held, clicks: clicks)
                     for x in to {
                         // The sheet as it is by then: looked at closer, it creeps along under what is dragged past its end.
                         let (scale, length) = (hand.scale(width: 600), store.filmBoard?.filmLength ?? length)
-                        hand.dragged(to: CGPoint(x: x, y: p.y), by: x - p.x, rows: rows, scale: scale, length: length, flags: held)
+                        let y = across ? CGFloat(number(-10...Double(rows.count) * 24 + 20)) : p.y
+                        hand.dragged(to: CGPoint(x: x, y: y), by: x - p.x, rows: rows, scale: scale, length: length, flags: held)
                         if chance(0.4) { hand.creep(number(0...0.3)) }
                     }
+                    if escaped { hand.cancel() }
                     hand.ended(scale: hand.scale(width: 600), flags: held)
                 }
             case 21:

@@ -4,7 +4,8 @@ import AppKit
 
 /// The film's timeline taken by the pointer (`FilmHand`), and the lines it is made of
 /// (`FilmRow`, `FilmScale`): what a press, a drag and a right click do on a bead, on a line's
-/// band, on bare sheet and on the ruler, with and without the keys held down.
+/// band, on bare sheet and on the ruler, with and without the keys held down. The marquee a
+/// drag from bare sheet draws is in `FilmMarqueeTests`.
 @MainActor
 struct FilmTimelineTests {
     /// On artboard A: a group of two (an icon and a label) over a card, and a hidden layer.
@@ -329,22 +330,64 @@ struct FilmTimelineTests {
         #expect(keys("Card", .fade) == [0.2, 0.6])
     }
 
-    @Test func aPressOnBareSheetLetsGoOfKeysAndKeepsWhatIsPicked() {
+    @Test func aClickOnBareSheetLetsGoOfKeysKeepsWhatIsPickedAndPutsThePlayheadThere() {
         animateCard()
         press(line: 1, at: 0.8)
         #expect(!store.film.keys.isEmpty)
-        // The line under the card's is bare.
-        press(line: 2, at: 1.2)
-        #expect(store.film.keys.isEmpty)
-        #expect(store.selection == [id("Card")])
-        #expect(store.filmTime == 0.8)
-        // Only a drag there, even of nothing, takes the playhead.
+        // The line under the card's is bare. Pressed, the keys are let go of; the playhead
+        // stays until the press is let go without having gone anywhere.
         let (rows, scale, length) = sheet
         let p = at(1.2, line: 2, scale)
         hand.press(at: p, rows: rows, scale: scale)
         hand.dragged(to: p, by: 0, rows: rows, scale: scale, length: length)
+        hand.dragged(to: CGPoint(x: p.x + 2, y: p.y - 2), by: 2, rows: rows, scale: scale, length: length)
+        #expect(store.film.keys.isEmpty)
+        #expect(store.selection == [id("Card")])
+        #expect(store.filmTime == 0.8 && hand.marquee == nil)
         hand.ended(scale: scale)
         #expect(store.filmTime == 1.2)
+        #expect(store.selection == [id("Card")] && hand.drag == nil)
+        // Near a key's moment, on whatever line, it lands on it; with Command, where it is put.
+        let near = CGPoint(x: scale.x(0.6) + 5, y: p.y)
+        hand.press(at: near, rows: rows, scale: scale)
+        hand.ended(scale: scale)
+        #expect(store.filmTime == 0.6)
+        hand.press(at: near, rows: rows, scale: scale, flags: .command)
+        #expect(hand.drag?.kind == .marquee)
+        hand.ended(scale: scale, flags: .command)
+        #expect(abs(store.filmTime - (0.6 + 5 / Double(scale.perSecond))) < 0.0006)
+        // With Shift nothing is let go of, and the playhead stays.
+        press(line: 1, at: 0.8)
+        press(line: 2, at: 1.5, flags: .shift)
+        #expect(store.film.keys == [FilmKeyRef(id("Card"), at: 0.8)] && store.filmTime == 0.8)
+    }
+
+    @Test func thePlayheadIsTakenByItsLineDownTheSheet() {
+        animateCard()
+        store.seek(1.4)
+        let (rows, scale, length) = sheet
+        // On bare sheet within reach of its line: dragged, it goes along and catches on keys.
+        let p = CGPoint(x: scale.x(1.4) + FilmHand.headReach, y: at(0, line: 2, scale).y)
+        hand.press(at: p, rows: rows, scale: scale)
+        #expect(hand.drag?.kind == .scrub)
+        hand.dragged(to: CGPoint(x: scale.x(1.7), y: p.y), by: scale.x(1.7) - p.x, rows: rows, scale: scale, length: length)
+        #expect(store.filmTime == 1.7 && hand.marquee == nil)
+        hand.dragged(to: CGPoint(x: scale.x(0.6) - 3, y: p.y), by: 0, rows: rows, scale: scale, length: length)
+        #expect(store.filmTime == 0.6)
+        hand.ended(scale: scale)
+        #expect(store.selection.isEmpty && store.film.keys.isEmpty)
+        // A point further from it is bare sheet.
+        hand.press(at: CGPoint(x: scale.x(0.6) + FilmHand.headReach + 1, y: p.y), rows: rows, scale: scale)
+        #expect(hand.drag?.kind == .marquee)
+        hand.ended(scale: scale)
+        // A bead on the playhead is still the bead, and a band under it the band.
+        hand.press(at: at(0.6, line: 1, scale), rows: rows, scale: scale)
+        #expect(hand.drag?.kind == .keys)
+        hand.ended(scale: scale)
+        store.seek(0.4)
+        hand.press(at: at(0.4, line: 1, scale), rows: rows, scale: scale)
+        #expect(hand.drag?.kind == .band)
+        hand.ended(scale: scale)
     }
 
     @Test func scrubbingStopsAFilmThatPlaysAndStaysWithinTheFilm() {
@@ -352,8 +395,8 @@ struct FilmTimelineTests {
         store.playFilm()
         #expect(store.film.playing)
         let (rows, scale, length) = sheet
-        let p = at(1.2, line: 3, scale)
-        hand.press(at: p, rows: rows, scale: scale)
+        let p = CGPoint(x: scale.x(1.2), y: 10)
+        hand.pressRuler(at: p, scale: scale, length: length)
         hand.dragged(to: p, by: 0, rows: rows, scale: scale, length: length)
         #expect(!store.film.playing && store.filmTime == 1.2)
         hand.dragged(to: CGPoint(x: -80, y: p.y), by: 0, rows: rows, scale: scale, length: length)
@@ -377,8 +420,8 @@ struct FilmTimelineTests {
     @Test func scrubbingTellsOnlyOfThePlayhead() {
         animateCard()
         let (rows, scale, length) = sheet
-        let p = at(0.4, line: 3, scale)
-        hand.press(at: p, rows: rows, scale: scale)
+        let p = CGPoint(x: scale.x(0.4), y: 10)
+        hand.pressRuler(at: p, scale: scale, length: length)
         hand.dragged(to: p, by: 0, rows: rows, scale: scale, length: length)
         nonisolated final class Told: @unchecked Sendable { var what: Set<String> = [] }
         let told = Told()

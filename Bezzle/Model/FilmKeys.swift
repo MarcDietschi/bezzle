@@ -230,6 +230,52 @@ extension FilmScale {
     }
 }
 
+// MARK: - A marquee over keys
+
+/// A rectangle dragged over the timeline's lines, to pick the keys under it. Its sides are
+/// moments, not points along the sheet, so it keeps what it caught while a sheet looked at
+/// closer moves along under it; its top and foot are measured down the lines, from the top of
+/// the first.
+struct FilmMarquee: Equatable {
+    /// The moment the press was at, and the one the pointer is at now.
+    var from: Double
+    var to: Double
+    /// How far down the lines the press was, and the pointer is now.
+    var top: CGFloat
+    var foot: CGFloat
+
+    /// How near a bead's middle it catches the bead, in points: where it touches it.
+    static let reach: CGFloat = 4
+
+    /// Where it lies on a sheet.
+    func rect(on scale: FilmScale) -> CGRect {
+        let left = scale.x(min(from, to)), right = scale.x(max(from, to))
+        return CGRect(x: left, y: min(top, foot), width: right - left, height: abs(foot - top))
+    }
+
+    /// The keys under it, as the lines show them, each line `line` points tall: a bead on a
+    /// layer's line, or on the camera's, is every key that has at that moment, one on a
+    /// property's or a shader input's line that key alone. Where a layer's line and its
+    /// properties' are both under it, the layer's bead stands for them all.
+    func keys(of rows: [FilmRow], line: CGFloat, scale: FilmScale) -> Set<FilmKeyRef> {
+        let near = Double(Self.reach / scale.perSecond)
+        let early = min(from, to) - near, late = max(from, to) + near
+        let high = min(top, foot) - Self.reach, low = max(top, foot) + Self.reach
+        var out: Set<FilmKeyRef> = []
+        var own: [FilmKeyRef] = []
+        for (i, row) in rows.enumerated() {
+            let middle = (CGFloat(i) + 0.5) * line
+            guard middle >= high, middle <= low else { continue }
+            for mark in row.marks where mark.t >= early && mark.t <= late {
+                let ref = FilmKeyRef(row.layer, row.property, input: row.input, at: mark.t)
+                if row.single { own.append(ref) } else { out.insert(ref) }
+            }
+        }
+        for ref in own where !out.contains(FilmKeyRef(ref.layer, at: ref.time)) { out.insert(ref) }
+        return out
+    }
+}
+
 // MARK: - The camera, sent somewhere
 
 extension Node {
