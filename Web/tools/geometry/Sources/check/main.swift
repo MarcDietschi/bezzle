@@ -65,5 +65,43 @@ for _ in 0..<200_000 {
     let sz = CoreGraphics.CGSize(width: d, height: e).applying(t), wsz = WebGeometry.CGSize(width: d, height: e).applying(wt)
     check(sz.width == wsz.width && sz.height == wsz.height, "size applying", "\(t)")
 }
+// Off the grid, where a sum is not exact: rectangles as designs have them, one in another, the
+// same again, grown or shrunk by a hair or a hundredth, touching an edge, or anywhere. On the grid
+// alone, `contains` asked as "adding it changes nothing" agreed everywhere and was wrong for more
+// than half of these, (x + w) − x being w only by luck.
+func fine() -> Double { Double.random(in: -500...2000, using: &rng) }
+func size() -> Double { Double.random(in: 0.1...2000, using: &rng) }
+func web(_ r: Mac) -> Web { r.isNull ? .null : Web(x: r.origin.x, y: r.origin.y, width: r.size.width, height: r.size.height) }
+for _ in 0..<400_000 {
+    let a = Int.random(in: 0..<6, using: &rng) == 0
+        ? Mac(x: Double(Int.random(in: 0...1920, using: &rng)), y: Double(Int.random(in: 0...1080, using: &rng)),
+              width: Double(Int.random(in: 1...900, using: &rng)), height: Double(Int.random(in: 1...900, using: &rng)))
+        : Mac(x: fine(), y: fine(), width: size(), height: size())
+    var b: Mac
+    switch Int.random(in: 0..<9, using: &rng) {
+    case 0: b = a
+    case 1: b = a.insetBy(dx: Double.random(in: 0...Double(a.width) / 2.1, using: &rng), dy: Double.random(in: 0...Double(a.height) / 2.1, using: &rng))
+    case 2: b = a.insetBy(dx: -0.01, dy: -0.01)
+    case 3: b = a.insetBy(dx: 0.01, dy: 0.01).insetBy(dx: -0.01, dy: -0.01)
+    case 4: b = Mac(x: a.minX, y: a.minY + a.height / 4, width: a.width, height: a.height / 2)
+    case 5: b = Mac(x: a.minX.nextDown, y: a.minY, width: a.width, height: a.height)
+    case 6: b = Mac(x: a.minX, y: a.minY, width: a.width.nextUp, height: a.height.nextDown)
+    case 7: b = a.offsetBy(dx: Double.random(in: -1...1, using: &rng) * Double(a.width), dy: Double.random(in: -1...1, using: &rng) * Double(a.height))
+    default: b = Mac(x: fine(), y: fine(), width: size(), height: size())
+    }
+    let wa = web(a), wb = web(b)
+    check(a.contains(b) == wa.contains(wb), "contains rect, off the grid", "\(a) ⊇ \(b): mac \(a.contains(b))")
+    check(b.contains(a) == wb.contains(wa), "contains rect, off the grid", "\(b) ⊇ \(a): mac \(b.contains(a))")
+    check(a.intersects(b) == wa.intersects(wb), "intersects, off the grid", "\(a), \(b): mac \(a.intersects(b))")
+    check(same(a.union(b), wa.union(wb)), "union, off the grid", "\(a) ∪ \(b) mac \(a.union(b)) web \(wa.union(wb))")
+    check(same(a.intersection(b), wa.intersection(wb)), "intersection, off the grid", "\(a) ∩ \(b) mac \(a.intersection(b)) web \(wa.intersection(wb))")
+    let d = Double.random(in: -3...3, using: &rng), e = Double.random(in: -3...3, using: &rng)
+    check(same(a.insetBy(dx: d, dy: e), wa.insetBy(dx: d, dy: e)), "insetBy, off the grid", "\(a) by \(d), \(e)")
+    check(same(a.integral, wa.integral), "integral, off the grid", "\(a)")
+    let p = CoreGraphics.CGPoint(x: Bool.random(using: &rng) ? a.maxX : a.minX + d, y: Bool.random(using: &rng) ? a.minY : a.maxY + e)
+    check(a.contains(p) == wa.contains(WebGeometry.CGPoint(x: p.x, y: p.y)), "contains point, off the grid", "\(a) ∋ \(p): mac \(a.contains(p))")
+    check([a.minX, a.midX, a.maxX, a.minY, a.midY, a.maxY, a.width, a.height] == [wa.minX, wa.midX, wa.maxX, wa.minY, wa.midY, wa.maxY, wa.width, wa.height],
+          "edges, off the grid", "\(a)")
+}
 checkPaths()
 print(failures.isEmpty ? "all \(checked) checks agree with Core Graphics" : "\(failures.values.reduce(0, +)) of \(checked) differ: \(failures)")

@@ -172,9 +172,12 @@ only a module's own declarations shadow Foundation's.
 
 `tools/geometry` compiles that geometry and `CGPath` on the Mac and checks them against Core
 Graphics on random cases (`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift run -c
-release` there). Rectangles, points, sizes and transforms agree to the last digit in 4.4 million
-checks; for that, every `x·y + z·w` is fused as a Mac fuses it (`fma(x, y, z·w)`), and the inverse
-goes by the determinant's reciprocal. Rectangles, ellipses and rounded rectangles come out as Core
+release` there). Rectangles, points, sizes and transforms agree to the last digit in 8 million
+checks, on a coarse grid where edges often touch and off it, where a sum is not exact; for that,
+every `x·y + z·w` is fused as a Mac fuses it (`fma(x, y, z·w)`), the inverse goes by the
+determinant's reciprocal, and a rectangle is asked whether it holds another by its edges (asked
+whether their union is the rectangle itself, it agreed on the grid and was wrong for more than
+half the rectangles off it, until 2026-11-14). Rectangles, ellipses and rounded rectangles come out as Core
 Graphics makes them; arcs, cut as it cuts them (quarter turns from the start, then the rest when
 over √ε), agree within 4e-10. Left: tangent arcs at very sharp angles (2.5e-7 apart), one turning
 straight back from its own corner, and a point lying exactly on a curve.

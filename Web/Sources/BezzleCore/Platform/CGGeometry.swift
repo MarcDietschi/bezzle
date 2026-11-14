@@ -159,8 +159,16 @@ nonisolated public struct CGRect: Hashable, Sendable, Codable, CustomStringConve
         return p.x >= minX && p.x < maxX && p.y >= minY && p.y < maxY
     }
 
-    /// Nothing is in everything; a rectangle is in another when adding it changes nothing.
-    public func contains(_ r: CGRect) -> Bool { r.isNull || (!isNull && union(r) == standardized) }
+    /// Nothing is in everything; a rectangle is in another that reaches as far as it does on every
+    /// side. Asked by the edges, as Core Graphics answers. Asked as "adding it changes nothing"
+    /// (`union(r) == standardized`) it was right only where the union's width came out to the
+    /// last digit, (x + w) − x being w only by luck: of rectangles as designs have them, more than
+    /// half were not found in one that held them (`tools/geometry`, off the grid).
+    public func contains(_ r: CGRect) -> Bool {
+        if r.isNull { return true }
+        if isNull { return false }
+        return r.minX >= minX && r.maxX <= maxX && r.minY >= minY && r.maxY <= maxY
+    }
 
     public func divided(atDistance distance: CGFloat, from edge: CGRectEdge) -> (slice: CGRect, remainder: CGRect) {
         if isNull { return (.null, .null) }
