@@ -319,6 +319,285 @@ nonisolated extension MotionTrack {
     }
 }
 
+// MARK: - When the design's outline changes
+
+// A Shape key is a change of each of the design's points, so it is made for one outline. When the
+// design gives the layer another, without a point being edited (it is resized, a rectangle's
+// corners are rounded, it is flipped, or shapes are combined into it), its keys go with it:
+// stretched as the layer is, turned over as it is, and where the outline has other points, each
+// new point going as the place it lies at on the old outline went.
+
+nonisolated extension BezierPath {
+    /// How the change of each anchor of an outline is made of the changes of another's, the one
+    /// its Shape keys were made for.
+    struct Following {
+        /// A share of one of the old outline's changes: its anchors' numbered three to an anchor,
+        /// its point, its handle in, its handle out.
+        typealias Share = (from: Int, share: Double)
+        /// For each of the new outline's anchors three lists, what its point, its handle in and
+        /// its handle out go by.
+        var shares: [[Share]] = []
+        /// How many anchors the old outline has.
+        var old = 0
+
+        /// From `old`, lying in the new outline's own points, to `new`. An anchor where one was
+        /// goes as that one did, its handles too, the other way round where the outline now runs
+        /// the other way; `inOrder` takes them by their place in the outline when both have the
+        /// same runs, as a shape drawn again by its kind has them. Any other anchor goes as the
+        /// place nearest it on the old outline went, between the anchors either side of it there,
+        /// and its handles as the places they pull towards.
+        init(from old: BezierPath, to new: BezierPath, inOrder: Bool) {
+            self.old = old.anchorCount
+            // The anchors of each, one after another, and where each run begins among them.
+            func starts(_ p: BezierPath) -> [Int] {
+                var at = 0
+                return p.subpaths.map { run in defer { at += run.anchors.count }; return at }
+            }
+            let oldStarts = starts(old), newStarts = starts(new)
+            let was = old.subpaths.flatMap(\.anchors), now = new.subpaths.flatMap(\.anchors)
+            let alike = old.subpaths.count == new.subpaths.count
+                && zip(old.subpaths, new.subpaths).allSatisfy { $0.anchors.count == $1.anchors.count }
+            var from = [Int?](repeating: nil, count: now.count)
+            var used = Set<Int>()
+            if alike, inOrder {
+                for j in now.indices { from[j] = j }
+            } else {
+                // Where one was: the one with the same place in the outline first, so that two
+                // lying on each other each stay themselves.
+                for j in now.indices where j < was.count && BezierPath.same(was[j].point, now[j].point) {
+                    from[j] = j
+                    used.insert(j)
+                }
+                for j in now.indices where from[j] == nil {
+                    if let i = was.indices.first(where: { !used.contains($0) && BezierPath.same(was[$0].point, now[j].point) }) {
+                        from[j] = i
+                        used.insert(i)
+                    }
+                }
+                // Dragged, with the outline's runs as they were: by its place in the outline.
+                if alike {
+                    for j in now.indices where from[j] == nil && !used.contains(j) {
+                        from[j] = j
+                        used.insert(j)
+                    }
+                }
+            }
+            // An anchor's neighbours along its run, among all the anchors.
+            func neighbours(_ k: Int, _ p: BezierPath, _ starts: [Int]) -> (before: Int?, after: Int?) {
+                guard let s = starts.lastIndex(where: { $0 <= k }) else { return (nil, nil) }
+                let run = p.subpaths[s], i = k - starts[s]
+                return (run.before(i).map { $0 + starts[s] }, run.after(i).map { $0 + starts[s] })
+            }
+            // Whether the outline runs the other way through an anchor than it did: its handles
+            // tell, and where they cannot, as at a corner, the anchors either side.
+            func turnedRound(_ j: Int, _ i: Int) -> Bool {
+                let a = was[i], b = now[j]
+                let aIn = a.handleIn ?? a.point, aOut = a.handleOut ?? a.point
+                let bIn = b.handleIn ?? b.point, bOut = b.handleOut ?? b.point
+                let straight = BezierPath.same(bIn, aIn) && BezierPath.same(bOut, aOut)
+                let crossed = BezierPath.same(bIn, aOut) && BezierPath.same(bOut, aIn)
+                if straight != crossed { return crossed }
+                let o = neighbours(i, old, oldStarts), n = neighbours(j, new, newStarts)
+                if let next = n.after, let came = from[next] {
+                    if came == o.before, came != o.after { return true }
+                    if came == o.after { return false }
+                }
+                if let last = n.before, let came = from[last] {
+                    if came == o.after, came != o.before { return true }
+                }
+                return false
+            }
+            // What a place on the old outline goes by: the four points of its curve, each by how
+            // much it pulls there. A straight side is measured along itself, and its curve runs
+            // along it by `3u² − 2u³`: the same place, at the `u` that comes to.
+            func pull(at spot: Spot) -> [Share] {
+                let run = old.subpaths[spot.subpath]
+                let i = oldStarts[spot.subpath] + spot.segment, j = oldStarts[spot.subpath] + (spot.segment + 1) % run.anchors.count
+                var t = Double(min(max(spot.t, 0), 1))
+                if old.isStraight(spot.subpath, spot.segment) { t = 0.5 - sin(asin(1 - 2 * t) / 3) }
+                let u = 1 - t
+                return [(i * 3, u * u * u), (i * 3 + 2, 3 * u * u * t), (j * 3 + 1, 3 * u * t * t), (j * 3, t * t * t)]
+            }
+            // The place nearest a point on one curve of the old outline, or on those either side of it.
+            func spot(near p: CGPoint, by found: Spot) -> Spot {
+                let run = old.subpaths[found.subpath], count = run.segmentCount
+                var best = found
+                best.distance = .infinity
+                var tried = Set<Int>()
+                for d in [0, -1, 1] {
+                    var k = found.segment + d
+                    if run.closed { k = (k % count + count) % count }
+                    guard k >= 0, k < count, tried.insert(k).inserted else { continue }
+                    let a = run.anchors[k], b = run.anchors[(k + 1) % run.anchors.count]
+                    let piece = BezierPath(subpaths: [Subpath(anchors: [Anchor(a.point, out: a.handleOut), Anchor(b.point, in: b.handleIn)])])
+                    if let s = piece.nearest(to: p), s.distance < best.distance {
+                        best = Spot(subpath: found.subpath, segment: k, t: s.t, point: s.point, distance: s.distance)
+                    }
+                }
+                return best
+            }
+            for j in now.indices {
+                if let i = from[j] {
+                    let round = turnedRound(j, i)
+                    shares += [[(i * 3, 1)], [(i * 3 + (round ? 2 : 1), 1)], [(i * 3 + (round ? 1 : 2), 1)]]
+                    continue
+                }
+                guard let found = old.nearest(to: now[j].point) else {
+                    // An outline of single points has no curve to lie on: as the nearest of them went.
+                    let near = was.indices.min { Self.far(was[$0].point, now[j].point) < Self.far(was[$1].point, now[j].point) }
+                    let all: [Share] = near.map { [($0 * 3, 1)] } ?? []
+                    shares += [all, all, all]
+                    continue
+                }
+                let point = pull(at: found)
+                // A handle goes as the place it pulls towards; with none, it stays on its point.
+                let handleIn = now[j].handleIn.map { pull(at: spot(near: $0, by: found)) } ?? point
+                let handleOut = now[j].handleOut.map { pull(at: spot(near: $0, by: found)) } ?? point
+                shares += [point, handleIn, handleOut]
+            }
+        }
+
+        private static func far(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
+
+        /// A change of the old outline's anchors as the change of the new one's that it comes to.
+        /// `place` is how the old outline's own points lie in the new one's: a change is turned
+        /// and grown as they are.
+        func carried(_ change: [Double], placed place: CGAffineTransform) -> [Double] {
+            let n = BezierPath.numbersPerAnchor
+            guard change.count == old * n else { return change }
+            let a = Double(place.a), b = Double(place.b), c = Double(place.c), d = Double(place.d)
+            var out: [Double] = []
+            out.reserveCapacity(shares.count * 2)
+            for list in shares {
+                var x = 0.0, y = 0.0
+                for (from, share) in list {
+                    let dx = change[from * 2], dy = change[from * 2 + 1]
+                    x += (dx * a + dy * c) * share
+                    y += (dx * b + dy * d) * share
+                }
+                out += [x, y]
+            }
+            return out
+        }
+    }
+}
+
+nonisolated extension MotionTrack {
+    /// The keys of a Shape made for the outline `before`, for the outline `after` that the design
+    /// has now, each in the layer's own points as they were and as they are. `place` is where the
+    /// old own points lie among the new: grown as the layer was resized, turned over as it was
+    /// flipped. Keys made for neither are left alone.
+    func following(_ before: BezierPath, to after: BezierPath, placed place: CGAffineTransform = .identity, inOrder: Bool = false) -> MotionTrack {
+        let count = before.anchorCount * BezierPath.numbersPerAnchor
+        guard count > 0, after.anchorCount > 0, keys.contains(where: { $0.v.count == count }),
+              [place.a, place.b, place.c, place.d, place.tx, place.ty].allSatisfy(\.isFinite) else { return self }
+        let follow = BezierPath.Following(from: before.applying(place), to: after, inOrder: inOrder)
+        var out = self
+        for k in out.keys.indices where out.keys[k].v.count == count {
+            out.keys[k].v = MotionProperty.shape.clamped(follow.carried(out.keys[k].v, placed: place))
+        }
+        return out
+    }
+}
+
+nonisolated extension Node {
+    /// What its outline is made of, besides where it lies: while none of this changes, its Shape
+    /// keys fit it as they did.
+    private func outlineSame(as other: Node) -> Bool {
+        kind == other.kind && frame.size == other.frame.size && path == other.path && pathBox == other.pathBox
+            && cornerRadius == other.cornerRadius && corners == other.corners && cornerSmoothing == other.cornerSmoothing && rising == other.rising
+    }
+
+    /// Its Shape keys for the outline it has now, when `before`, the same layer as it was, had
+    /// another: `before`'s keys, made for that one. Nil where the outline is the same, or there
+    /// are no keys to go with it. A layer resized has them grown with it, as far as each side
+    /// grew; a rectangle, ellipse or line drawn anew, with other corners, has each of its points
+    /// go as the place it lies at went; a path given other points without their being edited one
+    /// by one, as shapes combined are, likewise, where both lie in what holds them.
+    func shapeKeys(following before: Node) -> MotionTrack? {
+        guard let track = before[track: .shape], canReshape, before.canReshape, !outlineSame(as: before),
+              let was = before.ownOutline, let now = ownOutline, was != now else { return nil }
+        let old = before.frame.size
+        let grown = CGAffineTransform(scaleX: old.width > 1e-6 ? frame.width / old.width : 1, y: old.height > 1e-6 ? frame.height / old.height : 1)
+        let next: MotionTrack
+        if kind != .path, before.kind != .path {
+            next = track.following(was, to: now, placed: grown, inOrder: kind == before.kind)
+        } else if kind == .path, before.kind == .path, path == before.path, pathBox == before.pathBox {
+            next = track.following(was, to: now, placed: grown, inOrder: true)
+        } else {
+            next = track.following(was, to: now, placed: before.placement.concatenating(placement.inverted()))
+        }
+        return next == self[track: .shape] ? nil : next
+    }
+
+    /// Whether it, or anything it holds, has Shape keys.
+    var holdsShapeKeys: Bool {
+        motion?[MotionProperty.shape.rawValue] != nil || children.contains(where: \.holdsShapeKeys) || (mask?.contains(where: \.holdsShapeKeys) ?? false)
+    }
+
+    /// The layer, flipped from `before` (`BezzleDocument.flipped`), with its Shape keys turned
+    /// over as its outline was, and those of what it holds: a point that went left now goes right.
+    func shapeKeysFlipped(from before: Node, horizontally: Bool) -> Node {
+        guard before.holdsShapeKeys else { return self }
+        var n = self
+        if let track = before[track: .shape], self[track: .shape] == track, let was = before.ownOutline, let now = ownOutline {
+            let size = before.frame.size
+            let over = horizontally ? CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: size.width, ty: 0)
+                                    : CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: size.height)
+            n[track: .shape] = track.following(was, to: now, placed: over)
+        }
+        func each(_ now: [Node], _ was: [Node]) -> [Node] {
+            guard now.count == was.count else { return now }
+            return zip(now, was).map { $0.id == $1.id ? $0.shapeKeysFlipped(from: $1, horizontally: horizontally) : $0 }
+        }
+        n.children = each(children, before.children)
+        if let mask, let was = before.mask { n.mask = each(mask, was) }
+        return n
+    }
+}
+
+nonisolated extension BezzleDocument {
+    /// Keeps every Shape key with the outline it was made for, after a change to the design:
+    /// where a layer's outline is another than in `before`, and its keys were left as they were,
+    /// they go with it (`Node.shapeKeys(following:)`). One step with the change, so both are
+    /// undone together. `start` is the design as a drag began: a layer dragged flat on the way,
+    /// which leaves nothing of its keys to grow again, has them from there.
+    mutating func followOutlines(since before: BezzleDocument, start: BezzleDocument? = nil) {
+        var found: [(at: [Int], track: MotionTrack)] = []
+        func look(_ now: [Node], _ was: [Node]?, _ at: [Int], _ old: (UUID) -> Node?) {
+            for (i, n) in now.enumerated() {
+                let same = was.flatMap { i < $0.count && $0[i].id == n.id ? $0[i] : nil }
+                if let same, same == n { continue }
+                if n.motion?[MotionProperty.shape.rawValue] != nil, n.canReshape, var then = same ?? old(n.id), then[track: .shape] == n[track: .shape] {
+                    // Flat when this step began: from where the drag did.
+                    if let began = start?.node(n.id), began[track: .shape] != nil,
+                       (then.frame.width <= 1e-6 && began.frame.width > 1e-6) || (then.frame.height <= 1e-6 && began.frame.height > 1e-6) {
+                        then = began
+                    }
+                    if let track = n.shapeKeys(following: then) { found.append((at + [i], track)) }
+                }
+                if !n.children.isEmpty { look(n.children, same?.children, at + [i], old) }
+            }
+        }
+        look(nodes, before.nodes, []) { before.node($0) }
+        for (at, track) in found { update(self[NodePath(indices: at)].id) { $0[track: .shape] = track } }
+        // The components' own layers, which lie apart from the canvas.
+        guard var list = components, list != before.components else { return }
+        found = []
+        var kept: [UUID: Node] = [:]
+        func note(_ nodes: [Node]) { for n in nodes { kept[n.id] = n; note(n.children) } }
+        note(before.components ?? [])
+        look(list, before.components, []) { kept[$0] }
+        guard !found.isEmpty else { return }
+        func set(_ nodes: inout [Node], _ at: ArraySlice<Int>, _ track: MotionTrack) {
+            guard let i = at.first else { return }
+            if at.count == 1 { nodes[i][track: .shape] = track } else { set(&nodes[i].children, at.dropFirst(), track) }
+        }
+        for (at, track) in found { set(&list, at[...], track) }
+        components = list
+    }
+}
+
 nonisolated extension BezierPath {
     /// Every anchor's place, in the outline's order.
     var anchorPoints: [CGPoint] { subpaths.flatMap { $0.anchors.map(\.point) } }

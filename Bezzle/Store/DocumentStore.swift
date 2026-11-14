@@ -331,6 +331,8 @@ final class DocumentStore {
         next.keepNotes(since: doc)
         next.fitGroups(since: doc)
         next.fitCarousels()
+        // A shape whose outline the change made another keeps its Shape keys with it.
+        next.followOutlines(since: doc, start: gestureStart?.doc)
         guard next != doc else { return }
         doc = next
         noteEcho(echo, was: gestureStart == nil ? before.doc : nil)

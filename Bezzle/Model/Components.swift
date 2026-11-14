@@ -847,7 +847,8 @@ extension Components {
         if was.frame != now.frame, alike(was.children, now.children, but: ["frame", "style", "spans", "grid", "mask"]),
            let found = scaling(a, b, plan) { return found }
         if alike(was.children, now.children, but: ["frame", "rotation"]), let found = turning(a, b, inst) { return found }
-        let flipping: Set<String> = ["frame", "rotation", "fill", "moreFills", "border", "moreBorders", "corners", "rising", "path", "pathBox"]
+        // A flip turns a shape's keys over with its outline (`Node.shapeKeysFlipped`).
+        let flipping: Set<String> = ["frame", "rotation", "fill", "moreFills", "border", "moreBorders", "corners", "rising", "path", "pathBox", "motion"]
         if alike(was.children, now.children, but: flipping),
            let found = flipped(a, b, inst, turnedOver: { turnedOver(was.children, now.children, horizontally: $0) }) { return found }
         return nil

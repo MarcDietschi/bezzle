@@ -183,12 +183,24 @@ along one artboard's film. Its keys are changes from the design and never the de
   another, and Shape, its points and handles each moved from the design's, six numbers to a point
   in the layer's own upright points (`Bezzle/Model/PathMotion.swift`). A film draws a shape whose
   keys change it as a path (`Node.reshaped`), its frame grown to hold points that go past it, and
-  turns and grows it about the design's middle still. Shape keys go with their points when the
-  design's points are added, taken away or dragged (`MotionTrack.realigned`, from
-  `BezzleDocument.setPoints`); keys made for an outline with other points change nothing. Its
+  turns and grows it about the design's middle still. Its
   points are moved in the film with the shared pen (`PenTool`) through `FilmPoints`, its host in
   Animate, which shows them where `Node.filmPointMap` puts them and poses the Shape at the
   playhead; there points are only moved (`PenHost.pointsFixed`). Its tests are `MotionPathTests`.
+- **Shape keys go with the design's outline** when it changes, in one step with the change.
+  Points added, taken away or dragged: each key with its point (`MotionTrack.realigned`, from
+  `BezzleDocument.setPoints`). A layer resized: its keys grown as far as each side grew (Move's
+  stay points on the artboard). A rectangle given other corners, or a path given other points
+  by anything but `setPoints`: each new point goes as the place it lies at on the old outline went, so the film still shows
+  what was keyed (`BezierPath.Following`, `Node.shapeKeys(following:)`). Both come from
+  `BezzleDocument.followOutlines(since:start:)`, which `DocumentStore.edit` calls after the other
+  passes: it looks at every layer whose outline the change made another and whose keys it left
+  alone, so a new way of changing an outline needs nothing more, and each cell of a repeat grid,
+  post of a deck and copy of a component keeps its own keys with its own outline. Flipped, a
+  layer's keys are turned over with it (`Node.shapeKeysFlipped`, from `BezzleDocument.flip`: a
+  flip of an ellipse leaves its outline as it was, so only the flip itself can tell). Keys that
+  fit no outline change nothing. Its tests are `MotionOutlineTests`, and `AnimateStressTests`
+  resizes, rounds and flips layers under its films.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
   `/given` for a key the app placed itself), so two people keying one layer both keep theirs

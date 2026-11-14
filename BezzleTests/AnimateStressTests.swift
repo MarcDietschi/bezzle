@@ -23,13 +23,17 @@ struct AnimateStressTests {
     }
 
     /// A design as it is without its film, and whatever is locked or hidden: what Animate may
-    /// never change.
+    /// never change. Frames count to a billionth of a point: a group resized in the design is
+    /// fitted round its layers again at the next change of anything in it, which can move its
+    /// frame by the last digit a number has (`BezzleDocument.fitGroups(since:)` fits exactly).
     static func plain(_ doc: BezzleDocument) -> BezzleDocument {
+        func near(_ x: CGFloat) -> CGFloat { (x * 1e9).rounded() / 1e9 }
         func strip(_ n: inout Node) {
             n.motion = nil
             n.film = nil
             n.locked = false
             n.hidden = false
+            n.frame = CGRect(x: near(n.frame.origin.x), y: near(n.frame.origin.y), width: near(n.frame.size.width), height: near(n.frame.size.height))
             for i in n.children.indices { strip(&n.children[i]) }
         }
         var out = doc
@@ -156,7 +160,9 @@ struct AnimateStressTests {
         }
         animate()
         let began = store.doc
-        let design = Self.plain(began)
+        // The design as it should be: what Animate does never changes it, and what changes it
+        // (a layer resized, rounded or flipped under the film, and undoing that) is noted here.
+        var design = Self.plain(began)
         let layers = ["Card", "Badge", "Row", "Icon", "Label", "Far"].map { bench.node($0)!.id }
         let boards = [bench.a.id, bench.b.id]
 
@@ -194,7 +200,7 @@ struct AnimateStressTests {
                 bench.step { store.edit("Show") { $0.update(hidden.id) { $0.hidden = false } } }
                 return
             }
-            switch whole(0...27) {
+            switch whole(0...29) {
             case 0, 1:
                 let t = moment()
                 did("seek \(t)")
@@ -313,6 +319,7 @@ struct AnimateStressTests {
                     did("redo")
                     bench.undo.redo()
                 }
+                design = Self.plain(store.doc)
             case 24:
                 let from = CGPoint(x: number(60...1040), y: number(60...440)), held = flags()
                 if chance(0.3) {
@@ -389,6 +396,24 @@ struct AnimateStressTests {
                     did("open \(open.count) lines")
                     store.film.open = open
                 }
+            case 27, 28:
+                // The design's outlines changed under the film: a layer resized, a rectangle's
+                // corners rounded, a layer flipped. Shape keys have to go with them, each still a
+                // change for every point its layer has.
+                let id = one(layers), what = whole(0...4)
+                let size = CGSize(width: one([8, 30, 90, 200]), height: one([8, 20, 60, 140]))
+                let radius = one([0, 0, 6, 18, 400]), across = chance(0.5)
+                did("design \(what) of \(store.doc.node(id)?.name ?? "?") \(size) \(radius)")
+                bench.step {
+                    switch what {
+                    case 0: store.edit("Resize") { $0.update(id) { $0.resize(to: size, byHeight: false) } }
+                    case 1: store.edit("Corner Radius") { $0.update(id) { $0.corners = nil; $0.cornerRadius = CGFloat(radius) } }
+                    case 2: store.edit("Corner Radius") { $0.update(id) { $0.corners = [CGFloat(radius), 0, 12, 0] } }
+                    case 3: store.edit("Corner Radius") { $0.update(id) { $0.cornerSmoothing = $0.cornerSmoothing == nil ? 0.6 : nil } }
+                    default: store.edit("Flip") { $0.flip([id], horizontally: across) }
+                    }
+                }
+                design = Self.plain(store.doc)
             default:
                 // The design itself changed under the film: something locked or hidden, by hand or by someone working along.
                 let id = chance(0.15) ? one(boards) : one(layers)
@@ -400,7 +425,13 @@ struct AnimateStressTests {
 
         func sound(_ n: Int) -> Bool {
             var wrong = Self.faults(in: store.doc) + Self.faults(on: store, hand: hand)
-            if Self.plain(store.doc) != design { wrong.append("the design itself is no longer what it was") }
+            let now = Self.plain(store.doc)
+            if now != design {
+                // Which layers: each compared without what is inside it.
+                func alone(_ n: Node) -> Node { var n = n; n.children = []; return n }
+                let which = zip(now.allNodes, design.allNodes).filter { alone($0) != alone($1) }.map { "\($0.name): \($0.frame) \($0.kind) was \($1.frame) \($1.kind)" }
+                wrong.append("the design itself is no longer what it was (\(which.prefix(3).joined(separator: "; ")))")
+            }
             #expect(wrong.isEmpty, "seed \(seed), step \(n): \(wrong.prefix(4)) after \(trail.suffix(10))")
             return wrong.isEmpty
         }
@@ -446,6 +477,9 @@ struct AnimateStressTests {
             if after != before, trail.count > said, trail.last?.hasPrefix("undo") != true, trail.last?.hasPrefix("redo") != true {
                 bench.undo.undo()
                 let back = store.doc == before
+                // Its Shape keys fit the design as it was before the step, too.
+                let fitted = Self.faults(in: store.doc)
+                #expect(fitted.isEmpty, "seed \(seed), step \(n) undone: \(fitted.prefix(4)) after \(trail.suffix(6))")
                 bench.undo.redo()
                 let again = store.doc == after
                 #expect(back && again, "seed \(seed), step \(n): \(back ? "" : "undone, not as it was; ")\(again ? "" : "redone, not as it was made; ")after \(trail.suffix(6))")
@@ -488,6 +522,7 @@ struct AnimateStressTests {
             bench.undo.undo()
             undone += 1
             if kept() != before { passed.append(before) } else { undos[undos.count - 1] += " (nothing)" }
+            design = Self.plain(store.doc)
             did("undo all \(undone)")
             guard sound(1000 + undone) else { return }
         }
@@ -502,6 +537,7 @@ struct AnimateStressTests {
             #expect(same, "seed \(seed): \(name) redone, \(passed.count) steps from the end, is not what it was: \(difference(kept(), was))")
             guard same else { return }
         }
+        design = Self.plain(store.doc)
         let asEnded = kept() == ended
         #expect(asEnded, "seed \(seed): redone, the design is not as it ended: \(difference(kept(), ended)); undone first \(undos.prefix(8)), redone last \(redos.suffix(8)), \(passed.count) left; the run ended \(trail.filter { !$0.hasPrefix("undo all") }.suffix(8))")
         _ = sound(9999)

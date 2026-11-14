@@ -104,7 +104,8 @@ extension BezzleDocument {
             // The line in the layer's parent's own coordinates.
             let o = parentOrigin(of: id)
             let axis = horizontally ? box.midX - o.x : box.midY - o.y
-            update(id) { $0 = BezzleDocument.flipped($0, horizontally: horizontally, about: axis) }
+            // What a shape's keys do to its outline in a film is turned over with it.
+            update(id) { $0 = BezzleDocument.flipped($0, horizontally: horizontally, about: axis).shapeKeysFlipped(from: $0, horizontally: horizontally) }
         }
     }
 
