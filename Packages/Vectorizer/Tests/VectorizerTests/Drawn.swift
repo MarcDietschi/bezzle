@@ -30,6 +30,37 @@ func drawn(_ w: Int, _ h: Int, _ color: (Double, Double) -> Paint) -> Bitmap {
     return Bitmap(width: w, height: h, pixels: pixels)
 }
 
+/// A large picture, drawn quickly: `part` tells which thing a place is of, and only the pixels
+/// whose corners are not all of one thing are the mean of 8 by 8 samples of `color`. The others
+/// are the colour at their middle.
+func drawn(_ w: Int, _ h: Int, parts part: (Double, Double) -> Int, _ color: (Double, Double) -> Paint) -> Bitmap {
+    var pixels = [UInt8](repeating: 255, count: w * h * 4)
+    let n = 8
+    var above = (0...w).map { part(Double($0), 0) }
+    for y in 0..<h {
+        let below = (0...w).map { part(Double($0), Double(y + 1)) }
+        for x in 0..<w {
+            let one = above[x]
+            var r = 0.0, g = 0.0, b = 0.0, all = 1.0
+            if above[x + 1] == one, below[x] == one, below[x + 1] == one {
+                (r, g, b) = color(Double(x) + 0.5, Double(y) + 0.5)
+            } else {
+                all = Double(n * n)
+                for j in 0..<n {
+                    for i in 0..<n {
+                        let c = color(Double(x) + (Double(i) + 0.5) / Double(n), Double(y) + (Double(j) + 0.5) / Double(n))
+                        r += c.0; g += c.1; b += c.2
+                    }
+                }
+            }
+            let i = (y * w + x) * 4
+            pixels[i] = UInt8((r / all).rounded()); pixels[i + 1] = UInt8((g / all).rounded()); pixels[i + 2] = UInt8((b / all).rounded())
+        }
+        above = below
+    }
+    return Bitmap(width: w, height: h, pixels: pixels)
+}
+
 /// `bitmap` with every pixel moved a little, each time the same way.
 func shaken(_ bitmap: Bitmap, by most: Int) -> Bitmap {
     var pixels = bitmap.pixels

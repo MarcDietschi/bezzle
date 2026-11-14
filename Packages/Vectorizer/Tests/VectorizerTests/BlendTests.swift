@@ -130,6 +130,54 @@ final class BlendTests: XCTestCase {
         XCTAssertEqual(height, 30, accuracy: 0.15)
     }
 
+    /// The sky, the ball and the bar again, `times` as large, every pixel a level off either
+    /// way where `dithered`, as a program that draws such a run mostly leaves it: what was
+    /// traced of them, and how far the ball's outline lies from the circle drawn, at the worst.
+    private func large(_ times: Double, dithered: Bool) throws -> (traced: Tracing, ball: Shape, off: Double) {
+        let sky = straight((36, 61, 128), (242, 168, 128), from: Spot(0, 0), to: Spot(150 * times, 300 * times))
+        let lit = round((255, 230, 158), (178, 66, 20), middle: Spot(110 * times, 115 * times), reach: 100 * times)
+        let at = Spot(130 * times, 140 * times), reach = 70 * times
+        func ball(_ x: Double, _ y: Double) -> Bool { (x - at.x) * (x - at.x) + (y - at.y) * (y - at.y) <= reach * reach }
+        func bar(_ x: Double, _ y: Double) -> Bool { x >= 240 * times && x <= 360 * times && y >= 216 * times && y <= 240 * times }
+        let bitmap = drawn(Int(400 * times), Int(300 * times), parts: { x, y in ball(x, y) ? 1 : bar(x, y) ? 2 : 0 }) { x, y in
+            ball(x, y) ? lit(x, y) : bar(x, y) ? self.white : sky(x, y)
+        }
+        let traced = try XCTUnwrap(Vectorizer.trace(dithered ? shaken(bitmap, by: 1) : bitmap))
+        let round = try XCTUnwrap(traced.shapes.first { $0.blend?.kind == .radial })
+        var worst = 0.0
+        for outline in round.outlines {
+            for corner in corners(outline) {
+                worst = max(worst, abs(((corner.x - at.x) * (corner.x - at.x) + (corner.y - at.y) * (corner.y - at.y)).squareRoot() - reach))
+            }
+        }
+        return (traced, round, worst)
+    }
+
+    func testAGentleRunWithEveryPixelALevelOffIsOneShape() throws {
+        // The bands such a run is read as then have specks of each other all along their
+        // borders, many beside one band, and the ball has so few of the palette's colours
+        // that its bands are further apart than bands mostly are. It is a sky, a ball and a
+        // bar still, the ball the circle drawn.
+        let (traced, ball, _) = try large(2, dithered: true)
+        XCTAssertEqual(traced.shapes.count, 3)
+        XCTAssertEqual(traced.shapes.first?.blend?.kind, .linear)
+        guard case .ellipse(let center, let radiusX, let radiusY, _)? = ball.figure else { return XCTFail("the ball is no ellipse") }
+        XCTAssertEqual(center.x, 260, accuracy: 0.1)
+        XCTAssertEqual(center.y, 280, accuracy: 0.1)
+        XCTAssertEqual(radiusX, 140, accuracy: 0.1)
+        XCTAssertEqual(radiusY, 140, accuracy: 0.1)
+    }
+
+    func testAGentleRunInALargePictureIsOneShape() throws {
+        // Twice as large again, read with one sample to a pixel: three shapes, and the ball's
+        // outline as near the circle as an outline is let stray in a picture of that size.
+        let (traced, _, off) = try large(4, dithered: true)
+        XCTAssertEqual(traced.shapes.count, 3)
+        XCTAssertEqual(traced.shapes.first?.blend?.kind, .linear)
+        XCTAssertEqual(traced.shapes.filter { $0.blend != nil }.count, 2)
+        XCTAssertLessThanOrEqual(off, 0.6)
+    }
+
     func testShapesOnColoursThatRunStayThemselves() throws {
         // A sky with a dark disc, a white bar and a bar of one of the sky's own colours on
         // it, lying where the sky is another colour: three shapes of one colour each on one of

@@ -21,7 +21,9 @@ extension Vectorizer {
             return SIMD3(Double(p[i]), Double(p[i + 1]), Double(p[i + 2]))
         }
 
-        // How alike two of the palette's colours are: bands beside each other are nearly the same.
+        // How alike two of the palette's colours are: bands beside each other are nearly the
+        // same, 72 levels apart at most where the palette has colours enough for the run, and
+        // up to 100 where it has few.
         let n = colors.count
         var alike = [Bool](repeating: false, count: 256 * 256)
         var apart = [Double](repeating: 0, count: 256 * 256)
@@ -29,7 +31,7 @@ extension Vectorizer {
             for b in 0..<n where a != b {
                 let d = colors[a] &- colors[b]
                 let gap = Double((d &* d).wrappedSum()).squareRoot()
-                alike[a << 8 | b] = gap <= 72
+                alike[a << 8 | b] = gap <= 100
                 apart[a << 8 | b] = gap
             }
         }
@@ -70,9 +72,13 @@ extension Vectorizer {
                 let before = at(x - far * dx, y - far * dy), after = at(x + far * dx, y + far * dy)
                 return (before == a || before == b) && (after == a || after == b)
             }
-            guard theirs(1) else { return }
-            last.told += 1
+            // Two colours further apart than bands mostly are may as well be one side of an
+            // edge and the mixed pixels along it: of those every pixel of the border tells,
+            // so that it takes a third of the whole border without a step to make them one.
             let gap = apart[la << 8 | lb]
+            if gap > 72 { last.told += 1 }
+            guard theirs(1) else { return }
+            if gap <= 72 { last.told += 1 }
             let near = color(x + dx, y + dy) - color(x - dx, y - dy)
             let step = (near * near).sum()
             guard step <= 0.25 * gap * gap else { return }
@@ -110,38 +116,49 @@ extension Vectorizer {
             }
             return r
         }
+        // What lies between two sets, kept for each as the sets grow.
+        var between = [[Int32: Border]](repeating: [:], count: count)
+        for (key, border) in borders {
+            let a = Int32(key >> 32), b = Int32(key & 0xFFFF_FFFF)
+            between[Int(a)][b] = border
+            between[Int(b)][a] = border
+        }
+        // Three pixels of border without a step at least, and a third of it: the rest may run
+        // along the edge of something else, where both are mixed with that.
+        @inline(__always) func sure(_ border: Border) -> Bool { border.soft >= 3 * scale && 3 * border.soft >= border.told }
         var any = false
-        var between = borders
         for _ in 0..<32 {
-            // Three pixels of border without a step at least, and a third of it: the rest may
-            // run along the edge of something else, where both are mixed with that.
-            let sure = between.filter { $0.value.soft >= 3 * scale && 3 * $0.value.soft >= $0.value.told }
-                .sorted {
-                    let a = $0.value.soft * $1.value.told, b = $1.value.soft * $0.value.told
-                    return a != b ? a > b : $0.key < $1.key
+            var pairs: [(a: Int32, b: Int32, border: Border)] = []
+            for a in 0..<count where parent[a] == Int32(a) {
+                for (b, border) in between[a] where b > Int32(a) && sure(border) { pairs.append((Int32(a), b, border)) }
+            }
+            guard !pairs.isEmpty else { break }
+            pairs.sort {
+                let x = $0.border.soft * $1.border.told, y = $1.border.soft * $0.border.told
+                return x != y ? x > y : ($0.a != $1.a ? $0.a < $1.a : $0.b < $1.b)
+            }
+            var joined = false
+            for pair in pairs {
+                // As the two are now: either may have grown since the round began.
+                let a = root(pair.a), b = root(pair.b)
+                guard a != b, let now = between[Int(a)][b], sure(now) else { continue }
+                let (kept, gone) = between[Int(a)].count >= between[Int(b)].count ? (a, b) : (b, a)
+                for (other, border) in between[Int(gone)] where other != kept {
+                    var sum = between[Int(kept)][other] ?? Border()
+                    sum.long += border.long
+                    sum.told += border.told
+                    sum.soft += border.soft
+                    between[Int(kept)][other] = sum
+                    between[Int(other)][gone] = nil
+                    between[Int(other)][kept] = sum
                 }
-            guard !sure.isEmpty else { break }
-            var taken = Set<Int32>()
-            for (key, _) in sure {
-                let a = Int32(key >> 32), b = Int32(key & 0xFFFF_FFFF)
-                guard !taken.contains(a), !taken.contains(b) else { continue }
-                taken.insert(a)
-                taken.insert(b)
-                parent[Int(b)] = a
+                between[Int(kept)][gone] = nil
+                between[Int(gone)] = [:]
+                parent[Int(gone)] = kept
+                joined = true
                 any = true
             }
-            var next: [UInt64: Border] = [:]
-            for (key, border) in between {
-                let a = root(Int32(key >> 32)), b = root(Int32(key & 0xFFFF_FFFF))
-                guard a != b else { continue }
-                let joined = UInt64(min(a, b)) << 32 | UInt64(max(a, b))
-                var sum = next[joined] ?? Border()
-                sum.long += border.long
-                sum.told += border.told
-                sum.soft += border.soft
-                next[joined] = sum
-            }
-            between = next
+            guard joined else { break }
         }
         guard any else { return nil }
 
@@ -171,20 +188,31 @@ extension Vectorizer {
         // Two pixels from anything else: an edge's own pixels are mixed with what lies beyond
         // it, and the pixels beside those are held against them here.
         var pixels = [[Int32]](repeating: [], count: runs)
+        // First along the rows, then down the columns of what the rows found.
+        var across = [Bool](repeating: false, count: w * h)
+        for y in 0..<h {
+            let row = y * w
+            for x in 0..<w {
+                let g = runAt[row + x]
+                guard g >= 0 else { continue }
+                across[row + x] = (x < 1 || runAt[row + x - 1] == g) && (x < 2 || runAt[row + x - 2] == g)
+                    && (x + 1 >= w || runAt[row + x + 1] == g) && (x + 2 >= w || runAt[row + x + 2] == g)
+            }
+        }
         for y in 1..<(h - 1) {
             for x in 1..<(w - 1) {
-                let g = runAt[y * w + x]
-                guard g >= 0 else { continue }
+                let i = y * w + x, g = runAt[i]
+                guard g >= 0, across[i] else { continue }
                 var within = true
-                for dy in -2...2 where within {
+                for dy in [-2, -1, 1, 2] {
                     let yy = y + dy
                     guard yy >= 0, yy < h else { continue }
-                    for dx in -2...2 {
-                        let xx = x + dx
-                        if xx >= 0, xx < w, runAt[yy * w + xx] != g { within = false; break }
+                    if runAt[yy * w + x] != g || !across[yy * w + x] {
+                        within = false
+                        break
                     }
                 }
-                if within { pixels[Int(g)].append(Int32(y * w + x)) }
+                if within { pixels[Int(g)].append(Int32(i)) }
             }
         }
 
@@ -323,9 +351,15 @@ extension Vectorizer {
     /// The colours that run across some pixels of a picture, if they run straight across or
     /// outward from a middle, with the pixels of one place along the way differing by `most`
     /// at most.
-    private static func fit(_ pixels: [Int32], raster: Raster, most: Double) -> Blend? {
+    private static func fit(_ all: [Int32], raster: Raster, most: Double) -> Blend? {
         let w = raster.w, p = raster.rgb.p
-        guard pixels.count >= 48 else { return nil }
+        guard all.count >= 48 else { return nil }
+        // A large run tells no more by all its pixels than by enough of them.
+        var pixels = all
+        if all.count > 240_000 {
+            let every = (all.count / 120_000) | 1
+            pixels = stride(from: 0, to: all.count, by: every).map { all[$0] }
+        }
         @inline(__always) func color(_ i: Int) -> SIMD3<Double> { SIMD3(Double(p[i * 3]), Double(p[i * 3 + 1]), Double(p[i * 3 + 2])) }
 
         // Which way the colours change at each pixel. Straight across, they all change one
