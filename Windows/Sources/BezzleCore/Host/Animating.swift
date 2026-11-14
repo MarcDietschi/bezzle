@@ -174,6 +174,10 @@ extension WindowsCore {
             if let id = board { frame(id) }
         }
 
+        /// How many lines the film on the desk has in the timeline, as its layers are opened: the
+        /// card grows with them, and the film's artboard is kept clear of it.
+        public var lineCount: Int { filmBoard.map { FilmRow.rows(of: $0, open: open).count } ?? 0 }
+
         /// The moment that is posed: the playhead, within the film as it is now.
         public var filmTime: Double { min(max(time, 0), filmBoard?.filmLength ?? 0) }
 

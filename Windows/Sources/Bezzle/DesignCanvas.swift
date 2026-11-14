@@ -1040,20 +1040,20 @@ final class DesignCanvas {
         return best.id
     }
 
-    /// The view glided so the film's artboard lies whole above the timeline, as the Mac's
-    /// frameFilm; one that shows whole there already is left where it is.
+    /// The view moved so the film's artboard lies whole above the timeline, as the Mac's
+    /// frameFilm: clear of the card as tall as this film's lines make it; one that shows whole
+    /// there already is left where it is, and one that has to move moves only the way it must.
     private func frameFilm(_ id: UUID) {
         guard root.isLoaded, let board = WindowsCore.boards().first(where: { $0.id == id }) else { return }
-        let w = root.actualWidth, h = root.actualHeight - FilmTimelineView.foot
+        let w = root.actualWidth, h = root.actualHeight - FilmFraming.foot(lines: session.film.lineCount)
         guard w > 0, h > 160 else { return }
         let f = board.frame
-        let a = onStage(f.origin)
-        let shown = CGRect(x: Double(a.x), y: Double(a.y), width: Double(f.width) * zoom, height: Double(f.height) * zoom)
-        guard !CGRect(x: 12, y: 12, width: w - 24, height: h - 24).contains(shown) else { return }
-        let z = max(0.02, min(max(1, min(zoom, 2)), (w - 80) / Double(f.width), (h - 80) / Double(f.height)))
+        let now = FilmFraming.View(zoom: zoom, panX: Double(pan.x), panY: Double(pan.y))
+        guard let to = FilmFraming.framed(x: Double(f.minX), y: Double(f.minY), width: Double(f.width), height: Double(f.height),
+                                          from: now, roomWidth: w, roomHeight: h) else { return }
         flyingZoom = nil
-        session.zoom = z
-        pan = CGPoint(x: (w - Double(f.width) * z) / 2 - Double(f.minX) * z, y: (h - Double(f.height) * z) / 2 - Double(f.minY) * z)
+        session.zoom = to.zoom
+        pan = CGPoint(x: to.panX, y: to.panY)
         drawAll()
     }
 

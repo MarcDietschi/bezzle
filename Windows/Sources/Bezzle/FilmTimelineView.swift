@@ -59,9 +59,6 @@ final class FilmTimelineView {
 
     static let rowHeight = 24.0
     static let rulerHeight = 24.0
-    /// How much of the canvas's foot the card takes while it shows its fewest lines, with the room
-    /// under it: what the film's artboard is kept clear of.
-    static let foot = 44 + rulerHeight + 4 * rowHeight + 6 + 14
 
     init(session: DesignSession) {
         self.session = session
@@ -421,7 +418,8 @@ final class FilmTimelineView {
         playLine = nil
         paintHeader()
         let lines = hand.lines()
-        shownRows = min(max(lines.count, 4), 7)
+        // As many lines as `FilmFraming.foot(lines:)` keeps the film's artboard clear of.
+        shownRows = FilmFraming.shown(of: lines.count)
         let width = max(sheet.actualWidth, 300)
         namesWidth = min(150, max(104, width * 0.22))
         names.width = namesWidth

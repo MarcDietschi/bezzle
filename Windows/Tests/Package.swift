@@ -4,7 +4,8 @@ import PackageDescription
 // Tests of what Bezzle for Windows decides without asking Windows anything: which way a PC makes
 // a subject matte, what it remembers of the ways, what cutouts are called, and the cells the line
 // round a picture is laid on; in Animate, when a shape's points are taken in hand and put down,
-// and the Draw move's line in its chip. Pure/ and FilmPure/ link to those files in
+// the Draw move's line in its chip, and where the view goes when the desk turns to a film.
+// Pure/ and FilmPure/ link to those files in
 // ../Sources/BezzleCore/Host and to the shared model's files they use, so the tests run wherever
 // Swift does, on a Mac too:
 //
