@@ -608,10 +608,35 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     'Difference', 'Exclusion', 'Hue', 'Saturation', 'Color', 'Luminosity', 'Clear', 'Src', 'SrcIn', 'SrcOut', 'SrcATop',
     'DstOver', 'DstIn', 'DstOut', 'DstATop', 'Xor', 'Multiply', 'Plus']
 
+  // Core Graphics' "plus darker" (26), which Skia has no mode for, as a blender of its own. What
+  // Core Graphics makes of it, measured there with colours and alphas of every strength: the alphas
+  // add up, to no more than one, and each colour is what that sum leaves once what either lacks of
+  // its own alpha is taken away, never less than nothing (all premultiplied). Over an opaque
+  // backdrop that is the backdrop less the source's shortfall. Where CanvasKit cannot build it,
+  // multiply stands in, as it did.
+  const plusDarker = 26
+  let darker
+  function darkerBlender() {
+    if (darker === undefined) {
+      darker = null
+      try {
+        const effect = CK.RuntimeEffect.MakeForBlender?.(`
+          vec4 main(vec4 src, vec4 dst) {
+            float a = min(1.0, src.a + dst.a);
+            return vec4(max(vec3(0.0), src.rgb + dst.rgb + (a - src.a - dst.a)), a);
+          }`)
+        darker = effect?.makeBlender([]) ?? null
+      } catch {}
+    }
+    return darker
+  }
+
   // Alpha, blend mode and shadow, as each drawing carries them.
   function look(c, i, paint, canvas) {
     const alpha = c[i], blend = c[i + 1], shadowed = c[i + 2]
-    paint.setBlendMode(CK.BlendMode[blends[blend] ?? 'SrcOver'])
+    const own = blend === plusDarker ? darkerBlender() : null
+    if (own) paint.setBlender(own)
+    else paint.setBlendMode(CK.BlendMode[blends[blend] ?? 'SrcOver'])
     if (shadowed) {
       // Given in device pixels, as Core Graphics measures shadows: back into the canvas's own space.
       const m = canvas.getTotalMatrix()
