@@ -168,9 +168,12 @@ nonisolated enum CurvedText {
         /// The main font's height above and below the baseline.
         let ascent: CGFloat
         let descent: CGFloat
+        /// The line the page set its letters in, held for the page as long as this is kept or a
+        /// drawing draws it.
+        let held: HostTexts?
 
         init(letters: [Letter], box: CGRect, anchor: CGPoint, anchorAngle: CGFloat, alignK: CGFloat, walk: Walk, reversed: Bool,
-             ascent: CGFloat, descent: CGFloat) {
+             ascent: CGFloat, descent: CGFloat, held: HostTexts? = nil) {
             self.letters = letters
             self.box = box
             self.anchor = anchor
@@ -180,6 +183,7 @@ nonisolated enum CurvedText {
             self.reversed = reversed
             self.ascent = ascent
             self.descent = descent
+            self.held = held
         }
     }
 
@@ -225,6 +229,8 @@ nonisolated enum CurvedText {
         let glyphs: [Glyph]
         /// The runs the letters are of, as they were given: their colour, underline and strike.
         let runs: [[String: Any]]
+        /// The line's number, held for the page as long as the line is kept or drawn.
+        var held: HostTexts? = nil
     }
 
     private struct LineKey: Hashable {
@@ -241,6 +247,14 @@ nonisolated enum CurvedText {
     static func forget() {
         lines.with { $0.removeAll() }
         laidOut.with { $0.removeAll() }
+    }
+
+    /// For a host that lets go of the lines no longer held here (`TextLayout.trim`): once more
+    /// than `most` are kept, all are forgotten. What a drawing still draws stays with the page
+    /// until the drawing is let go, and a line asked for again is set again.
+    static func trim(over most: Int) {
+        lines.with { if $0.count > most { $0.removeAll() } }
+        laidOut.with { if $0.count > most { $0.removeAll() } }
     }
 
     /// The words of a text as one line, breaks between lines and paragraphs as spaces.
@@ -277,7 +291,7 @@ nonisolated enum CurvedText {
                                               ascent: own?.ascent ?? CGFloat($0[4]), descent: own?.descent ?? CGFloat($0[5]), underline: CGFloat($0[6]),
                                               thickness: CGFloat($0[7]), xHeight: CGFloat($0[8]))
                         },
-                        runs: runs)
+                        runs: runs, held: HostTexts([id]))
         }
         lines.with {
             if $0.count > 3000 { $0.removeAll() }
@@ -419,7 +433,7 @@ nonisolated enum CurvedText {
                     .concatenating(CGAffineTransform(rotationAngle: anchorAngle)).concatenating(CGAffineTransform(translationX: anchor.x, y: anchor.y)))
         }
         return Laid(letters: letters, box: box, anchor: anchor, anchorAngle: anchorAngle, alignK: k, walk: walk, reversed: reversed,
-                    ascent: ascent, descent: descent)
+                    ascent: ascent, descent: descent, held: line.held)
     }
 
     // MARK: Drawing
@@ -428,17 +442,17 @@ nonisolated enum CurvedText {
     /// by `painting` when that is a gradient or a picture.
     static func draw(_ laid: Laid, in ctx: CGContext, painting: ((CGContext) -> Void)? = nil) {
         guard let painting else {
-            draw(laid.letters[...], in: ctx)
+            draw(laid.letters[...], in: ctx, keeping: laid.held)
             return
         }
-        draw(laid.letters.filter(\.own)[...], in: ctx)
+        draw(laid.letters.filter(\.own)[...], in: ctx, keeping: laid.held)
         let painted = laid.letters.filter { !$0.own }
         guard !painted.isEmpty else { return }
         ctx.saveGState()
         defer { ctx.restoreGState() }
         let room = laid.box.insetBy(dx: -max(laid.box.height, 24), dy: -max(laid.box.height, 24))
         ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
-        draw(painted[...], in: ctx)
+        draw(painted[...], in: ctx, keeping: laid.held)
         ctx.setBlendMode(.sourceIn)
         ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
         ctx.saveGState()
@@ -448,11 +462,11 @@ nonisolated enum CurvedText {
         ctx.endTransparencyLayer()
     }
 
-    private static func draw(_ letters: ArraySlice<Letter>, in ctx: CGContext) {
+    private static func draw(_ letters: ArraySlice<Letter>, in ctx: CGContext, keeping held: HostTexts?) {
         for letter in letters where letter.color.alpha > 0 {
             ctx.saveGState()
             ctx.concatenate(letter.place)
-            ctx.drawGlyph(letter.index, of: letter.line, color: letter.color)
+            ctx.drawGlyph(letter.index, of: letter.line, color: letter.color, keeping: held)
             let rules = rules(of: letter)
             if !rules.isEmpty {
                 ctx.setFillColor(letter.color)

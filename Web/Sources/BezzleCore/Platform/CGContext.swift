@@ -69,6 +69,8 @@ nonisolated public final class CGContext: @unchecked Sendable {
 
     /// The pictures drawn into it, which a picture made of it draws too (`CGImage.uses`).
     public private(set) var drawn: [CGImage] = []
+    /// The texts drawn into it, kept as the pictures are (`CGImage.texts`).
+    public private(set) var texts: [HostTexts] = []
 
     deinit {
         if let bitmap { Bitmap.draw?(self, bitmap) }
@@ -326,27 +328,37 @@ nonisolated public final class CGContext: @unchecked Sendable {
         put(.endLayer)
     }
 
-    /// Text laid out by the page, by its number there, its top left at `at`, y down.
-    public func drawText(_ id: Int, at: CGPoint, color: CGColor?) {
+    /// Text laid out by the page, by its number there, its top left at `at`, y down. `keeping`
+    /// is what holds that number for the page (`HostTexts`): kept with what is drawn here, so
+    /// the page has the text for as long as it may still be asked to draw this.
+    public func drawText(_ id: Int, at: CGPoint, color: CGColor?, keeping: HostTexts? = nil) {
         put(.text)
         putLook()
         put(Double(id), Double(at.x), Double(at.y))
         if let color { put(1); put(color) } else { put(0, 0, 0, 0, 0) }
+        keep(keeping)
     }
 
     /// One letter of a line the page set for a curve (`CurvedText`), by the line's number there
-    /// and the letter's place in it, its baseline's left end at the origin, y down.
-    public func drawGlyph(_ index: Int, of line: Int, color: CGColor) {
+    /// and the letter's place in it, its baseline's left end at the origin, y down. `keeping` as
+    /// for `drawText`.
+    public func drawGlyph(_ index: Int, of line: Int, color: CGColor, keeping: HostTexts? = nil) {
         put(.glyph)
         putLook()
         put(Double(line), Double(index))
         put(color)
+        keep(keeping)
+    }
+
+    private func keep(_ held: HostTexts?) {
+        if let held, texts.last !== held { texts.append(held) }
     }
 
     /// What has been drawn so far, as a picture.
     public func makeImage() -> CGImage? {
         let image = CGImage(width: width, height: height, source: .picture(commands))
         image.uses = drawn
+        image.texts = texts
         return image
     }
 

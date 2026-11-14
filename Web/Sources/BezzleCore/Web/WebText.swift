@@ -95,6 +95,11 @@ nonisolated enum TextLayout {
         /// The words set again, as these are, with only the letters of a colour of their own
         /// seen, and with only the others: made when the text is first painted.
         private var parts: (own: Int, painted: Int)?
+        /// Everything the page set for it (its lines, its markers, its parts), held for the page
+        /// as long as this is kept or a drawing draws it.
+        let held: HostTexts
+        /// Which of the host's calls it was last asked for in (`TextLayout.trim`).
+        fileprivate var asked = 0
 
         init(id: Int, lines: [Line], usedSize: CGSize, string: String, markers: [Marker] = [], spec: [String: Any] = [:], own: [Bool] = []) {
             self.id = id
@@ -104,6 +109,7 @@ nonisolated enum TextLayout {
             self.markers = markers
             self.spec = spec
             self.own = own
+            held = HostTexts([id] + markers.map(\.id))
         }
 
         /// Draws with the text's top left at `origin`, y down, into the context the renderer
@@ -117,18 +123,18 @@ nonisolated enum TextLayout {
             // Each marker's baseline was placed where it is drawn: only its left end moves it.
             func drawMarkers(own: Bool?) {
                 for marker in markers where own.map({ $0 == (marker.look.color != nil) }) ?? true {
-                    ctx.drawText(marker.id, at: CGPoint(x: origin.x + marker.at.x, y: origin.y), color: nil)
+                    ctx.drawText(marker.id, at: CGPoint(x: origin.x + marker.at.x, y: origin.y), color: nil, keeping: held)
                 }
             }
             guard let painting else {
-                ctx.drawText(id, at: origin, color: nil)
+                ctx.drawText(id, at: origin, color: nil, keeping: held)
                 drawMarkers(own: nil)
                 return
             }
             let painted = own.contains(false) || markers.contains { $0.look.color == nil }
             let mixed = own.contains(true)
             let ids = mixed ? split() : (own: 0, painted: id)
-            if mixed { ctx.drawText(ids.own, at: origin, color: nil) }
+            if mixed { ctx.drawText(ids.own, at: origin, color: nil, keeping: held) }
             drawMarkers(own: true)
             guard painted else { return }
             ctx.saveGState()
@@ -136,7 +142,7 @@ nonisolated enum TextLayout {
             let used = bounds.offsetBy(dx: origin.x, dy: origin.y)
             let room = used.insetBy(dx: -max(used.height, 24), dy: -max(used.height, 24))
             ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
-            if own.contains(false) { ctx.drawText(ids.painted, at: origin, color: nil) }
+            if own.contains(false) { ctx.drawText(ids.painted, at: origin, color: nil, keeping: held) }
             drawMarkers(own: false)
             ctx.setBlendMode(.sourceIn)
             ctx.beginTransparencyLayer(in: room, auxiliaryInfo: nil)
@@ -175,6 +181,7 @@ nonisolated enum TextLayout {
             }
             let made = (own: set(keeping: true), painted: set(keeping: false))
             parts = made
+            held.ids += [made.own, made.painted].filter { $0 > 0 }
             return made
         }
     }
@@ -196,6 +203,23 @@ nonisolated enum TextLayout {
         kept = [:]
         Fonts.lineHeights = [:]
         CurvedText.forget()
+    }
+
+    /// The host's calls counted, by `trim`: which of them a text was last asked for in.
+    nonisolated(unsafe) private static var call = 0
+
+    /// For a host that lets go of the texts no longer held here (`HostTexts.released`; the
+    /// browser's page), between two of its calls: once more than `most` texts are kept, those
+    /// longest not asked for are forgotten, down to half as many. Those asked for in the call
+    /// before all stay, however many, so an artboard drawn again and again keeps its own. A text
+    /// set anew at every moment (one growing in a film) would otherwise stay for good, here and
+    /// in the page. What a drawing still draws stays with the page until the drawing is let go.
+    static func trim(over most: Int = 1200) {
+        call += 1
+        CurvedText.trim(over: most)
+        guard kept.count > most else { return }
+        let old = kept.filter { $0.value.asked < call - 1 }.sorted { $0.value.asked < $1.value.asked }
+        for (key, _) in old.prefix(kept.count - most / 2) { kept[key] = nil }
     }
 
     /// How far the letters are raised in lines set further apart than the font's own, as on the Mac.
@@ -437,6 +461,8 @@ nonisolated enum TextLayout {
         }
         let looks = node.runs.isEmpty ? [TextSpan(text: "")] : node.runs
         let laid = Laid(id: id, lines: lines, usedSize: used, string: string, markers: markers, spec: spec, own: looks.map { $0.look.color != nil })
+        // A marker set for an item whose line was not found is let go with the rest.
+        laid.held.ids += items.map(\.id).filter { set in set > 0 && !markers.contains { $0.id == set } }
         // The page draws each line where it is placed here.
         _ = Host.call(.textLayout, string: "{\"place\":\(id),\"baselines\":\(Recording.json(lines.map { Double($0.drawn) }))}")
         return laid
@@ -537,8 +563,12 @@ nonisolated enum TextLayout {
         let spec: [String: Any] = ["width": 100_000.0, "align": "left", "lineSpacing": 0.0, "paragraphSpacing": 0.0, "runs": runs(node)]
         let json = (try? JSONSerialization.data(withJSONObject: spec)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         let answer = Host.call(.textLayout, string: json)
-        guard let data = answer.data(using: .utf8), let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let m = (reply["lines"] as? [[Double]])?.first, m.count >= 6 else { return ceil((node.style?.size ?? 12) * 1.2) }
+        guard let data = answer.data(using: .utf8), let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return ceil((node.style?.size ?? 12) * 1.2)
+        }
+        // Set to be measured, never drawn: the page may let it go at once.
+        _ = HostTexts([reply["id"] as? Int ?? 0])
+        guard let m = (reply["lines"] as? [[Double]])?.first, m.count >= 6 else { return ceil((node.style?.size ?? 12) * 1.2) }
         return CGFloat(m[3] + m[4] + m[5]).rounded(.up)
     }
 
@@ -557,8 +587,12 @@ nonisolated enum TextLayout {
             trailing = typed
         }
         let key = Key(text: words, spans: node.spans, style: style, color: node.letterColor, width: width, trailing: trailing)
-        if let laid = kept[key] { return laid }
+        if let laid = kept[key] {
+            laid.asked = call
+            return laid
+        }
         let laid = lay(node, width: width, trailing: trailing)
+        laid.asked = call
         kept[key] = laid
         return laid
     }
@@ -569,8 +603,12 @@ nonisolated enum TextLayout {
         var probe = node
         probe.style = style
         let key = Key(text: node.text ?? "", spans: node.spans, style: style, color: nil, width: nil)
-        if let laid = kept[key] { return ceil(laid.usedSize.width) }
+        if let laid = kept[key] {
+            laid.asked = call
+            return ceil(laid.usedSize.width)
+        }
         let laid = lay(probe, width: 100_000)
+        laid.asked = call
         kept[key] = laid
         return ceil(laid.usedSize.width)
     }

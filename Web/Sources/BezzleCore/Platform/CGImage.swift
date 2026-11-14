@@ -22,6 +22,8 @@ nonisolated public final class CGImage: @unchecked Sendable, Equatable, Hashable
     public let source: Source
     /// The pictures a drawing draws, kept as long as it is (`CGContext.drawn`).
     public internal(set) var uses: [CGImage] = []
+    /// The texts a drawing draws, set by the host, kept as long as it is (`CGContext.texts`).
+    public internal(set) var texts: [HostTexts] = []
     /// Pixels made here whose colours are not multiplied by how solid they are, as Core
     /// Graphics' `.last` keeps them.
     public internal(set) var straightAlpha = false
@@ -35,7 +37,7 @@ nonisolated public final class CGImage: @unchecked Sendable, Equatable, Hashable
     }
 
     /// Told when a picture is no longer held anywhere, so that a host keeping what it made of it
-    /// (Bezzle for Windows' Skia) can let it go too; the browser's page keeps none, so nil there.
+    /// (Bezzle for Windows' Skia, the browser's page) can let it go too.
     public nonisolated(unsafe) static var released: ((Int) -> Void)?
 
     deinit { Self.released?(id) }
@@ -85,6 +87,20 @@ nonisolated public final class CGImage: @unchecked Sendable, Equatable, Hashable
         }
         self.init(width: width, height: height, source: .pixels(rgb, bytesPerRow: width * 4, gray: false))
     }
+}
+
+/// Texts the host has set for the core (a text's lines, a list's markers, the letters of a line
+/// for a curve), by their numbers there, held for as long as anything here may still have them
+/// drawn: the layout that had them set, and every drawing that draws them (`CGContext.texts`),
+/// until it is let go. A host that keeps what it set is then told (`released`) and lets go too:
+/// the browser's page listens; Bezzle for Windows does not, and keeps its texts as it did.
+nonisolated public final class HostTexts: @unchecked Sendable {
+    public internal(set) var ids: [Int]
+    public init(_ ids: [Int]) { self.ids = ids.filter { $0 > 0 } }
+
+    public nonisolated(unsafe) static var released: (([Int]) -> Void)?
+
+    deinit { if !ids.isEmpty { Self.released?(ids) } }
 }
 
 nonisolated public final class CGDataProvider: @unchecked Sendable {
