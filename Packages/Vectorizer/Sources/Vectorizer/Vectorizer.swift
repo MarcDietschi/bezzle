@@ -19,79 +19,14 @@ public enum Vectorizer {
     /// work is on, and stops the work by answering false; nil is returned then.
     public static func trace(_ bitmap: Bitmap, settings: Settings = Settings(), progress: (@Sendable (Double) -> Bool)? = nil) -> Tracing? {
         @Sendable func going(_ done: Double) -> Bool { progress?(done) ?? true }
-        // How much of the picture's small things is wanted: with little, few colours, nothing
-        // small or faint, and outlines that run calmer; with much, every colour and small thing
-        // the picture has, its edges as calm as ever.
-        let detail = min(max(settings.detail, 0), 1)
-        var raster = Raster.prepare(bitmap, cap: settings.draft ? 700_000 : 4_000_000)
-        var noise = raster.noise()
-        let hard = noise < 1 && raster.hardEdged()
-        let pixelArt = hard && max(raster.w, raster.h) / raster.blockSize() <= 192
-        // A picture kept as a JPEG is calm where it is flat and restless along its edges, where
-        // its colour is coarse too: read as a noisy one.
-        let coarse = !hard && raster.colorCoarse()
-        // A picture scaled up or blurred holds nothing finer than its edges are soft: it is
-        // traced at the size its edges would be a drawn picture's, where they are found as
-        // exactly, and what wavers along them is evened out.
-        let softness = hard ? 1 : raster.softness(0.25)
-        let shrink = min(softness / 1.15, 4, Double(min(raster.w, raster.h)) / 48)
-        var mixing = Mixing(coarse: coarse)
-        if shrink >= 1.3 {
-            raster = raster.resized(Int((Double(raster.w) / shrink).rounded()), Int((Double(raster.h) / shrink).rounded()))
-            noise = raster.noise()
-            // Made much smaller, its colour is as fine as its light again.
-            if shrink >= 1.8 { mixing = Mixing(coarse: false) }
+        let reading: Reading
+        switch read(bitmap, settings: settings, going: going) {
+        case .stopped: return nil
+        case .nothing(let pixelArt): return Tracing(width: bitmap.width, height: bitmap.height, shapes: [], palette: [], pixelArt: pixelArt)
+        case .done(let read): reading = read
         }
-        if coarse { noise = max(noise, 4) }
-        if !hard, noise >= 1.2 { raster = raster.calmed(noise: noise) }
-        guard going(0.08) else { return nil }
-
-        let palette = Palette.find(raster, settings: settings, noise: noise, exact: pixelArt, mixing: mixing)
-        let tints = palette.colors.map { Tint(r: UInt8(clamping: $0.x), g: UInt8(clamping: $0.y), b: UInt8(clamping: $0.z)) }
-        guard !palette.colors.isEmpty else {
-            return Tracing(width: bitmap.width, height: bitmap.height, shapes: [], palette: [], pixelArt: pixelArt)
-        }
-        guard going(0.16) else { return nil }
-
-        let pixels = Double(raster.w * raster.h)
-        let scale: Int
-        if pixelArt {
-            scale = 1
-        } else if settings.draft {
-            scale = pixels <= 300_000 ? 2 : 1
-        } else {
-            scale = max(1, min(4, Int((6_500_000 / pixels).squareRoot())))
-        }
-        let sampler = Sampler(raster, scale: scale)
-        let nearest = Nearest(palette.colors)
-        // Whether the picture can be taken at its word, pixel by pixel: drawn, and kept as drawn.
-        let clean = !coarse && noise < 1 && shrink < 1.3
-        var labels = Labels.read(sampler, nearest, weights: palette.weights, noise: noise, mixes: !pixelArt, mixing: mixing, worn: !clean)
-        if !pixelArt, !clean { labels.withoutSpurs(reach: max(1, Int((0.5 * Double(scale)).rounded())), most: 4 * scale * scale) }
-        guard going(0.42) else { return nil }
-
-        var regions = Regions.find(labels)
-        if !pixelArt, regions.threaded(labels, colors: palette.colors, thin: 2 * scale, worn: !clean) {
-            regions = Regions.find(labels)
-        }
-        if !pixelArt, !clean {
-            if regions.withoutFringes(labels, colors: palette.colors, thin: Int((1.5 * Double(scale)).rounded()), scale: scale,
-                                      faint: 40 + 120 * (1 - detail)) {
-                regions = Regions.find(labels)
-            }
-        }
-        if !pixelArt {
-            // The smallest things kept: by how much detail is wanted, and no more shapes than a
-            // design can hold.
-            let bold = max(0, 0.5 - detail)
-            var least = Int(((1 + 10 * (1 - detail) * (1 - detail) + pixels / 375 * bold * bold) * Double(scale * scale)).rounded())
-            let most = Int(300 + 12000 * detail * detail)
-            let sizes = regions.area.sorted(by: >)
-            if sizes.count > most { least = max(least, Int(sizes[most])) }
-            labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail))
-            regions = Regions.find(labels)
-        }
-        guard going(0.55) else { return nil }
+        let raster = reading.raster, palette = reading.palette, tints = reading.tints, labels = reading.labels, regions = reading.regions
+        let scale = reading.scale, pixelArt = reading.pixelArt, clean = reading.clean, shrink = reading.shrink, detail = reading.detail
 
         var stack = Stack.make(regions, clear: labels.clear, lap: scale)
         guard going(0.65) else { return nil }
@@ -229,6 +164,111 @@ public enum Vectorizer {
         }
         _ = going(1)
         return Tracing(width: bitmap.width, height: bitmap.height, shapes: shapes, palette: tints, pixelArt: pixelArt)
+    }
+
+    /// A picture read: its colours, which of them every sample is, and the regions those make.
+    struct Reading {
+        /// The picture as it was read: calmed, and made smaller when its edges were soft.
+        var raster: Raster
+        var palette: Palette
+        var tints: [Tint]
+        var labels: Labels
+        var regions: Regions
+        /// Samples across a pixel of `raster`.
+        var scale: Int
+        var pixelArt: Bool
+        /// Whether the picture can be taken at its word, pixel by pixel: drawn, and kept as drawn.
+        var clean: Bool
+        /// How many times smaller than the picture `raster` is.
+        var shrink: Double
+        var noise: Double
+        var detail: Double
+        var mixing: Mixing
+    }
+
+    enum Read {
+        case stopped
+        /// Nothing in the picture shows.
+        case nothing(pixelArt: Bool)
+        case done(Reading)
+    }
+
+    /// Steps 1 to 3: the picture made ready, its colours found, its samples given their colours
+    /// and gathered into regions.
+    static func read(_ bitmap: Bitmap, settings: Settings, going: (Double) -> Bool) -> Read {
+        // How much of the picture's small things is wanted: with little, few colours, nothing
+        // small or faint, and outlines that run calmer; with much, every colour and small thing
+        // the picture has, its edges as calm as ever.
+        let detail = min(max(settings.detail, 0), 1)
+        var raster = Raster.prepare(bitmap, cap: settings.draft ? 700_000 : 4_000_000)
+        var noise = raster.noise()
+        let hard = noise < 1 && raster.hardEdged()
+        let pixelArt = hard && max(raster.w, raster.h) / raster.blockSize() <= 192
+        // A picture kept as a JPEG is calm where it is flat and restless along its edges, where
+        // its colour is coarse too: read as a noisy one.
+        let coarse = !hard && raster.colorCoarse()
+        // A picture scaled up or blurred holds nothing finer than its edges are soft: it is
+        // traced at the size its edges would be a drawn picture's, where they are found as
+        // exactly, and what wavers along them is evened out.
+        let softness = hard ? 1 : raster.softness(0.25)
+        let shrink = min(softness / 1.15, 4, Double(min(raster.w, raster.h)) / 48)
+        var mixing = Mixing(coarse: coarse)
+        if shrink >= 1.3 {
+            raster = raster.resized(Int((Double(raster.w) / shrink).rounded()), Int((Double(raster.h) / shrink).rounded()))
+            noise = raster.noise()
+            // Made much smaller, its colour is as fine as its light again.
+            if shrink >= 1.8 { mixing = Mixing(coarse: false) }
+        }
+        if coarse { noise = max(noise, 4) }
+        if !hard, noise >= 1.2 { raster = raster.calmed(noise: noise) }
+        guard going(0.08) else { return .stopped }
+
+        let palette = Palette.find(raster, settings: settings, noise: noise, exact: pixelArt, mixing: mixing)
+        let tints = palette.colors.map { Tint(r: UInt8(clamping: $0.x), g: UInt8(clamping: $0.y), b: UInt8(clamping: $0.z)) }
+        guard !palette.colors.isEmpty else { return .nothing(pixelArt: pixelArt) }
+        guard going(0.16) else { return .stopped }
+
+        let pixels = Double(raster.w * raster.h)
+        let scale: Int
+        if pixelArt {
+            scale = 1
+        } else if settings.draft {
+            scale = pixels <= 300_000 ? 2 : 1
+        } else {
+            scale = max(1, min(4, Int((6_500_000 / pixels).squareRoot())))
+        }
+        let sampler = Sampler(raster, scale: scale)
+        let nearest = Nearest(palette.colors)
+        // Whether the picture can be taken at its word, pixel by pixel: drawn, and kept as drawn.
+        let clean = !coarse && noise < 1 && shrink < 1.3
+        var labels = Labels.read(sampler, nearest, weights: palette.weights, noise: noise, mixes: !pixelArt, mixing: mixing, worn: !clean)
+        if !pixelArt, !clean { labels.withoutSpurs(reach: max(1, Int((0.5 * Double(scale)).rounded())), most: 4 * scale * scale) }
+        guard going(0.42) else { return .stopped }
+
+        var regions = Regions.find(labels)
+        if !pixelArt, regions.threaded(labels, colors: palette.colors, thin: 2 * scale, worn: !clean) {
+            regions = Regions.find(labels)
+        }
+        if !pixelArt, !clean {
+            if regions.withoutFringes(labels, colors: palette.colors, thin: Int((1.5 * Double(scale)).rounded()), scale: scale,
+                                      faint: 40 + 120 * (1 - detail)) {
+                regions = Regions.find(labels)
+            }
+        }
+        if !pixelArt {
+            // The smallest things kept: by how much detail is wanted, and no more shapes than a
+            // design can hold.
+            let bold = max(0, 0.5 - detail)
+            var least = Int(((1 + 10 * (1 - detail) * (1 - detail) + pixels / 375 * bold * bold) * Double(scale * scale)).rounded())
+            let most = Int(300 + 12000 * detail * detail)
+            let sizes = regions.area.sorted(by: >)
+            if sizes.count > most { least = max(least, Int(sizes[most])) }
+            labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail))
+            regions = Regions.find(labels)
+        }
+        guard going(0.55) else { return .stopped }
+        return .done(Reading(raster: raster, palette: palette, tints: tints, labels: labels, regions: regions, scale: scale, pixelArt: pixelArt,
+                             clean: clean, shrink: shrink, noise: noise, detail: detail, mixing: mixing))
     }
 
     /// A figure found in a picture that was made smaller to be traced, at the picture's own size.
