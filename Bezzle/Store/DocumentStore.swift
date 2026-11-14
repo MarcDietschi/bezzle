@@ -63,6 +63,9 @@ final class DocumentStore {
     @ObservationIgnored private var reshapedWorkedOut: (version: Int, token: UUID, doc: BezzleDocument)?
     /// The design as it is seen, each deck showing the post in front (`seenDoc`).
     @ObservationIgnored var seenWorkedOut: (version: Int, fronts: [UUID: Int], doc: BezzleDocument)?
+    /// The layers a pose goes to in Animate (`posedLayers`), asked many times a frame while the
+    /// playhead moves, and each a search through the artboard for every layer picked.
+    @ObservationIgnored var posedWorkedOut: (version: Int, fronts: [UUID: Int], board: UUID, selection: [UUID], layers: [UUID])?
     var selection: [UUID] = [] {
         didSet { if selection != oldValue { selectionChanged() } }
     }

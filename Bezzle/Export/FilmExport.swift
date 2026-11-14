@@ -205,11 +205,14 @@ nonisolated enum FilmExport {
         private var whole: [Bool]
         /// The part last drawn of each piece, of what it shows now.
         private var parts: [FilmPictures.Part?]
+        /// The layer each piece places, found once for the whole film.
+        private let layers: [Node?]
 
         init(_ board: Node, size: CGSize, fps: Int = 1) {
             self.board = board
             self.fps = max(fps, 1)
             pieces = board.filmPieces()
+            layers = board.filmLayers(of: pieces)
             ground = FilmPictures.Ground.of(board)
             density = max(size.width / max(board.frame.width, 1), size.height / max(board.frame.height, 1))
             pixels = size.width * size.height
@@ -223,7 +226,7 @@ nonisolated enum FilmExport {
         /// What the frame at a moment is made from.
         mutating func shot(at t: Double) -> Shot {
             let camera = board.camera(at: t)
-            let placements = pieces.map { board.placement(of: $0, at: t, camera: camera) }
+            let placements = pieces.indices.map { board.placement(of: pieces[$0], layer: layers[$0], at: t, camera: camera) }
             let frame = CGRect(origin: .zero, size: board.frame.size)
             var fresh: [Shot.Fresh] = []
             var inParts: Set<Int> = []
@@ -285,7 +288,7 @@ nonisolated enum FilmExport {
             for k in stride(from: 1, through: fps / 2, by: 1) {
                 let then = t + Double(k) / Double(fps)
                 guard then <= length + 1e-9 else { break }
-                let q = board.placement(of: piece, at: then, camera: board.camera(at: then))
+                let q = board.placement(of: piece, layer: layers[i], at: then, camera: board.camera(at: then))
                 guard q.blur <= 0.05, q.opacity >= 0.001, let next = q.map.seen(of: reach, through: frame) else { continue }
                 let grown = all.union(next.part), sharper = max(most, CGFloat(next.stretch) * density)
                 // As it would be drawn: a fifth sharper at most, by the steps parts are sharp in.

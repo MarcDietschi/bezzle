@@ -113,6 +113,23 @@ along one artboard's film. Its keys are changes from the design and never the de
   `part`, drawn ahead while the film plays). Nothing but the sheet ends at the artboard's edge:
   a shadow or a layer that reaches past it shows once the camera sees past it. A picture covers
   the artboard and some way round it (`FilmPictures.core`), the rest is drawn as parts when seen.
+  A piece whose insides move (a moving shader, a masked or faded group holding a layer that moves)
+  is drawn again at every moment, so it is drawn only as it shows then: the part seen through the
+  film's frame, as sharp as it is seen (`FilmStageView.seenPart`). The stage draws its pictures in
+  the screen's own colour space: in sRGB, Core Animation matched every colour of each new picture
+  again on the main thread, which was most of a scrub's time on a screen that is not sRGB.
+- **Keeping it quick:** what is placed at every frame is found once (`Node.filmLayers`, not a
+  search through the artboard per piece); new pictures are placed on the stage without drawing
+  the canvas again; what is watched by views (`film.playing`, the timeline's hand) is set only
+  when it changes, and the timeline's header, which depends on the playhead, is a view of its own
+  so that a scrub does not build every line again. The panel's cards show `store.panelTime`, the
+  playhead caught up with at most thirty times a second while it is dragged (a step alone at once,
+  the last of a drag always); the film, the playhead and its clock follow every step. The picked
+  layer's way and its home outline are kept until the design changes (`MotionTool`), since they
+  do not depend on the playhead. To measure, `BEZZLE_FILM=…;4:scrub=0,10,8`
+  with `BEZZLE_SCRUB_OUT=<file>` drags the playhead through a film 120 times a second and writes
+  how many steps the app kept up with; run it on an optimized copy (see Speed, above) of a copy
+  of a real design, and `sample <pid>` meanwhile.
 - **Shapes** (paths, and rectangles, ellipses and lines, whose outline is points too) have two
   properties more: Draw, how much of the outline is drawn as a pen draws it, one run after
   another, and Shape, its points and handles each moved from the design's, six numbers to a point
@@ -130,7 +147,7 @@ along one artboard's film. Its keys are changes from the design and never the de
   (`Bezzle/Model/FlatDesign.swift`). Keys closer than a frame's quarter are one:
   `BezzleDocument.repairMotion()`.
 - **Driving a copy:** `BEZZLE_ANIMATE` and `BEZZLE_FILM` (`Bezzle/App/AnimateHooks.swift`) pick,
-  pose, play and press. Their clock starts when the hook does, well after launch: photograph late.
+  pose, play, press and scrub. Their clock starts when the hook does, well after launch: photograph late.
 - **Its words** are in the catalog in all four languages; `AnimateWordsTests` fails when one is
   missing, so a new property, pace or move brings its words along.
 

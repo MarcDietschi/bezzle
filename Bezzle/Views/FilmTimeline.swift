@@ -32,7 +32,7 @@ struct FilmTimeline: View {
         let length = board?.filmLength ?? MotionTiming.shortest
         let shown = min(max(rows.count, 4), 7)
         VStack(spacing: 0) {
-            header(board)
+            FilmHeader(store: store, once: board?.film?.once == true)
             Hairline()
             GeometryReader { geo in
                 let names = min(150, max(104, geo.size.width * 0.22))
@@ -46,56 +46,6 @@ struct FilmTimeline: View {
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .animation(Theme.spring, value: shown)
         .onChange(of: store.film.board) { hand.held = nil }
-    }
-
-    // MARK: The row above
-
-    private func header(_ board: Node?) -> some View {
-        let playing = store.film.playing
-        let inHand = store.hasKeysToRemove
-        let pace = inHand ? store.sharedEase?.kind : nil
-        let once = board?.film?.once == true
-        return HStack(spacing: 10) {
-            Button { store.toggleFilm() } label: {
-                ZStack {
-                    Circle().fill(playing ? Theme.pencil : Theme.ink.opacity(0.06))
-                    Image(systemName: playing ? "pause.fill" : "play.fill")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundStyle(playing ? .white : Theme.ink2)
-                        .offset(x: playing ? 0 : 1)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .frame(width: 26, height: 26)
-                .contentShape(Circle())
-            }
-            .buttonStyle(Pressable())
-            .help(playing ? Text("Stop the film  Space") : Text("Play the film  Space"))
-            .animation(Theme.spring, value: playing)
-            FilmClock(store: store)
-            Spacer(minLength: 4)
-            HoldBead(state: store.holdState) {
-                if store.holdState == .here { store.removeFilmKeys() } else { store.holdHere() }
-            }
-            HStack(spacing: 1) {
-                ForEach(MotionEase.Kind.allCases, id: \.self) { kind in
-                    PaceChip(kind: kind, chosen: pace == kind) {
-                        store.setEase(kind == .spring ? .spring() : MotionEase(kind: kind))
-                    }
-                }
-            }
-            // Always there, so nothing moves as keys come into hand: only readier.
-            .opacity(inHand ? 1 : 0.3)
-            .allowsHitTesting(inHand)
-            .animation(Theme.quick, value: inHand)
-            Hairline(vertical: true)
-                .frame(height: 16)
-            RoundButton(on: !once, help: once ? "Plays once and stops. Click to play it round and round." : "Plays round and round. Click to play it once.") {
-                store.setFilm(once ? "Play Round and Round" : "Play Once") { $0.once = once ? nil : true }
-            }
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, 10)
-        .frame(height: 44)
     }
 
     // MARK: The sheet
@@ -190,6 +140,65 @@ struct FilmTimeline: View {
             let entries = hand.menu(rows: rows, scale: scale)
             if !entries.isEmpty { menus.show(at: at, width: 200, entries: entries) }
         }
+    }
+}
+
+/// The row above the timeline: play, the clock, a key here, how the keys in hand are come to,
+/// and whether the film goes round. A view of its own, as what it shows depends on the playhead:
+/// moving that draws this row again, and not every line of the timeline under it; and it reads the
+/// panels' moment, so a scrub draws it again no more than thirty times a second.
+private struct FilmHeader: View {
+    let store: DocumentStore
+    let once: Bool
+
+    var body: some View {
+        let playing = store.film.playing
+        // At the panels' moment, which a scrub catches up with thirty times a second.
+        let t = store.panelTime
+        let inHand = store.hasKeysToRemove(at: t)
+        let pace = inHand ? store.sharedEase(at: t)?.kind : nil
+        let hold = store.holdState(at: t)
+        return HStack(spacing: 10) {
+            Button { store.toggleFilm() } label: {
+                ZStack {
+                    Circle().fill(playing ? Theme.pencil : Theme.ink.opacity(0.06))
+                    Image(systemName: playing ? "pause.fill" : "play.fill")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundStyle(playing ? .white : Theme.ink2)
+                        .offset(x: playing ? 0 : 1)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+            }
+            .buttonStyle(Pressable())
+            .help(playing ? Text("Stop the film  Space") : Text("Play the film  Space"))
+            .animation(Theme.spring, value: playing)
+            FilmClock(store: store)
+            Spacer(minLength: 4)
+            HoldBead(state: hold) {
+                if store.holdState == .here { store.removeFilmKeys() } else { store.holdHere() }
+            }
+            HStack(spacing: 1) {
+                ForEach(MotionEase.Kind.allCases, id: \.self) { kind in
+                    PaceChip(kind: kind, chosen: pace == kind) {
+                        store.setEase(kind == .spring ? .spring() : MotionEase(kind: kind))
+                    }
+                }
+            }
+            // Always there, so nothing moves as keys come into hand: only readier.
+            .opacity(inHand ? 1 : 0.3)
+            .allowsHitTesting(inHand)
+            .animation(Theme.quick, value: inHand)
+            Hairline(vertical: true)
+                .frame(height: 16)
+            RoundButton(on: !once, help: once ? "Plays once and stops. Click to play it round and round." : "Plays round and round. Click to play it once.") {
+                store.setFilm(once ? "Play Round and Round" : "Play Once") { $0.once = once ? nil : true }
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .frame(height: 44)
     }
 }
 

@@ -679,6 +679,75 @@ struct FilmStageTests {
         try check(stage, store)
     }
 
+    /// A piece whose insides move is drawn again at every moment; one far larger than the frame,
+    /// such as a moving backdrop under the whole artboard, is drawn only as it shows then: the
+    /// part seen through the film's frame, as sharp as it is seen, and a little round it. All of
+    /// it, as sharp as it ever shows, was dozens of times as many pixels at every step.
+    @Test func aLargePieceWhoseInsidesMoveIsDrawnOnlyAsItShows() async throws {
+        var inner = box("Inner", CGRect(x: 1100, y: 1100, width: 40, height: 40), green)
+        inner.setKey(.move, [0, 0], at: 0, ease: .linear)
+        inner.setKey(.move, [100, 0], at: 1, ease: .linear)
+        // Faded as a whole, so it is drawn again as what it holds moves; reaching a thousand
+        // points past the artboard each way.
+        var sky = Node(kind: .group, name: "Sky", frame: CGRect(x: -1000, y: -1000, width: 2400, height: 2300))
+        sky.opacity = 0.8
+        sky.children = [box("Far", CGRect(x: 0, y: 0, width: 2400, height: 2300), blue), inner]
+        let (bench, stage) = staged([sky, box("Still", CGRect(x: 20, y: 20, width: 100, height: 60), red)])
+        let store = bench.store
+        try await settle(stage)
+        // On the canvas the artboard is 400 by 300 at two pixels to the point: that is what shows.
+        let seen = CGRect(x: 0, y: 0, width: 400, height: 300)
+        func backdrop() throws -> CALayer { try layers(stage).pictures[1] }
+        func image() throws -> CGImage { try #require(backdrop().contents.map { $0 as! CGImage }) }
+        #expect(try expected(store, at: 0).map(\.piece.changes) == [false, true, false])
+        let first = try backdrop().bounds
+        #expect(first.contains(seen) && first.width < 500 && first.height < 400, "\(first)")
+        #expect(try abs(CGFloat(image().width) - first.width * 2) <= 1)
+        // Placed where the film puts the piece, as any picture is.
+        let placement = try #require(expected(store, at: 0).first { $0.piece.changes }?.placement)
+        let layer = try backdrop()
+        let corner = CGPoint(x: layer.bounds.minX, y: layer.bounds.minY)
+        let at = shown(corner, by: layer), should = placement.map(corner)
+        #expect(hypot(at.x - should.x, at.y - should.y) < 1e-6)
+
+        // Elsewhere in time, drawn again, as it shows then.
+        let before = try image()
+        store.seek(0.5)
+        try await settle(stage)
+        let then = try backdrop().bounds
+        #expect(try image() !== before)
+        #expect(then.contains(seen), "\(then)")
+        // Through a camera drawn back, more of it shows, each point smaller: drawn as that shows.
+        bench.step { store.poseCamera(.cameraZoom, [0.5]) }
+        try await settle(stage)
+        let wide = try backdrop().bounds
+        #expect(wide.width > 600 && wide.height > 450, "\(wide)")
+        let pixels = try image().width
+        #expect(CGFloat(pixels) <= wide.width * 1.2, "\(pixels) pixels for \(wide.width) points")
+    }
+
+    /// In a window, the pictures are drawn in the screen's own colours, so that Core Animation
+    /// shows them as they are and does not first work every colour of each out again, on the
+    /// main thread, as it comes on the stage. Away from any window, in sRGB.
+    @Test func picturesAreDrawnInTheColoursOfTheScreenTheyShowOn() async throws {
+        let (bench, stage) = staged(cast())
+        try await settle(stage)
+        let srgb = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        for layer in try layers(stage).pictures {
+            #expect(try #require(layer.contents.map { $0 as! CGImage }).colorSpace == srgb)
+        }
+        let holder = HolderFromTheTop(frame: bench.canvas.frame)
+        holder.addSubview(stage)
+        let window = window(holding: holder)
+        let screen = try #require(window.colorSpace?.cgColorSpace)
+        try await settle(stage)
+        for layer in try layers(stage).pictures {
+            #expect(try #require(layer.contents.map { $0 as! CGImage }).colorSpace == screen)
+        }
+        try check(stage, bench.store, "in a window")
+        window.contentView = nil
+    }
+
     // MARK: Laid out from the top
 
     @Test func itsLayersRunFromTheTopInAnyParent() async throws {

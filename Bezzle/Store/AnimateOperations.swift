@@ -16,6 +16,13 @@ final class FilmDesk {
     var live = 0.0
     /// The same again, where nothing watches it: the stage reads it each frame of the screen.
     @ObservationIgnored var head = 0.0
+    /// The moment the panels show: where the playhead rests, but caught up with no more than
+    /// thirty times a second while a hand drags it. The numbers of a scrub are not read at the
+    /// screen's pace, and drawing the panels' cards again at every step took most of the main
+    /// thread; the film, the playhead and its clock still follow the hand at every step.
+    var shown = 0.0
+    @ObservationIgnored var shownAt: CFTimeInterval = 0
+    @ObservationIgnored var catching = false
     var playing = false
     /// The camera picked, rather than any layer.
     var camera = false
@@ -96,6 +103,7 @@ extension DocumentStore {
         self.film.keys = []
         self.film.camera = false
         self.film.time = 0
+        self.film.shown = 0
         self.film.live = 0
         self.film.head = 0
         if animating { frameFilm() }
@@ -136,10 +144,42 @@ extension DocumentStore {
     /// The moment that is posed: the playhead, within the film as it is now.
     var filmTime: Double { min(max(film.time, 0), filmBoard?.filmLength ?? 0) }
 
+    /// The moment the panels show (`FilmDesk.shown`), within the film as it is now.
+    var panelTime: Double { min(max(film.shown, 0), filmBoard?.filmLength ?? 0) }
+
+    /// Brings the panels' moment to the playhead: at once when they last caught up a thirtieth of
+    /// a second ago or more, as for a step of the arrows; else as soon as that much has passed,
+    /// so the last moment of a drag is always the one they show.
+    func catchUpPanels() {
+        guard film.shown != film.time else { return }
+        let now = CACurrentMediaTime(), every = 1.0 / 30
+        if now - film.shownAt >= every {
+            film.shown = film.time
+            film.shownAt = now
+            return
+        }
+        guard !film.catching else { return }
+        film.catching = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + every - (now - film.shownAt)) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.film.catching = false
+                self.catchUpPanels()
+            }
+        }
+    }
+
     /// The layers a pose is given to: those picked that lie on the film's artboard.
     var posedLayers: [UUID] {
         guard let board = filmBoard else { return [] }
-        return selection.filter { id in id != board.id && board.descendant(id).map { !$0.locked } == true }
+        // Worked out once for each design and selection: what it is read from is read all the
+        // same, so whatever watches it hears of a change.
+        if let had = posedWorkedOut, had.version == version, had.fronts == fronts, had.board == board.id, had.selection == selection {
+            return had.layers
+        }
+        let layers = selection.filter { id in id != board.id && board.descendant(id).map { !$0.locked } == true }
+        posedWorkedOut = (version, fronts, board.id, selection, layers)
+        return layers
     }
 
     /// Picks the camera, and lets go of the layers.
@@ -154,7 +194,9 @@ extension DocumentStore {
 
     /// Puts the playhead at a moment, and stops the film there.
     func seek(_ t: Double) {
-        film.playing = false
+        // Only when it changes: each time it is set, all that watches it is drawn again, and a
+        // hand scrubbing through the film sets the playhead many times a second.
+        if film.playing { film.playing = false }
         film.pass = nil
         // A moment that is no number at all is the start. Never past the end, even by the
         // fraction that rounding to a thousandth can add.
@@ -163,6 +205,7 @@ extension DocumentStore {
         if film.time != to { film.time = to }
         if film.live != to { film.live = to }
         film.head = to
+        catchUpPanels()
     }
 
     /// Plays the film from the playhead, or from its start once it has reached the end.
@@ -305,9 +348,9 @@ extension DocumentStore {
 
     /// The number layers share of a property at the playhead, as the panel shows it; nil where
     /// they differ, or there are none.
-    func sharedValue(_ property: MotionProperty, _ index: Int, of ids: [UUID]) -> Double? {
+    func sharedValue(_ property: MotionProperty, _ index: Int, of ids: [UUID], at moment: Double? = nil) -> Double? {
         guard let board = filmBoard, index < property.rest.count else { return nil }
-        let t = filmTime
+        let t = moment ?? filmTime
         let values = ids.compactMap { board.descendant($0)?.value(of: property, at: t)[index] }
         guard let first = values.first, values.allSatisfy({ abs($0 - first) < 1e-6 }) else { return nil }
         return first
@@ -350,9 +393,9 @@ extension DocumentStore {
     }
 
     /// One number of an input the picked layers share at the playhead; nil where they differ.
-    func sharedInput(_ name: String, _ index: Int) -> Double? {
+    func sharedInput(_ name: String, _ index: Int, at moment: Double? = nil) -> Double? {
         guard let board = filmBoard else { return nil }
-        let t = filmTime
+        let t = moment ?? filmTime
         let values = posedLayers.compactMap { board.descendant($0)?.shaderInput(name, at: t) }.compactMap { index < $0.count ? $0[index] : nil }
         guard values.count == posedLayers.count, let first = values.first, values.allSatisfy({ abs($0 - first) < 1e-6 }) else { return nil }
         return first
@@ -385,9 +428,9 @@ extension DocumentStore {
     }
 
     /// How an input stands at the playhead, over the picked layers.
-    func inputKeyState(_ name: String) -> FilmKeyState {
+    func inputKeyState(_ name: String, at moment: Double? = nil) -> FilmKeyState {
         guard let board = filmBoard else { return .none }
-        let t = filmTime
+        let t = moment ?? filmTime
         var state = FilmKeyState.none
         for id in posedLayers {
             guard let track = board.descendant(id)?[track: ShaderFill.inputTrack(name)] else { continue }
@@ -430,9 +473,9 @@ extension DocumentStore {
     }
 
     /// How a property stands at the playhead, over everything it would be keyed for.
-    func keyState(_ property: MotionProperty) -> FilmKeyState {
+    func keyState(_ property: MotionProperty, at moment: Double? = nil) -> FilmKeyState {
         guard let board = filmBoard else { return .none }
-        let t = filmTime
+        let t = moment ?? filmTime
         var state = FilmKeyState.none
         for id in targets(of: property) {
             guard let track = (id == board.id ? board : board.descendant(id))?[track: property] else { continue }
@@ -488,9 +531,11 @@ extension DocumentStore {
 
     /// How what is picked stands at the playhead, over everything of it that moves: for the bead
     /// that holds it there.
-    var holdState: FilmKeyState {
+    var holdState: FilmKeyState { holdState(at: filmTime) }
+
+    /// The same at a moment, as the panels show it (`panelTime`).
+    func holdState(at t: Double) -> FilmKeyState {
         guard let board = filmBoard else { return .none }
-        let t = filmTime
         var state = FilmKeyState.none
         for id in keyTargets {
             guard let node = id == board.id ? board : board.descendant(id) else { continue }
@@ -524,10 +569,12 @@ extension DocumentStore {
 
     /// Whether Delete has keys to take away: some picked in the timeline, or some at the playhead
     /// of what is picked.
-    var hasKeysToRemove: Bool {
+    var hasKeysToRemove: Bool { hasKeysToRemove(at: filmTime) }
+
+    /// The same at a moment, as the panels show it (`panelTime`).
+    func hasKeysToRemove(at t: Double) -> Bool {
         if !pickedKeys.isEmpty { return true }
         guard let board = filmBoard else { return false }
-        let t = filmTime
         return keyTargets.contains { id in
             (id == board.id ? board : board.descendant(id))?.motion?.values.contains { $0.index(at: t) != nil } == true
         }
@@ -562,9 +609,11 @@ extension DocumentStore {
     }
 
     /// The pace the picked keys share, or those at the playhead; nil when they differ or there are none.
-    var sharedEase: MotionEase? {
+    var sharedEase: MotionEase? { sharedEase(at: filmTime) }
+
+    /// The same at a moment, as the panels show it (`panelTime`).
+    func sharedEase(at t: Double) -> MotionEase? {
         guard let board = filmBoard else { return nil }
-        let t = filmTime
         var refs = pickedKeys
         if refs.isEmpty { refs = keyTargets.map { FilmKeyRef($0, at: t) } }
         var found: MotionEase?

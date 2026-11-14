@@ -371,6 +371,50 @@ struct FilmTimelineTests {
         #expect(store.film.live == store.film.time && store.film.head == store.film.time)
     }
 
+    /// A scrub sets the playhead many times a second. What does not change with it, whether the
+    /// film plays and what the hand holds, is left alone, or everything that shows those (the
+    /// whole timeline, every line of it) would be drawn again at every step.
+    @Test func scrubbingTellsOnlyOfThePlayhead() {
+        animateCard()
+        let (rows, scale, length) = sheet
+        let p = at(0.4, line: 3, scale)
+        hand.press(at: p, rows: rows, scale: scale)
+        hand.dragged(to: p, by: 0, rows: rows, scale: scale, length: length)
+        nonisolated final class Told: @unchecked Sendable { var what: Set<String> = [] }
+        let told = Told()
+        withObservationTracking {
+            _ = (store.film.playing, hand.drag, hand.hot, hand.held)
+        } onChange: { told.what.insert("else") }
+        withObservationTracking {
+            _ = store.film.time
+        } onChange: { told.what.insert("time") }
+        // Between keys, clear of any a moment catches on.
+        hand.dragged(to: CGPoint(x: scale.x(0.65), y: p.y), by: scale.x(0.65) - p.x, rows: rows, scale: scale, length: length)
+        #expect(store.filmTime == 0.65)
+        #expect(told.what == ["time"])
+        hand.ended(scale: scale)
+    }
+
+    /// The panels show the playhead's moment, caught up with no more than thirty times a second
+    /// while it is dragged: a step alone shows at once, a scrub's steps a thirtieth of a second
+    /// apart, and the last of them always.
+    @Test func thePanelsCatchUpWithAScrubThirtyTimesASecondAndLandWhereItStops() async throws {
+        animateCard()
+        store.seek(0.1)
+        #expect(store.panelTime == 0.1)
+        store.seek(0.2)
+        store.seek(0.35)
+        #expect(store.filmTime == 0.35 && store.panelTime == 0.1)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(store.panelTime == 0.35)
+        // What the panels read at the moment they show is what the store has there.
+        let card = id("Card")
+        #expect(store.sharedValue(.fade, 0, of: [card], at: store.panelTime) == store.sharedValue(.fade, 0, of: [card]))
+        // A step well after the last shows at once.
+        store.seek(0.5)
+        #expect(store.panelTime == 0.5)
+    }
+
     @Test func aBandDraggedToTheStartStopsThereWhole() {
         animateCard()
         drag(line: 1, from: 0.4, to: -0.4)

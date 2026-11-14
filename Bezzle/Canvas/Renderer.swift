@@ -739,9 +739,11 @@ nonisolated enum Renderer {
         ctx.endPage()
     }
 
-    static func bitmap(_ size: CGSize) -> CGContext? {
+    /// A bitmap to draw in: sRGB, unless it is for a screen that shows in another space, where a
+    /// picture in the screen's own is shown as it is, with no colours worked out again first.
+    static func bitmap(_ size: CGSize, space: CGColorSpace? = nil) -> CGContext? {
         CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
-                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                  space: space ?? CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     }
 
     static func withFlippedContext(_ ctx: CGContext, _ body: () -> Void) {

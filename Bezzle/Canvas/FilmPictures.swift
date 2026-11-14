@@ -169,7 +169,11 @@ nonisolated enum FilmPictures {
     /// Draws a subject, `scale` pixels to the artboard's point, or as many as its size allows.
     /// With a `part`, only what of it lies there, as sharp as the part says: for a piece seen so
     /// large that all of it drawn as sharp would be more than any screen shows.
-    static func picture(of subject: Subject, scale: CGFloat, assets: Assets?, part: Part? = nil) -> Picture? {
+    ///
+    /// `space` is the screen's, for a picture the stage shows: the colours are matched to it as
+    /// it is drawn, away from the main thread, where Core Animation would otherwise match them
+    /// itself, on the main thread, as the picture comes on the stage.
+    static func picture(of subject: Subject, scale: CGFloat, assets: Assets?, part: Part? = nil, space: CGColorSpace? = nil) -> Picture? {
         let whole = rect(of: subject)
         guard whole.width > 0, whole.height > 0, !whole.isNull else { return nil }
         var r = core(of: subject), scale = scale
@@ -183,7 +187,7 @@ nonisolated enum FilmPictures {
             scale = min(scale, most / max(r.width, r.height))
             size = CGSize(width: max(1, (r.width * scale).rounded(.up)), height: max(1, (r.height * scale).rounded(.up)))
         }
-        guard let ctx = Renderer.bitmap(size) else { return nil }
+        guard let ctx = Renderer.bitmap(size, space: space) else { return nil }
         ctx.translateBy(x: 0, y: size.height)
         ctx.scaleBy(x: size.width / r.width, y: -size.height / r.height)
         ctx.translateBy(x: -r.minX, y: -r.minY)

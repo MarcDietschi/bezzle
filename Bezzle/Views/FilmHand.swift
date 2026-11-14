@@ -33,7 +33,7 @@ final class FilmHand {
     }
 
     /// What a press has in hand.
-    struct Drag {
+    struct Drag: Equatable {
         enum Kind { case scrub, keys, band, length, nothing }
         var kind: Kind
         /// The keys as they were when taken.
@@ -193,7 +193,8 @@ final class FilmHand {
             t = min(max(t, 0.25), scale.span)
             store.setFilm("Film Length") { $0.length = MotionTiming.time(t) }
         }
-        drag = d
+        // Only when it changed: the timeline is drawn again each time it is set.
+        if drag != d { drag = d }
     }
 
     /// The press let go.

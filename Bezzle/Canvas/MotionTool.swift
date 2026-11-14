@@ -892,17 +892,27 @@ final class MotionTool {
         var home: Bool
     }
 
-    /// Where a layer's middle shows at a moment.
-    private func middle(of id: UUID, at t: Double, in scene: Scene) -> CGPoint? {
-        guard let q = scene.board.filmCorners(of: id, at: t, pieces: scene.pieces) else { return nil }
-        return scene.toView(Self.middle(q))
-    }
+    /// The beads of a layer's way, in the film frame's points: like the way, the same at every
+    /// moment, so worked out once for each design and kept while the playhead moves.
+    private var beadsWorkedOut: (version: Int, fronts: [UUID: Int], board: UUID, id: UUID, loose: Set<UUID>, beads: [Bead])?
 
+    /// The beads of a layer's way, where they show on screen.
     private func beads(of id: UUID, in scene: Scene) -> [Bead] {
-        guard let node = scene.board.descendant(id), let track = node[track: .move], track.keys.count >= 2 else { return [] }
-        return track.keys.compactMap { key in
-            middle(of: id, at: key.t, in: scene).map { Bead(at: $0, time: key.t, home: MotionTiming.alike(key.v, MotionProperty.move.rest)) }
+        let loose = Set(store.posedLayers), framed: [Bead]
+        if let had = beadsWorkedOut, had.version == store.version, had.fronts == store.fronts, had.board == scene.board.id, had.id == id, had.loose == loose {
+            framed = had.beads
+        } else {
+            if let node = scene.board.descendant(id), let track = node[track: .move], track.keys.count >= 2 {
+                framed = track.keys.compactMap { key in
+                    scene.board.filmCorners(of: id, at: key.t, pieces: scene.pieces)
+                        .map { Bead(at: Self.middle($0), time: key.t, home: MotionTiming.alike(key.v, MotionProperty.move.rest)) }
+                }
+            } else {
+                framed = []
+            }
+            beadsWorkedOut = (store.version, store.fronts, scene.board.id, id, loose, framed)
         }
+        return framed.map { Bead(at: scene.toView($0.at), time: $0.time, home: $0.home) }
     }
 
     private func outline(_ points: [CGPoint]) -> CGPath {
@@ -959,14 +969,16 @@ final class MotionTool {
         ctx.setLineWidth(1)
         // A shape whose points are in hand shows them in place of its frame.
         let editing = store.editingPath
+        var shown: [UUID: [CGPoint]] = [:]
         for id in picked where id != editing {
             guard let q = scene.corners(of: id) else { continue }
+            shown[id] = q
             ctx.addPath(outline(q))
             ctx.strokePath()
         }
         if editing != nil {
             points.draw(ctx, scale: scale)
-        } else if let id = handled(scene), let q = scene.corners(of: id) {
+        } else if let id = handled(scene), let q = shown[id] ?? scene.corners(of: id) {
             let moving: Bool = { if case .move(_, _, true) = drag { return true } else { return false } }()
             if !moving {
                 let lengths = (0..<4).map { Self.distance(q[$0], q[($0 + 1) % 4]) }
@@ -986,9 +998,29 @@ final class MotionTool {
         }
     }
 
+    /// A layer at home, as the design has it: the artboard with the layer's keys taken off, its
+    /// piece there, and its corners. All of it the same at every moment, so worked out once for
+    /// each design and kept while the playhead moves.
+    private var homeWorkedOut: (version: Int, fronts: [UUID: Int], board: UUID, id: UUID,
+                                home: (board: Node, piece: FilmPiece, layer: Node, corners: [CGPoint])?)?
+
     /// Where a layer's corners would show at home, as designed, through the camera as it is now.
     private func homeCorners(of id: UUID, in scene: Scene) -> [CGPoint]? {
-        var board = scene.board
+        let home: (board: Node, piece: FilmPiece, layer: Node, corners: [CGPoint])?
+        if let had = homeWorkedOut, had.version == store.version, had.fronts == store.fronts, had.board == scene.board.id, had.id == id {
+            home = had.home
+        } else {
+            home = Self.home(of: id, on: scene.board)
+            homeWorkedOut = (store.version, store.fronts, scene.board.id, id, home)
+        }
+        guard let home else { return nil }
+        // The camera where it is now, whatever its keys say of other moments.
+        let map = home.board.placement(of: home.piece, layer: home.layer, at: scene.time, camera: scene.camera).map
+        return home.corners.map { scene.toView(map($0)) }
+    }
+
+    private static func home(of id: UUID, on board: Node) -> (board: Node, piece: FilmPiece, layer: Node, corners: [CGPoint])? {
+        var board = board
         func strip(_ n: inout Node) {
             if n.id == id {
                 for p in MotionProperty.layer { n[track: p] = nil }
@@ -997,16 +1029,21 @@ final class MotionTool {
             for i in n.children.indices { strip(&n.children[i]) }
         }
         strip(&board)
-        // The camera where it is now, whatever its keys say of other moments.
         let pieces = board.filmPieces(loose: [id])
         guard let piece = pieces.first(where: { $0.layers == [id] }), let layer = board.descendant(id),
               let way = board.way(to: id) else { return nil }
         let origin = way.dropLast().reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.frame.minX, y: $0.y + $1.frame.minY) }
-        let map = board.placement(of: piece, at: scene.time, camera: scene.camera).map
         let turn = BezzleDocument.turnedBox(of: layer)
         let box = layer.isGroup ? turn.frame.offsetBy(dx: origin.x, dy: origin.y) : layer.frame.offsetBy(dx: origin.x, dy: origin.y)
-        return Geometry.corners(of: box, rotation: turn.rotation).map { scene.toView(map($0)) }
+        return (board, piece, layer, Geometry.corners(of: box, rotation: turn.rotation))
     }
+
+    /// The way of the layer in hand, in the film frame's points: where its middle shows at even
+    /// moments from its first move key to its last, each through the camera of that moment. It
+    /// changes with the design alone, not with the playhead, so it is worked out once for each
+    /// design and kept while the playhead moves; each a search through the artboard, the line's
+    /// two hundred points were most of a scrub's time with a moving layer picked.
+    private var wayWorkedOut: (version: Int, fronts: [UUID: Int], board: UUID, id: UUID, loose: Set<UUID>, from: Double, to: Double, steps: Int, points: [CGPoint])?
 
     /// The picked layer's way across the artboard: a fine line through where its middle goes,
     /// ticked at even moments, so that where the ticks crowd it goes slowly; and a bead at each
@@ -1015,10 +1052,17 @@ final class MotionTool {
         guard let node = scene.board.descendant(id), let track = node[track: .move], track.keys.count >= 2,
               let a = track.start, let b = track.end, b > a else { return }
         let steps = max(2, min(240, Int(((b - a) * 60).rounded())))
-        var points: [CGPoint] = []
-        for k in 0...steps {
-            if let p = middle(of: id, at: a + (b - a) * Double(k) / Double(steps), in: scene) { points.append(p) }
+        let loose = Set(store.posedLayers), framed: [CGPoint]
+        if let had = wayWorkedOut, had.version == store.version, had.fronts == store.fronts, had.board == scene.board.id, had.id == id,
+           had.loose == loose, had.from == a, had.to == b, had.steps == steps {
+            framed = had.points
+        } else {
+            framed = (0...steps).compactMap { k in
+                scene.board.filmCorners(of: id, at: a + (b - a) * Double(k) / Double(steps), pieces: scene.pieces).map(Self.middle)
+            }
+            wayWorkedOut = (store.version, store.fronts, scene.board.id, id, loose, a, b, steps, framed)
         }
+        let points = framed.map(scene.toView)
         guard points.count >= 2 else { return }
         let line = CGMutablePath()
         line.addLines(between: points)

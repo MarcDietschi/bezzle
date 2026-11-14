@@ -354,6 +354,75 @@ struct MotionLensTests {
         #expect(near(turned.map(CGPoint(x: 135, y: 85)), CGPoint(x: 125, y: 95)))
     }
 
+    /// The layers the pieces place, found in one walk for a stage that places them frame after
+    /// frame, are the ones each would find on its own, and place each piece as that does.
+    @Test func thePiecesLayersFoundTogetherPlaceThemAsEachFoundAlone() {
+        var moving = card("Moving", CGRect(x: 5, y: 5, width: 20, height: 20))
+        moving.pose(.turn, [90], at: 1)
+        var lifted = card("Lifted", CGRect(x: 0, y: 100, width: 20, height: 20))
+        lifted.pose(.lift, [60], at: 1)
+        var fading = card("Fading", CGRect(x: 30, y: 30, width: 30, height: 30))
+        fading.pose(.fade, [0.2], at: 1)
+        let inner = group("Inner", at: CGPoint(x: 10, y: 20), [card("Deep still", CGRect(x: 40, y: 5, width: 20, height: 20)), moving])
+        let outer = group("Outer", at: CGPoint(x: 100, y: 50), [inner, lifted])
+        var b = board([card("Under"), outer, fading, card("Over")])
+        b.pose(.cameraTilt, [20], at: 1)
+        // The one the selection keeps apart, though nothing moves it.
+        let picked = b.children[3].id
+        let pieces = b.filmPieces(loose: [picked])
+        let layers = b.filmLayers(of: pieces)
+        #expect(layers.count == pieces.count)
+        for (piece, layer) in zip(pieces, layers) {
+            let alone = piece.kind == .layer ? piece.layers.first.flatMap { b.descendant($0) } : nil
+            #expect(layer?.id == alone?.id && layer == alone, "\(piece.key)")
+            for t in [0, 0.4, 1.0] {
+                let camera = b.camera(at: t)
+                #expect(b.placement(of: piece, layer: layer, at: t, camera: camera) == b.placement(of: piece, at: t, camera: camera))
+            }
+        }
+        #expect(layers.compactMap { $0?.name } == ["Moving", "Lifted", "Fading", "Over"])
+        // A piece whose layer is no longer there is placed as the ground is, as on its own.
+        let gone = FilmPiece(kind: .layer, layers: [UUID()])
+        #expect(b.filmLayers(of: [gone]) == [nil])
+        #expect(b.placement(of: gone, layer: nil, at: 1, camera: b.camera(at: 1)) == b.placement(of: gone, at: 1, camera: b.camera(at: 1)))
+    }
+
+    /// A layer deep in a piece drawn again as what it holds moves shows where its groups pose,
+    /// grow and turn it, whatever else they hold: posed along the way down alone, its corners are
+    /// those of the layer in the whole group posed.
+    @Test func aLayerInAPieceDrawnAgainShowsWhereItsWholeGroupPosesIt() throws {
+        var target = card("Target", CGRect(x: 10, y: 15, width: 40, height: 30))
+        target.pose(.move, [30, 10], at: 1)
+        target.pose(.turn, [20], at: 1)
+        var beside = card("Beside", CGRect(x: 80, y: 5, width: 20, height: 20))
+        beside.pose(.move, [0, 60], at: 1)
+        var inner = group("Inner", at: CGPoint(x: 20, y: 30), [target, beside])
+        inner.frame.size = CGSize(width: 120, height: 80)
+        inner.pose(.scale, [1.5, 0.8], at: 1)
+        inner.pose(.turn, [-35], at: 1)
+        var sibling = card("Sibling", CGRect(x: 150, y: 120, width: 30, height: 30))
+        sibling.pose(.fade, [0.2], at: 1)
+        // Faded as a whole, so drawn again as what it holds moves.
+        var outer = group("Outer", at: CGPoint(x: 60, y: 40), [sibling, inner, card("Still", CGRect(x: 0, y: 150, width: 50, height: 20))])
+        outer.opacity = 0.8
+        var b = board([outer])
+        b.pose(.cameraSwing, [25], at: 1)
+        let pieces = b.filmPieces()
+        let piece = try #require(pieces.first { $0.layers == [outer.id] })
+        #expect(piece.changes)
+        for t in [0, 0.35, 0.8, 1.0] {
+            // The whole group posed, and the layer found in it.
+            let whole = outer.posed(at: t, own: false)
+            let posedInner = try #require(whole.children.first { $0.id == inner.id })
+            let posedTarget = try #require(posedInner.children.first { $0.id == target.id })
+            let origin = CGPoint(x: outer.frame.minX + posedInner.frame.minX, y: outer.frame.minY + posedInner.frame.minY)
+            let map = b.placement(of: piece, at: t, camera: b.camera(at: t)).map
+            let want = Geometry.corners(of: posedTarget.frame.offsetBy(dx: origin.x, dy: origin.y), rotation: posedTarget.rotation).map { map($0) }
+            let got = try #require(b.filmCorners(of: target.id, at: t, pieces: pieces))
+            for (a, w) in zip(got, want) { #expect(near(a, w, 1e-6), "at \(t): \(a) for \(w)") }
+        }
+    }
+
     @Test func aMovingGroupIsOnePieceWithWhatMovesInsideIt() {
         var inner = card("Inner", CGRect(x: 0, y: 0, width: 40, height: 40))
         inner.pose(.fade, [0], at: 1)

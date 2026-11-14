@@ -6,7 +6,7 @@ import AppKit
 ///   BEZZLE_FILM=t:step;t:step;…    at these times, one step each:
 ///       seek=1.5                   put the playhead there
 ///       play | pause | start       play from the playhead, stop, play from the start
-///       pick=name,name | pick=camera   pick layers by name, or the camera
+///       pick=name,name | pick=camera   pick layers by name ("Artboard/name" on that artboard alone), or the camera
 ///       pose=property:v[,v]        pose what is picked at the playhead (move, scale, turn, fade, lift,
 ///                                  tilt, swing, blur; cameraMove, cameraZoom, cameraRoll, cameraTilt, cameraSwing)
 ///       key=name:property:t:v[,v][:pace]   set one key exactly (name "camera" for the camera)
@@ -19,6 +19,10 @@ import AppKit
 ///                                  picture of it shows, and let go, or drag to another first. The
 ///                                  view under the point is told directly, so the pointer stays
 ///                                  where it is and the window where it lies.
+///       scrub=from,to,seconds      drag the playhead from one moment to the other and back, as a
+///                                  hand on the timeline would, 120 times a second; how often the
+///                                  app found the time to is written to BEZZLE_SCRUB_OUT (or the log)
+///       watch=seconds              the same without moving the playhead, while the film plays
 enum AnimateHooks {
     static func attach(_ store: DocumentStore, env: [String: String], after: (Double, @escaping @MainActor () -> Void) -> Void) {
         if let s = env["BEZZLE_ANIMATE"].flatMap(Double.init) { after(s) { store.animating = true } }
@@ -68,6 +72,65 @@ enum AnimateHooks {
         }
     }
 
+    /// Moves the playhead as a hand on the timeline does, at the pace of the screen's frames,
+    /// and writes how often the app found the time to: each step waits for the one before.
+    /// Without a `to`, it only watches, as the film plays.
+    @MainActor private final class Scrubber {
+        static var running: Scrubber?
+        let store: DocumentStore
+        let from: Double, to: Double?, seconds: Double
+        var began = 0.0
+        var steps: [Double] = []
+        var timer: Timer?
+        var pictures = 0, parts = 0
+
+        init(_ store: DocumentStore, from: Double, to: Double?, seconds: Double) {
+            self.store = store
+            self.from = from
+            self.to = to
+            self.seconds = seconds
+        }
+
+        static func run(_ store: DocumentStore, from: Double, to: Double?, seconds: Double) {
+            let s = Scrubber(store, from: from, to: to, seconds: seconds)
+            running = s
+            s.began = CACurrentMediaTime()
+            s.pictures = store.canvas?.filmStage.picturesMade ?? 0
+            s.parts = store.canvas?.filmStage.partsMade ?? 0
+            let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { _ in MainActor.assumeIsolated { s.tick() } }
+            RunLoop.main.add(timer, forMode: .common)
+            s.timer = timer
+        }
+
+        func tick() {
+            let now = CACurrentMediaTime()
+            steps.append(now)
+            let k = min((now - began) / seconds, 1)
+            // There and back, as a hand goes.
+            let u = k < 0.5 ? k * 2 : 2 - k * 2
+            if let to { store.seek(from + (to - from) * u) }
+            guard k >= 1 else { return }
+            timer?.invalidate()
+            Scrubber.running = nil
+            var gaps: [Double] = []
+            for i in 1..<steps.count { gaps.append((steps[i] - steps[i - 1]) * 1000) }
+            let sorted = gaps.sorted()
+            func at(_ q: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * q))] }
+            let stage = store.canvas?.filmStage
+            let line = String(format: (to == nil ? "watched: " : "scrubbed: ") + "steps %d in %.2f s, %.1f a second; gap ms p50 %.1f p90 %.1f p99 %.1f max %.1f; over 17 ms %d, over 34 ms %d; pictures %d, parts %d\n",
+                              steps.count, now - began, Double(steps.count) / (now - began), at(0.5), at(0.9), at(0.99), sorted.last ?? 0,
+                              gaps.filter { $0 > 17 }.count, gaps.filter { $0 > 34 }.count,
+                              (stage?.picturesMade ?? 0) - pictures, (stage?.partsMade ?? 0) - parts)
+            if let path = ProcessInfo.processInfo.environment["BEZZLE_SCRUB_OUT"], !path.isEmpty {
+                let url = URL(fileURLWithPath: path)
+                let had = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+                try? (had + line).write(to: url, atomically: true, encoding: .utf8)
+            } else {
+                NSLog("%@", line)
+            }
+        }
+    }
+
     private static func numbers(_ s: String) -> [Double] { s.split(separator: ",").compactMap { Double($0) } }
 
     private static func run(_ step: String, _ store: DocumentStore) {
@@ -83,8 +146,18 @@ enum AnimateHooks {
             if rest == "camera" {
                 store.pickCamera()
             } else {
-                let wanted = rest.split(separator: ",").map(String.init)
-                store.selection = store.doc.allNodes.filter { wanted.contains($0.name) }.map(\.id)
+                // "Artboard/Layer" picks only the layers of that name on that artboard.
+                var picked: [UUID] = []
+                for name in rest.split(separator: ",").map(String.init) {
+                    let parts = name.split(separator: "/", maxSplits: 1).map(String.init)
+                    if parts.count == 2, let board = store.doc.nodes.first(where: { $0.isArtboard && $0.name == parts[0] }) {
+                        func walk(_ nodes: [Node]) { for n in nodes { if n.name == parts[1] { picked.append(n.id) }; walk(n.children) } }
+                        walk(board.children)
+                    } else {
+                        picked += store.doc.allNodes.filter { $0.name == name }.map(\.id)
+                    }
+                }
+                store.selection = picked
             }
         case "pose":
             guard fields.count == 2, let property = MotionProperty(rawValue: fields[0]) else { return }
@@ -106,6 +179,11 @@ enum AnimateHooks {
         case "clear": store.clearFilmMotion()
         case "fly": store.flyCamera(to: store.posedLayers)
         case "press": press(rest, store)
+        case "scrub":
+            let n = numbers(rest)
+            guard n.count == 3 else { return }
+            Scrubber.run(store, from: n[0], to: n[1], seconds: n[2])
+        case "watch": Scrubber.run(store, from: 0, to: nil, seconds: Double(rest) ?? 5)
         default: break
         }
     }

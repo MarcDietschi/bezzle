@@ -483,13 +483,28 @@ extension Node {
     /// left, top right, bottom right, bottom left. Nil for a layer not on it.
     func filmCorners(of id: UUID, at t: Double, pieces: [FilmPiece]) -> [CGPoint]? {
         guard var way = way(to: id) else { return nil }
+        let design = way
         let ids = Set(way.map(\.id))
         // The piece the layer is drawn in: its own, or the one of what holds it.
         guard let piece = pieces.last(where: { p in p.layers.contains { ids.contains($0) } }) else { return nil }
         // In a piece drawn again as what it holds moves, a layer it holds is where its own keys
         // have it, and those of what holds it there. The piece's own layer the piece places.
         if piece.changes, let top = way.firstIndex(where: { piece.layers.contains($0.id) }), top < way.count - 1 {
-            var posed = [way[top].posed(at: t, own: false)]
+            // Posed along the way down alone: a group poses, grows and turns each thing it holds
+            // on its own, so what else it holds does not move the layer, and posing all of that at
+            // every step was most of what a picked layer's outline cost. A repeat grid lays out its
+            // cells together, and is posed whole.
+            var chain = way[way.count - 1]
+            if way[top..<(way.count - 1)].contains(where: \.isRepeatGrid) {
+                chain = way[top]
+            } else {
+                for i in stride(from: way.count - 2, through: top, by: -1) {
+                    var holder = way[i]
+                    holder.children = [chain]
+                    chain = holder
+                }
+            }
+            var posed = [chain.posed(at: t, own: false)]
             for next in way[(top + 1)...] {
                 guard let child = posed[posed.count - 1].children.first(where: { $0.id == next.id }) else { break }
                 posed.append(child)
@@ -501,7 +516,10 @@ extension Node {
         if layer.reshapes, piece.layers.first == id { layer = layer.reshaped(at: t) }
         let holders = way.dropLast()
         let origin = holders.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.frame.minX, y: $0.y + $1.frame.minY) }
-        let map = placement(of: piece, at: t, camera: camera(at: t)).map
+        // The layer the piece places is on the way down already, as the design has it: not looked
+        // for again through the whole artboard.
+        let placed = piece.kind == .layer ? design.first { $0.id == piece.layers.first } ?? piece.layers.first.flatMap { descendant($0) } : nil
+        let map = placement(of: piece, layer: placed, at: t, camera: camera(at: t)).map
         let flat = piece.flat && piece.layers.first == id
         let frame = layer.frame.offsetBy(dx: origin.x, dy: origin.y)
         let turn = BezzleDocument.turnedBox(of: layer)

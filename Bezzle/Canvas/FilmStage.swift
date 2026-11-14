@@ -62,19 +62,30 @@ final class FilmStageView: NSView {
         var subject: FilmPictures.Subject
     }
 
-    /// A picture to draw.
+    /// A picture to draw: of all of a piece, or for a piece whose insides move, of the part of
+    /// it that shows.
     private struct Job: Sendable {
         var key: String
         var subject: FilmPictures.Subject
         var scale: CGFloat
+        var part: FilmPictures.Part? = nil
     }
 
-    /// A picture kept: what it shows, how sharp, and when it was last on the stage.
+    /// A picture kept: what it shows, how sharp, of which part when not of all of it, and when
+    /// it was last on the stage.
     private struct Kept {
         var subject: FilmPictures.Subject
         var scale: CGFloat
+        var part: FilmPictures.Part? = nil
         var picture: FilmPictures.Picture
+        /// Where its subject draws at all and what the picture covers, measured as it was drawn.
+        var reach: CGRect
         var used: Int
+    }
+
+    /// The screen's colours, handed to the threads that draw.
+    private struct Space: @unchecked Sendable {
+        let space: CGColorSpace?
     }
 
     /// What the pieces on the stage were worked out from, to tell when to work them out again.
@@ -111,6 +122,14 @@ final class FilmStageView: NSView {
     private var sharpRound = 0
     /// While it plays, the frames since it last looked ahead for parts to draw.
     private var sinceAhead = 0
+    /// The layer each piece on the stage places, found once for each design and set of pieces,
+    /// and not looked for through the whole artboard at every frame.
+    private var placing: (version: Int, fronts: [UUID: Int], board: UUID, pieces: [FilmPiece], layers: [Node?])?
+    /// The colours of the screen the stage is on, which its pictures are drawn in; nil away from
+    /// a window, which draws them in sRGB.
+    private var space: CGColorSpace?
+    /// The screen's pixels to the artboard's point, as the stage was last brought to the design.
+    private var screen: CGFloat = 0
     private var link: CADisplayLink?
     private static let queue = DispatchQueue(label: "Bezzle film pictures", qos: .userInteractive)
 
@@ -169,6 +188,14 @@ final class FilmStageView: NSView {
         pow(2, (log2(times) * 2 - 0.02).rounded(.up) / 2)
     }
 
+    private static func same(_ a: CGColorSpace?, _ b: CGColorSpace?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): true
+        case let (a?, b?): a === b || CFEqual(a, b)
+        default: false
+        }
+    }
+
     private static func still(_ body: () -> Void) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -196,13 +223,23 @@ final class FilmStageView: NSView {
         // While it plays, the moment is read where the canvas does not watch it, or the whole canvas
         // would be drawn again each frame.
         let t = store.film.playing ? store.film.head : store.filmTime
+        // Drawn in the screen's own colours; on another screen, all of them again.
+        let space = window?.colorSpace?.cgColorSpace
+        if !Self.same(space, self.space) {
+            self.space = space
+            kept = [:]
+            sharper = [:]
+            sharpRound += 1
+            signature = nil
+        }
+        screen = zoom * scale
         let wanted = Signature(version: store.version, board: board.id, loose: Set(store.posedLayers), fronts: store.fronts, step: step,
                                measured: !store.inGesture)
         if wanted != signature {
             signature = wanted
-            prepare(board, at: t, pixels: step)
+            prepare(board, at: t, pixels: step, frame: rect)
         } else if changing, t != drawnAt, !making {
-            prepare(board, at: t, pixels: step, again: true)
+            prepare(board, at: t, pixels: step, frame: rect, again: true)
         }
         guard shownBoard == board.id, !shown.isEmpty else {
             Self.still { gate.isHidden = true }
@@ -252,10 +289,18 @@ final class FilmStageView: NSView {
     /// `again` when only time has passed since they were last worked out, for the pieces whose
     /// insides move: the others are left as they are, and nothing is measured anew, so a film
     /// with such a piece among hundreds still plays at the screen's pace.
-    private func prepare(_ board: Node, at t: Double, pixels: CGFloat, again: Bool = false) {
+    ///
+    /// A piece whose insides move is drawn again at every moment, so it is drawn only as it is
+    /// seen then: the part of it that shows through the film's frame on the screen (`frame`, in
+    /// the view's points), as sharp as it shows there, with a little room round it for a camera on
+    /// its way. All of it, as sharp as it ever shows, would be drawn again at every moment too,
+    /// and a large piece, such as a shader under the whole artboard, would fall behind the playhead.
+    private func prepare(_ board: Node, at t: Double, pixels: CGFloat, frame: CGRect? = nil, again: Bool = false) {
         let pieces = board.filmPieces(loose: Set(store.posedLayers))
         changing = pieces.contains(where: \.changes)
         drawnAt = t
+        let seen = window(of: board, frame: frame)
+        var lens: (camera: FilmCamera, layers: [Node?])?
         // One ground for all the pieces, and the one from before while the artboard is as it was.
         let ground: FilmPictures.Ground
         if again, let had = self.ground { ground = had } else { ground = FilmPictures.Ground.of(board, before: self.ground) }
@@ -264,7 +309,7 @@ final class FilmStageView: NSView {
         var missing: [Job] = []
         // While a layer is being dragged, how large it will ever show is not asked again each step.
         let measured = !store.inGesture && !again
-        for piece in pieces {
+        for (index, piece) in pieces.enumerated() {
             let had = kept[piece.key]
             if again, !piece.changes, let had {
                 set.append((piece, had.subject, had.scale))
@@ -275,6 +320,17 @@ final class FilmStageView: NSView {
             // drawn when the camera finds it.
             let rect = FilmPictures.core(of: subject)
             guard rect.width > 0, rect.height > 0 else { continue }
+            if piece.changes, seen.width > 0, screen > 0 {
+                let found = lens ?? (board.camera(at: t), board.filmLayers(of: pieces))
+                lens = found
+                if let part = Self.seenPart(of: subject, placed: board.placement(of: piece, layer: found.layers[index], at: t, camera: found.camera),
+                                            through: seen, screen: screen) {
+                    set.append((piece, subject, part.scale))
+                    if let had, had.subject.isDrawn(as: subject), Self.holds(had, part) { continue }
+                    missing.append(Job(key: piece.key, subject: subject, scale: part.scale, part: part))
+                    continue
+                }
+            }
             var scale = pixels
             if measured || had == nil {
                 // Sharp at its largest in the whole film, within reason.
@@ -284,7 +340,7 @@ final class FilmStageView: NSView {
             }
             scale = min(scale, FilmPictures.most / max(rect.width, rect.height))
             set.append((piece, subject, scale))
-            if let had, had.scale >= scale * 0.99, had.subject.isDrawn(as: subject) { continue }
+            if let had, had.part == nil, had.scale >= scale * 0.99, had.subject.isDrawn(as: subject) { continue }
             missing.append(Job(key: piece.key, subject: subject, scale: scale))
         }
         generation += 1
@@ -295,20 +351,23 @@ final class FilmStageView: NSView {
             return
         }
         making = true
-        let assets = store.assets
+        let assets = store.assets, space = Space(space: space)
         let jobs = missing
         Self.queue.async {
             let made = FilmMade()
             DispatchQueue.concurrentPerform(iterations: jobs.count) { i in
-                made.put(jobs[i].key, FilmPictures.picture(of: jobs[i].subject, scale: jobs[i].scale, assets: assets))
+                let picture = FilmPictures.picture(of: jobs[i].subject, scale: jobs[i].scale, assets: assets, part: jobs[i].part, space: space.space)
+                made.put(jobs[i].key, picture, reach: picture.map { FilmPictures.rect(of: jobs[i].subject).union($0.rect) } ?? .null)
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     // The pictures are kept even when a newer set was asked for meanwhile: most of
                     // them are the newer set's too.
+                    let all = made.all, reaches = made.reaches
                     for job in jobs {
-                        guard let picture = made.all[job.key] else { continue }
-                        self.kept[job.key] = Kept(subject: job.subject, scale: job.scale, picture: picture, used: self.installs)
+                        guard let picture = all[job.key] else { continue }
+                        self.kept[job.key] = Kept(subject: job.subject, scale: job.scale, part: job.part, picture: picture,
+                                                  reach: reaches[job.key] ?? picture.rect, used: self.installs)
                     }
                     #if DEBUG
                     self.picturesMade += jobs.count
@@ -320,11 +379,43 @@ final class FilmStageView: NSView {
                         self.store.canvas?.needsDisplay = true
                         return
                     }
+                    let showing = self.shownBoard == id && !self.gate.isHidden
                     self.install(wanted, board: id)
-                    self.store.canvas?.needsDisplay = true
+                    self.placeNew(showing: showing)
                 }
             }
         }
+    }
+
+    /// The part to draw of a piece whose insides move, placed so at the moment: what shows of it
+    /// through `window`, as sharp as it shows at `screen` pixels to the artboard's point, and a
+    /// tenth more each way. Nil for one that does not show, or shows blurred: that is drawn whole.
+    private static func seenPart(of subject: FilmPictures.Subject, placed p: FilmPlacement, through window: CGRect, screen: CGFloat) -> FilmPictures.Part? {
+        let reach = FilmPictures.rect(of: subject)
+        guard p.blur <= 0.05, p.opacity > 0.001, reach.width > 0, reach.height > 0, let seen = p.map.seen(of: reach, through: window) else { return nil }
+        let need = CGFloat(seen.stretch) * screen
+        return FilmPictures.part(for: seen.part, of: reach, need: need, margin: 0.1, around: 2 / max(need, 1e-6))
+    }
+
+    /// Whether a picture kept of a piece holds a part of it as sharp as asked.
+    private static func holds(_ had: Kept, _ part: FilmPictures.Part) -> Bool {
+        let rect = had.part?.rect ?? had.picture.rect
+        return rect.insetBy(dx: -0.01, dy: -0.01).contains(part.rect) && had.scale >= part.scale * 0.99
+    }
+
+    /// New pictures have come: placed for where the film is now. On a stage already showing,
+    /// at once, or with the screen's next frame while the film plays, and the canvas is left as it
+    /// is; else the canvas draws again, which shows the stage.
+    private func placeNew(showing: Bool) {
+        guard showing, screen > 0, let board = store.filmBoard, shownBoard == board.id, let signature, signature.version == store.version else {
+            store.canvas?.needsDisplay = true
+            return
+        }
+        guard !store.film.playing else { return }
+        let t = store.filmTime
+        Self.still { place(board, at: t, pixels: screen) }
+        // The playhead went on while they were drawn: what moves inside is drawn for where it is now.
+        if changing, t != drawnAt, !making { prepare(board, at: t, pixels: signature.step, frame: gate.frame, again: true) }
     }
 
     /// Puts a set of pieces on the stage, each with the picture kept for it.
@@ -346,8 +437,7 @@ final class FilmStageView: NSView {
                 let layer = layers.removeValue(forKey: item.piece.key) ?? Self.pictureLayer()
                 if layer.contents as AnyObject? !== had.picture.image { layer.contents = had.picture.image }
                 layer.bounds = had.picture.rect
-                var piece = Shown(piece: item.piece, subject: item.subject, rect: had.picture.rect,
-                                  reach: FilmPictures.rect(of: item.subject).union(had.picture.rect), layer: layer,
+                var piece = Shown(piece: item.piece, subject: item.subject, rect: had.picture.rect, reach: had.reach, layer: layer,
                                   sharp: FilmPictures.sharpness(of: had.picture), blurred: blurred.contains(item.piece.key))
                 // A part laid over it before stays until `place` finds out whether it still fits.
                 if let was = shown.first(where: { $0.layer === layer }) {
@@ -396,8 +486,8 @@ final class FilmStageView: NSView {
     private func place(_ board: Node, at t: Double, pixels: CGFloat, playing: Bool = false) {
         guard !shown.isEmpty else { return }
         let camera = board.camera(at: t)
-        let pieces = shown.map(\.piece)
-        let placements = pieces.map { board.placement(of: $0, at: t, camera: camera) }
+        let pieces = shown.map(\.piece), layers = layers(on: board)
+        let placements = pieces.indices.map { board.placement(of: pieces[$0], layer: layers[$0], at: t, camera: camera) }
         let wanted = board.filmOrder(pieces, placements)
         if wanted != order {
             order = wanted
@@ -448,10 +538,22 @@ final class FilmStageView: NSView {
 
     // MARK: Sharp however near
 
+    /// The layer each piece on the stage places.
+    private func layers(on board: Node) -> [Node?] {
+        let pieces = shown.map(\.piece)
+        if let had = placing, had.version == store.version, had.fronts == store.fronts, had.board == board.id, had.pieces == pieces {
+            return had.layers
+        }
+        let layers = board.filmLayers(of: pieces)
+        placing = (store.version, store.fronts, board.id, pieces, layers)
+        return layers
+    }
+
     /// The part of the film's frame that shows in the stage, in the artboard's points: what is
-    /// scrolled out of the view needs no drawing.
-    private func window(of board: Node) -> CGRect {
-        let frame = gate.frame
+    /// scrolled out of the view needs no drawing. `frame` is where the film's frame is in the
+    /// view, when it is not yet where the gate lies.
+    private func window(of board: Node, frame: CGRect? = nil) -> CGRect {
+        let frame = frame ?? gate.frame
         let seen = frame.intersection(bounds)
         guard frame.width > 0, frame.height > 0, !seen.isNull, seen.width > 0, seen.height > 0 else { return .zero }
         let kx = board.frame.width / frame.width, ky = board.frame.height / frame.height
@@ -579,10 +681,10 @@ final class FilmStageView: NSView {
             sinceAhead += 1
             guard sinceAhead >= 4 else { return }
             sinceAhead = 0
-            let pieces = shown.map(\.piece)
+            let pieces = shown.map(\.piece), layers = layers(on: board)
             for seconds in [0.15, 0.3] {
                 let then = moment(t, after: seconds, on: board), camera = board.camera(at: then)
-                moments.append(pieces.map { board.placement(of: $0, at: then, camera: camera) })
+                moments.append(pieces.indices.map { board.placement(of: pieces[$0], layer: layers[$0], at: then, camera: camera) })
             }
         }
         var jobs: [PartJob] = []
@@ -605,13 +707,13 @@ final class FilmStageView: NSView {
         }
         guard !jobs.isEmpty else { return }
         sharpening = true
-        let assets = store.assets, round = sharpRound
+        let assets = store.assets, round = sharpRound, space = Space(space: space)
         let work = jobs
         Self.queue.async {
             let jobs = work
             let made = FilmMade()
             DispatchQueue.concurrentPerform(iterations: jobs.count) { i in
-                made.put(jobs[i].key, FilmPictures.picture(of: jobs[i].subject, scale: jobs[i].part.scale, assets: assets, part: jobs[i].part))
+                made.put(jobs[i].key, FilmPictures.picture(of: jobs[i].subject, scale: jobs[i].part.scale, assets: assets, part: jobs[i].part, space: space.space))
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -625,8 +727,8 @@ final class FilmStageView: NSView {
                         guard let picture = made.all[job.key] else { continue }
                         self.sharper[job.key] = Sharper(subject: job.subject, part: job.part, picture: picture)
                     }
-                    // Laid over their pieces when the canvas next draws, or with the film's next frame.
-                    self.store.canvas?.needsDisplay = true
+                    // Laid over their pieces at once, or with the film's next frame.
+                    self.placeNew(showing: !self.gate.isHidden)
                 }
             }
         }
@@ -660,7 +762,8 @@ final class FilmStageView: NSView {
         }
         let t = store.film.head
         layFromTheTop()
-        Self.still { place(board, at: t, pixels: store.viewport.zoom * (window?.backingScaleFactor ?? 2), playing: true) }
+        screen = store.viewport.zoom * (window?.backingScaleFactor ?? 2)
+        Self.still { place(board, at: t, pixels: screen, playing: true) }
         // Pieces whose insides move are drawn again as it goes, as fast as they can be.
         if changing, !making, t != drawnAt, let signature {
             prepare(board, at: t, pixels: signature.step, again: signature.version == store.version)
@@ -696,11 +799,13 @@ final class FilmStageView: NSView {
 private final class FilmMade: @unchecked Sendable {
     private let lock = NSLock()
     private var pictures: [String: FilmPictures.Picture] = [:]
+    private var reached: [String: CGRect] = [:]
 
-    func put(_ key: String, _ picture: FilmPictures.Picture?) {
+    func put(_ key: String, _ picture: FilmPictures.Picture?, reach: CGRect = .null) {
         guard let picture else { return }
         lock.lock()
         pictures[key] = picture
+        if !reach.isNull { reached[key] = reach }
         lock.unlock()
     }
 
@@ -708,5 +813,12 @@ private final class FilmMade: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return pictures
+    }
+
+    /// Where each picture's subject draws at all, with what the picture covers.
+    var reaches: [String: CGRect] {
+        lock.lock()
+        defer { lock.unlock() }
+        return reached
     }
 }

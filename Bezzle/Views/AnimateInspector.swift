@@ -267,7 +267,7 @@ private struct KeyBead: View {
     @State private var hovering = false
 
     var body: some View {
-        let state = store.keyState(property)
+        let state = store.keyState(property, at: store.panelTime)
         ZStack {
             Circle().fill(Theme.ink.opacity(hovering ? 0.07 : 0))
             Circle()
@@ -321,7 +321,7 @@ private struct PoseCard: View {
     let layers: [UUID]
 
     var body: some View {
-        PanelCard(title: "Pose", summary: seconds(store.filmTime)) {
+        PanelCard(title: "Pose", summary: seconds(store.panelTime)) {
             PoseGlyph()
         } content: {
             PropertyRow(store: store, property: .move) {
@@ -372,7 +372,7 @@ private struct PoseCard: View {
     /// One number of a property: what the layers share, or a dash where they differ.
     private func field(_ property: MotionProperty, _ index: Int, label: String = "", unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
                        times: Double = 1, scrub: Double = 1, decimals: Int = 1, width: CGFloat = 84) -> some View {
-        NumberField(label: .verbatim(label), value: store.sharedValue(property, index, of: layers).map { $0 * times }, unit: unit, range: range,
+        NumberField(label: .verbatim(label), value: store.sharedValue(property, index, of: layers, at: store.panelTime).map { $0 * times }, unit: unit, range: range,
                     scrub: scrub, decimals: decimals, action: property.action) { shown in
             store.pose(property, number: index, to: shown / times, of: layers)
         }
@@ -424,7 +424,7 @@ private struct ShaderInputsCard: View {
     let inputs: [String]
 
     var body: some View {
-        PanelCard(title: "Shader", summary: seconds(store.filmTime)) {
+        PanelCard(title: "Shader", summary: seconds(store.panelTime)) {
             Image(systemName: "sparkles").font(.system(size: 12, weight: .medium))
         } content: {
             ForEach(inputs, id: \.self) { name in
@@ -457,14 +457,14 @@ private struct ShaderInputsCard: View {
     }
 
     private func colour(_ name: String, _ count: Int) -> RGBA? {
-        let values = (0..<count).map { store.sharedInput(name, $0) }
+        let values = (0..<count).map { store.sharedInput(name, $0, at: store.panelTime) }
         guard values.allSatisfy({ $0 != nil }) else { return nil }
         let v = values.map { min(max($0!, 0), 1) }
         return RGBA(r: v[0], g: v[1], b: v[2], a: count == 4 ? v[3] : 1)
     }
 
     private func field(_ name: String, _ index: Int, label: String, width: CGFloat) -> some View {
-        NumberField(label: .verbatim(label), value: store.sharedInput(name, index), scrub: 0.01, decimals: 3, action: "Change Shader") { v in
+        NumberField(label: .verbatim(label), value: store.sharedInput(name, index, at: store.panelTime), scrub: 0.01, decimals: 3, action: "Change Shader") { v in
             store.poseInput(name, number: index, to: v)
         }
         .frame(width: width)
@@ -499,7 +499,7 @@ private struct InputBead: View {
     @State private var hovering = false
 
     var body: some View {
-        let state = store.inputKeyState(name)
+        let state = store.inputKeyState(name, at: store.panelTime)
         ZStack {
             Circle().fill(Theme.ink.opacity(hovering ? 0.07 : 0))
             Circle()
@@ -582,7 +582,7 @@ private struct CameraCard: View {
     let board: Node
 
     var body: some View {
-        let camera = board.camera(at: store.filmTime)
+        let camera = board.camera(at: store.panelTime)
         PanelCard(title: LocalizedStringResource("animate.camera", defaultValue: "Camera"), summary: "×" + camera.zoom.formatted(.number.precision(.fractionLength(0...2)))) {
             CameraGlyph()
         } content: {
@@ -616,7 +616,7 @@ private struct CameraCard: View {
 
     private func field(_ property: MotionProperty, _ index: Int, label: String = "", unit: String = "", range: ClosedRange<Double> = -100_000...100_000,
                        scrub: Double = 1, decimals: Int = 1, width: CGFloat = 84) -> some View {
-        NumberField(label: .verbatim(label), value: board.value(of: property, at: store.filmTime)[index], unit: unit, range: range,
+        NumberField(label: .verbatim(label), value: board.value(of: property, at: store.panelTime)[index], unit: unit, range: range,
                     step: decimals >= 2 ? 0.1 : 1, scrub: scrub, decimals: decimals, action: property.action) { v in
             store.poseCamera(property, number: index, to: v)
         }
