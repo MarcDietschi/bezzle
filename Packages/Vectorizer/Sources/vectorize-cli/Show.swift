@@ -70,7 +70,13 @@ func paths(inSVG text: String) -> (size: CGSize, paths: [Drawn]) {
         let tag = ns.substring(with: match.range)
         guard let d = attribute("d", in: tag) else { continue }
         var drawn = Drawn()
-        drawn.fill = attribute("fill", in: tag).flatMap(color)
+        drawn.fill = attribute("fill", in: tag).flatMap { fill -> CGColor? in
+            if let plain = color(fill) { return plain }
+            // Colours that run: shown here as the first of them.
+            guard fill.hasPrefix("url(#"), let from = text.range(of: "id=\"\(fill.dropFirst(5).dropLast())\""),
+                  let stop = text.range(of: ##"stop-color="#[0-9a-fA-F]{6}""##, options: .regularExpression, range: from.upperBound..<text.endIndex) else { return nil }
+            return color(String(text[stop].dropFirst(12).dropLast()))
+        }
         drawn.stroke = attribute("stroke", in: tag).flatMap(color)
         drawn.evenOdd = attribute("fill-rule", in: tag) == "evenodd"
         // The numbers and letters of the path, one after the other.

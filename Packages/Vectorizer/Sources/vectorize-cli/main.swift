@@ -63,7 +63,8 @@ func render(_ tracing: Tracing, zoom: Int, background: CGColor? = nil, packed: B
         ctx.fill(CGRect(x: 0, y: 0, width: tracing.width * zoom, height: tracing.height * zoom))
     }
     ctx.scaleBy(x: CGFloat(zoom), y: CGFloat(zoom))
-    let drawn: [(color: Tint, outlines: [Outline])] = packed ? tracing.layers(most: 0).map { ($0.color, $0.outlines) } : tracing.shapes.map { ($0.color, $0.outlines) }
+    let drawn: [(color: Tint, outlines: [Outline], blend: Blend?)] = packed
+        ? tracing.layers(most: 0).map { ($0.color, $0.outlines, $0.blend) } : tracing.shapes.map { ($0.color, $0.outlines, $0.blend) }
     for shape in drawn {
         let path = CGMutablePath()
         for outline in shape.outlines {
@@ -78,7 +79,25 @@ func render(_ tracing: Tracing, zoom: Int, background: CGColor? = nil, packed: B
             path.closeSubpath()
         }
         ctx.addPath(path)
-        ctx.setFillColor(CGColor(srgbRed: CGFloat(shape.color.r) / 255, green: CGFloat(shape.color.g) / 255, blue: CGFloat(shape.color.b) / 255, alpha: 1))
+        func color(_ t: Tint) -> CGColor { CGColor(srgbRed: CGFloat(t.r) / 255, green: CGFloat(t.g) / 255, blue: CGFloat(t.b) / 255, alpha: 1) }
+        // Colours that run across it, as a design draws a gradient.
+        if let blend = shape.blend,
+           let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: blend.stops.map { color($0.color) } as CFArray,
+                                     locations: blend.stops.map { CGFloat($0.offset) }) {
+            ctx.saveGState()
+            ctx.clip(using: packed ? .winding : .evenOdd)
+            let start = CGPoint(x: blend.start.x, y: blend.start.y), end = CGPoint(x: blend.end.x, y: blend.end.y)
+            switch blend.kind {
+            case .linear:
+                ctx.drawLinearGradient(gradient, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+            case .radial:
+                ctx.drawRadialGradient(gradient, startCenter: start, startRadius: 0, endCenter: start, endRadius: hypot(end.x - start.x, end.y - start.y),
+                                       options: [.drawsAfterEndLocation])
+            }
+            ctx.restoreGState()
+            continue
+        }
+        ctx.setFillColor(color(shape.color))
         ctx.fillPath(using: packed ? .winding : .evenOdd)
     }
     return ctx.makeImage()!

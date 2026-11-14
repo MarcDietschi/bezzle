@@ -25,9 +25,10 @@ public enum Vectorizer {
         case .nothing(let pixelArt): return Tracing(width: bitmap.width, height: bitmap.height, shapes: [], palette: [], pixelArt: pixelArt)
         case .done(let read): reading = read
         }
-        let raster = reading.raster, palette = reading.palette, tints = reading.tints, labels = reading.labels, regions = reading.regions
+        let raster = reading.raster, tints = reading.tints, labels = reading.labels, regions = reading.regions
         let scale = reading.scale, pixelArt = reading.pixelArt, clean = reading.clean, shrink = reading.shrink, detail = reading.detail
         let wavers = reading.wavers && !pixelArt
+        let running = reading.blends
 
         var stack = Stack.make(regions, clear: labels.clear, lap: scale)
         guard going(0.65) else { return nil }
@@ -166,7 +167,12 @@ public enum Vectorizer {
                     if walks.count == 1 { figure = fitted.figure.flatMap { scaled($0, offsetX, offsetY) } }
                 }
                 guard !outlines.isEmpty else { continue }
-                out.value[k] = Shape(color: tints[Int(kept.label[r])], outlines: outlines, figure: figure, blend: nil,
+                // Colours that run across it, at the picture's own size; its one colour is then
+                // the one halfway along.
+                let blend = r < running.count ? running[r].map {
+                    Blend(kind: $0.kind, start: Spot($0.start.x * offsetX, $0.start.y * offsetY), end: Spot($0.end.x * offsetX, $0.end.y * offsetY), stops: $0.stops)
+                } : nil
+                out.value[k] = Shape(color: blend?.color(at: 0.5) ?? tints[Int(kept.label[r])], outlines: outlines, figure: figure, blend: blend,
                                      area: Double(kept.area[r]) * scaleBy * scaleBy * offsetX * offsetY)
                 if finished.add() % 64 == 0, !going(0.7 + 0.3 * Double(finished.value) / Double(max(count, 1))) { stopped.set() }
             }
@@ -189,6 +195,9 @@ public enum Vectorizer {
         var tints: [Tint]
         var labels: Labels
         var regions: Regions
+        /// For each region, the colours that run across it, in `raster`'s pixels; nil for a
+        /// region of one colour, and empty when none has any (`blended`).
+        var blends: [Blend?]
         /// Samples across a pixel of `raster`.
         var scale: Int
         var pixelArt: Bool
@@ -288,8 +297,15 @@ public enum Vectorizer {
             labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail))
             regions = Regions.find(labels)
         }
+        // Colours that run into each other were read as bands: each run one region again, and
+        // its edges where its own colours put them.
+        var blends: [Blend?] = []
+        if !pixelArt, let found = blended(regions, labels: labels, raster: raster, colors: palette.colors, scale: scale, noise: noise, mixing: mixing) {
+            regions = found.regions
+            blends = found.blends
+        }
         guard going(0.55) else { return .stopped }
-        return .done(Reading(raster: raster, palette: palette, tints: tints, labels: labels, regions: regions, scale: scale, pixelArt: pixelArt,
+        return .done(Reading(raster: raster, palette: palette, tints: tints, labels: labels, regions: regions, blends: blends, scale: scale, pixelArt: pixelArt,
                              clean: clean, wavers: !clean || rings, shrink: shrink, noise: noise, detail: detail, mixing: mixing))
     }
 
@@ -307,7 +323,8 @@ public enum Vectorizer {
     }
 }
 
-private struct Sent<T>: @unchecked Sendable {
+/// Something handed to the threads of `parallel` as it is, each writing its own part of it.
+struct Sent<T>: @unchecked Sendable {
     let value: T
     init(_ value: T) { self.value = value }
 }
@@ -360,7 +377,22 @@ public extension Tracing {
             return t == t.rounded() ? String(Int(t)) : String(t)
         }
         var out = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"\(width)\" height=\"\(height)\" viewBox=\"0 0 \(width) \(height)\">\n"
-        for shape in shapes {
+        func hex(_ c: Tint) -> String { String(format: "#%02x%02x%02x", c.r, c.g, c.b) }
+        // The colours that run across shapes, each named by its shape's place.
+        var defs = ""
+        for (k, shape) in shapes.enumerated() {
+            guard let blend = shape.blend else { continue }
+            let stops = blend.stops.map { "<stop offset=\"\(n($0.offset))\" stop-color=\"\(hex($0.color))\"/>" }.joined()
+            switch blend.kind {
+            case .linear:
+                defs += "<linearGradient id=\"b\(k)\" gradientUnits=\"userSpaceOnUse\" x1=\"\(n(blend.start.x))\" y1=\"\(n(blend.start.y))\" x2=\"\(n(blend.end.x))\" y2=\"\(n(blend.end.y))\">\(stops)</linearGradient>\n"
+            case .radial:
+                let r = ((blend.end.x - blend.start.x) * (blend.end.x - blend.start.x) + (blend.end.y - blend.start.y) * (blend.end.y - blend.start.y)).squareRoot()
+                defs += "<radialGradient id=\"b\(k)\" gradientUnits=\"userSpaceOnUse\" cx=\"\(n(blend.start.x))\" cy=\"\(n(blend.start.y))\" r=\"\(n(r))\">\(stops)</radialGradient>\n"
+            }
+        }
+        if !defs.isEmpty { out += "<defs>\n\(defs)</defs>\n" }
+        for (k, shape) in shapes.enumerated() {
             var d = ""
             for outline in shape.outlines {
                 d += "M\(n(outline.start.x)) \(n(outline.start.y))"
@@ -372,8 +404,7 @@ public extension Tracing {
                 }
                 d += "Z"
             }
-            let hex = String(format: "#%02x%02x%02x", shape.color.r, shape.color.g, shape.color.b)
-            out += "<path fill=\"\(hex)\" fill-rule=\"evenodd\" d=\"\(d)\"/>\n"
+            out += "<path fill=\"\(shape.blend == nil ? hex(shape.color) : "url(#b\(k))")\" fill-rule=\"evenodd\" d=\"\(d)\"/>\n"
         }
         return out + "</svg>\n"
     }

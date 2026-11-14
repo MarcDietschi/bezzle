@@ -10,6 +10,9 @@ public struct Layer: Hashable, Sendable {
     public var figure: Figure?
     /// How many of the tracing's shapes it holds.
     public var shapes: Int
+    /// The colours that run across it, when it is not one colour: then it is one shape alone,
+    /// and `color` the colour halfway along.
+    public var blend: Blend?
 }
 
 public extension Tracing {
@@ -21,7 +24,7 @@ public extension Tracing {
     /// is no ellipse anyone drew, so none is made a figure.
     func layers(most: Int = 400) -> [Layer] {
         guard shapes.count > most else {
-            return shapes.map { Layer(color: $0.color, outlines: $0.outlines, figure: $0.figure, shapes: 1) }
+            return shapes.map { Layer(color: $0.color, outlines: $0.outlines, figure: $0.figure, shapes: 1, blend: $0.blend) }
         }
         struct Box {
             var x0 = Double.greatestFiniteMagnitude, y0 = Double.greatestFiniteMagnitude
@@ -68,7 +71,7 @@ public extension Tracing {
                     for j in grid[y * across + x] where seen[j] != i {
                         seen[j] = i
                         let other = layers[layerOf[j]]
-                        if other.color != shape.color, boxes[j].meets(box) {
+                        if other.color != shape.color || other.blend != nil || shape.blend != nil, boxes[j].meets(box) {
                             under = max(under, layerOf[j])
                         }
                     }
@@ -76,7 +79,7 @@ public extension Tracing {
             }
             var into: Int?
             // The lowest of its colour's layers over that, so the layers stay few.
-            if let own = ofColor[shape.color], let last = own.last, last > under {
+            if shape.blend == nil, let own = ofColor[shape.color], let last = own.last, last > under {
                 var lo = 0, hi = own.count - 1
                 while lo < hi {
                     let mid = (lo + hi) / 2
@@ -89,9 +92,10 @@ public extension Tracing {
                 layers[into].shapes += 1
                 layerOf[i] = into
             } else {
-                layers.append(Layer(color: shape.color, outlines: shape.outlines, figure: nil, shapes: 1))
+                layers.append(Layer(color: shape.color, outlines: shape.outlines, figure: nil, shapes: 1, blend: shape.blend))
                 layerOf[i] = layers.count - 1
-                ofColor[shape.color, default: []].append(layers.count - 1)
+                // Colours that run across a shape are its own: nothing shares its layer.
+                if shape.blend == nil { ofColor[shape.color, default: []].append(layers.count - 1) }
             }
             for y in ys {
                 for x in xs { grid[y * across + x].append(i) }

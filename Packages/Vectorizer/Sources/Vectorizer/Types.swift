@@ -67,15 +67,67 @@ public enum Figure: Hashable, Sendable {
     case rectangle(center: Spot, width: Double, height: Double, radius: Double, angle: Double)
 }
 
-/// Colours running across a shape instead of one: from `from` at `start` to `to` at `end`.
+/// Colours running across a shape instead of one. Straight across (`linear`): the first stop's
+/// colour at `start`, the last's at `end`, every line square to the way between them one colour,
+/// and beyond the two the first and the last colour. Outward from a middle (`radial`): the
+/// first stop's colour at `start`, the last's on the circle round it through `end` and outside.
 public struct Blend: Hashable, Sendable {
+    public enum Kind: Hashable, Sendable {
+        case linear
+        case radial
+    }
+
+    public var kind: Kind
     public var start: Spot
     public var end: Spot
+    /// At least two, their offsets rising from 0 at `start` to 1 at `end`.
     public var stops: [Stop]
 
     public struct Stop: Hashable, Sendable {
+        /// 0 at `start`, 1 at `end`.
         public var offset: Double
         public var color: Tint
+
+        public init(offset: Double, color: Tint) {
+            self.offset = offset
+            self.color = color
+        }
+    }
+
+    public init(kind: Kind, start: Spot, end: Spot, stops: [Stop]) {
+        self.kind = kind
+        self.start = start
+        self.end = end
+        self.stops = stops
+    }
+
+    /// The colour at `offset` along it.
+    public func color(at offset: Double) -> Tint {
+        guard let first = stops.first, let last = stops.last else { return Tint(r: 0, g: 0, b: 0) }
+        if offset <= first.offset { return first.color }
+        for k in 1..<stops.count where offset <= stops[k].offset {
+            let a = stops[k - 1], b = stops[k]
+            let u = b.offset > a.offset ? (offset - a.offset) / (b.offset - a.offset) : 1
+            func mix(_ x: UInt8, _ y: UInt8) -> UInt8 { UInt8((Double(x) * (1 - u) + Double(y) * u).rounded()) }
+            return Tint(r: mix(a.color.r, b.color.r), g: mix(a.color.g, b.color.g), b: mix(a.color.b, b.color.b))
+        }
+        return last.color
+    }
+
+    /// How far along it a place lies: 0 at `start` and before it, 1 at `end` and beyond.
+    public func offset(of spot: Spot) -> Double {
+        let dx = end.x - start.x, dy = end.y - start.y, long = dx * dx + dy * dy
+        guard long > 0 else { return 0 }
+        let px = spot.x - start.x, py = spot.y - start.y
+        switch kind {
+        case .linear: return min(max((px * dx + py * dy) / long, 0), 1)
+        case .radial: return min(((px * px + py * py) / long).squareRoot(), 1)
+        }
+    }
+
+    /// The colour at a place.
+    public func color(at spot: Spot) -> Tint {
+        color(at: offset(of: spot))
     }
 }
 
