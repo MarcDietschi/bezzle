@@ -30,6 +30,8 @@ extension MCPTools {
                 ("bounce", number("With pace spring: how far past it goes, 0 (not at all) to 1; 0.3 otherwise.")),
                 ("to", list("The camera's key only, in place of property and value: the layers it looks at then, whole with room round them, wherever they are at that moment. Sets cameraMove and cameraZoom together, as Bezzle's own fly-to does; tilt, swing and roll stay as they are.")),
                 ("input", text("In place of property: an input of the layer's shader (a uniform of its fill.shader, as get_animation lists them with what the design sets), keyed like a property. value is how far it is from the design there, as many numbers as the input has: [0.4, -0.2, 0] turns a colour input more red and less green; 0 for each is the design.")),
+                ("look", choice(Self.lookWords, "In place of property: how the layer looks, keyed like a property. value is the look itself at that time, not a change: for fill and border a colour (\"#RRGGBB\", or \"#RRGGBBAA\"), or where it is a gradient its colours, as many as the design's has, each a colour or {color, offset}; for borderWidth points; for corners one radius or four, [top left, top right, bottom right, bottom left]; for shadow {color, x, y, blur, spread}, any of them. The design's own look is the key that changes nothing.")),
+                ("which", number("With look: which of several fills, borders or shadows, counted from 1 at the bottom as get_design lists them; the first otherwise.")),
             ])),
             ("required", ["time"]),
         ])
@@ -58,7 +60,11 @@ extension MCPTools {
                        much of its outline is drawn, each 0 (its start) to 1 (its end), and shape, its outline changed: each shape key \
                        is given as path, its outline then in the layer's own points (its frame's top left at 0, before it is turned), \
                        which has the design's points, each moved, or other points altogether, and such a layer lists outline, its \
-                       outline as designed in the same points. \
+                       outline as designed in the same points. A layer whose look is keyed lists \
+                       looks: each a fill, border, borderWidth, corners or shadow (with which, for the second of several and up), as \
+                       the design has it and with its keys, each value the look itself at that time: a colour, a gradient's colours \
+                       with their offsets, a width, four radii, a shadow. One marked gone has keys for what the design no longer has \
+                       there (one colour made a gradient, a fill taken away): they change nothing until it is back. \
                        Before its first key a property has that key's value and after its \
                        last that one's; a layer with no keys is as designed. A key marked given is the design itself, put there by \
                        Bezzle to go with the first pose made by hand, and anyone's to change. In a deck each layer says its post, \
@@ -96,7 +102,13 @@ extension MCPTools {
                        the others 0) it shows the whole artboard straight on, and a fly over is a few camera keys with tilt and zoom, \
                        ending at rest. A layer filled with a shader also has its inputs keyed (input in place of property): its \
                        colours, intensities and the like, each value a change from what the design sets, so a gradient can shift its \
-                       colours as the film plays; the shader's own time runs by itself. moves give layers a whole entrance or exit as keys, one layer after another apart seconds in \
+                       colours as the film plays; the shader's own time runs by itself. How a layer looks is keyed too (look in \
+                       place of property): its fill's and its border's colour, a gradient's colours and where they lie, a border's \
+                       width, a rectangle's corners and a shadow's colour, offset, blur and spread. A look's value is the look itself \
+                       at that time, a colour or a width, and between two keys colours mix evenly to the eye; the design keeps its own \
+                       look, and its styles, wherever no key says otherwise. What a layer is painted with stays the design's: a key \
+                       changes a colour into a colour and a gradient's colours into as many, and adds no fill, border or shadow. \
+                       moves give layers a whole entrance or exit as keys, one layer after another apart seconds in \
                        the order they are read on the artboard, from the top down and across; the keys can be changed afterwards like \
                        any. In a deck each post's layers have keys of their own and the film shows the post in front: a name is the \
                        layer in the first post, and a layer of another post is given by its id (deck with post lists them). \
@@ -110,7 +122,7 @@ extension MCPTools {
                            ("artboard", text("The artboard whose film it is, or a layer on it, by id or name. Left out, it is the one the layers named lie on; with none named, the selection's artboard, or the one in sight.")),
                            ("keys", ["type": "array", "items": key, "description": "Keys to set, each {layer, property, time, value, pace}. A key already there at that time is changed."]),
                            ("moves", ["type": "array", "items": move, "description": "Ready made moves, each {move, layers, time, going, apart}. Keys of the same properties in the time a move takes give way to it."]),
-                           ("remove", ["description": "What to take away: a list of {layer or layers, property, time}. With property and time it is one key; with property alone, all of that property's keys; with time alone, the layer's keys at that moment; with neither, all motion of the layers and of what they hold. Without a layer it is the camera's: a camera property, or \"camera\" for all of them. Or \"all\": every key on the artboard, its camera's, and what its film was set to."]),
+                           ("remove", ["description": "What to take away: a list of {layer or layers, property, time}. With property and time it is one key; with property alone, all of that property's keys; with time alone, the layer's keys at that moment; with neither, all motion of the layers and of what they hold. input, or look with which, in place of property takes a shader input's keys or a look's. Without a layer it is the camera's: a camera property, or \"camera\" for all of them. Or \"all\": every key on the artboard, its camera's, and what its film was set to."]),
                            ("length", ["description": "How many seconds the film runs, more than 0. null (or \"auto\") lets it run as long as its last key, to the next half second, and at least 2 seconds."]),
                            ("loop", boolean("true plays the film round and round, the usual; false plays it once.")),
                            ("backdrop", ["description": "What shows past the artboard's edges when the camera sees them: a colour, \"#RRGGBB\". null (or \"auto\") lets Bezzle choose it to go with the artboard."]),
@@ -172,7 +184,8 @@ extension MCPTools {
                     ]
                     if child.isAnimated {
                         let outline = child.canReshape && child[track: .shape] != nil ? child.ownOutline.map { JSONValue.string($0.data) } : nil
-                        moving.append(.compact(who + [("tracks", tracks(of: child, MotionProperty.layer)), ("outline", outline), ("shader", inputs(of: child))]))
+                        moving.append(.compact(who + [("tracks", tracks(of: child, MotionProperty.layer)), ("outline", outline), ("shader", inputs(of: child)),
+                                                      ("looks", looks(of: child))]))
                     } else if only != nil {
                         still.append(.compact(who))
                     }
@@ -294,6 +307,8 @@ extension MCPTools {
         var properties: [MotionProperty]?
         /// Only this shader input's keys, in place of properties.
         var input: String? = nil
+        /// Only these looks' keys, in place of properties.
+        var looks: [LookTrack]? = nil
         /// Only the keys at this moment; nil for whole tracks.
         var time: Double?
     }
@@ -408,7 +423,7 @@ extension MCPTools {
         var removals: [FilmRemoval] = []
         for (i, spec) in removeSpecs.enumerated() {
             let place = "remove[\(i)]"
-            try Self.known(spec, ["layer", "layers", "property", "time", "input"], place)
+            try Self.known(spec, ["layer", "layers", "property", "time", "input", "look", "which"], place)
             let word = try Read.string(spec["property"], "\(place).property")
             if let input = try Read.string(spec["input"], "\(place).input") {
                 guard word == nil, let named = try refs(spec) else { throw MCPError("\(place): an input is a layer's shader's: give layer, and no property.") }
@@ -417,6 +432,14 @@ extension MCPTools {
                 removals.append(FilmRemoval(ids: ids, properties: [], input: input, time: try Self.motionTime(spec["time"], "\(place).time")))
                 continue
             }
+            if let looks = try Self.lookTracks(spec, place) {
+                guard word == nil, let named = try refs(spec) else { throw MCPError("\(place): a look is a layer's: give layer, and no property.") }
+                let ids = try layers(named, place)
+                try ids.forEach(onFilm)
+                removals.append(FilmRemoval(ids: ids, properties: [], looks: looks, time: try Self.motionTime(spec["time"], "\(place).time")))
+                continue
+            }
+            guard spec["which"] == nil else { throw MCPError("\(place): which goes with look.") }
             let time = try Self.motionTime(spec["time"], "\(place).time")
             if let named = try refs(spec) {
                 let ids = try layers(named, place)
@@ -475,9 +498,27 @@ extension MCPTools {
         var aims: [(ids: [UUID], time: Double, ease: MotionEase?)] = []
         /// Keys of shader inputs, each a change from the input the design sets.
         var inputKeys: [(id: UUID, input: String, change: [Double], time: Double, ease: MotionEase?)] = []
+        /// Keys of how layers look, each the look itself at its moment.
+        var lookKeys: [LookKey] = []
         for (i, spec) in keySpecs.enumerated() {
             let place = "keys[\(i)]"
-            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce", "to", "input", "path", "outlineOf"], place)
+            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce", "to", "input", "path", "outlineOf", "look", "which"], place)
+            if spec["look"] != nil {
+                guard spec["property"] == nil, spec["input"] == nil, spec["to"] == nil, spec["path"] == nil, spec["outlineOf"] == nil else {
+                    throw MCPError("\(place): a key is of a property, of a shader input or of a look, one of them.")
+                }
+                guard let named = try refs(spec) else { throw MCPError("\(place): say whose look, as layer.") }
+                let ids = try layers(named, place)
+                try ids.forEach(onFilm)
+                guard let time = try Self.motionTime(spec["time"], "\(place).time") else { throw MCPError("\(place) needs time: seconds from the film's start.") }
+                let ease = try Self.motionEase(spec, place)
+                for id in ids {
+                    guard let n = doc.node(id) else { throw MCPError("That layer is gone.") }
+                    if let key = try Self.lookKey(spec, on: n, time: time, ease: ease, place) { lookKeys.append(key) }
+                }
+                continue
+            }
+            guard spec["which"] == nil else { throw MCPError("\(place): which goes with look.") }
             if let to = spec["to"] {
                 let named = (to as? String).map { [$0] } ?? (to as? [String])
                 guard let named, !named.isEmpty else { throw MCPError("\(place).to is the layers the camera looks at, by id or name.") }
@@ -583,6 +624,10 @@ extension MCPTools {
             }
             keys.append(FilmKey(ids: ids, property: property, time: time, value: kept, ease: try Self.motionEase(spec, place)))
         }
+        // A rectangle whose shape is keyed keeps the design's corners (`Node.lookCount`): given both at once, neither is set.
+        if let both = lookKeys.first(where: { key in key.look == .corners && keys.contains { $0.property == .shape && $0.ids.contains(key.id) } }) {
+            throw MCPError("keys: \(doc.node(both.id)?.name ?? "A layer") is given corners and a shape. A shape's keys move the points its corners make, so its corners stay the design's while it has any: key one of the two.")
+        }
 
         // All of it as one change.
         var taken = 0
@@ -596,6 +641,12 @@ extension MCPTools {
                         let track = ShaderFill.inputTrack(input)
                         if n[track: track] == nil { warnings.append("\(n.name) has no keys of \(input).") }
                         if let time = removal.time { doc.update(id) { $0.removeKeys(at: time, tracks: [track]) } } else { doc.update(id) { $0[track: track] = nil } }
+                        continue
+                    }
+                    if let looks = removal.looks {
+                        let tracks = looks.map(\.name)
+                        if !tracks.contains(where: { n[track: $0] != nil }) { warnings.append("\(n.name) has no keys of that look.") }
+                        if let time = removal.time { doc.update(id) { $0.removeKeys(at: time, tracks: tracks) } } else { doc.update(id) { layer in for t in tracks { layer[track: t] = nil } } }
                         continue
                     }
                     let who = removal.ids == nil ? "The camera" : n.name
@@ -638,6 +689,7 @@ extension MCPTools {
             for key in inputKeys {
                 doc.update(key.id) { $0.setInputKey(key.input, change: key.change, at: key.time, ease: key.ease) }
             }
+            for key in lookKeys { _ = Self.set(key, in: &doc) }
             for aim in aims {
                 guard let now = doc.node(board.id), let seen = DocumentStore.cameraAim(at: aim.ids, on: now, in: doc, time: aim.time) else { continue }
                 doc.update(board.id) { n in
@@ -661,7 +713,7 @@ extension MCPTools {
         if changed {
             if everything { done.append("All motion taken from \(board.name).") } else if taken > 0 { done.append("\(Self.counted(taken, "key")) taken away.") }
             for move in moves { done.append("\(move.move.rawValue) given to \(Self.counted(move.ids.count, "layer")).") }
-            let set = keys.reduce(0) { $0 + max($1.ids.count, 1) } + aims.count * 2 + inputKeys.count
+            let set = keys.reduce(0) { $0 + max($1.ids.count, 1) } + aims.count * 2 + inputKeys.count + lookKeys.count
             if set > 0 { done.append("\(Self.counted(set, "key")) set.") }
             if setsFilm { done.append("The film's settings changed.") }
         } else if edits {
@@ -678,7 +730,12 @@ extension MCPTools {
                 warnings.append("\(who) has one \(key.property.rawValue) key, so it \(stays) for the whole film: a motion takes two keys that differ.")
             }
         }
-        if !keys.isEmpty || !moves.isEmpty, let end = after.film?.length, end > 0, after.lastKey > end + 0.0042 {
+        for key in lookKeys {
+            guard let n = store.doc.node(key.id), let track = n[track: key.look.name], track.keys.count == 1 else { continue }
+            guard alone.insert("\(key.id.uuidString) \(key.look.name)").inserted else { continue }
+            warnings.append("\(n.name) has one key of that look, so it looks so for the whole film: a change takes two keys that differ.")
+        }
+        if !keys.isEmpty || !moves.isEmpty || !lookKeys.isEmpty, let end = after.film?.length, end > 0, after.lastKey > end + 0.0042 {
             warnings.append("The film ends at \(Self.plain(end)) s, and keys after that never show: give a longer length, or null to let it run as long as its last key.")
         }
 
@@ -690,6 +747,7 @@ extension MCPTools {
         }
         named += moves.flatMap(\.ids)
         named += keys.flatMap(\.ids)
+        named += lookKeys.map(\.id)
         var touched: [UUID] = []
         for id in named where !touched.contains(id) { touched.append(id) }
         // A deck's film shows the post in front, and a name is the layer in the first post: keys

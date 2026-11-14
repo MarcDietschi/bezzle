@@ -97,7 +97,9 @@ import Foundation
         made, one after another by apart seconds. Leave pace at auto unless there is a reason: it \
         settles what comes home and flows through keys that keep going. The camera at rest (zoom \
         1, no tilt) shows the whole artboard, and a fly over is a few camera keys with tilt and \
-        zoom, ending at rest. Every change is one step the person can undo with Ctrl+Z, and \
+        zoom, ending at rest. How a layer looks is keyed too (a key with look): its colours, a \
+        border's width, its corners and its shadow, each value the look itself at that time. \
+        Every change is one step the person can undo with Ctrl+Z, and \
         designs save themselves: there is no save.
         """
 

@@ -356,7 +356,9 @@ keys of that moment (`FilmKeyRef.look`, `FilmDesk.tracks(of:)`). Two clicks on t
 Here set or take that look's key (`FilmDesk.toggleLookKeys`), the bead that holds a pose keys the
 looks that have keys too, and a key for what the design no longer has (a fill turned off) is
 faint. Windows has no cards at the playhead, beads or corner dots yet, so a look cannot be keyed
-by hand there. For a test run, `look=fill:ff0000` (or `border:`, `width:`, `corners:`, `shadow:`)
+by hand there; the AI server keys looks and reads them back as the Mac's does (`animate` with
+`look` and `which`, `get_animation`'s `looks`: `MCP/MCPAnimateLooks.swift`, the Mac's file). For a
+test run, `look=fill:ff0000` (or `border:`, `width:`, `corners:`, `shadow:`)
 keys what is picked at the playhead through the shared `Node.poseLooks`, and `open=Card 2` opens
 a layer's lines. Looked at in the VM on 2026-11-14 with a fill keyed red at 1 s and blue at 5 s:
 the stage, at rest and playing, the AI server's `render` and the frames of a movie saved from it

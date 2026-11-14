@@ -522,6 +522,9 @@ extension MCPTools {
         a check mark, a chart's line); shape changes its outline, one becoming another whatever points each has (a blob that \
         breathes, a wave, a star turning into a circle, an icon into the next), each key given as path in the layer's own \
         points, or as outlineOf, another shape on the artboard.
+        - Looks: a key with look in place of property changes how a layer looks as the film plays: its fill's or border's colour \
+        (a gradient's colours too), a border's width, a rectangle's corners, a shadow. Its value is the look itself at that time, \
+        so a button turns from grey to its accent, a card's shadow deepens as it lifts, a square's corners grow round.
         - Paces: leave auto unless there is a reason; spring with bounce 0.2 to 0.4 for something playful; hold for a cut.
         - Shaders: a layer filled with a shader (brought in from a website) moves by itself as the film plays, its inputs \
         keyed like any property.
