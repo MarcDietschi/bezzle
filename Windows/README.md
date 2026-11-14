@@ -367,7 +367,12 @@ Save as Movie and the AI
 server's `export` with format mp4 write H.264 in an .mp4 through Media Foundation's sink writer
 (`Host/FilmMovie.swift`, FilmExport's reel ported, and `CBezzleHost/movie.cpp`): High profile, a
 key frame every second, BT.709 and sRGB said, what says how it is read put before the pictures
-once the file is whole; Windows' encoder takes no more than 120 frames a second. The AI server's
+once the file is whole. Windows' encoder keeps to H.264's levels, up to 5.2, and refuses a movie
+that asks for more (0xC00D36B4 as the writer's input is set): no more than 172 frames a second at
+any size, and no more than 2 073 600 macroblocks a second, which is 144 frames a second at 2560 by
+1440 and 64 at 3840 by 2160 (`Host/FilmRates.swift`, with what was tried in the VM). A movie asked
+for with more is made with the most its size takes; the Mac's, whose encoder asks for no level,
+goes to 240. The AI server's
 `get_animation` and `animate` are the Mac's (`MCP/MCPAnimate.swift`), `render` takes `time` and
 `frames`, and its `animate` prompt is there. `bezzle-render` draws a design's films at moments and
 saves them as movies, headless: `BEZZLE_FILM_AT=0;0.5;1.5` (seconds) and

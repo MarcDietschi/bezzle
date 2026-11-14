@@ -374,7 +374,7 @@ extension MCPTools {
                            ("layers", Self.list("Artboards or layers to export. The selection otherwise, or every artboard when nothing is selected; with marked, everything marked for export.")),
                            ("format", Self.choice(ExportFormat.offered.map(\.rawValue) + ["mp4"], "png otherwise. mp4 saves films: artboards named (or the artboards of layers named), the one in sight, or every artboard with a film.")),
                            ("scale", Self.number("For pictures (png, jpeg, webp, avif): pixels to a point, 1 to 4; 1 otherwise. For mp4: 0.25 to 4, 2 otherwise, and no side over 3840 pixels.")),
-                           ("fps", Self.integer("For mp4: frames a second, 60 otherwise, 120 at most; 24, 25, 30 and 50 are usual too.")),
+                           ("fps", Self.integer("For mp4: frames a second, 60 otherwise; 24, 25, 30 and 50 are usual too. No more than Windows writes at the movie's size: 172 up to 1920 by 1080 pixels, 144 at 2560 by 1440, 64 at 3840 by 2160. Asked for more, the movie is made with the most, and the answer says how many.")),
                            ("quality", Self.number("For jpeg, webp and avif: how much of the picture is kept, 0 to 1; 0.9 otherwise. 1 makes a webp lossless.")),
                            ("marked", Self.boolean("Export each layer as its exports say, ignoring format and scale.")),
                            ("replace", Self.boolean("Replace files of the same name already in the folder. Ask the user first: false otherwise, which numbers the new files.")),

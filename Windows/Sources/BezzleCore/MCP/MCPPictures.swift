@@ -391,8 +391,10 @@ extension MCPTools {
             } catch {
                 throw MCPError("\(board.name)'s film could not be saved: \(error.localizedDescription)")
             }
+            // As many frames a second as were asked for, or as the encoder takes at this size.
             let size = WindowsCore.FilmMovie.size(of: board, settings: settings)
-            written.append(.compact([("file", .string(url.path)), ("seconds", .number(board.filmLength)), ("fps", .number(Double(fps))),
+            written.append(.compact([("file", .string(url.path)), ("seconds", .number(board.filmLength)),
+                                     ("fps", .number(Double(min(fps, WindowsCore.FilmMovie.fastest(for: size))))),
                                      ("pixels", .string("\(Int(size.width))×\(Int(size.height))"))]))
         }
         return [.text(JSONValue.compact([("movies", .array(written))]).text)]

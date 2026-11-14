@@ -24,8 +24,10 @@ extension WindowsCore {
         static let most: CGFloat = 3840
         /// The longest film saved as a movie, in seconds: an hour.
         static let longest: Double = 3600
-        /// The most frames a second a movie is made with: Windows' H.264 encoder takes no more.
-        public static let fastest = 120
+        /// The most frames a second a movie is made with at any size, and at a frame of a given
+        /// size: what Windows' H.264 encoder takes (`FilmRates` says why and how it was found).
+        public static let fastest = FilmRates.fastest
+        static func fastest(for size: CGSize) -> Int { FilmRates.fastest(width: Int(size.width), height: Int(size.height)) }
 
         /// The movie's frame in pixels: the artboard's size times the scale, in even numbers, as
         /// H.264 wants them, and no side over `most`.
@@ -118,7 +120,7 @@ extension WindowsCore {
         /// what it wrote.
         static func write(_ board: Node, to url: URL, settings: Settings = Settings(), progress: @escaping @MainActor (Double) -> Void) async throws {
             try check(board)
-            let size = size(of: board, settings: settings), fps = min(max(settings.fps, 1), fastest)
+            let size = size(of: board, settings: settings), fps = min(max(settings.fps, 1), fastest(for: size))
             let moments = moments(of: board, fps: fps)
             var reel = Reel(board, size: size, fps: fps)
             try tryPlace(url)

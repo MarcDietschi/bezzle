@@ -5,7 +5,8 @@ import PackageDescription
 // a subject matte, what it remembers of the ways, what cutouts are called, and the cells the line
 // round a picture is laid on; in Animate, when a shape's points are taken in hand and put down,
 // the Draw move's line in its chip, where the view goes when the desk turns to a film, and the
-// timeline's sheet looked at closer: its ruler, the stroke that says which part shows, the wheel.
+// timeline's sheet looked at closer: its ruler, the stroke that says which part shows, the wheel,
+// and how many frames a second a movie of a size can have.
 // Pure/ and FilmPure/ link to those files in
 // ../Sources/BezzleCore/Host and to the shared model's files they use, so the tests run wherever
 // Swift does, on a Mac too:
