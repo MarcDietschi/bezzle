@@ -372,7 +372,7 @@ private struct FilmTrack: View {
             }
             ForEach(row.marks, id: \.t) { mark in
                 let ms = Int((mark.t * 1000).rounded())
-                Bead(home: mark.home, given: mark.given, picked: picked.contains(ms), hot: hot == ms, small: own)
+                Bead(home: mark.home, given: mark.given, picked: picked.contains(ms), hot: hot == ms, small: own, gone: mark.gone)
                     .offset(x: scale.x(mark.t) - Bead.room / 2)
                     // Grown out of its own middle, which the offset puts away from the room it is laid out in.
                     .transition(.scale(scale: 0.2, anchor: UnitPoint(x: scale.x(mark.t) / Bead.room, y: 0.5)).combined(with: .opacity))
@@ -390,6 +390,8 @@ private struct Bead: View {
     let picked: Bool
     let hot: Bool
     let small: Bool
+    /// A look's key for what the design no longer has: it changes nothing, and is faint.
+    var gone = false
 
     /// The room a bead is laid out in, whatever its size.
     static let room: CGFloat = 20
@@ -407,6 +409,7 @@ private struct Bead: View {
                 .frame(width: d, height: d)
         }
         .scaleEffect(hot ? 1.3 : 1)
+        .opacity(gone ? 0.35 : 1)
         .frame(width: Self.room, height: Self.room)
         .animation(Theme.pop, value: hot)
         .animation(Theme.quick, value: picked)

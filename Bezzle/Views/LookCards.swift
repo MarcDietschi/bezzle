@@ -30,7 +30,8 @@ extension SelectionInspector {
                 n.radii = Array(repeating: min(CGFloat(v.rounded()), Presets.cornerRadius(nil, for: n)), count: 4)
             }
         } : nil
-        return AspectCard(aspect: .corners, title: "Corners", summary: summary, dial: dial, live: live) {
+        return AspectCard(aspect: .corners, title: "Corners", summary: summary, dial: dial, live: live,
+                          accessory: keyBead([.corners], "Corners"), styles: !filming) {
             CornerGlyph(radius: pill > 0 && radius >= pill - 0.5 ? nil : CGFloat(radius), smooth: smooth)
         } picks: {
             HStack(spacing: 8) {
@@ -52,13 +53,16 @@ extension SelectionInspector {
                 }
                 .frame(width: Inspector.endField)
             }
-            HStack(spacing: 8) {
-                SegmentedWell(selection: Binding(get: { smooth }, set: { on in
-                    store.updateSelection(on ? "Smooth Corners" : "Round Corners") { $0.cornerSmoothing = on ? Presets.squircle : nil }
-                }), options: [(false, "Round"), (true, "Squircle")])
-                layerField("", unit: "%", range: 0...100, scrub: 0.5, decimals: 0, action: "Smooth Corners",
-                           get: { Double(($0.cornerSmoothing ?? 0) * 100) }, set: { $0.cornerSmoothing = $1 > 0 ? CGFloat($1 / 100) : nil })
-                    .frame(width: Inspector.endField)
+            // How smoothly they run into the sides is the design's, and not keyed.
+            if !filming {
+                HStack(spacing: 8) {
+                    SegmentedWell(selection: Binding(get: { smooth }, set: { on in
+                        store.updateSelection(on ? "Smooth Corners" : "Round Corners") { $0.cornerSmoothing = on ? Presets.squircle : nil }
+                    }), options: [(false, "Round"), (true, "Squircle")])
+                    layerField("", unit: "%", range: 0...100, scrub: 0.5, decimals: 0, action: "Smooth Corners",
+                               get: { Double(($0.cornerSmoothing ?? 0) * 100) }, set: { $0.cornerSmoothing = $1 > 0 ? CGFloat($1 / 100) : nil })
+                        .frame(width: Inspector.endField)
+                }
             }
         }
     }
@@ -169,8 +173,10 @@ extension SelectionInspector {
                           summary: Self.summary(of: fill, blend: blends && slot == 0 ? common { $0.blend } : nil),
                           dial: dial,
                           // The blend mode is shown with the first fill, so it goes when the last does.
-                          remove: removable || slot > 0 ? { removeLook(.fill, slot, "Remove Fill") } : nil,
-                          removal: blends ? "Remove fill" : "Remove colour", live: live, more: more, restack: restack) {
+                          remove: !filming && (removable || slot > 0) ? { removeLook(.fill, slot, "Remove Fill") } : nil,
+                          removal: blends ? "Remove fill" : "Remove colour", live: live,
+                          accessory: keyBead([.fill(slot), .fillStops(slot)], "Fill"), more: filming ? nil : more, restack: restack,
+                          styles: !filming) {
             FillSwatch(fill: first[keyPath: path], radius: 4)
                 .frame(width: 15, height: 15)
         } picks: {
@@ -191,7 +197,7 @@ extension SelectionInspector {
                 .transition(.unfold)
             }
         } exact: {
-            if blends && slot == 0 { blendRow }
+            if blends && slot == 0 && !filming { blendRow }
         }
         // A picture selected may be cut out next: what that needs done once on this Mac is
         // done now, behind everything else.
@@ -323,35 +329,43 @@ extension SelectionInspector {
         let more = AddBar.Item(id: "more-border", aspect: .border(topSlot(.border) + 1), title: lineOnly ? "Line" : "Border",
                                help: lineOnly ? "Add another line" : "Add another border", action: "Add Border") { $0.add(Presets.border(over: $0)) }
         return AspectCard(aspect: .border(slot), title: lineOnly ? "Line" : "Border", summary: summary, dial: dial,
-                          remove: removable || slot > 0 ? { removeLook(.border, slot, "Remove Border") } : nil,
-                          removal: lineOnly ? "Remove line" : "Remove border", live: live, more: more, restack: restack) {
+                          remove: !filming && (removable || slot > 0) ? { removeLook(.border, slot, "Remove Border") } : nil,
+                          removal: lineOnly ? "Remove line" : "Remove border", live: live,
+                          accessory: keyBead([.border(slot), .borderStops(slot), .borderWidth(slot)], lineOnly ? "Line" : "Border"),
+                          more: filming ? nil : more, restack: restack, styles: !filming) {
             BorderGlyph(width: first.dash > 0 ? nil : first.width)
         } picks: {
-            PresetStrip(action: "Change Border", items: Presets.borders.map { preset in
+            // A dashed line is the design's: only its weights are keyed.
+            PresetStrip(action: "Change Border", items: Presets.borders.filter { !filming || $0.width != nil }.map { preset in
                 PresetItem(id: preset.id, name: preset.name, active: those.allSatisfy { Presets.isBorder(preset.width, $0[keyPath: path]) }) {
                     Presets.applyBorder(preset.width, to: &$0[keyPath: path])
                 }
             }) { item in
                 BorderGlyph(width: Presets.borders.first { $0.id == item.id }?.width ?? nil)
             }
-            // One colour, or a gradient or a picture, chosen in the fill menu as a fill's is.
-            FillField(fill: first.paint, color: color, action: "Change Border", suggestions: suggestions(besides: color),
-                      preview: { c in store.showPreview("border-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) },
-                      target: .border(slot)) { c in
-                store.updateSelection("Change Border") { $0[keyPath: path].color = c; $0[keyPath: path].on = true }
+            // One colour, or a gradient or a picture, chosen in the fill menu as a fill's is. A
+            // picture is the design's: in Animate there is nothing of it to key.
+            if !filming || those.allSatisfy({ $0[keyPath: path].image == nil }) {
+                FillField(fill: first.paint, color: color, action: "Change Border", suggestions: suggestions(besides: color),
+                          preview: { c in store.showPreview("border-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) },
+                          target: .border(slot)) { c in
+                    store.updateSelection("Change Border") { $0[keyPath: path].color = c; $0[keyPath: path].on = true }
+                }
             }
         } exact: {
             HStack(spacing: 8) {
                 layerField(LocalizedStringResource("border.size", defaultValue: "Size", comment: "How thick a border is."), range: 0...1000, scrub: 0.25, action: "Change Border",
                            get: { Double($0[keyPath: path].width) }, set: { $0[keyPath: path].width = CGFloat($1); $0[keyPath: path].on = true })
-                layerField("Dash", range: 0...1000, scrub: 0.25, action: "Change Border", get: { Double($0[keyPath: path].dash) }) { n, v in
-                    n[keyPath: path].dash = CGFloat(v)
-                    if n[keyPath: path].gap == 0 { n[keyPath: path].gap = CGFloat(v) }
+                if !filming {
+                    layerField("Dash", range: 0...1000, scrub: 0.25, action: "Change Border", get: { Double($0[keyPath: path].dash) }) { n, v in
+                        n[keyPath: path].dash = CGFloat(v)
+                        if n[keyPath: path].gap == 0 { n[keyPath: path].gap = CGFloat(v) }
+                    }
+                    layerField("Gap", range: 0...1000, scrub: 0.25, action: "Change Border",
+                               get: { Double($0[keyPath: path].gap) }, set: { $0[keyPath: path].gap = CGFloat($1) })
                 }
-                layerField("Gap", range: 0...1000, scrub: 0.25, action: "Change Border",
-                           get: { Double($0[keyPath: path].gap) }, set: { $0[keyPath: path].gap = CGFloat($1) })
             }
-            if !lineOnly {
+            if !lineOnly && !filming {
                 IconChoice(selection: common(among: those) { $0[keyPath: path].position }, options: [
                     (.inside, "square.inset.filled", "Inside"),
                     (.center, "square.dashed", "Centred on the edge"),
@@ -391,10 +405,13 @@ extension SelectionInspector {
         let more = AddBar.Item(id: "more-shadow", aspect: .shadow(topSlot(.shadow) + 1), title: "Shadow", help: "Add another shadow",
                                action: "Add Shadow") { $0.add(Presets.shadow(besides: $0[keyPath: path])) }
         return AspectCard(aspect: .shadow(slot), title: inset ? "Inner shadow" : "Shadow", summary: summary, dial: dial,
-                          remove: { removeLook(.shadow, slot, "Remove Shadow") }, removal: "Remove shadow", live: live, more: more, restack: restack) {
+                          remove: filming ? nil : { removeLook(.shadow, slot, "Remove Shadow") }, removal: "Remove shadow", live: live,
+                          accessory: keyBead([.shadow(slot)], inset ? "Inner shadow" : "Shadow"), more: filming ? nil : more, restack: restack,
+                          styles: !filming) {
             ShadowGlyph(y: first.y, blur: first.blur, inset: inset)
         } picks: {
-            if canInset {
+            // Which side of the layer it falls on is the design's, and not keyed.
+            if canInset && !filming {
                 SegmentedWell(selection: Binding(get: { inset }, set: { v in
                     store.updateSelection("Change Shadow") { Presets.setShadowInset(v, on: &$0[keyPath: path]) }
                 }), options: [(false, "Outside"), (true, "Inside")])
@@ -426,7 +443,7 @@ extension SelectionInspector {
                 }
             }
             // Inside, the shadow lies under the layer itself, where dragging moves the layer.
-            if !inset {
+            if !inset && !filming {
                 Caption("Or drag the shadow itself on the canvas.")
                     .transition(.unfold)
             }

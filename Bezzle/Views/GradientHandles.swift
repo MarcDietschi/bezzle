@@ -20,7 +20,8 @@ struct GradientHandles: View {
     @Environment(GradientSession.self) private var session
 
     var body: some View {
-        if menus.open?.id == FillMenu.id, store.selection.count == 1, let id = store.selection.first, let node = store.node(id),
+        // Not in Animate: its line and ends are the design's, which the film shows moved and turned.
+        if menus.open?.id == FillMenu.id, !store.animating, store.selection.count == 1, let id = store.selection.first, let node = store.node(id),
            case let fill = node[keyPath: session.target.path], fill.on, fill.image == nil, let gradient = fill.gradient, gradient.stops.count >= 2,
            let frame = store.doc.absoluteFrame(of: id) {
             GradientRig(store: store, gradient: gradient, map: LayerMap(frame: frame, rotation: node.rotation, viewport: store.viewport))

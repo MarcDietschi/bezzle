@@ -107,7 +107,7 @@ final class FilmHand {
         out.row = row.id
         let near = row.marks.min { abs(scale.x($0.t) - p.x) < abs(scale.x($1.t) - p.x) }
         if let near, abs(scale.x(near.t) - p.x) <= Self.reach {
-            out.key = FilmKeyRef(row.layer, row.property, input: row.input, at: near.t)
+            out.key = FilmKeyRef(row.layer, row.property, input: row.input, look: row.look, at: near.t)
         } else if let first = row.marks.first, let last = row.marks.last, last.t > first.t, p.x > scale.x(first.t), p.x < scale.x(last.t) {
             out.band = row.id
         }
@@ -171,11 +171,19 @@ final class FilmHand {
             pick(row)
             store.film.keys = []
             store.seek(snapped(scale.t(p.x)))
-            if let property = row.property { store.toggleKey(property) } else if let input = row.input { store.toggleInputKey(input) } else { store.holdHere() }
+            if let property = row.property {
+                store.toggleKey(property)
+            } else if let input = row.input {
+                store.toggleInputKey(input)
+            } else if let look = row.look {
+                store.toggleLookKeys([look])
+            } else {
+                store.holdHere()
+            }
             drag = Drag(kind: .nothing)
         } else if at.band != nil, let row {
             pick(row)
-            let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, at: $0.t) }
+            let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, look: row.look, at: $0.t) }
             store.film.keys = Set(refs)
             drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0, grip: scale.t(p.x))
         } else if abs(p.x - scale.x(store.film.live)) <= Self.headReach {
@@ -594,11 +602,19 @@ final class FilmHand {
             entries.append(.item("Remove Key", shortcut: "⌫") { store.removeFilmKeys() })
         } else {
             let t = snapped(scale.t(hot.x))
-            let property = row.property, input = row.input
+            let property = row.property, input = row.input, look = row.look
             store.film.keys = []
             entries.append(.item("Add Key Here") {
                 store.seek(t)
-                if let property { store.toggleKey(property) } else if let input { store.toggleInputKey(input) } else { store.holdHere() }
+                if let property {
+                    store.toggleKey(property)
+                } else if let input {
+                    store.toggleInputKey(input)
+                } else if let look {
+                    store.toggleLookKeys([look])
+                } else {
+                    store.holdHere()
+                }
             })
             entries.append(.separator)
             entries.append(.item(row.camera ? "Remove the Camera's Motion" : "Remove Motion") { store.clearFilmMotion() })

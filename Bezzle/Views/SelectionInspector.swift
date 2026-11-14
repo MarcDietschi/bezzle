@@ -12,7 +12,11 @@ struct SelectionInspector: View {
     @State var restacking: Restacking?
     @State var cardHeights: [Int: CGFloat] = [:]
 
-    var nodes: [Node] { store.selectedNodes }
+    /// In Animate: only the cards for how the layers look, showing them as they look at the
+    /// playhead and keying there what they change (`filmLooks`).
+    var filming = false
+
+    var nodes: [Node] { filming ? store.lookedSelection : store.selectedNodes }
 
     /// The value all the selected layers share, or nil when they differ.
     func common<T: Equatable>(_ value: (Node) -> T) -> T? {
@@ -23,7 +27,9 @@ struct SelectionInspector: View {
     var body: some View {
         let nodes = nodes
         // On its way out after a delete, the panel can be asked once more for layers that are gone.
-        if let first = nodes.first {
+        if filming {
+            if !nodes.isEmpty { filmLooks(nodes) }
+        } else if let first = nodes.first {
             content(nodes, first: first)
                 .onChange(of: store.selection) { lockAspect = false }
                 // What is being worked on, on the canvas, opens the card that works it.

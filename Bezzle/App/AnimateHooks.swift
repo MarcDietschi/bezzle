@@ -10,6 +10,10 @@ import AppKit
 ///       pose=property:v[,v]        pose what is picked at the playhead (move, scale, turn, fade, lift,
 ///                                  tilt, swing, blur; cameraMove, cameraZoom, cameraRoll, cameraTilt, cameraSwing)
 ///       key=name:property:t:v[,v][:pace]   set one key exactly (name "camera" for the camera)
+///       look=fill:rrggbb | look=border:rrggbb | look=width:6 | look=corners:24 | look=shadow:30
+///                                  change how what is picked looks at the playhead, as its cards do:
+///                                  a colour, a border's width, every corner, a shadow's blur
+///       open=name,name             open these layers' lines in the timeline, one for each thing keyed
 ///       move=rise[:going]          give what is picked a ready-made move at the playhead
 ///       apart=0.08                 how far apart several layers are given it
 ///       length=4 | once=1          the film's own settings
@@ -310,6 +314,20 @@ enum AnimateHooks {
             store.edit("Add Key") { doc in
                 for id in ids { doc.update(id) { $0.setKey(property, numbers(fields[3]), at: t, ease: ease) } }
             }
+        case "look":
+            guard fields.count == 2 else { return }
+            let size = CGFloat(Double(fields[1]) ?? 0), color = RGBA(hex: fields[1])
+            switch fields[0] {
+            case "fill": if let color { store.updateSelection("Change Fill") { $0.fill.color = color } }
+            case "border": if let color { store.updateSelection("Change Border") { $0.border.color = color } }
+            case "width": store.updateSelection("Change Border") { $0.border.width = size }
+            case "corners": store.updateSelection("Change Corners") { $0.radii = Array(repeating: size, count: 4) }
+            case "shadow": store.updateSelection("Change Shadow") { $0.shadow.blur = size }
+            default: break
+            }
+        case "open":
+            let names = Set(rest.split(separator: ",").map(String.init))
+            store.film.open = Set(store.doc.allNodes.filter { names.contains($0.name) }.map(\.id))
         case "move":
             guard let move = MotionMove(rawValue: fields.first ?? "") else { return }
             store.film.going = fields.count > 1 && fields[1] == "going"

@@ -612,6 +612,10 @@ extension DocumentStore {
                         track.keys.sort { $0.t < $1.t }
                         n[track: name] = track
                     }
+                    // How it looks, where its keys are for what the design has.
+                    for look in n.looks where n.fits(look) && n[track: look.name]?.index(at: t) == nil {
+                        if let change = n.lookValue(look, at: t) { n.setLookKey(look, change: change, at: t) }
+                    }
                 }
             }
         }
@@ -628,17 +632,19 @@ extension DocumentStore {
         for id in keyTargets {
             guard let node = id == board.id ? board : board.descendant(id) else { continue }
             let tracks = node.motionProperties.compactMap { node[track: $0] } + node.inputTracks.compactMap { node[track: $0] }
+                + node.looks.filter { node.fits($0) }.compactMap { node[track: $0.name] }
             if tracks.contains(where: { $0.index(at: t) != nil }) { return .here }
             if !tracks.isEmpty { state = .between }
         }
         return state
     }
 
-    /// The tracks a picked key stands for: one property's, one input's, or all the layer's, or
-    /// all the camera's.
+    /// The tracks a picked key stands for: one property's, one input's, one look's, or all the
+    /// layer's, or all the camera's.
     private func tracks(of ref: FilmKeyRef) -> [String] {
         if let p = ref.property { return [p.rawValue] }
         if let input = ref.input { return [ShaderFill.inputTrack(input)] }
+        if let look = ref.look { return [look.name] }
         if ref.layer == film.board { return MotionProperty.camera.map(\.rawValue) }
         guard let node = filmBoard?.descendant(ref.layer) else { return MotionProperty.layer.map(\.rawValue) }
         return node.layerTracks
@@ -813,7 +819,7 @@ extension DocumentStore {
                 doc.update(ref.layer) { $0.moveKeys(from: ref.time, to: ref.time + delta, tracks: tracks(of: ref)) }
             }
         }
-        return refs.map { FilmKeyRef($0.layer, $0.property, input: $0.input, at: MotionTiming.time($0.time + delta)) }
+        return refs.map { FilmKeyRef($0.layer, $0.property, input: $0.input, look: $0.look, at: MotionTiming.time($0.time + delta)) }
     }
 
     // MARK: The camera, sent somewhere

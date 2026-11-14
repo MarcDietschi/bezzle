@@ -116,11 +116,12 @@ along one artboard's film. Its keys are changes from the design and never the de
   `part`, drawn ahead while the film plays). Nothing but the sheet ends at the artboard's edge:
   a shadow or a layer that reaches past it shows once the camera sees past it. A picture covers
   the artboard and some way round it (`FilmPictures.core`), the rest is drawn as parts when seen.
-  A piece whose insides move (a moving shader, a masked or faded group holding a layer that moves)
-  is drawn again at every moment, so it is drawn only as it shows then: the part seen through the
-  film's frame, as sharp as it is seen (`FilmStageView.seenPart`). The stage draws its pictures in
-  the screen's own colour space: in sRGB, Core Animation matched every colour of each new picture
-  again on the main thread, which was most of a scrub's time on a screen that is not sRGB.
+  A piece whose insides move (a moving shader, a shape or a look that is keyed, a masked or faded
+  group holding a layer that moves) is drawn again at every moment, so it is drawn only as it
+  shows then: the part seen through the film's frame, as sharp as it is seen
+  (`FilmStageView.seenPart`). The stage draws its pictures in the screen's own colour space: in
+  sRGB, Core Animation matched every colour of each new picture again on the main thread, which
+  was most of a scrub's time on a screen that is not sRGB.
 - **Gentle tones in a movie:** a wide dark gradient, a soft shadow, a blur or a slow fade shows
   as bands where its values are cut to whole steps, and as wider, uneven ones when they are cut
   twice. So a movie's are cut once. A piece that has such tones (`Node.hasGentleTones`: a
@@ -258,11 +259,34 @@ along one artboard's film. Its keys are changes from the design and never the de
   before has points it has none for; `Node.shapesToTake` lists whose a layer can take. Its tests
   are `MotionOutlineKeyTests`, and `AnimateStressTests` keys other outlines and takes them from
   other shapes.
+- **Looks** (`Bezzle/Model/LookMotion.swift`, shared): a layer's fills, borders and shadows and a
+  rectangle's corners are keyed too, in tracks named for what they change (`LookTrack`: `fill.0`,
+  `fill.0.stops`, `border.0`, `border.0.stops`, `border.0.width`, `shadow.0`, `corners`; the
+  number is the slot, counted from the bottom, and the keys follow their fill, border or shadow
+  when it is restacked or taken away). A key holds a change from the design. For a colour that is
+  a colour laid over the design's by an amount (five numbers in OKLab, all nothing where the
+  design shows), so a design restyled, a named colour changed or an artboard turned dark is what
+  the film starts from, while a colour that was chosen stays the chosen one; for a width, a
+  corner, a shadow's place and blur and a gradient colour's place it is how far from the design's.
+  `Node.looked(at:)` is the layer as it looks at a moment, and `Node.posed(at:)` calls it, so the
+  stage, the movie and the single frame draw it. Keys made for what the design no longer has (a
+  fill taken away, one colour made a gradient, a gradient with other colours) change nothing,
+  wait for it to come back and show faint in the timeline (`Node.fits`, `FilmRow.Mark.gone`). So
+  do the Corners keys of a rectangle whose Shape has keys: those move the points the design's
+  corners make, so there the corners stay the design's (`Node.lookCount`). In
+  the app the design's own cards do it: the Animate panel shows them under Pose for the picked
+  layers as they look at the playhead (`SelectionInspector(filming:)`, `store.lookedSelection`),
+  and `DocumentStore.updateSelection` hands a change made in Animate to `poseLooks`, which keys
+  what it changed of the looks and drops the rest; a change to no look is the design's as before.
+  What cannot be keyed (a picture, a shader, on and off, dashes, a border's side, which side a
+  shadow falls on, a gradient's line) is not on the cards there. A rectangle's corner dots are on
+  the stage (`MotionTool.cornerDots`). Its tests are `MotionLooksTests` for the arithmetic and
+  `AnimateLooksTests` for the cards, the timeline and the stage.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
-  `/given` for a key the app placed itself), so two people keying one layer both keep theirs
-  (`Bezzle/Model/FlatDesign.swift`). Keys closer than a frame's quarter are one:
-  `BezzleDocument.repairMotion()`.
+  `/given` for a key the app placed itself; a look's by its track's name, `motion/fill.0/1000`),
+  so two people keying one layer both keep theirs (`Bezzle/Model/FlatDesign.swift`). Keys closer
+  than a frame's quarter are one: `BezzleDocument.repairMotion()`.
 - **Driving a copy:** `BEZZLE_ANIMATE` and `BEZZLE_FILM` (`Bezzle/App/AnimateHooks.swift`) pick,
   pose, play, press and scrub. Their clock starts when the hook does, well after launch: photograph late.
   `pinch=`, `tap2=`, `wheel=` and `swipe=` send the timeline the events a trackpad or a wheel
@@ -276,7 +300,7 @@ along one artboard's film. Its keys are changes from the design and never the de
   `+` before the points keeps the button down until `lift=`, `escape=1` stands in for Escape
   held down, and `picked` writes what is picked into `BEZZLE_SCRUB_OUT`.
 - **Its words** are in the catalog in all four languages; `AnimateWordsTests` fails when one is
-  missing, so a new property, pace or move brings its words along.
+  missing, so a new property, look, pace or move brings its words along.
 
 ### 3D
 

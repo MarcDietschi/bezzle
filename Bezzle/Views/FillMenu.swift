@@ -96,10 +96,11 @@ struct FillField: View {
             }
             .animation(Theme.quick, value: dropping)
             // A picture from the Finder, let go on it, paints with that picture.
+            // In Animate a paint keeps its kind: what it is painted with is the design's.
             .dropDestination(for: URL.self) { urls, _ in
-                guard target.takesPicture, let url = DocumentStore.pictureFiles(in: urls).first else { return false }
+                guard target.takesPicture, !store.animating, let url = DocumentStore.pictureFiles(in: urls).first else { return false }
                 return store.paint(target, withPictureAt: url)
-            } isTargeted: { dropping = $0 && target.takesPicture }
+            } isTargeted: { dropping = $0 && target.takesPicture && !store.animating }
     }
 
     @ViewBuilder private var field: some View {
@@ -132,7 +133,7 @@ struct FillField: View {
 
     private func open() {
         session.target = target
-        menus.panel(FillMenu.id, size: FillMenu.size(for: FillKind(fill))) {
+        menus.panel(FillMenu.id, size: FillMenu.size(for: FillKind(fill), keyed: store.animating)) {
             FillMenu(action: action)
                 .environment(store)
                 .environment(menus)
@@ -197,30 +198,38 @@ struct FillMenu: View {
     /// The fill or border the menu is open on, of those one over another.
     private var path: WritableKeyPath<Node, Fill> { session.target.path }
 
-    static func size(for kind: FillKind) -> CGSize {
+    /// `keyed`, in Animate: without the row that chooses what it is painted with.
+    static func size(for kind: FillKind, keyed: Bool = false) -> CGSize {
+        let kinds: CGFloat = keyed ? Theme.controlHeight + 14 : 0
         switch kind {
-        case .solid: CGSize(width: 248, height: 374)
-        case .linear, .radial: CGSize(width: 248, height: 408)
-        case .picture: CGSize(width: 248, height: 156)
+        case .solid: return CGSize(width: 248, height: 374 - kinds)
+        case .linear, .radial: return CGSize(width: 248, height: 408 - kinds)
+        case .picture: return CGSize(width: 248, height: 156)
         }
     }
 
     var body: some View {
-        if let first = store.selectedNodes.first {
+        // In Animate the paint is shown as it is at the playhead, and what is chosen here is
+        // keyed there (`DocumentStore.poseLooks`): its colour, or its gradient's colours and
+        // their places. What it is painted with, and how many colours, is the design's.
+        let keyed = store.animating
+        if let first = store.lookedSelection.first {
             let kind = FillKind(first[keyPath: path])
             let gradient = kind == .picture ? nil : first[keyPath: path].gradient.flatMap { $0.stops.isEmpty ? nil : $0 }
             let chosen = gradient.map { min(session.stop, $0.stops.count - 1) }
             VStack(alignment: .leading, spacing: 0) {
-                SegmentedWell(selection: Binding(get: { kind }, set: { choose($0) }), options: FillKind.choices(with: kind, pictures: session.target.takesPicture))
-                    .padding([.horizontal, .top], 14)
+                if !keyed {
+                    SegmentedWell(selection: Binding(get: { kind }, set: { choose($0) }), options: FillKind.choices(with: kind, pictures: session.target.takesPicture))
+                        .padding([.horizontal, .top], 14)
+                }
                 if let gradient, let chosen {
-                    GradientBar(stops: gradient.stops, chosen: chosen, choose: { session.stop = $0 },
+                    GradientBar(stops: gradient.stops, chosen: chosen, fixed: keyed, choose: { session.stop = $0 },
                                 move: { move($0, to: $1, in: gradient) }, add: { add(at: $0, in: gradient) }, remove: { remove($0, in: gradient) })
                         .padding(.horizontal, 14)
                         .padding(.top, 14)
                         .transition(.unfold)
                 }
-                if kind == .picture {
+                if kind == .picture, !keyed {
                     Text("A picture fills this. Choose a colour or a gradient to fill it with that instead.")
                         .prose(12)
                         .foregroundStyle(Theme.ink3)
@@ -228,7 +237,7 @@ struct FillMenu: View {
                         .padding(14)
                     ChipButton(title: "Choose Another Picture…") { store.choosePicture(for: session.target, "Replace Picture") }
                         .padding(.horizontal, 14)
-                } else {
+                } else if kind != .picture {
                     // One colour and a gradient's first are the same when it turns into the other,
                     // so the picker stays as it is then. It starts again for another colour, or when
                     // one is taken off or added and another comes to have the chosen place.
@@ -309,6 +318,8 @@ private struct GradientBar: View {
     @Environment(DocumentStore.self) private var store
     let stops: [GradientStop]
     let chosen: Int
+    /// In Animate: the colours are moved and changed, and there stay as many as the design has.
+    var fixed = false
     let choose: (Int) -> Void
     let move: (Int, Double) -> Void
     let add: (Double) -> Void
@@ -340,16 +351,16 @@ private struct GradientBar: View {
                 .padding(.top, 1)
                 .contentShape(Rectangle())
                 .onTapGesture(coordinateSpace: .local) { p in
-                    add(Double(min(max((p.x - Self.pin / 2) / run, 0), 1)))
+                    if !fixed { add(Double(min(max((p.x - Self.pin / 2) / run, 0), 1))) }
                 }
-                .help("Click to add a colour here")
+                .help(fixed ? Text(verbatim: "") : Text("Click to add a colour here"))
 
                 ForEach(stops.indices, id: \.self) { i in
                     StopPin(color: stops[i].color, chosen: i == chosen)
                         .opacity(from != nil && i == chosen && leaving ? 0.3 : 1)
                         .offset(x: stops[i].offset * run, y: -0.5)
                         .gesture(pinDrag(i, run: run))
-                        .help("Drag to move this colour, or off the bar to take it away")
+                        .help(fixed ? Text("Drag to move this colour") : Text("Drag to move this colour, or off the bar to take it away"))
                 }
             }
         }
@@ -367,7 +378,7 @@ private struct GradientBar: View {
                     store.beginGesture()
                 }
                 guard let from else { return }
-                leaving = stops.count > 2 && abs(g.translation.height) > Self.away
+                leaving = !fixed && stops.count > 2 && abs(g.translation.height) > Self.away
                 if g.translation.width != 0 { move(chosen, from + Double(g.translation.width / run)) }
             }
             .onEnded { _ in
@@ -431,10 +442,11 @@ final class GradientSession {
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 51 || event.keyCode == 117, self.menus?.open?.id == FillMenu.id,
                   !(event.window?.firstResponder is NSText), let store = self.store,
-                  let fill = store.selectedNodes.first?[keyPath: self.target.path], fill.on, fill.image == nil,
+                  let fill = store.lookedSelection.first?[keyPath: self.target.path], fill.on, fill.image == nil,
                   let gradient = fill.gradient else { return event }
             let path = self.target.path
-            if gradient.stops.count > 2, gradient.stops.indices.contains(self.stop) {
+            // In Animate a gradient keeps the colours the design gives it: none is taken off.
+            if !store.animating, gradient.stops.count > 2, gradient.stops.indices.contains(self.stop) {
                 var stops = gradient.stops
                 stops.remove(at: self.stop)
                 self.stop = max(self.stop - 1, 0)

@@ -44,6 +44,26 @@ struct AnimateStressTests {
         return out
     }
 
+    /// What of a design is other than it was, briefly: each layer by its name, and what of it.
+    static func changed(_ now: BezzleDocument, from was: BezzleDocument) -> String {
+        func fields(_ n: Node) -> [String: Any] {
+            var n = n
+            n.children = []
+            return (try? JSONEncoder().encode(n)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+        }
+        var out: [String] = []
+        if now.allNodes.map(\.id) != was.allNodes.map(\.id) { out.append("other layers, or in another order") }
+        for (a, b) in zip(now.allNodes, was.allNodes) {
+            let x = fields(a), y = fields(b)
+            let keys = Set(x.keys).union(y.keys).filter { key in
+                guard let p = x[key] as? NSObject, let q = y[key] as? NSObject else { return (x[key] == nil) != (y[key] == nil) }
+                return !p.isEqual(q)
+            }
+            if !keys.isEmpty { out.append("\(b.name)'s \(keys.sorted().joined(separator: ", "))") }
+        }
+        return out.isEmpty ? "elsewhere than in a layer" : out.prefix(4).joined(separator: "; ")
+    }
+
     /// Everything wrong with a film as it is kept in a design.
     static func faults(in doc: BezzleDocument) -> [String] {
         var out: [String] = []
@@ -56,23 +76,32 @@ struct AnimateStressTests {
             guard let motion = n.motion else { continue }
             if motion.isEmpty { out.append("\(n.name) keeps motion with nothing in it") }
             for (raw, track) in motion {
-                guard let p = MotionProperty(rawValue: raw) else {
+                // A property's keys, or a look's (`LookTrack`): those may be for what the design
+                // no longer has, and are then as many numbers as they were made with.
+                let property = MotionProperty(rawValue: raw), look = LookTrack(name: raw)
+                guard property != nil || look != nil else {
                     out.append("\(n.name): no such property as \(raw)")
                     continue
                 }
-                if p.isCamera != n.isArtboard { out.append("\(n.name) has keys of \(raw)") }
+                if let p = property, p.isCamera != n.isArtboard { out.append("\(n.name) has keys of \(raw)") }
+                if look != nil, n.isArtboard { out.append("\(n.name) has keys of \(raw)") }
                 if track.keys.isEmpty { out.append("\(n.name).\(raw) has no keys") }
+                if look != nil, Set(track.keys.map(\.v.count)).count > 1 { out.append("\(n.name).\(raw): keys of \(track.keys.map(\.v.count)) numbers") }
                 for (i, key) in track.keys.enumerated() {
                     if !(key.t >= 0 && key.t.isFinite) || key.t != MotionTiming.time(key.t) { out.append("\(n.name).\(raw): a key at \(key.t)") }
                     if i > 0, key.t - track.keys[i - 1].t < 0.0042 { out.append("\(n.name).\(raw): keys at \(track.keys[i - 1].t) and \(key.t)") }
-                    let count = p == .shape ? n.shapeRest.count : p.rest.count
-                    // A Shape's key may hold an outline of its own: behind a nought for every number the design's points have.
-                    var fits = key.v.count == count
-                    if !fits, p == .shape, let own = BezierPath(key: key.v) {
-                        fits = key.v.count == count + 1 + 6 * (own.subpaths.count + own.anchorCount) && key.v.prefix(count).allSatisfy { $0 == 0 }
-                            && own.subpaths.allSatisfy { $0.anchors.count >= 2 }
+                    if let p = property {
+                        let count = p == .shape ? n.shapeRest.count : p.rest.count
+                        // A Shape's key may hold an outline of its own: behind a nought for every number the design's points have.
+                        var fits = key.v.count == count
+                        if !fits, p == .shape, let own = BezierPath(key: key.v) {
+                            fits = key.v.count == count + 1 + 6 * (own.subpaths.count + own.anchorCount) && key.v.prefix(count).allSatisfy { $0 == 0 }
+                                && own.subpaths.allSatisfy { $0.anchors.count >= 2 }
+                        }
+                        if !fits || key.v != p.clamped(key.v) { out.append("\(n.name).\(raw): a key of \(key.v)") }
+                    } else if key.v.isEmpty || !key.v.allSatisfy(\.isFinite) {
+                        out.append("\(n.name).\(raw): a key of \(key.v)")
                     }
-                    if !fits || key.v != p.clamped(key.v) { out.append("\(n.name).\(raw): a key of \(key.v)") }
                     if key.ease?.kind == .auto { out.append("\(n.name).\(raw): no pace kept as a pace") }
                     if let bounce = key.ease?.bounce, !bounce.isFinite { out.append("\(n.name).\(raw): a spring of \(bounce)") }
                 }
@@ -138,6 +167,42 @@ struct AnimateStressTests {
                 let numbers = (n.outline(at: store.film.live)?.numbers ?? [.nan]) + [drawn.frame.minX, drawn.frame.minY, drawn.frame.width, drawn.frame.height].map { Double($0) }
                 if !numbers.allSatisfy(\.isFinite) { out.append("\(n.name) has no whole outline at \(store.film.live)") }
             }
+            // So is how every layer looks there: colours that are colours, and no width, corner or
+            // blur under nothing.
+            func whole(_ c: RGBA) -> Bool { [c.r, c.g, c.b, c.a].allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 } }
+            func whole(_ stops: [GradientStop]?) -> Bool { (stops ?? []).allSatisfy { whole($0.color) && $0.offset >= 0 && $0.offset <= 1 } }
+            var inside: [Node] = []
+            func gather(_ list: [Node]) {
+                for n in list {
+                    inside.append(n)
+                    gather(n.children)
+                }
+            }
+            gather(board.children)
+            for n in inside where n.hasLooks {
+                let seen = n.looked(at: store.film.live)
+                var sound = seen.radii.allSatisfy { $0.isFinite && $0 >= 0 }
+                for i in 0..<seen.slots(.fill) where !(whole(seen[fill: i].color) && whole(seen[fill: i].gradient?.stops)) { sound = false }
+                for i in 0..<seen.slots(.border) {
+                    let border = seen[border: i]
+                    if !(whole(border.color) && whole(border.gradient?.stops) && border.width.isFinite && border.width >= 0) { sound = false }
+                }
+                for i in 0..<seen.slots(.shadow) {
+                    let shadow = seen[shadow: i]
+                    if !(whole(shadow.color) && shadow.blur.isFinite && shadow.blur >= 0 && shadow.x.isFinite && shadow.y.isFinite && shadow.grown.isFinite) { sound = false }
+                }
+                if !sound { out.append("\(n.name) looks as no layer can at \(store.film.live)") }
+                // Nothing but its looks is other than the design's.
+                var plain = seen
+                for i in 0..<n.slots(.fill) { plain[fill: i] = n[fill: i] }
+                for i in 0..<n.slots(.border) { plain[border: i] = n[border: i] }
+                for i in 0..<n.slots(.shadow) { plain[shadow: i] = n[shadow: i] }
+                // Both of what keeps its corners: four radii set as one write the largest beside them.
+                plain.cornerRadius = n.cornerRadius
+                plain.corners = n.corners
+                plain.spans = n.spans
+                if plain != n { out.append("\(n.name) at \(store.film.live) is other than designed in more than its looks") }
+            }
         }
         return out
     }
@@ -158,11 +223,14 @@ struct AnimateStressTests {
             CanvasTests.rect("Icon", CGRect(x: 0, y: 0, width: 40, height: 40)),
             CanvasTests.rect("Label", CGRect(x: 60, y: 10, width: 140, height: 20)),
         ]
-        let bench = Bench(extra: [
-            CanvasTests.rect("Card", CGRect(x: 40, y: 40, width: 120, height: 80)),
-            CanvasTests.rect("Badge", CGRect(x: 240, y: 180, width: 60, height: 40)),
-            row,
-        ])
+        // Looks to key (`LookTrack`): the card has a border and a shadow, the badge a gradient.
+        var card = CanvasTests.rect("Card", CGRect(x: 40, y: 40, width: 120, height: 80))
+        card.border = Border(on: true, color: .black, width: 2)
+        card.shadow = Shadow(on: true, color: RGBA(r: 0, g: 0, b: 0, a: 0.4), x: 0, y: 4, blur: 8)
+        var badge = CanvasTests.rect("Badge", CGRect(x: 240, y: 180, width: 60, height: 40))
+        badge.fill.gradient = Gradient(kind: .linear, stops: [GradientStop(offset: 0, color: RGBA(r: 1, g: 0.2, b: 0.1)), GradientStop(offset: 1, color: RGBA(r: 0.1, g: 0.3, b: 1))],
+                                       start: CGPoint(x: 0, y: 0.5), end: CGPoint(x: 1, y: 0.5))
+        let bench = Bench(extra: [card, badge, row])
         let store = bench.store
         bench.step { store.edit("Add") { $0.nodes[1].children = [CanvasTests.rect("Far", CGRect(x: 20, y: 20, width: 50, height: 50))] } }
         bench.undo.removeAllActions()
@@ -216,7 +284,7 @@ struct AnimateStressTests {
                 bench.step { store.edit("Show") { $0.update(hidden.id) { $0.hidden = false } } }
                 return
             }
-            switch whole(0...32) {
+            switch whole(0...35) {
             case 0, 1:
                 let t = moment()
                 did("seek \(t)")
@@ -255,6 +323,73 @@ struct AnimateStressTests {
                 guard let id = store.posedLayers.first, let other = store.shapesToTake(for: id).randomElement(using: &dice) else { return }
                 did("take the outline of \(other.name)")
                 bench.step { store.takeShape(of: other.id, for: id) }
+            case 33, 34, 35:
+                // How the picked layers look, changed as their cards change it. The cards are there
+                // with a film, for the layers a pose goes to, and each only for what every one of
+                // them can be keyed in: so only that is done here.
+                guard store.animating, store.filmBoard != nil else { return }
+                if store.posedLayers.isEmpty, chance(0.8) {
+                    // No layer is picked: one or two are, first.
+                    let picked = chance(0.7) ? [one(layers)] : [one(layers), one(layers)]
+                    did("select \(picked.map { store.doc.node($0)?.name ?? "?" })")
+                    store.selection = Array(Set(picked))
+                }
+                let nodes = store.lookedSelection
+                guard !store.film.camera, !store.posedLayers.isEmpty, nodes.count == store.posedLayers.count else { return }
+                func all(_ looks: [LookTrack]) -> Bool { nodes.allSatisfy { n in looks.contains { n.lookCount($0) != nil } } }
+                let color = RGBA(r: number(0...1), g: number(0...1), b: number(0...1), a: chance(0.7) ? 1 : number(0...1))
+                let size = CGFloat(one([0, 1, 4, 12, 60, number(0...400), number(0...1e7)]))
+                switch whole(0...5) {
+                case 0:
+                    guard all([.fill(0), .fillStops(0)]) else { return }
+                    // The fill menu: a colour, or the picked colour of a gradient and where it lies.
+                    let far = number(0...1), move = chance(0.3), last = chance(0.5)
+                    did("look fill \(color) \(move ? "to \(far)" : "")")
+                    bench.step {
+                        store.updateSelection("Change Fill") { n in
+                            guard let stops = n.fill.gradient?.stops, !stops.isEmpty else {
+                                n.fill.color = color
+                                return
+                            }
+                            let i = last ? stops.count - 1 : 0
+                            n.fill.gradient?.stops[i].color = color
+                            if move { n.fill.gradient?.stops[i].offset = far }
+                        }
+                    }
+                case 1:
+                    guard all([.border(0), .borderStops(0)]) else { return }
+                    did("look border \(color)")
+                    bench.step { store.updateSelection("Change Border") { $0.border.color = color } }
+                case 2:
+                    guard all([.borderWidth(0)]) else { return }
+                    did("look border width \(size)")
+                    bench.step { store.updateSelection("Change Border") { $0.border.width = size } }
+                case 3:
+                    guard all([.corners]) else { return }
+                    let radii = chance(0.5) ? Array(repeating: size, count: 4) : (0..<4).map { _ in CGFloat(number(0...60)) }
+                    did("look corners \(radii)")
+                    bench.step { store.updateSelection("Change Corners") { $0.radii = radii } }
+                case 4:
+                    guard all([.shadow(0)]) else { return }
+                    let what = whole(0...4), by = CGFloat(number(-80...80))
+                    did("look shadow \(what) \(by)")
+                    bench.step {
+                        store.updateSelection("Change Shadow") { n in
+                            switch what {
+                            case 0: n.shadow.color = color
+                            case 1: n.shadow.x = by
+                            case 2: n.shadow.y = by
+                            case 3: n.shadow.blur = abs(by)
+                            default: n.shadow.spread = by
+                            }
+                        }
+                    }
+                default:
+                    // The bead on a card: a key set here, or the one here taken away.
+                    let looks = one([[LookTrack.fill(0), .fillStops(0)], [.border(0), .borderStops(0), .borderWidth(0)], [.shadow(0)], [.corners]])
+                    did("look bead \(looks.map(\.name))")
+                    bench.step { store.toggleLookKeys(looks) }
+                }
             case 2:
                 var picked: [UUID] = []
                 for _ in 0..<whole(0...3) { picked.append(one(layers + boards)) }
@@ -482,10 +617,10 @@ struct AnimateStressTests {
             var wrong = Self.faults(in: store.doc) + Self.faults(on: store, hand: hand)
             let now = Self.plain(store.doc)
             if now != design {
-                // Which layers: each compared without what is inside it.
+                // Which layers: each compared without what is inside it, and what of each is other.
                 func alone(_ n: Node) -> Node { var n = n; n.children = []; return n }
                 let which = zip(now.allNodes, design.allNodes).filter { alone($0) != alone($1) }.map { "\($0.name): \($0.frame) \($0.kind) was \($1.frame) \($1.kind)" }
-                wrong.append("the design itself is no longer what it was (\(which.prefix(3).joined(separator: "; ")))")
+                wrong.append("the design itself is no longer what it was (\(which.prefix(3).joined(separator: "; ")); \(Self.changed(now, from: design)))")
             }
             #expect(wrong.isEmpty, "seed \(seed), step \(n): \(wrong.prefix(4)) after \(trail.suffix(10))")
             return wrong.isEmpty
@@ -522,7 +657,7 @@ struct AnimateStressTests {
             doc.viewport = store.doc.viewport
             return store.doc == doc
         }
-        var moving = 0, most = 0
+        var moving = 0, most = 0, looking = 0
         for n in 0..<360 {
             let before = store.doc, said = trail.count
             step(n)
@@ -544,7 +679,10 @@ struct AnimateStressTests {
             let keys = store.doc.allNodes.reduce(0) { $0 + ($1.motion ?? [:]).values.reduce(0) { $0 + $1.keys.count } }
             if keys > 0 { moving += 1 }
             most = max(most, keys)
+            if store.doc.allNodes.contains(where: \.hasLooks) { looking += 1 }
         }
+        // And, in the dozen runs made every time, films of how layers look too.
+        if seed < 1000 { #expect(looking > 60, "seed \(seed): looks keyed at \(looking) steps, of \(trail.filter { $0.hasPrefix("look") }.count) that changed one") }
         // The run did make films: it was not three hundred steps of nothing.
         #expect(moving > 60 && most >= 6, "seed \(seed): a film at \(moving) steps, \(most) keys at most; animating \(store.animating), board \(store.filmBoard?.name ?? "none"), hidden \(store.doc.artboards.filter(\.hidden).map(\.name)), began \(trail.prefix(30))")
 
@@ -562,6 +700,9 @@ struct AnimateStressTests {
             for (x, y) in zip(a.allNodes, b.allNodes) where x.motion != y.motion || x.film != y.film {
                 for p in MotionProperty.allCases where x[track: p] != y[track: p] {
                     out.append("\(x.name).\(p.rawValue): \((x[track: p]?.keys ?? []).map(\.t)) and \((y[track: p]?.keys ?? []).map(\.t))")
+                }
+                for name in Set(x.lookTracks + y.lookTracks).sorted() where x[track: name] != y[track: name] {
+                    out.append("\(x.name).\(name): \((x[track: name]?.keys ?? []).map(\.t)) and \((y[track: name]?.keys ?? []).map(\.t))")
                 }
                 if x.film != y.film { out.append("\(x.name)'s film") }
             }

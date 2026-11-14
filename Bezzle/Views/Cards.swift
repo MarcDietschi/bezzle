@@ -98,6 +98,9 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
     /// For a card in a pile of its kind: told how far it is dragged up or down as it is picked up
     /// and moved, and nil when it is let go. See `SelectionInspector.pile`.
     var restack: ((CGFloat?) -> Void)?
+    /// Whether it says the design's style its look is and offers the styles of its kind: not in
+    /// Animate, where a look is keyed and never named.
+    var styles = true
     let glyph: Glyph
     let picks: Picks
     let exact: Exact
@@ -125,7 +128,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 
     init(aspect: Aspect, title: LocalizedStringResource, summary: String, dial: Dial? = nil, remove: (() -> Void)? = nil,
          removal: LocalizedStringResource = "Remove", live: Bool = false, accessory: AnyView? = nil,
-         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil,
+         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil, styles: Bool = true,
          @ViewBuilder glyph: () -> Glyph, @ViewBuilder picks: () -> Picks, @ViewBuilder exact: () -> Exact) {
         self.aspect = aspect
         self.title = title
@@ -137,6 +140,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
         self.accessory = accessory
         self.more = more
         self.restack = restack
+        self.styles = styles
         self.glyph = glyph()
         self.picks = picks()
         self.exact = exact()
@@ -145,12 +149,12 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
     private var opens: Bool { Picks.self != EmptyView.self || Exact.self != EmptyView.self }
 
     /// The design's style the selected layers' look is, when the card shows one that has a name.
-    private var named: Style? { aspect.stylePlace.flatMap { store.sharedStyle(at: $0) } }
+    private var named: Style? { styles ? aspect.stylePlace.flatMap { store.sharedStyle(at: $0) } : nil }
 
     /// Whether the open card offers the design's styles of its kind first: not while letters
     /// picked out are what the text card changes.
     private var offersStyles: Bool {
-        guard let place = aspect.stylePlace, !store.holding(place).isEmpty else { return false }
+        guard styles, let place = aspect.stylePlace, !store.holding(place).isEmpty else { return false }
         return place != .text || store.pickedLetters == nil
     }
 
@@ -367,10 +371,10 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 extension AspectCard where Exact == EmptyView {
     init(aspect: Aspect, title: LocalizedStringResource, summary: String, dial: Dial? = nil, remove: (() -> Void)? = nil,
          removal: LocalizedStringResource = "Remove", live: Bool = false, accessory: AnyView? = nil,
-         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil,
+         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil, styles: Bool = true,
          @ViewBuilder glyph: () -> Glyph, @ViewBuilder picks: () -> Picks) {
         self.init(aspect: aspect, title: title, summary: summary, dial: dial, remove: remove, removal: removal, live: live,
-                  accessory: accessory, more: more, restack: restack, glyph: glyph, picks: picks, exact: { EmptyView() })
+                  accessory: accessory, more: more, restack: restack, styles: styles, glyph: glyph, picks: picks, exact: { EmptyView() })
     }
 }
 

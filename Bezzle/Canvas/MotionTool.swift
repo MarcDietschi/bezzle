@@ -111,6 +111,8 @@ final class MotionTool {
         case grip(Grip)
         /// A key of the picked layer's way across the artboard, by its number.
         case bead(Int)
+        /// The dot inside a corner of the picked rectangle, by the corner's number: rounds its corners.
+        case round(Int)
         case cameraChip
         /// The film's frame with the camera picked: dragging looks elsewhere.
         case look
@@ -215,6 +217,7 @@ final class MotionTool {
                 case .turn, .depth: break
                 }
             }
+            if let dots = cornerDots(scene), let i = dots.at.firstIndex(where: { Self.distance(v, $0) <= 6 }) { return .round(i) }
             // A bead the layer lies on is not taken hold of: there the layer itself is, to be posed
             // at the playhead. Else a layer resting where a key left it could never be dragged on
             // by its middle, its last key going with it instead and the playhead back to that key.
@@ -254,7 +257,7 @@ final class MotionTool {
             case .turn(let i): return Cursors.rotate(angle(q[i]))
             case .depth: return Cursors.turn
             }
-        case .bead: return .crosshair
+        case .bead, .round: return .crosshair
         case .cameraChip: return .pointingHand
         case .look:
             if case .look = drag { return .closedHand }
@@ -275,6 +278,8 @@ final class MotionTool {
         case turn(id: UUID, center: CGPoint, last: CGPoint, round: Double, from: Double)
         case depth(id: UUID, side: Int, start: CGPoint, tilt: Double, swing: Double)
         case bead(id: UUID, key: Int, start: CGPoint, from: CGPoint, lift: Double)
+        /// A rectangle's corners rounded by the dot inside one: `radii` as they were at the press.
+        case round(id: UUID, corner: Int, radii: [CGFloat])
         /// The camera looking elsewhere: the point of the artboard under the pointer stays under it.
         case look(start: CGPoint, camera: FilmCamera, started: Bool, under: UUID?)
         case zoom(center: CGPoint, start: CGPoint, from: Double)
@@ -374,6 +379,10 @@ final class MotionTool {
             let key = track.keys[i]
             begin([id], scene)
             drag = .bead(id: id, key: i, start: v, from: CGPoint(x: key.v[0], y: key.v[1]), lift: node.pose(at: key.t).lift)
+        case .round(let i):
+            guard let dots = cornerDots(scene) else { return }
+            begin([dots.id], scene)
+            drag = .round(id: dots.id, corner: i, radii: dots.radii)
         case .look:
             let under = pick(chain(at: v, in: scene), in: scene, deep: flags.contains(.command))
             drag = .look(start: v, camera: scene.camera, started: false, under: under)
@@ -560,6 +569,14 @@ final class MotionTool {
                     n[track: .move] = track
                 }
             }
+        case .round(let id, let corner, let radii):
+            // The pointer where it is in the rectangle's own points, through its pose and the
+            // camera; then as in the design: every corner alike, or with Option only this one.
+            guard let design = scene.board.descendant(id), let map = scene.board.filmPointMap(of: id, at: scene.time, pieces: scene.pieces),
+                  let own = map.back(scene.toFrame(v)) else { break }
+            let next = BezzleDocument.cornerRadii(at: own, frame: CGRect(origin: .zero, size: design.frame.size), rotation: 0,
+                                                  corner: BezzleDocument.cornerOrder[corner], original: radii, alone: flags.contains(.option)).radii
+            store.poseLooks(of: [id], "Change Corners") { $0.radii = next }
         case .look(let start, let camera, var started, let under):
             if !started {
                 guard Self.distance(v, start) >= 3 else { return }
@@ -652,6 +669,7 @@ final class MotionTool {
         case .turn: finish(MotionProperty.turn.action)
         case .depth(_, let side, _, _, _): finish((side % 2 == 0 ? MotionProperty.tilt : .swing).action)
         case .bead: finish(MotionProperty.move.action)
+        case .round: finish("Change Corners")
         case .zoom: finish(MotionProperty.cameraZoom.action)
         case .roll: finish(MotionProperty.cameraRoll.action)
         case .tip(let side, _, _, _): finish((side % 2 == 0 ? MotionProperty.cameraTilt : .cameraSwing).action)
@@ -922,6 +940,58 @@ final class MotionTool {
         return path
     }
 
+    /// The dots inside the corners of the one picked rectangle, as the design's canvas has them
+    /// (`BezzleDocument.cornerDots`), where the film shows them at the playhead: each along the
+    /// diagonal as far in as its corner is round there, and never nearer the corner than ten
+    /// points on screen. Dragged, a dot rounds the corners there, which keys them. Only for a
+    /// rectangle the film draws by itself, big enough on screen for them not to crowd it.
+    private func cornerDots(_ scene: Scene) -> (id: UUID, radii: [CGFloat], at: [CGPoint])? {
+        guard let id = handled(scene), let design = scene.board.descendant(id), design.lookCount(.corners) != nil, !design.locked,
+              scene.pieces.contains(where: { $0.kind == .layer && $0.layers == [id] }),
+              let q = scene.corners(of: id), q.count == 4,
+              let map = scene.board.filmPointMap(of: id, at: scene.time, pieces: scene.pieces) else { return nil }
+        let size = design.frame.size
+        let across = Self.distance(q[0], q[1]), down = Self.distance(q[1], q[2])
+        guard size.width > 0, size.height > 0, across >= 48, down >= 48 else { return nil }
+        // How many points on screen one of its own is, the lesser way.
+        let k = min(across / size.width, down / size.height)
+        let half = min(size.width, size.height) / 2
+        let radii = design.looked(at: scene.time).radii
+        let at = zip(BezzleDocument.cornerOrder, radii).map { h, radius -> CGPoint in
+            let inset = min(max(min(max(radius, 0), half), 10 / k), half)
+            let sx: CGFloat = h.unit.x == 0 ? 1 : -1, sy: CGFloat = h.unit.y == 0 ? 1 : -1
+            return scene.toView(map(CGPoint(x: h.unit.x * size.width + sx * inset, y: h.unit.y * size.height + sy * inset)))
+        }
+        return (id, radii, at)
+    }
+
+    /// Whether the corner dots show: while the pointer is on the picked rectangle or on one of
+    /// them, and while one is dragged.
+    private var showsCornerDots: Bool {
+        if case .round = drag { return true }
+        guard case .none = drag else { return false }
+        switch hot {
+        case .round: return true
+        case .layer(let id): return store.posedLayers == [id]
+        default: return false
+        }
+    }
+
+    private func drawCornerDots(_ scene: Scene, in ctx: CGContext, scale: CGFloat) {
+        guard showsCornerDots, let dots = cornerDots(scene) else { return }
+        for p in dots.at {
+            let rect = CGRect(center: p, size: CGSize(width: 7, height: 7))
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: -0.5 * scale), blur: 1.5 * scale, color: NSColor.black.withAlphaComponent(0.18).cgColor)
+            ctx.setFillColor(.white)
+            ctx.fillEllipse(in: rect)
+            ctx.restoreGState()
+            ctx.setStrokeColor(CanvasInk.pencil.cgColor)
+            ctx.setLineWidth(1)
+            ctx.strokeEllipse(in: rect.insetBy(dx: 0.5, dy: 0.5))
+        }
+    }
+
     private func drawHandle(_ p: CGPoint, in ctx: CGContext, scale: CGFloat, round: Bool = false) {
         let c = CGPoint(x: (p.x * scale).rounded() / scale, y: (p.y * scale).rounded() / scale)
         let rect = CGRect(center: c, size: CGSize(width: 8, height: 8))
@@ -986,6 +1056,7 @@ final class MotionTool {
                     drawHandle(CGPoint(x: (q[i].x + q[(i + 1) % 4].x) / 2, y: (q[i].y + q[(i + 1) % 4].y) / 2), in: ctx, scale: scale)
                 }
                 if Self.hasSize(lengths) { for p in q { drawHandle(p, in: ctx, scale: scale) } }
+                drawCornerDots(scene, in: ctx, scale: scale)
             }
         }
         if case .marquee(let start, let now, _) = drag {

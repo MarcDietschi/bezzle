@@ -13,6 +13,7 @@ struct AnimateWordsTests {
         MotionProperty.allCases.map { p in
             p.isCamera ? "animate.camera." + p.rawValue.dropFirst("camera".count).lowercased() : "animate." + p.rawValue
         } + MotionEase.Kind.allCases.map { "ease." + $0.rawValue } + MotionMove.allCases.map { "move." + $0.rawValue }
+            + LookTrack.words.map(\.key)
     }
 
     /// What Animate says anywhere else: its mode, the panel, the timeline, the menus and what the Edit menu undoes.
@@ -42,6 +43,8 @@ struct AnimateWordsTests {
         "Edit Points", "Done", "Move its points on the canvas to give it another shape at the playhead",
         "animate.shape.from", "Give it the outline of another shape at the playhead",
         "Add Point", "Delete Point", "Delete Points", "Move Points",
+        // How layers look, keyed on the design's own cards: what those say only here.
+        "Drag to move this colour",
     ]
 
     /// The values a string takes, in order: `%@`, `%lld` and the like.
@@ -83,6 +86,11 @@ struct AnimateWordsTests {
         for p in MotionProperty.allCases { #expect(!p.title.contains("animate.") && !p.title.isEmpty) }
         for kind in MotionEase.Kind.allCases { #expect(!MotionEase(kind: kind).title.contains("ease.")) }
         for move in MotionMove.allCases { #expect(!move.title.contains("move.")) }
+        // Every look's line says one of the words kept for them, in English as written there.
+        let english = Set(LookTrack.words.map(\.english))
+        let looks: [LookTrack] = [.fill(0), .fillStops(0), .border(0), .borderStops(0), .borderWidth(0), .shadow(0), .corners]
+        for look in looks { for line in [false, true] { #expect(english.contains(look.title(line: line))) } }
+        #expect(Set(looks.flatMap { [$0.title(), $0.title(line: true)] }) == english)
         #expect(Set(Self.named).count == Self.named.count)
     }
 }

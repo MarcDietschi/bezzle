@@ -27,6 +27,8 @@ struct AnimateInspector: View {
                                 ShaderInputsCard(store: store, inputs: inputs)
                                     .transition(.card)
                             }
+                            // How they look at the playhead, on the design's own cards.
+                            SelectionInspector(store: store, filming: true)
                             FlyCard(store: store, layers: layers)
                                 .transition(.card)
                         }

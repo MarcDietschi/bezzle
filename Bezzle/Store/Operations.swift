@@ -42,6 +42,8 @@ extension DocumentStore {
 
     /// Changes every selected layer the same way. Text layers are refitted to their words afterwards.
     func updateSelection(_ action: LocalizedStringResource, _ change: (inout Node) -> Void) {
+        // In Animate, a change to how layers look is keyed at the playhead (`poseLooks`).
+        if animating, poseLooks(action, change) { return }
         update(selection, action, change)
     }
 
