@@ -233,25 +233,42 @@ far each plane lies in front, and those in one plane as listed (`DepthOrder.near
 `filmOrder` uses the same). So a button stays on its card when both are swung, though its middle
 then stands lower than the card's.
 
+An artboard can be looked at from the side while designing, to see how high each layer stands.
+The page is not turned: the eye is moved aside (`DepthLook`, at most 60°), as someone moves their
+head in front of a window. So the page and all that lies flat in it stay where they are and every
+tool stays true, while what stands off the page shows where the moved eye sees it, with a post
+under each corner down to where it would lie (under what is picked alone, when some of it is). On
+the Mac, Control dragged beside the layers turns the look (Shift in fives); a click there with
+Control, Escape with nothing picked, or the word by the artboard's top right corner looks from the
+front again. It is a way of looking, never part of the design: `DocumentStore.looks` holds it and
+hands it to the design it shows (`BezzleDocument.looks`, which no file has and `==` leaves out), so
+everything on the canvas asks `doc.eye(…)` as ever and is given the moved eye. It is not an undo
+step, and it ends when the design is seen as a prototype, inspected or animated. The renderer
+sees from the side only where the canvas says so (`Renderer.Options.looks`): exports, films,
+thumbnails and the AI server's pictures are always from the front.
+
 - **Where:** all shared with Windows and the browser. `Bezzle/Model/Perspective.swift` has `Eye`,
   the homography seen from it, and `BezzleDocument.eye(inside:)` and `eye(forParentOf:)`, where any
   layer is seen from. `DepthOrder.swift` is nearer over further, `DepthPushing.swift` the push
   while dragging, `DepthTurning.swift` the knob and turning from a side, `DepthBody.swift` several
   layers turned as one (`turnInDepth`, `layFlat`, `poseInDepth`), which the Mac's card and pad
-  reach through `Store/DepthOperations.swift`. The renderer finds the eye itself, from
-  `Options.board` and `offset` (`Renderer.Options.eye`).
+  reach through `Store/DepthOperations.swift`, `DepthLooking.swift` the look from the side and
+  its posts, which the Mac's canvas turns with `Canvas/LookTool.swift`. The renderer finds the eye
+  itself, from `Options.board` and `offset` (`Renderer.Options.eye`).
 - **The rule for new code:** whatever asks where a layer in depth shows (`Perspective`,
   `Geometry.bounds`, `Geometry.contains`, `Renderer.reach`, `Prototype.chain`) is given the eye of
   the layer's parent. Without one it sees the layer from its own middle, which is only right off
-  artboards.
+  artboards. Ask the design for an artboard's eye (`doc.stage(of:)`, `doc.eye(inside:)`), not
+  `Eye.stage`, wherever the canvas is concerned, so a look from the side is seen; and read
+  `doc.front` in anything that leaves the canvas, so it never is.
 - **On the canvas:** Control held while moving layers pushes them away or pulls them nearer, up
   nearer by a point for a point, catching at the page and at the heights of the layers around,
   Shift in tens; pressed or let go during the drag, nothing jumps. The knob takes Control as it
   takes Option. A layer only held at a height and facing the eye has no knob, so a drag on its
   middle moves it. In Animate, Control while moving keys Lift. On Windows the key is Alt, pressed
   once the drag is under way (Alt at the press duplicates).
-- **Its tests** are `DepthSceneTests`, `DepthTests` and `DepthBodyTests`, with `MotionLensTests`
-  for the film.
+- **Its tests** are `DepthSceneTests`, `DepthTests`, `DepthBodyTests` and `DepthLookTests`, with
+  `MotionLensTests` for the film.
 - **Driving a copy:** `BEZZLE_CLICKS` takes `^x,y>x,y` for a drag with Control held.
 
 ### Mac parity
