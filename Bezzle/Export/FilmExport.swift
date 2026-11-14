@@ -490,7 +490,7 @@ nonisolated enum FilmExport {
 
     /// What the movie is packed as. The colours are tagged as what they are, sRGB, so a player
     /// that reads the tags shows them as the canvas does.
-    private static func video(_ size: CGSize, fps: Int, codec: Codec) -> [String: Any] {
+    static func video(_ size: CGSize, fps: Int, codec: Codec) -> [String: Any] {
         [
             AVVideoCodecKey: codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
             AVVideoWidthKey: Int(size.width),

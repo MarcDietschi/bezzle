@@ -299,6 +299,14 @@ struct FilmBandingTests {
         }
         let url = kept ?? scratch()
         defer { if kept == nil { try? FileManager.default.removeItem(at: url) } }
+        if let kept {
+            // And the film itself as a design, for a Bezzle elsewhere to make its movie of.
+            var design = BezzleDocument()
+            design.nodes = [board]
+            let file = kept.deletingLastPathComponent().appendingPathComponent("tones.bezzle")
+            try? FileManager.default.removeItem(at: file)
+            try DesignFile.write(design, to: file)
+        }
         let clock = ContinuousClock()
         let took = try await clock.measure { try await FilmExport.write(board, assets: nil, to: url, settings: settings) { _ in } }
         let size = FilmExport.size(of: board, settings: settings)
@@ -453,6 +461,108 @@ struct FilmBandingTests {
             let url = URL(fileURLWithPath: String(path))
             _ = try await measure(url, as: "given-" + url.deletingPathExtension().lastPathComponent)
         }
+    }
+
+    // MARK: Noise
+
+    /// Why no noise is laid over a movie's steps to hide them. Frames are made here from exact
+    /// numbers, a still dark ramp over the same ramp fading in, cut to eight bits plainly or
+    /// with fine noise first (half a step either way, on the luma), packed as the app packs a
+    /// movie and read back. Written down (`…-noise.txt`), nothing held to it: run with
+    /// `TEST_RUNNER_ANIMATE_BANDING_NOISE=1` before `xcodebuild`, and again when what packs
+    /// movies on a Mac changes.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["ANIMATE_BANDING_NOISE"] != nil))
+    func measuresNoiseOverTheSteps() async throws {
+        let width = 1920, height = 1080, count = Self.fps
+        let size = CGSize(width: width, height: height)
+        // What each column holds, exactly: of the still half, and of the fading half at a frame.
+        func column(_ x: Int, _ shows: Double) -> (y: Float, cb: Float, cr: Float) {
+            let u = (Double(x) + 0.5) / Double(width)
+            func mix(_ a: Double, _ b: Double) -> Double { (a + (b - a) * u) * shows }
+            return Planes.packed(mix(Self.dark.r, Self.lit.r), mix(Self.dark.g, Self.lit.g), mix(Self.dark.b, Self.lit.b))
+        }
+        func shows(_ frame: Int) -> Double { 0.3 + 0.7 * Double(frame) / Double(count - 1) }
+        func exact(_ frame: Int) -> Planes {
+            var planes = Planes(width: width, height: height)
+            for half in 0..<2 {
+                let row = (0..<width).map { column($0, half == 0 ? 1 : shows(frame)) }
+                for py in half * height / 2..<(half + 1) * height / 2 {
+                    for px in 0..<width { planes.y[py * width + px] = row[px].y }
+                    guard py % 2 == 0 else { continue }
+                    for px in 0..<width / 2 {
+                        planes.cb[py / 2 * (width / 2) + px] = (row[2 * px].cb + row[2 * px + 1].cb) / 2
+                        planes.cr[py / 2 * (width / 2) + px] = (row[2 * px].cr + row[2 * px + 1].cr) / 2
+                    }
+                }
+            }
+            return planes
+        }
+        // A tile of noise from half a step under to half a step over.
+        var seed: UInt64 = 0x2545F4914F6CDD1D
+        let noise: [Float] = (0..<64 * 64).map { _ in
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Float((seed >> 40) & 0xFFFF) / 65536 - 0.5
+        }
+        let halves = [("still", CGRect(x: 0, y: 0, width: 960, height: 270)), ("fading", CGRect(x: 0, y: 270, width: 960, height: 270))]
+        var lines: [String] = []
+        for (name, noisy, bits) in [("plain", false, 1.0), ("noise", true, 1.0), ("noise at four times the bits", true, 4.0), ("noise at sixteen times the bits", true, 16.0)] {
+            let url = scratch()
+            defer { try? FileManager.default.removeItem(at: url) }
+            var settings = FilmExport.video(size, fps: Self.fps, codec: .h264)
+            var packing = try #require(settings[AVVideoCompressionPropertiesKey] as? [String: Any])
+            packing[AVVideoAverageBitRateKey] = Int(Double(FilmExport.bitRate(size, fps: Self.fps)) * bits)
+            settings[AVVideoCompressionPropertiesKey] = packing
+            let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+            input.expectsMediaDataInRealTime = false
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+            ])
+            writer.add(input)
+            #expect(writer.startWriting())
+            writer.startSession(atSourceTime: .zero)
+            for frame in 0..<count {
+                while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+                var made: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, try #require(adaptor.pixelBufferPool), &made)
+                let buffer = try #require(made)
+                CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+                CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_sRGB, .shouldPropagate)
+                CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+                CVPixelBufferLockBaseAddress(buffer, [])
+                let luma = CVPixelBufferGetBaseAddressOfPlane(buffer, 0)!.assumingMemoryBound(to: UInt8.self), lumaRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+                let chroma = CVPixelBufferGetBaseAddressOfPlane(buffer, 1)!.assumingMemoryBound(to: UInt8.self), chromaRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
+                for half in 0..<2 {
+                    let row = (0..<width).map { column($0, half == 0 ? 1 : shows(frame)) }
+                    for py in half * height / 2..<(half + 1) * height / 2 {
+                        for px in 0..<width {
+                            let grain = noisy ? noise[(py & 63) * 64 + (px & 63)] : 0
+                            luma[py * lumaRow + px] = UInt8((row[px].y + grain).rounded())
+                        }
+                        guard py % 2 == 0 else { continue }
+                        for px in 0..<width / 2 {
+                            chroma[py / 2 * chromaRow + 2 * px] = UInt8(((row[2 * px].cb + row[2 * px + 1].cb) / 2).rounded())
+                            chroma[py / 2 * chromaRow + 2 * px + 1] = UInt8(((row[2 * px].cr + row[2 * px + 1].cr) / 2).rounded())
+                        }
+                    }
+                }
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+                #expect(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(Self.fps))))
+            }
+            input.markAsFinished()
+            writer.endSession(atSourceTime: CMTime(value: CMTimeValue(count), timescale: CMTimeScale(Self.fps)))
+            await writer.finishWriting()
+            #expect(writer.status == .completed)
+            let bytes = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            let movie = try await Self.read(Set(Self.shown), of: url)
+            lines.append("\(name): \(bytes * 8 / 1000) kbit/s of \(Int(Double(FilmExport.bitRate(size, fps: Self.fps)) * bits) / 1000) at most")
+            for k in Self.shown {
+                let read = try #require(movie.frames[k]), whole = exact(k)
+                for (part, box) in halves { lines.append("\(name), frame \(k), \(part): \(Self.banding(read, in: box, against: whole))") }
+            }
+        }
+        try note(lines, as: "noise")
     }
 
     // MARK: Stills

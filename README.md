@@ -129,16 +129,20 @@ along one artboard's film. Its keys are changes from the design and never the de
   chroma planes the movie packs (`FilmExport.Codec`), eight bits for H.264 and ten for HEVC.
   Handed over as BGRA, as it was, every value was rounded a second time by the packing. No
   noise is laid over the steps: what packs movies on a Mac irons fine noise out again unless
-  the movie is many times larger. H.264 stays what a movie is, and shows the steps eight bits
+  the movie is many times larger (2026-11-14: kept only when let use sixteen times the bits,
+  which made 25 Mbit/s of a movie that is 0.13 without). H.264 stays what a movie is, and shows the steps eight bits
   have; the Film card's other choice, HEVC with 10 bits (the AI server's `codec`), has steps a
   quarter as large. `FilmBandingTests` measures all of this on a film of such tones, in steps
   of eight bits by which the mean of every 8 by 8 block is off, and writes the numbers into
   `$TMPDIR/bezzle-film-banding-….txt` (2026-11-14, on average: 0.35 before, 0.29 as H.264, which
   is what one rounding leaves, 0.07 as HEVC). `TEST_RUNNER_ANIMATE_BANDING_STILLS=1` also
   writes down what exported pictures and the stage's pictures hold,
-  `TEST_RUNNER_ANIMATE_BANDING_KEEP=<a folder>` keeps the movies it makes there, and
-  `TEST_RUNNER_ANIMATE_BANDING_MOVIE=<a file>` measures a movie of the same film made
-  elsewhere: on Windows, or one of the kept ones after a video site packed it again.
+  `TEST_RUNNER_ANIMATE_BANDING_NOISE=1` what packing leaves of fine noise laid over the steps
+  (run it again when macOS packs movies another way: it is why none is laid),
+  `TEST_RUNNER_ANIMATE_BANDING_KEEP=<a folder>` keeps the movies it makes there with the film
+  as a design, `tones.bezzle`, and `TEST_RUNNER_ANIMATE_BANDING_MOVIE=<a file>` measures a
+  movie of that film made elsewhere: on Windows, or a kept one after a video site packed it
+  again.
 - **Keeping it quick:** what is placed at every frame is found once (`Node.filmLayers`, not a
   search through the artboard per piece); new pictures are placed on the stage without drawing
   the canvas again; what is watched by views (`film.playing`, the timeline's hand) is set only
