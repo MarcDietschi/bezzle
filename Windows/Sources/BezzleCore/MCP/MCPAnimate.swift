@@ -23,7 +23,8 @@ extension MCPTools {
                 ("layers", list("Several layers given the same key, in place of layer.")),
                 ("property", choice(properties, "What changes. A layer's: \(Self.names(MotionProperty.layer)). The camera's: \(Self.names(MotionProperty.camera)).")),
                 ("time", number("Seconds from the film's start, 0 or more.")),
-                ("value", ["description": "The value there: [x, y] for move, scale and cameraMove (one number for scale is both ways); one number for the rest."]),
+                ("value", ["description": "The value there: [x, y] for move, scale and cameraMove (one number for scale is both ways); [from, to] for draw (one number is to, from 0); one number for the rest."]),
+                ("path", text("For property shape, in place of value: the layer's outline at that time, as SVG path data in the layer's own points (its frame's top left at 0, before it is turned), with the same points in the same order as the design's outline, each moved where it is to be. get_animation lists a moving shape's outline as designed; an outline with other points is refused with the design's outline in the answer.")),
                 ("pace", choice(MotionEase.Kind.allCases.map(\.rawValue), "How the value arrives here from the key before. Left out, a new key is auto and a key already there keeps its pace.")),
                 ("bounce", number("With pace spring: how far past it goes, 0 (not at all) to 1; 0.3 otherwise.")),
                 ("to", list("The camera's key only, in place of property and value: the layers it looks at then, whole with room round them, wherever they are at that moment. Sets cameraMove and cameraZoom together, as Bezzle's own fly-to does; tilt, swing and roll stay as they are.")),
@@ -34,7 +35,7 @@ extension MCPTools {
         let move: JSONValue = .object([
             ("type", "object"),
             ("properties", .object([
-                ("move", choice(MotionMove.allCases.map(\.rawValue), "Which: fade; rise (from a little below, fading in); drop (from above, with a bounce); slide (from off the nearer side of the artboard); pop (grown from small, with a bounce); zoom (settling from larger); flip (tipped up from lying back); focus (out of a blur).")),
+                ("move", choice(MotionMove.allCases.map(\.rawValue), "Which: fade; rise (from a little below, fading in); drop (from above, with a bounce); slide (from off the nearer side of the artboard); pop (grown from small, with a bounce); zoom (settling from larger); flip (tipped up from lying back); focus (out of a blur); draw (a path, rectangle, ellipse or line drawn on as a pen draws it; anything else fades).")),
                 ("layers", list("The layers, by id or name. The selection otherwise.")),
                 ("time", number("When the first of them starts, in seconds; 0 otherwise.")),
                 ("going", boolean("true for going, from the design to away, rather than coming on.")),
@@ -52,7 +53,11 @@ extension MCPTools {
                        chosen (auto otherwise). Values are changes from the design, never places of their own: move is points right \
                        and down from where the design has the layer, scale is times its size, turn is degrees clockwise added to its \
                        rotation, fade is times its opacity, lift is points nearer the eye, tilt and swing are degrees tipped back and \
-                       swung round, blur is points of blur added. Before its first key a property has that key's value and after its \
+                       swung round, blur is points of blur added. A path, rectangle, ellipse or line also has draw, [from, to], how \
+                       much of its outline is drawn, each 0 (its start) to 1 (its end), and shape, its points moved: each shape key is \
+                       given as path, its outline then in the layer's own points (its frame's top left at 0, before it is turned), and \
+                       such a layer lists outline, its outline as designed in the same points. \
+                       Before its first key a property has that key's value and after its \
                        last that one's; a layer with no keys is as designed. A key marked given is the design itself, put there by \
                        Bezzle to go with the first pose made by hand, and anyone's to change. In a deck each layer says its post, \
                        counted from 1, as every post's layers have keys of their own. animating says whether the person's \
@@ -70,7 +75,11 @@ extension MCPTools {
                        time, and between two keys the value travels from one to the other. Values are changes from the design: move \
                        [x, y] in points right and down from where the design has the layer, scale [x, y] in times its size, turn in \
                        degrees clockwise, fade in times its opacity (0 gone, 1 as designed), lift in points nearer the eye, tilt and \
-                       swing in degrees (its top, or its right side, going away), blur in points. The design itself is move [0, 0], \
+                       swing in degrees (its top, or its right side, going away), blur in points. A path, rectangle, ellipse or line \
+                       has two more: draw [from, to], how much of its outline is drawn as a pen draws it, each 0 (its start) to 1 (its \
+                       end), so a line draws itself on from draw [0, 0] to [0, 1]; and shape, its points moved, a key given as path, \
+                       its outline then with the same points as the design's, so one outline becomes another (a blob that breathes, an \
+                       icon that turns into another with as many points). The design itself is move [0, 0], \
                        scale 1, fade 1 and 0 for the rest. Only the keys given are set and none are added, and before its first key a \
                        property stays at that key's value, after its last at that one's: so a layer coming on takes two keys, one \
                        away from the design at the start (fade 0, move [0, 28]) and one back at the design a little later (fade 1, \
@@ -158,7 +167,8 @@ extension MCPTools {
                         ("post", post.map { .number(Double($0)) }),
                     ]
                     if child.isAnimated {
-                        moving.append(.compact(who + [("tracks", tracks(of: child, MotionProperty.layer)), ("shader", inputs(of: child))]))
+                        let outline = child.canReshape && child[track: .shape] != nil ? child.ownOutline.map { JSONValue.string($0.data) } : nil
+                        moving.append(.compact(who + [("tracks", tracks(of: child, MotionProperty.layer)), ("outline", outline), ("shader", inputs(of: child))]))
                     } else if only != nil {
                         still.append(.compact(who))
                     }
@@ -188,9 +198,12 @@ extension MCPTools {
             let keys: [JSONValue] = track.keys.map { key in
                 let pace: MotionEase? = key.ease.flatMap { $0.kind == .auto ? nil : $0 }
                 let bounce: Double? = pace?.kind == .spring ? pace?.bounce : nil
+                // A shape's key as the outline it gives: what it is made with, rather than a change of each number.
+                let path: String? = p == .shape ? node.ownOutline.flatMap { $0.changed(by: key.v) }.map(\.data) : nil
                 return .compact([
                     ("time", JSONValue.number(key.t)),
-                    ("value", written(key.v, of: p)),
+                    ("value", p == .shape ? nil : written(key.v, of: p)),
+                    ("path", path.map { JSONValue.string($0) }),
                     ("pace", pace.map { JSONValue.string($0.kind.rawValue) }),
                     ("bounce", bounce.map { JSONValue.number($0) }),
                     ("given", key.given == true ? true : nil),
@@ -455,7 +468,7 @@ extension MCPTools {
         var inputKeys: [(id: UUID, input: String, change: [Double], time: Double, ease: MotionEase?)] = []
         for (i, spec) in keySpecs.enumerated() {
             let place = "keys[\(i)]"
-            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce", "to", "input"], place)
+            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce", "to", "input", "path"], place)
             if let to = spec["to"] {
                 let named = (to as? String).map { [$0] } ?? (to as? [String])
                 guard let named, !named.isEmpty else { throw MCPError("\(place).to is the layers the camera looks at, by id or name.") }
@@ -498,6 +511,40 @@ extension MCPTools {
                 throw MCPError("\(place) needs property. \(Self.propertyHelp)")
             }
             let property = try Self.motionProperty(word, "\(place).property")
+            if property == .shape || property == .draw {
+                // A shape's own: its outline, which only a path, rectangle, ellipse or line has.
+                guard let named = try refs(spec) else { throw MCPError("\(place): \(property.rawValue) is a layer's: give layer.") }
+                let ids = try layers(named, place)
+                try ids.forEach(onFilm)
+                guard let time = try Self.motionTime(spec["time"], "\(place).time") else { throw MCPError("\(place) needs time: seconds from the film's start.") }
+                let ease = try Self.motionEase(spec, place)
+                for id in ids {
+                    guard let n = doc.node(id), let design = n.ownOutline else {
+                        throw MCPError("\(place): \(doc.node(id)?.name ?? "That layer") has no outline of points: \(property.rawValue) is for paths, rectangles, ellipses and lines.")
+                    }
+                    if property == .draw {
+                        guard spec["path"] == nil else { throw MCPError("\(place): path goes with property shape.") }
+                        var value = try Self.motionValue(spec["value"], of: .draw, "\(place).value")
+                        let kept = MotionProperty.draw.clamped(value)
+                        if !MotionTiming.alike(kept, value) {
+                            warnings.append("\(place): draw \(Self.plain(value)) is outside 0 to 1, and was kept as \(Self.plain(kept)).")
+                        }
+                        value = kept
+                        keys.append(FilmKey(ids: [id], property: .draw, time: time, value: value, ease: ease))
+                        continue
+                    }
+                    guard spec["value"] == nil, let data = try Read.string(spec["path"], "\(place).path") else {
+                        throw MCPError("\(place): a shape key is given as path, \(n.name)'s outline at that time in its own points. Its outline as designed: \(design.data)")
+                    }
+                    guard let change = design.change(to: BezierPath(data)) else {
+                        let runs = design.subpaths.map { "\($0.anchors.count)" }.joined(separator: ", ")
+                        throw MCPError("\(place).path: \(n.name)'s outline has \(design.anchorCount) points (in runs of \(runs)), and a shape key only moves them: path needs the same points in the same order. Its outline as designed, in its own points: \(design.data)")
+                    }
+                    keys.append(FilmKey(ids: [id], property: .shape, time: time, value: change, ease: ease))
+                }
+                continue
+            }
+            guard spec["path"] == nil else { throw MCPError("\(place): path goes with property shape.") }
             var ids: [UUID] = []
             if let named = try refs(spec) {
                 guard !property.isCamera else { throw MCPError("\(place): \(Self.cameraOnALayer(property))") }
@@ -735,8 +782,9 @@ extension MCPTools {
             throw MCPError("\(key) is missing: \(property.rawValue) takes \(property.rest.count == 2 ? "two numbers, [x, y]" : "one number").")
         }
         if property == .scale, numbers.count == 1 { numbers += numbers }
+        if property == .draw, numbers.count == 1 { numbers = [0, numbers[0]] }
         guard numbers.count == property.rest.count else {
-            let takes = property.rest.count == 2 ? "two numbers, [x, y]\(property == .scale ? ", or one for both" : "")" : "one number"
+            let takes = property == .draw ? "[from, to], or one number for to" : property.rest.count == 2 ? "two numbers, [x, y]\(property == .scale ? ", or one for both" : "")" : "one number"
             throw MCPError("\(key): \(property.rawValue) takes \(takes), and \(numbers.count) were given.")
         }
         return numbers

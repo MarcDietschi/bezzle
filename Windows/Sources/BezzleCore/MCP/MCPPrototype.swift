@@ -511,13 +511,16 @@ extension MCPTools {
         is now, and a picture of it come after this. Go on from what is there rather than writing over it.
 
         What a Bezzle film can do, all through animate:
-        - Entrances and exits in one go: moves (rise, fade, drop, slide, pop, zoom, flip, focus), with apart for one layer after \
+        - Entrances and exits in one go: moves (rise, fade, drop, slide, pop, zoom, flip, focus, draw), with apart for one layer after \
         another. Keys are changes from the design, so a layer coming on takes a key away from the design and a key back at it.
         - Depth: lift brings a layer nearer the eye, tilt and swing turn it in space. With the camera tilted or swung, lifted \
         layers part from the page like real layers of a scene.
         - The camera: cameraMove, cameraZoom, cameraRoll, cameraTilt, cameraSwing; a key with to looks at layers, framed whole. \
         A fly over is a few camera keys with tilt and zoom, ending at rest (move [0, 0], zoom 1, the rest 0).
         - Focus: blur on a layer, or a focus move, pulls attention; blur what lies behind while what matters is sharp.
+        - Paths, rectangles, ellipses and lines: draw [from, to] draws the outline on as a pen does (a signature, an underline, \
+        a check mark, a chart's line); shape moves its points, one outline becoming another with the same points (a blob that \
+        breathes, a wave, an icon turning into the next), each key given as path in the layer's own points.
         - Paces: leave auto unless there is a reason; spring with bounce 0.2 to 0.4 for something playful; hold for a cut.
         - Shaders: a layer filled with a shader (brought in from a website) moves by itself as the film plays, its inputs \
         keyed like any property.
