@@ -72,7 +72,7 @@ nonisolated extension Renderer {
         alone.castingShadow = true
         // Cast by as much of it as is drawn, without stopping the drawing it is part of.
         alone.halt = options.halt.map { Halt(before: $0.before) }
-        guard let picture = offscreen(region, scale: made, { c in
+        guard let picture = offscreen(region, scale: made, deep: options.deep, { c in
             c.translateBy(x: away, y: 0)
             drawCaster(of: node, casting: cast, in: c, options: alone)
         }) else { return false }
@@ -177,16 +177,17 @@ nonisolated extension Renderer {
         var keyed = plain
         keyed.blur = node.blur
         let image: CGImage?
-        if let kept = BlurCache.shared.object(keyed, scale: scale, region: region) {
+        let deep = options.deep
+        if let kept = BlurCache.shared.object(keyed, scale: scale, region: region, deep: deep) {
             image = kept
         } else {
-            image = offscreen(region, scale: scale) { drawNode(plain, in: $0, options: options) }
+            image = offscreen(region, scale: scale, deep: deep) { drawNode(plain, in: $0, options: options) }
                 .flatMap { picture in
-                    guard let ramp else { return blurred(picture, sigma: radius * scale, clamp: false) }
+                    guard let ramp else { return blurred(picture, sigma: radius * scale, clamp: false, deep: deep) }
                     let (from, to) = pixels(of: ramp, on: node, in: region, sx: scale, sy: scale, height: CGFloat(picture.height))
-                    return blurred(picture, sigma: radius * scale, from: from, to: to, clamp: false)
+                    return blurred(picture, sigma: radius * scale, from: from, to: to, clamp: false, deep: deep)
                 }
-            if let image { BlurCache.shared.keep(object: keyed, scale: scale, region: region, image: image) }
+            if let image { BlurCache.shared.keep(object: keyed, scale: scale, region: region, deep: deep, image: image) }
         }
         guard let image else { return }
         ctx.saveGState()
@@ -240,11 +241,13 @@ nonisolated extension Renderer {
         guard !region.isNull, region.width > 0, region.height > 0 else { return nil }
         if blur.ramp != nil { scale = rampScale(scale, radius: blur.radius, region: region) }
 
-        if let kept = BlurCache.shared.backdrop(node, board: board, scale: scale, region: region, settling: options.settling) {
+        let deep = options.deep
+        if let kept = BlurCache.shared.backdrop(node, board: board, scale: scale, region: region, deep: deep, settling: options.settling) {
             return kept
         }
-        let made = offscreen(region.offsetBy(dx: toCanvas.x, dy: toCanvas.y), scale: scale, exactly: true) { c in
+        let made = offscreen(region.offsetBy(dx: toCanvas.x, dy: toCanvas.y), scale: scale, exactly: true, deep: deep) { c in
             var behind = Options(deviceScale: scale, assets: options.assets)
+            behind.deep = deep
             behind.picturesLater = options.picturesLater
             behind.halt = Halt(before: node.id)
             // Only what lies behind this part of it: the rest of the artboard is left out.
@@ -253,13 +256,13 @@ nonisolated extension Renderer {
             drawArtboard(board, in: c, options: behind)
         }
         .flatMap { picture in
-            guard let ramp = blur.ramp else { return blurred(picture, sigma: blur.radius * scale, clamp: true) }
+            guard let ramp = blur.ramp else { return blurred(picture, sigma: blur.radius * scale, clamp: true, deep: deep) }
             let height = CGFloat(picture.height)
             let (from, to) = pixels(of: ramp, on: node, in: region, sx: CGFloat(picture.width) / region.width, sy: height / region.height, height: height)
-            return blurred(picture, sigma: blur.radius * scale, from: from, to: to, clamp: true)
+            return blurred(picture, sigma: blur.radius * scale, from: from, to: to, clamp: true, deep: deep)
         }
         guard let made else { return nil }
-        BlurCache.shared.keep(backdrop: node, board: board, scale: scale, region: region, image: made)
+        BlurCache.shared.keep(backdrop: node, board: board, scale: scale, region: region, deep: deep, image: made)
         return (made, region)
     }
 
@@ -304,11 +307,11 @@ nonisolated extension Renderer {
     /// Draws into a picture of `region`, given in the context's coordinates, at `scale` pixels to the point.
     /// `exactly` makes it a whole number of pixels that covers just `region`, stretched a hair to
     /// fit, for a picture whose edges are carried on outward: a pixel only partly covered at its
-    /// edge would carry on fainter.
-    static func offscreen(_ region: CGRect, scale: CGFloat, exactly: Bool = false, _ body: (CGContext) -> Void) -> CGImage? {
+    /// edge would carry on fainter. `deep` as the bitmap it is drawn back into is (`Options.deep`).
+    static func offscreen(_ region: CGRect, scale: CGFloat, exactly: Bool = false, deep: Bool = false, _ body: (CGContext) -> Void) -> CGImage? {
         let w = Int((region.width * scale).rounded(exactly ? .toNearestOrAwayFromZero : .up))
         let h = Int((region.height * scale).rounded(exactly ? .toNearestOrAwayFromZero : .up))
-        guard w > 0, h > 0, w * h <= 40_000_000, let c = bitmap(CGSize(width: w, height: h)) else { return nil }
+        guard w > 0, h > 0, w * h <= 40_000_000, let c = bitmap(CGSize(width: w, height: h), deep: deep) else { return nil }
         c.translateBy(x: 0, y: CGFloat(h))
         c.scaleBy(x: exactly ? CGFloat(w) / region.width : scale, y: exactly ? -CGFloat(h) / region.height : -scale)
         c.translateBy(x: -region.minX, y: -region.minY)
@@ -322,17 +325,29 @@ nonisolated extension Renderer {
 
     /// A Gaussian blur, measured as a standard deviation in pixels, which is what XD's blur amount is. What lies behind a layer reaches
     /// past the picture's edges, so for a backdrop the edge pixels carry on outward rather than fade.
-    private static func blurred(_ image: CGImage, sigma: CGFloat, clamp: Bool) -> CGImage? {
+    private static func blurred(_ image: CGImage, sigma: CGFloat, clamp: Bool, deep: Bool) -> CGImage? {
         let input = CIImage(cgImage: image)
         let source = clamp ? input.clampedToExtent() : input
         let output = source.applyingGaussianBlur(sigma: Double(sigma)).cropped(to: input.extent)
-        return imaging.createCGImage(output, from: input.extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        return picture(of: output, from: input.extent, deep: deep)
+    }
+
+    /// What Core Image made, as a picture to draw: with eight bits to a colour, or sixteen where
+    /// it is drawn into a deep bitmap (`Options.deep`), which only the Mac's are: this file is
+    /// built for Windows and the browser too, whose pictures have eight.
+    static func picture(of output: CIImage, from extent: CGRect, deep: Bool) -> CGImage? {
+        #if canImport(Metal)
+        let format: CIFormat = deep ? .RGBAh : .RGBA8
+        #else
+        let format = CIFormat.RGBA8
+        #endif
+        return imaging.createCGImage(output, from: extent, format: format, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
     }
 
     /// The same, growing from none at `from` to `sigma` at `to`, in the picture's pixels counted
     /// from its bottom left as Core Image counts them, and staying as it is past either.
-    private static func blurred(_ image: CGImage, sigma: CGFloat, from: CGPoint, to: CGPoint, clamp: Bool) -> CGImage? {
-        guard hypot(to.x - from.x, to.y - from.y) >= 0.5 else { return blurred(image, sigma: sigma, clamp: clamp) }
+    private static func blurred(_ image: CGImage, sigma: CGFloat, from: CGPoint, to: CGPoint, clamp: Bool, deep: Bool) -> CGImage? {
+        guard hypot(to.x - from.x, to.y - from.y) >= 0.5 else { return blurred(image, sigma: sigma, clamp: clamp, deep: deep) }
         let input = CIImage(cgImage: image)
         let source = clamp ? input.clampedToExtent() : input
         let mask = CIFilter.linearGradient()
@@ -345,7 +360,7 @@ nonisolated extension Renderer {
         blur.mask = mask.outputImage
         blur.radius = Float(sigma)
         guard let output = blur.outputImage?.cropped(to: input.extent) else { return nil }
-        return imaging.createCGImage(output, from: input.extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        return picture(of: output, from: input.extent, deep: deep)
     }
 
     /// Where a blur's ramp runs in a picture of `region` of the layer's parent, at `sx` and `sy`
@@ -402,8 +417,12 @@ nonisolated final class BlurCache: @unchecked Sendable {
         /// Where a picture of a layer turned in depth goes, which is not where it was made.
         var at: CGPoint = .zero
         var used: UInt64 = 0
-        var bytes: Int { image.width * image.height * 4 }
+        var bytes: Int { image.width * image.height * image.bitsPerPixel / 8 }
     }
+
+    /// A picture with sixteen bits to a colour, made for a movie (`Renderer.Options.deep`), is
+    /// kept apart from the one the canvas draws with.
+    private static func mark(_ deep: Bool) -> String { deep ? "h" : "" }
 
     private var entries: [String: Entry] = [:]
     private var clock: UInt64 = 0
@@ -413,11 +432,12 @@ nonisolated final class BlurCache: @unchecked Sendable {
 
     /// A layer may be drawn at two scales by turns, once for its shadow, made apart at fewer
     /// pixels: a picture at each is kept.
-    func object(_ node: Node, scale: CGFloat, region: CGRect) -> CGImage? {
+    func object(_ node: Node, scale: CGFloat, region: CGRect, deep: Bool = false) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
-        guard let e = entries["o\(node.id)@\(scale)"], e.region == region, e.node == node else { return nil }
-        touch("o\(node.id)@\(scale)")
+        let key = "o\(node.id)@\(scale)" + Self.mark(deep)
+        guard let e = entries[key], e.region == region, e.node == node else { return nil }
+        touch(key)
         return e.image
     }
 
@@ -429,42 +449,43 @@ nonisolated final class BlurCache: @unchecked Sendable {
     /// While things settle, what lay behind may have moved on a little; the picture made before
     /// stands in until they are done, wherever it was made for, as long as it covers what is needed
     /// and is blurred as much: a blur being changed itself shows each change at once.
-    func backdrop(_ node: Node, board: Node, scale: CGFloat, region: CGRect, settling: Bool = false) -> (image: CGImage, region: CGRect)? {
+    func backdrop(_ node: Node, board: Node, scale: CGFloat, region: CGRect, deep: Bool = false, settling: Bool = false) -> (image: CGImage, region: CGRect)? {
         lock.lock()
         defer { lock.unlock() }
-        guard let e = entries["b\(node.id)@\(scale)"] else { return nil }
+        let key = "b\(node.id)@\(scale)" + Self.mark(deep)
+        guard let e = entries[key] else { return nil }
         let stands = e.region.contains(region) && e.node.blur?.radius == node.blur?.radius && e.node.blur?.ramp == node.blur?.ramp
         guard settling ? stands : e.region == region && e.board == board else { return nil }
-        touch("b\(node.id)@\(scale)")
+        touch(key)
         return (e.image, e.region)
     }
 
     /// A layer turned in depth: as it shows, or, `casting`, as it is drawn to cast its shadow at fewer pixels.
-    func depth(_ node: Node, scale: CGFloat, region: CGRect, casting: Bool, eye: Eye?) -> (image: CGImage, at: CGPoint)? {
+    func depth(_ node: Node, scale: CGFloat, region: CGRect, casting: Bool, eye: Eye?, deep: Bool = false) -> (image: CGImage, at: CGPoint)? {
         lock.lock()
         defer { lock.unlock() }
-        let key = (casting ? "c" : "d") + "\(node.id)"
+        let key = (casting ? "c" : "d") + "\(node.id)" + Self.mark(deep)
         guard let e = entries[key], e.scale == scale, e.region == region, e.node == node, e.eye == eye else { return nil }
         touch(key)
         return (e.image, e.at)
     }
 
-    func keep(depth node: Node, scale: CGFloat, region: CGRect, casting: Bool, eye: Eye?, image: CGImage, at: CGPoint) {
+    func keep(depth node: Node, scale: CGFloat, region: CGRect, casting: Bool, eye: Eye?, deep: Bool = false, image: CGImage, at: CGPoint) {
         lock.lock()
         defer { lock.unlock() }
-        store((casting ? "c" : "d") + "\(node.id)", Entry(node: node, board: nil, eye: eye, scale: scale, region: region, image: image, at: at))
+        store((casting ? "c" : "d") + "\(node.id)" + Self.mark(deep), Entry(node: node, board: nil, eye: eye, scale: scale, region: region, image: image, at: at))
     }
 
-    func keep(object node: Node, scale: CGFloat, region: CGRect, image: CGImage) {
+    func keep(object node: Node, scale: CGFloat, region: CGRect, deep: Bool = false, image: CGImage) {
         lock.lock()
         defer { lock.unlock() }
-        store("o\(node.id)@\(scale)", Entry(node: node, board: nil, scale: scale, region: region, image: image))
+        store("o\(node.id)@\(scale)" + Self.mark(deep), Entry(node: node, board: nil, scale: scale, region: region, image: image))
     }
 
-    func keep(backdrop node: Node, board: Node, scale: CGFloat, region: CGRect, image: CGImage) {
+    func keep(backdrop node: Node, board: Node, scale: CGFloat, region: CGRect, deep: Bool = false, image: CGImage) {
         lock.lock()
         defer { lock.unlock() }
-        store("b\(node.id)@\(scale)", Entry(node: node, board: board, scale: scale, region: region, image: image))
+        store("b\(node.id)@\(scale)" + Self.mark(deep), Entry(node: node, board: board, scale: scale, region: region, image: image))
     }
 
     /// Lets go of the pictures that show a picture, which may have been drawn at another size for

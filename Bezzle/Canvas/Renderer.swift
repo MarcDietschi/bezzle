@@ -42,6 +42,11 @@ nonisolated enum Renderer {
         /// The moment of an Animate film being drawn, in seconds from its start: a shader is drawn
         /// as it is then. As the design shows it when nil.
         var time: Double?
+        /// Drawing into a bitmap with sixteen bits to a colour (`bitmap(_:space:deep:)`), as a
+        /// movie's pictures are on the Mac: what is drawn apart on the way, a shadow or a blur,
+        /// is made as deep, or it would bring eight bits' steps along. (Not yet a layer turned
+        /// in depth inside a group, whose picture `Depth.swift` makes with eight.)
+        var deep = false
 
         /// Where the layers being drawn are seen from in depth, in what holds them: in front of
         /// their artboard's middle (`Eye.stage`). Off any artboard, nil: each from its own middle.
@@ -741,9 +746,18 @@ nonisolated enum Renderer {
 
     /// A bitmap to draw in: sRGB, unless it is for a screen that shows in another space, where a
     /// picture in the screen's own is shown as it is, with no colours worked out again first.
-    static func bitmap(_ size: CGSize, space: CGColorSpace? = nil) -> CGContext? {
-        CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
-                  space: space ?? CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    /// `deep`, with sixteen bits to a colour and not eight, for a picture a movie is made of: a
+    /// gentle gradient or a wide shadow keeps the values that lie between eight bits' steps, so
+    /// that it is cut to steps once, by the movie, and not here already (draw with
+    /// `Options.deep` set). Twice the memory, so only where there are such tones. On the Mac
+    /// only: what Windows and the browser draw with has eight bits, whatever is asked for.
+    static func bitmap(_ size: CGSize, space: CGColorSpace? = nil, deep: Bool = false) -> CGContext? {
+        // Half floats, low byte first: Core Graphics' `floatComponents` and `byteOrder16Little`,
+        // by their numbers, which the stand-ins this file is also built with have no names for.
+        let halves: UInt32 = (1 << 8) | (1 << 12)
+        return CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: deep ? 16 : 8, bytesPerRow: 0,
+                         space: space ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | (deep ? halves : 0))
     }
 
     static func withFlippedContext(_ ctx: CGContext, _ body: () -> Void) {

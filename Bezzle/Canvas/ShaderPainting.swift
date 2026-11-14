@@ -27,7 +27,10 @@ nonisolated enum ShaderPainting {
 
     /// Draws a shader fill inside an outline, a layer of `size` with its top left at zero, at the
     /// film's moment `film` (the design's moment when nil): placed as its picture is, or in the
-    /// whole box. Says whether it drew, so that the picture is drawn when it did not.
+    /// whole box. Says whether it drew, so that the picture is drawn when it did not. Into a
+    /// bitmap with sixteen bits to a colour, as a movie's pictures are on the Mac
+    /// (`Renderer.bitmap(_:space:deep:)`), it is made as deep, so that its glows keep what lies
+    /// between eight bits' steps.
     static func paint(_ shader: ShaderFill, picture: ImageFill?, in path: CGPath, size: CGSize, rule: CGPathFillRule,
                       in ctx: CGContext, film: Double?, assets: Assets?, box: CGRect? = nil) -> Bool {
         guard let renderer = ShaderRenderer.shared else { return false }
@@ -53,7 +56,11 @@ nonisolated enum ShaderPainting {
         guard let frame = frame(of: shader, at: shader.time(film: film), assets: assets) else { return false }
         let image: CGImage
         do {
+            #if canImport(Metal)
+            image = try renderer.image(of: frame, pixels: pixels, region: region, deep: ctx.bitsPerComponent > 8)
+            #else
             image = try renderer.image(of: frame, pixels: pixels, region: region)
+            #endif
         } catch {
             broken.insert(key)
             return false

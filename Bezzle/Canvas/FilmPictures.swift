@@ -71,6 +71,10 @@ nonisolated enum FilmPictures {
             // The ground's own is the bare artboard, which is soon read.
             return ground === other.ground || (kind == .ground && ground.board == other.ground.board)
         }
+
+        /// Whether it draws tones that run gently into one another (`Node.hasGentleTones`): its
+        /// picture for a movie is then made deep, with sixteen bits to a colour.
+        var hasGentleTones: Bool { kind == .ground ? board.hasGentleTones : layers.contains(where: \.hasGentleTones) }
     }
 
     /// The longest side a picture is made with, in pixels.
@@ -173,7 +177,12 @@ nonisolated enum FilmPictures {
     /// `space` is the screen's, for a picture the stage shows: the colours are matched to it as
     /// it is drawn, away from the main thread, where Core Animation would otherwise match them
     /// itself, on the main thread, as the picture comes on the stage.
-    static func picture(of subject: Subject, scale: CGFloat, assets: Assets?, part: Part? = nil, space: CGColorSpace? = nil) -> Picture? {
+    ///
+    /// `deep` is for a picture a movie is made of: where the subject has gentle tones, a
+    /// gradient, a shadow, a blur or a shader, it is drawn with sixteen bits to a colour, so that
+    /// they come to the movie whole and are cut to its steps once, and not to eight bits' here
+    /// and to the movie's again after fading, blurring and the camera have worked on them.
+    static func picture(of subject: Subject, scale: CGFloat, assets: Assets?, part: Part? = nil, space: CGColorSpace? = nil, deep: Bool = false) -> Picture? {
         let whole = rect(of: subject)
         guard whole.width > 0, whole.height > 0, !whole.isNull else { return nil }
         var r = core(of: subject), scale = scale
@@ -187,7 +196,9 @@ nonisolated enum FilmPictures {
             scale = min(scale, most / max(r.width, r.height))
             size = CGSize(width: max(1, (r.width * scale).rounded(.up)), height: max(1, (r.height * scale).rounded(.up)))
         }
-        guard let ctx = Renderer.bitmap(size, space: space) else { return nil }
+        // Twice the memory, so only where there is something to keep.
+        let deep = deep && subject.hasGentleTones
+        guard let ctx = Renderer.bitmap(size, space: space, deep: deep) else { return nil }
         ctx.translateBy(x: 0, y: size.height)
         ctx.scaleBy(x: size.width / r.width, y: -size.height / r.height)
         ctx.translateBy(x: -r.minX, y: -r.minY)
@@ -198,6 +209,7 @@ nonisolated enum FilmPictures {
             o.deviceScale = scale
             o.assets = assets
             o.time = subject.time
+            o.deep = deep
             if subject.kind == .ground {
                 Renderer.drawArtboard(subject.board, in: ctx, options: o)
                 return
@@ -212,6 +224,18 @@ nonisolated enum FilmPictures {
 }
 
 nonisolated extension Node {
+    /// Whether its drawing has tones that run gently into one another, which eight bits to a
+    /// colour cut into steps that show as bands: a gradient, a shadow, a blur or a shader, its own
+    /// or of anything it holds. Flat colours and letters have none, and a picture has only eight
+    /// bits itself.
+    var hasGentleTones: Bool {
+        if !shadows.isEmpty || blur?.on == true { return true }
+        if fills.contains(where: { $0.shader != nil || $0.gradient?.stops.isEmpty == false }) { return true }
+        if borders.contains(where: { $0.gradient?.stops.isEmpty == false }) { return true }
+        if mask?.contains(where: \.hasGentleTones) == true { return true }
+        return children.contains { !$0.hidden && $0.hasGentleTones }
+    }
+
     /// The layer with no keys, nor any in what it holds: what its drawing is made from.
     var withoutMotion: Node {
         guard motion != nil || film != nil || holdsMotion else { return self }

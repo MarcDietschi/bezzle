@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreImage
 import Metal
+import VideoToolbox
 
 /// An artboard's film saved as a movie.
 ///
@@ -8,11 +9,48 @@ import Metal
 /// once (`FilmPictures`) and after that only placed, moment by moment, by the film's own
 /// arithmetic (`Node.placement`), so what is posed is what is saved. Core Image does the placing
 /// on the graphics card, straight into the pictures the movie's writer packs.
+///
+/// Gentle tones, a wide dark gradient, a soft shadow, a slow fade, are kept exact until the
+/// movie's own steps cut them, once: a piece that has them is drawn with sixteen bits to a
+/// colour (`FilmPictures.picture(deep:)`), the frame is put together in numbers as fine, and it
+/// is written straight into the kind of picture the movie packs, luma and chroma at the
+/// movie's depth. Cut to eight bits on the way and again by the packing, a gradient lay a
+/// quarter further from its true tones, in bands up to a tenth wider, than eight bits make it
+/// (`FilmBandingTests` measures it). The bands eight bits do make stay in an H.264 movie. No
+/// noise is laid over them to hide them: what packs a movie on a Mac irons noise that fine
+/// out again unless the movie is made many times larger, and what is left of it is further
+/// from the true tones than the clean steps are. A movie with ten bits (`Codec.hevc`) has
+/// steps a quarter as large instead.
 nonisolated enum FilmExport {
     struct Settings: Equatable, Sendable {
         /// Pixels to the artboard's point.
         var scale: CGFloat = 2
         var fps = 60
+        var codec = Codec.h264
+    }
+
+    /// How a movie is packed. Both are .mp4 files.
+    enum Codec: String, Sendable, CaseIterable {
+        /// H.264 with eight bits to a colour, which everything plays. A gentle dark gradient
+        /// shows the steps eight bits have, and no others.
+        case h264
+        /// HEVC (Main 10, named `hvc1`) with ten bits to a colour: steps a quarter as large,
+        /// for gentle gradients, soft shadows and slow fades. Plays wherever HEVC does: on
+        /// Apple's devices and in the browsers that have it (read back here with AVFoundation,
+        /// as QuickTime and Safari read it, with Chrome and with ffmpeg, 2026-11-14).
+        case hevc
+
+        /// The kind of picture its frames are handed over as: luma and chroma planes at its
+        /// depth, in video's range, which is what it packs. Nothing is rounded twice on the way.
+        fileprivate var pixels: OSType {
+            self == .hevc ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        }
+    }
+
+    /// Why a movie is not made: this Mac cannot pack one the way that was asked for.
+    struct CannotPack: LocalizedError, Equatable {
+        var errorDescription: String? { String(localized: "This Mac cannot save a movie of this kind.") }
+        var recoverySuggestion: String? { String(localized: "Save it as H.264 instead.") }
     }
 
     /// The longest side a movie is made with, in pixels.
@@ -64,30 +102,33 @@ nonisolated enum FilmExport {
     }
 
     /// One frame of the film as a picture of `size` pixels, composed exactly as the movie's
-    /// frames are.
+    /// frames are, with eight bits to a colour. `deep`, with sixteen: the frame before any
+    /// movie's steps have cut it, to hold a movie against.
     @MainActor
-    static func frame(of board: Node, at t: Double, size: CGSize, assets: Assets?) -> CGImage? {
+    static func frame(of board: Node, at t: Double, size: CGSize, assets: Assets?, deep: Bool = false) -> CGImage? {
         let size = CGSize(width: size.width.rounded(), height: size.height.rounded())
         guard size.width >= 1, size.height >= 1, board.frame.width > 0, board.frame.height > 0 else { return nil }
         var reel = Reel(board, size: size)
         let shot = reel.shot(at: t)
         var stills = [Still?](repeating: nil, count: reel.pieces.count), parts = stills
         for fresh in shot.fresh {
-            let still = FilmPictures.picture(of: fresh.subject, scale: fresh.scale, assets: assets, part: fresh.part).map(Still.init)
+            let still = FilmPictures.picture(of: fresh.subject, scale: fresh.scale, assets: assets, part: fresh.part, deep: true).map(Still.init)
             if fresh.part != nil { parts[fresh.piece] = still } else { stills[fresh.piece] = still }
         }
         let image = composed(stills, parts, shot, backdrop: board.filmBackdrop, board: board.frame.size, size: size)
-        return imaging.createCGImage(image, from: CGRect(origin: .zero, size: size), format: .RGBA8, colorSpace: sRGB)
+        return imaging.createCGImage(image, from: CGRect(origin: .zero, size: size), format: deep ? .RGBAh : .RGBA8, colorSpace: sRGB)
     }
 
     /// Writes the film of `board` (an artboard as it is seen; its frame's origin may be anywhere)
-    /// to `url` as an .mp4: H.264, sRGB, square pixels, `fps` frames a second and as long as the
-    /// film runs. It is written out of the way first (`workFile`) and put in its place when it is
-    /// whole, so a file already there is replaced only then, and stays as it was when the movie
-    /// is stopped or cannot be made. `progress` is told how far it is, from 0 to 1 when the file
-    /// is whole. Throws when the movie cannot be written, at once when nothing can be put at
-    /// `url` or the film runs longer than a movie may (`TooLong`), with nothing touched. When the
-    /// task it runs in is cancelled it stops, removes what it wrote and throws `CancellationError`.
+    /// to `url` as an .mp4: H.264 or HEVC as the settings say, sRGB, square pixels, `fps` frames
+    /// a second and as long as the film runs. It is written out of the way first (`workFile`)
+    /// and put in its place when it is whole, so a file already there is replaced only then,
+    /// and stays as it was when the movie is stopped or cannot be made. `progress` is told how
+    /// far it is, from 0 to 1 when the file is whole. Throws when the movie cannot be written,
+    /// at once when nothing can be put at `url`, the film runs longer than a movie may
+    /// (`TooLong`) or this Mac cannot pack such a movie (`CannotPack`), with nothing touched.
+    /// When the task it runs in is cancelled it stops, removes what it wrote and throws
+    /// `CancellationError`.
     @MainActor
     static func write(_ board: Node, assets: Assets?, to url: URL, settings: Settings = Settings(),
                       progress: @escaping @MainActor (Double) -> Void) async throws {
@@ -101,7 +142,7 @@ nonisolated enum FilmExport {
         try FileManager.default.createDirectory(at: work.deletingLastPathComponent(), withIntermediateDirectories: true)
         // The writer does not write over a file, such as one left by a save that was cut short.
         try? FileManager.default.removeItem(at: work)
-        let recorder = try Recorder(url: work, size: size, board: board, pieces: reel.pieces.count, fps: fps, assets: assets)
+        let recorder = try Recorder(url: work, size: size, board: board, pieces: reel.pieces.count, fps: fps, codec: settings.codec, assets: assets)
         do {
             try await recorder.start()
             for (k, t) in moments.enumerated() {
@@ -307,8 +348,10 @@ nonisolated enum FilmExport {
 
     /// Core Image on the graphics card, mixing in plain sRGB values as drawing does everywhere
     /// else in Bezzle (see `Renderer.imaging`), so a faded piece looks as it does on the canvas.
+    /// It works in sixteen bit numbers, so fading, blurring and scaling keep what the deep
+    /// pictures bring, down to the last step, where the movie's own depth takes over.
     private static let imaging: CIContext = {
-        let options: [CIContextOption: Any] = [.workingColorSpace: sRGB, .cacheIntermediates: false]
+        let options: [CIContextOption: Any] = [.workingColorSpace: sRGB, .workingFormat: CIFormat.RGBAh, .cacheIntermediates: false]
         if let device = MTLCreateSystemDefaultDevice() { return CIContext(mtlDevice: device, options: options) }
         return CIContext(options: options)
     }()
@@ -447,9 +490,9 @@ nonisolated enum FilmExport {
 
     /// What the movie is packed as. The colours are tagged as what they are, sRGB, so a player
     /// that reads the tags shows them as the canvas does.
-    private static func video(_ size: CGSize, fps: Int) -> [String: Any] {
+    private static func video(_ size: CGSize, fps: Int, codec: Codec) -> [String: Any] {
         [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
             AVVideoColorPropertiesKey: [
@@ -458,7 +501,7 @@ nonisolated enum FilmExport {
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
             ],
             AVVideoCompressionPropertiesKey: [
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                AVVideoProfileLevelKey: codec == .hevc ? kVTProfileLevel_HEVC_Main10_AutoLevel as String : AVVideoProfileLevelH264HighAutoLevel,
                 AVVideoAverageBitRateKey: bitRate(size, fps: fps),
                 AVVideoExpectedSourceFrameRateKey: fps,
                 // A whole picture every second, so the movie can be dragged through.
@@ -468,7 +511,9 @@ nonisolated enum FilmExport {
     }
 
     /// Bits a second for a movie of this size: enough that flat colour, hairlines and small
-    /// letters stay clean, about half as much again as video sites ask for.
+    /// letters stay clean, about half as much again as video sites ask for. The most it may
+    /// take: what packs it takes far less for a film that is mostly still, and HEVC less than
+    /// H.264 for the same film.
     static func bitRate(_ size: CGSize, fps: Int) -> Int {
         max(1_000_000, Int(size.width * size.height * (CGFloat(fps) * 0.1 + 3)))
     }
@@ -488,15 +533,18 @@ nonisolated enum FilmExport {
         /// The parts of pieces drawn sharper than their whole pictures, each the last drawn of its piece.
         private var parts: [Still?]
 
-        init(url: URL, size: CGSize, board: Node, pieces: Int, fps: Int, assets: Assets?) throws {
+        init(url: URL, size: CGSize, board: Node, pieces: Int, fps: Int, codec: Codec, assets: Assets?) throws {
             let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
             // What says how the movie is read comes first in the file, so it plays from a website
             // before all of it has arrived.
             writer.shouldOptimizeForNetworkUse = true
-            let input = AVAssetWriterInput(mediaType: .video, outputSettings: FilmExport.video(size, fps: fps))
+            let settings = FilmExport.video(size, fps: fps, codec: codec)
+            // Asked first: an input made with what cannot be packed here does not throw, it traps.
+            guard writer.canApply(outputSettings: settings, forMediaType: .video) else { throw CannotPack() }
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
             input.expectsMediaDataInRealTime = false
             let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferPixelFormatTypeKey as String: codec.pixels,
                 kCVPixelBufferWidthKey as String: Int(size.width),
                 kCVPixelBufferHeightKey as String: Int(size.height),
                 kCVPixelBufferMetalCompatibilityKey as String: true,
@@ -537,13 +585,16 @@ nonisolated enum FilmExport {
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
             guard let buffer = made else { throw failure }
             let image = FilmExport.composed(stills, parts, shot, backdrop: backdrop, board: board, size: size)
-            let destination = CIRenderDestination(pixelBuffer: buffer)
-            destination.colorSpace = FilmExport.sRGB
-            try FilmExport.imaging.startTask(toRender: image, from: CGRect(origin: .zero, size: size), to: destination, at: .zero).waitUntilCompleted()
-            // Said of every frame, so that packing it changes no colour.
+            // Said of every frame, and before it is filled: Core Image works out its luma and
+            // chroma by what is said here, each rounded to the movie's nearest step, once
+            // (measured: never more than half a step off, and by nothing on average), and
+            // packing it then changes no colour.
             CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
             CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_sRGB, .shouldPropagate)
             CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+            let destination = CIRenderDestination(pixelBuffer: buffer)
+            destination.colorSpace = FilmExport.sRGB
+            try FilmExport.imaging.startTask(toRender: image, from: CGRect(origin: .zero, size: size), to: destination, at: .zero).waitUntilCompleted()
             guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: CMTimeScale(fps))) else { throw failure }
         }
 
@@ -554,13 +605,13 @@ nonisolated enum FilmExport {
                 if item.part != nil { parts[item.piece] = picture.map(Still.init) } else { stills[item.piece] = picture.map(Still.init) }
             }
             guard fresh.count > 1 else {
-                for item in fresh { keep(item, FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets, part: item.part)) }
+                for item in fresh { keep(item, FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets, part: item.part, deep: true)) }
                 return
             }
             let assets = assets
             await withTaskGroup(of: (Int, FilmPictures.Picture?).self) { group in
                 for (k, item) in fresh.enumerated() {
-                    group.addTask { (k, FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets, part: item.part)) }
+                    group.addTask { (k, FilmPictures.picture(of: item.subject, scale: item.scale, assets: assets, part: item.part, deep: true)) }
                 }
                 for await (k, picture) in group { keep(fresh[k], picture) }
             }
