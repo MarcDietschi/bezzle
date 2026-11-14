@@ -94,6 +94,12 @@ struct AnimateStressTests {
         if !Set(store.pickedKeys).isSubset(of: store.film.keys) { out.append("keys count as picked that are not") }
         if store.gestureBefore != nil { out.append("a gesture was left open") }
         if hand.drag != nil || hand.held != nil { out.append("the timeline's hand still holds something") }
+        if hand.creep(0.1) { out.append("the timeline creeps along with nothing dragged") }
+        if store.animating, let part = store.film.window {
+            if part.fitted(to: store.filmWhole) != part { out.append("the timeline shows \(part) of a film \(store.filmWhole) long") }
+            let sheet = hand.scale(width: 600)
+            if !(sheet.perSecond > 0 && sheet.perSecond <= FilmWindow.closest + 1e-6 && sheet.start >= 0) { out.append("the timeline's sheet is \(sheet)") }
+        }
         if !(store.film.apart >= 0 && store.film.apart.isFinite) { out.append("layers \(store.film.apart) apart") }
         if let board = store.filmBoard {
             let rows = FilmRow.rows(of: board, open: store.film.open)
@@ -165,7 +171,8 @@ struct AnimateStressTests {
         func flags() -> NSEvent.ModifierFlags { one([[], [], [], .shift, .option, .command]) }
         func sheet() -> (rows: [FilmRow], scale: FilmScale, length: Double)? {
             guard let board = store.filmBoard else { return nil }
-            return (FilmRow.rows(of: board, open: store.film.open), FilmScale(width: 600, span: FilmScale.span(for: board.filmLength)), board.filmLength)
+            // As the card shows it: the whole film, or the part of it looked at closer.
+            return (FilmRow.rows(of: board, open: store.film.open), hand.scale(width: 600), board.filmLength)
         }
         /// A point of the sheet: on a bead as often as not, else anywhere on it or just off it.
         func spot(_ rows: [FilmRow], _ scale: FilmScale) -> CGPoint {
@@ -266,8 +273,13 @@ struct AnimateStressTests {
                 did("sheet press \(p) \(held.rawValue) x\(clicks) to \(to)")
                 bench.step {
                     hand.press(at: p, rows: rows, scale: scale, flags: held, clicks: clicks)
-                    for x in to { hand.dragged(to: CGPoint(x: x, y: p.y), by: x - p.x, rows: rows, scale: scale, length: length, flags: held) }
-                    hand.ended(scale: scale, flags: held)
+                    for x in to {
+                        // The sheet as it is by then: looked at closer, it creeps along under what is dragged past its end.
+                        let (scale, length) = (hand.scale(width: 600), store.filmBoard?.filmLength ?? length)
+                        hand.dragged(to: CGPoint(x: x, y: p.y), by: x - p.x, rows: rows, scale: scale, length: length, flags: held)
+                        if chance(0.4) { hand.creep(number(0...0.3)) }
+                    }
+                    hand.ended(scale: hand.scale(width: 600), flags: held)
                 }
             case 21:
                 guard let (rows, scale, length) = sheet() else { return }
@@ -278,8 +290,12 @@ struct AnimateStressTests {
                 did("ruler press \(x) x\(clicks) to \(to)")
                 bench.step {
                     hand.pressRuler(at: CGPoint(x: x, y: 10), scale: scale, length: length, clicks: clicks)
-                    for x2 in to { hand.dragged(to: CGPoint(x: x2, y: 10), by: x2 - x, rows: rows, scale: scale, length: length, flags: held) }
-                    hand.ended(scale: scale, flags: held)
+                    for x2 in to {
+                        let (scale, length) = (hand.scale(width: 600), store.filmBoard?.filmLength ?? length)
+                        hand.dragged(to: CGPoint(x: x2, y: 10), by: x2 - x, rows: rows, scale: scale, length: length, flags: held)
+                        if chance(0.4) { hand.creep(number(0...0.3)) }
+                    }
+                    hand.ended(scale: hand.scale(width: 600), flags: held)
                 }
             case 22:
                 guard let (rows, scale, _) = sheet() else { return }
@@ -313,7 +329,41 @@ struct AnimateStressTests {
                 did("key \(code)")
                 bench.key(code, flags: chance(0.2) ? .shift : [])
             case 26:
-                switch whole(0...5) {
+                switch whole(0...8) {
+                case 5:
+                    // The timeline looked at closer, or less close, about some point of it.
+                    let factor = chance(0.5) ? one([0.5, 0.8, 1.25, 2, 6, 40]) : number(-0.5...12), x = CGFloat(number(-20...620))
+                    did("timeline \(factor) times closer at \(x)")
+                    hand.zoom(by: factor, at: x, scale: hand.scale(width: 600))
+                case 6:
+                    if chance(0.75) {
+                        let dx = CGFloat(chance(0.2) ? number(-50_000...50_000) : number(-300...300))
+                        did("timeline along by \(dx)")
+                        hand.scroll(by: dx, scale: hand.scale(width: 600))
+                    } else {
+                        did("timeline double tap")
+                        hand.smartZoom(at: CGFloat(number(-20...620)), scale: hand.scale(width: 600))
+                    }
+                case 7:
+                    // A spring's bounce, to the number or from its chip; or another pace for the keys in hand.
+                    switch whole(0...2) {
+                    case 0:
+                        let bounce = chance(0.1) ? one([.nan, .infinity, -3, 7]) : number(-0.2...1.2)
+                        did("bounce \(bounce)")
+                        bench.step { store.setBounce(bounce) }
+                    case 1:
+                        var turns: [CGFloat] = []
+                        for _ in 0..<whole(0...4) { turns.append(CGFloat(number(-200...200))) }
+                        did("spring chip turned \(turns)")
+                        bench.step {
+                            for dx in turns { hand.turnBounce(by: dx) }
+                            hand.bounceTurned()
+                        }
+                    default:
+                        let kind = one(MotionEase.Kind.allCases)
+                        did("pace \(kind)")
+                        bench.step { store.setPace(kind) }
+                    }
                 case 0:
                     let mode = one([CanvasMode.design, .prototype, .inspect])
                     did("to \(mode) and back")
