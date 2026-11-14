@@ -4665,8 +4665,10 @@ final class DesignCanvas {
     /// A double click goes into a group, one level each time; on a text, it starts typing.
     private func doubleTapped(_ args: DoubleTappedRoutedEventArgs?) {
         // Animated, a double click is the film's (`MotionHand`, a shape's points taken in hand
-        // there): the design's own points, groups and words are not opened under it.
-        if animating { return }
+        // there): the design's own points, groups and words are not opened under it. Nor under a
+        // prototype, whose hand has the second click already (`FlowHand.down`: a screen played, a
+        // thread's note written, a group gone into), nor under Inspect, where nothing changes.
+        if animating || prototyping || inspecting { return }
         // A double click that began placing a picture, or ended it, is placing's alone.
         if pictureTookPress {
             pictureTookPress = false

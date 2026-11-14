@@ -380,7 +380,12 @@ extension WindowsCore {
                 WindowsCore.beginGesture()
                 return true
             }
-            if let id = sourceAt(v) {
+            if var id = sourceAt(v) {
+                // A second click goes into a group, as on the design.
+                if clicks >= 2, let n = seen.node(id), n.isGroup, !n.isCopy,
+                   let inner = WindowsCore.pick(p, inGroup: id, zoom: Double(zoom)) {
+                    id = seen.linkable(inner) ?? inner
+                }
                 choose(id, adding: shift)
                 press = Press(kind: .layer, at: v, id: id)
                 return true

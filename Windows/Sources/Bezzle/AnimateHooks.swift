@@ -18,6 +18,7 @@ import BezzleCore
 ///                                  with ",caught" after the seconds it catches on the keys it
 ///                                  passes, as a bare hand's does (else as with Ctrl held)
 ///       watch=seconds              the same without moving the playhead, while the film plays
+///       mode=0…3                   Design, Prototype, Inspect or Animate
 ///   BEZZLE_SCRUB_OUT=<file>        where a scrub or a watch writes how the app kept up (else the
 ///                                  trace, BEZZLE_TRACE)
 /// A scrub's line says how many steps the app found the time for a second, the gaps between them,
@@ -69,6 +70,7 @@ enum AnimateHooks {
         case "play": desk.play()
         case "start": desk.play(fromStart: true)
         case "pause": desk.pause()
+        case "mode": session.mode = Int(rest) ?? 0
         case "pick":
             if rest == "camera" {
                 desk.pickCamera()
