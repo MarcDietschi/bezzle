@@ -19,16 +19,22 @@ file was made (2026-11-14): look before starting on one.
 
 ### Mac and shared
 
-- **Shapes with other points:** a Shape key only moves the points the design has, so one outline
-  becomes another only with the same points in the same order. A morph between outlines with
-  other numbers of points (a star into a circle) would need the two matched or resampled
-  (`Bezzle/Model/PathMotion.swift`).
-- **Shape keys after a design change of corners:** they follow their points when points are
-  added, taken away or dragged (`MotionTrack.realigned`, from `BezzleDocument.setPoints`), but a
-  rectangle given round corners in the design, or one whose corners change, gets an outline with
-  other points, and its Shape keys then change nothing.
-- **Shape keys in points:** a layer resized in the design keeps its Shape changes the same size,
-  as Move's are; they do not grow with it.
+- **Shape keys that go with the design** (2026-11-14: a layer resized, rounded or flipped in the
+  design takes its Shape keys along, `BezzleDocument.followOutlines`). Left: a key another person
+  adds for the old size while a resize is merged stays unscaled; a rectangle's corners rounded
+  and squared again lose a little of the keyed reshaping (about 47 of 50 points come back); a new
+  component copy made at another size takes the component's keys unscaled.
+- **Outlines with other points** (2026-11-14: points added and taken away at the playhead, and
+  From… in the Pose card's Shape row gives a shape another's outline). A shape given another's
+  outline gets extra points where the outline before has points it has none for (a rectangle
+  after a triangle has six), and points taken in hand between two such keys are the matched
+  outline with those extras. From… ignores a 3D turn of either shape and takes only shapes on
+  the film's own artboard. Its menu and the hover preview were never looked at in a running
+  window; adding and deleting points is driven through canvas events in tests only.
+- **Outline keys in Bezzle 1.7:** it shows the design at such a key and keeps the key whole. Where
+  the design's outline gets more points while such a key keeps its old count of noughts (points
+  added in 1.7, or one person keying while another edits the design's points), 1.7 shows the
+  stretch to that key bent; this Bezzle reads the key right and rewrites it at its next change.
 - **Not built** *(from notes, 2026-11-13)*: depth of field, animating looks (colour, corner,
   border). On the timeline, a marquee over keys (several are picked with Shift).
 - **The timeline looked at closer** (2026-11-14): the pinch, two fingers moving it along, the
@@ -80,6 +86,12 @@ file was made (2026-11-14): look before starting on one.
 - **A spring's bounce** has no control, and choosing Spring for keys that are springs puts their
   bounce back to 0.3 (`Host/Animating.swift`); the Mac keeps it (`setPace`). The AI server's
   `get_animation` lists the bounce of a shader input's keys on the Mac; unchecked on Windows.
+- **Shape keys** do not follow a resized, rounded or flipped design (one call:
+  `next.followOutlines(since:start:)` in `Host/Editing.swift` after `fitCarousels`), and points
+  added or deleted in Animate, From… and the AI server's `outlineOf` are not there
+  (`Host/FilmPoints.swift` still passes `pointsFixed`, `AnimatePanel.swift` has no From… chip,
+  `MCP/MCPAnimate.swift` refuses a path with other points). A film with outline keys made on the
+  Mac plays there, since the drawing is shared; unchecked in the VM.
 - **A double click in Prototype and Inspect** may also reach WinUI's double tap and start editing
   the design underneath, as it did in Animate before 114d057 fixed it there.
 
