@@ -417,21 +417,16 @@ there.
 
 ## Housekeeping
 
-- **1.8.1 is committed and not released** (2026-11-14: 224f91a and 52906a7, not pushed). Bezzle
-  1.8 on the Mac closes when the camera is picked in Animate while a layer's Fill, Border or
-  Shadow card shows (`Bezzle/Views/FilmLooks.swift` drew the cards once more with nothing
-  picked). `AnimateLooksTests.theCardsLetGoWhenTheCameraIsPicked` breaks off on 1.8's code and
-  passes now; the whole suite passed on 52906a7 (2121 tests, 18 skipped). Left, at Erik's word:
-  the push and `Scripts/release.sh`, for the Mac alone. Windows has no look cards in Animate and
-  stays at 1.8.
 - **The VM's disk** has 42.8 GB free of 127 since 2026-11-14, when every finished agent's
   folder in `C:\src` was removed (`win-*`, `shader-check`). Left there beside `Bezzle` and
   `bezzle-release`: `curves`, `cutout-samples`, `import-samples`, a few build logs, and about 250
   old `C:\bezzle\BezzleDesktop-*.log` files.
 
-- **1.8 as released, not watched** (2026-11-14): an installed 1.7 taking the update, on the Mac
-  (Sparkle's window with the notes, a delta) or on Windows. The released Mac copy itself was not
-  launched, since it shares Erik's container: a sandboxed Release build of the same commit under
-  a test id was (home, a design window, a film with the camera's focus drawn, movies saved in
-  H.264 and HEVC through the AI server). The Windows installers were not run; the Arm64 release
-  build they hold was launched once in the VM.
+- **1.8 and 1.8.1 as released, not watched** (2026-11-14; 1.8.1 is the Mac's alone, for 1.8
+  closing when the camera was picked in Animate beside a layer's look cards, and Windows stays
+  at 1.8): an installed 1.7 or 1.8 taking the update, on the Mac (Sparkle's window with the
+  notes, a delta) or on Windows. The released Mac copies themselves were not launched, since
+  they share Erik's container: a sandboxed Release build of 1.8's commit under a test id was
+  (home, a design window, a film with the camera's focus drawn, movies saved in H.264 and HEVC
+  through the AI server), and 1.8.1 had the tests alone, in Debug. The Windows installers were
+  not run; the Arm64 release build they hold was launched once in the VM.
