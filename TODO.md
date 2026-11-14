@@ -29,8 +29,15 @@ file was made (2026-11-14): look before starting on one.
   other points, and its Shape keys then change nothing.
 - **Shape keys in points:** a layer resized in the design keeps its Shape changes the same size,
   as Move's are; they do not grow with it.
-- **Not built** *(from notes, 2026-11-13)*: zooming the timeline with a pinch, a control for a
-  spring's bounce, depth of field, animating looks (colour, corner, border).
+- **Not built** *(from notes, 2026-11-13)*: depth of field, animating looks (colour, corner,
+  border). On the timeline, a marquee over keys (several are picked with Shift).
+- **The timeline looked at closer** (2026-11-14): the pinch, two fingers moving it along, the
+  double tap and the creep under a drag were driven by tests and by made events in a test copy,
+  never felt on a trackpad (the creep's pace, the four times of the double tap, the catch at the
+  whole film). A pinch over the canvas while the timeline listens was checked in `FilmZoomTests`
+  only. The Bounce number and the Spring chip were photographed in German at one window size.
+- **Driving a copy:** `press=` of `BEZZLE_FILM` does not reach SwiftUI's gestures in the
+  timeline's header; `AnimateBounceTests.theChipItselfTellsADragFromAClick` shows a way that does.
 - **Unchecked:** a movie saved from the sandboxed build onto another disk, where it is copied into
   place instead of renamed. (Checked 2026-11-14 with a sandboxed copy of the Debug build and
   `BEZZLE_FILM` › `movie=`: a new movie through the save panel, one replacing another, and a place
@@ -48,6 +55,14 @@ file was made (2026-11-14): look before starting on one.
 - **Shapes** (2026-11-14): the Draw chip's home box is drawn solid where the Mac's is dashed, and
   chips do not grow a little under the pointer. The AI server's shape and draw keys were built
   but not run on Windows.
+- **The timeline shows the whole film only** (2026-11-14): no looking closer, no moving a part
+  along, no page turned as the film plays, no strokes finer than tenths. The shared `FilmWindow`
+  and `FilmScale.zoomed` and `scrolled` are there for it (`Bezzle/Model/FilmKeys.swift`, not yet
+  built for Windows or the browser); `Host/FilmHand.swift` builds its scale from the whole film
+  and moves keys by the pointer's distance, not by the moment under it.
+- **A spring's bounce** has no control, and choosing Spring for keys that are springs puts their
+  bounce back to 0.3 (`Host/Animating.swift`); the Mac keeps it (`setPace`). The AI server's
+  `get_animation` lists the bounce of a shader input's keys on the Mac; unchecked on Windows.
 - **A double click in Prototype and Inspect** may also reach WinUI's double tap and start editing
   the design underneath, as it did in Animate before 114d057 fixed it there.
 
