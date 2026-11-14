@@ -294,4 +294,33 @@ struct FilmFocusTests {
         c.setKey(.cameraSwing, [0], at: 0)
         #expect(c.focus(on: [rising.id], at: 1, pieces: c.filmPieces()) == 80)
     }
+
+    /// A group that keeps its layers' depth is no card: each layer in it stands where the group
+    /// and its own lift put it, and is blurred by that.
+    @Test func inAGroupThatKeepsItsLayersDepthEachLayerIsBlurredByWhereItStands() throws {
+        let low = card("Low", CGRect(x: 0, y: 0, width: 60, height: 40))
+        let high = card("High", CGRect(x: 80, y: 0, width: 60, height: 40), lifted: 100)
+        var held = Node(kind: .group, name: "Held", frame: CGRect(x: 130, y: 130, width: 140, height: 40))
+        held.children = [low, high]
+        held.transform3D = Transform3D(x: 0, y: 0, z: 50)
+        held.keepsDepth = true
+        let b = board([held])
+        let pieces = b.filmPieces()
+        // Sharp at 50, where the group holds its own page: the layer in that page is sharp, and
+        // the one a hundred above it has ten of its own points of blur, shown 800 / 650 as large.
+        let seen = camera { $0.blur = 10; $0.focus = 50 }
+        func soft(_ id: UUID) throws -> FilmSoft {
+            let piece = try #require(pieces.last { $0.layers.contains(id) })
+            return try #require(b.placement(of: piece, at: 0, camera: seen).soft)
+        }
+        #expect(try soft(low.id).range(in: CGRect(origin: .zero, size: size)).most < 1e-6)
+        #expect(try near(soft(high.id).blur(at: CGPoint(x: 200, y: 150)), 10 * far / (far - 150), 1e-6))
+        #expect(b.focus(on: [low.id], at: 0, pieces: pieces) == 50 && b.focus(on: [high.id], at: 0, pieces: pieces) == 150)
+        // As a card, the group is one flat picture where it is held: all of it at 50.
+        var flat = b
+        flat.children[0].keepsDepth = nil
+        let whole = flat.filmPieces()
+        let piece = try #require(whole.last { $0.layers.contains(held.id) })
+        #expect(try #require(flat.placement(of: piece, at: 0, camera: seen).soft).range(in: CGRect(origin: .zero, size: size)).most < 1e-6)
+    }
 }
