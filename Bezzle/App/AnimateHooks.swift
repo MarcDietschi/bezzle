@@ -8,7 +8,8 @@ import AppKit
 ///       play | pause | start       play from the playhead, stop, play from the start
 ///       pick=name,name | pick=camera   pick layers by name ("Artboard/name" on that artboard alone), or the camera
 ///       pose=property:v[,v]        pose what is picked at the playhead (move, scale, turn, fade, lift,
-///                                  tilt, swing, blur; cameraMove, cameraZoom, cameraRoll, cameraTilt, cameraSwing)
+///                                  tilt, swing, blur; cameraMove, cameraZoom, cameraRoll, cameraTilt, cameraSwing,
+///                                  cameraFocus, cameraBlur)
 ///       key=name:property:t:v[,v][:pace]   set one key exactly (name "camera" for the camera)
 ///       look=fill:rrggbb | look=border:rrggbb | look=width:6 | look=corners:24 | look=shadow:30
 ///                                  change how what is picked looks at the playhead, as its cards do:
@@ -19,6 +20,7 @@ import AppKit
 ///       length=4 | once=1          the film's own settings
 ///       clear                      take all motion from what is picked
 ///       fly                        fly the camera to what is picked
+///       focus                      have the camera be sharp on what is picked
 ///       press=x,y | press=x,y>x,y  press the window at a point measured from its top left, as a
 ///                                  picture of it shows, and let go, or drag to another first;
 ///                                  "+x,y>x,y" keeps the button down there, for a picture of what
@@ -45,7 +47,9 @@ import AppKit
 ///                                  BEZZLE_SCRUB_OUT (or the log)
 ///       scrub=from,to,seconds      drag the playhead from one moment to the other and back, as a
 ///                                  hand on the timeline would, 120 times a second; how often the
-///                                  app found the time to is written to BEZZLE_SCRUB_OUT (or the log)
+///                                  app found the time to is written to BEZZLE_SCRUB_OUT (or the log),
+///                                  and under a camera that blurs, how many frames the stage's lens
+///                                  made meanwhile and how long one took
 ///       watch=seconds              the same without moving the playhead, while the film plays
 ///       movie=path | movie=ask[:folder]   save the film as a movie there, or where the save panel
 ///                                  says (opened in a folder), as Save as Movie… does but without
@@ -168,6 +172,7 @@ enum AnimateHooks {
         var steps: [Double] = []
         var timer: Timer?
         var pictures = 0, parts = 0
+        var lensFrames = 0, lensSpent = 0.0
 
         init(_ store: DocumentStore, from: Double, to: Double?, seconds: Double) {
             self.store = store
@@ -182,6 +187,8 @@ enum AnimateHooks {
             s.began = CACurrentMediaTime()
             s.pictures = store.canvas?.filmStage.picturesMade ?? 0
             s.parts = store.canvas?.filmStage.partsMade ?? 0
+            s.lensFrames = store.canvas?.filmStage.lensFrames ?? 0
+            s.lensSpent = store.canvas?.filmStage.lensSpent ?? 0
             let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { _ in MainActor.assumeIsolated { s.tick() } }
             RunLoop.main.add(timer, forMode: .common)
             s.timer = timer
@@ -202,10 +209,13 @@ enum AnimateHooks {
             let sorted = gaps.sorted()
             func at(_ q: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * q))] }
             let stage = store.canvas?.filmStage
-            let line = String(format: (to == nil ? "watched: " : "scrubbed: ") + "steps %d in %.2f s, %.1f a second; gap ms p50 %.1f p90 %.1f p99 %.1f max %.1f; over 17 ms %d, over 34 ms %d; pictures %d, parts %d\n",
+            // Under a camera that blurs, the frames the stage's lens made meanwhile, and how long one took.
+            let frames = (stage?.lensFrames ?? 0) - lensFrames, spent = (stage?.lensSpent ?? 0) - lensSpent
+            let lens = frames > 0 ? String(format: "; lens frames %d, %.1f a second, %.1f ms each", frames, Double(frames) / (now - began), spent * 1000 / Double(frames)) : ""
+            let line = String(format: (to == nil ? "watched: " : "scrubbed: ") + "steps %d in %.2f s, %.1f a second; gap ms p50 %.1f p90 %.1f p99 %.1f max %.1f; over 17 ms %d, over 34 ms %d; pictures %d, parts %d",
                               steps.count, now - began, Double(steps.count) / (now - began), at(0.5), at(0.9), at(0.99), sorted.last ?? 0,
                               gaps.filter { $0 > 17 }.count, gaps.filter { $0 > 34 }.count,
-                              (stage?.picturesMade ?? 0) - pictures, (stage?.partsMade ?? 0) - parts)
+                              (stage?.picturesMade ?? 0) - pictures, (stage?.partsMade ?? 0) - parts) + lens + "\n"
             if let path = ProcessInfo.processInfo.environment["BEZZLE_SCRUB_OUT"], !path.isEmpty {
                 let url = URL(fileURLWithPath: path)
                 let had = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
@@ -337,6 +347,7 @@ enum AnimateHooks {
         case "once": store.setFilm("Play Once") { $0.once = rest == "1" ? true : nil }
         case "clear": store.clearFilmMotion()
         case "fly": store.flyCamera(to: store.posedLayers)
+        case "focus": store.focusCamera(on: store.posedLayers)
         case "press": press(rest, store)
         case "lift": press(rest, store, lift: true)
         case "escape": FilmHand.pretendsEscape = rest == "1"
