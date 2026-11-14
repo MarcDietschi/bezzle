@@ -534,6 +534,38 @@ struct FilmExportTests {
         #expect(frames[0].distance(to: frames[1]).mean > 8)
     }
 
+    /// A layer that stands still while its colour and its corners are keyed (`LookTrack`).
+    @Test func aLayerWhoseLookIsKeyedChangesInTheMovie() async throws {
+        var b = board(CGSize(width: 160, height: 120))
+        b.film = Film(length: 0.6)
+        var card = box("Card", CGRect(x: 40, y: 30, width: 80, height: 60), red)
+        card.setLookKey(.fill(0), change: [0, 0, 0, 0, 0], at: 0, ease: .linear)
+        card.setLookKey(.fill(0), change: LookColor.change(to: blue, over: red), at: 0.5, ease: .linear)
+        card.setLookKey(.corners, change: [0, 0, 0, 0], at: 0, ease: .linear)
+        card.setLookKey(.corners, change: [30, 30, 30, 30], at: 0.5, ease: .linear)
+        b.children = [card]
+        #expect(b.filmPieces().contains { $0.changes })
+        let url = scratch(), settings = FilmExport.Settings(scale: 2, fps: 10)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await FilmExport.write(b, assets: nil, to: url, settings: settings) { _ in }
+        let moments = FilmExport.moments(of: b, fps: settings.fps)
+        #expect(moments.count == 6 && moments.last == 0.5)
+        // Every frame is the film as it is composed at its moment: red and square, then on its
+        // way, then blue and round.
+        let size = FilmExport.size(of: b, settings: settings)
+        var frames: [Pixels] = []
+        for k in [0, 3, 5] {
+            let read = try await frame(k, of: url, fps: settings.fps)
+            let made = try Pixels(#require(FilmExport.frame(of: b, at: moments[k], size: size, assets: nil)))
+            #expect(read.distance(to: made).mean < 4, "frame \(k): \(read.distance(to: made))")
+            frames.append(read)
+        }
+        #expect(frames[0].shows(red, at: 160, 120, within: 30) && frames[2].shows(blue, at: 160, 120, within: 30))
+        #expect(!frames[1].shows(red, at: 160, 120, within: 30) && !frames[1].shows(blue, at: 160, 120, within: 30))
+        // Its corner: the card's at first, the page's once it is round.
+        #expect(frames[0].shows(red, at: 86, 66, within: 30) && frames[2].shows(.white, at: 86, 66, within: 30))
+    }
+
     @Test func cancellingRemovesTheFileAndSaysSo() async throws {
         let b = shortFilm(3), url = scratch()
         defer { try? FileManager.default.removeItem(at: url) }

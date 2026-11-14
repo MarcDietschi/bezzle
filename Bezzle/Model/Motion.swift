@@ -412,11 +412,12 @@ nonisolated extension Node {
     }
 
     /// Whether the layer itself moves in time: any of its own properties has keys, or an input
-    /// of its shader does.
-    var isAnimated: Bool { motionProperties.contains { !$0.isCamera } || !inputTracks.isEmpty }
+    /// of its shader does, or one of its looks (`LookTrack`).
+    var isAnimated: Bool { motionProperties.contains { !$0.isCamera } || !inputTracks.isEmpty || hasLooks }
 
-    /// The tracks of every key a layer has at a moment: its own properties', and its shader's inputs'.
-    var layerTracks: [String] { MotionProperty.layer.map(\.rawValue) + inputTracks }
+    /// The tracks of every key a layer has at a moment: its own properties', its shader's inputs'
+    /// and its looks'.
+    var layerTracks: [String] { MotionProperty.layer.map(\.rawValue) + inputTracks + lookTracks }
 
     /// What a track's value is where the design has it: a property's rest, or no change to an input.
     func rest(of track: String) -> [Double] {
@@ -878,7 +879,9 @@ nonisolated extension BezzleDocument {
 
     private static func crowded(_ node: Node) -> [String] {
         guard let motion = node.motion else { return [] }
-        return motion.compactMap { (MotionProperty(rawValue: $0.key) != nil || ShaderFill.input(of: $0.key) != nil) && $0.value.isCrowded ? $0.key : nil }
+        return motion.compactMap { key, track in
+            track.isCrowded && (MotionProperty(rawValue: key) != nil || ShaderFill.input(of: key) != nil || LookTrack(name: key) != nil) ? key : nil
+        }
     }
 
     private static func hasCrowdedKeys(_ list: [Node]) -> Bool {

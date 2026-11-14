@@ -104,6 +104,8 @@ nonisolated extension Node {
     /// Takes away what is in a slot; the ones over it come down a place. Taking away the first
     /// while there are more makes the next the first; the last to go is only turned off.
     mutating func remove(_ look: Look, at slot: Int) {
+        // Their keys in Animate go with them, and come down with those that do.
+        looksFollow(removing: look, at: slot, of: slots(look))
         switch look {
         case .fill:
             Stack.remove(slot, &fill, &moreFills) { $0.on = false }
@@ -117,6 +119,8 @@ nonisolated extension Node {
     /// Moves what is in one slot to another, the ones between moving up or down a place. A
     /// picture stays at the bottom, where a repeat grid's cells and a stack's posts keep their own.
     mutating func move(_ look: Look, from: Int, to: Int) {
+        // Their keys in Animate move with them.
+        if look != .fill || canMove(.fill, from: from, to: to) { looksFollow(moving: look, from: from, to: to, of: slots(look)) }
         switch look {
         case .fill:
             guard canMove(.fill, from: from, to: to) else { return }

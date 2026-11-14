@@ -314,7 +314,7 @@ nonisolated extension Node {
                 } else if own || deep || (stood && inside) {
                     flush()
                     out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders,
-                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes,
+                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes || n.looksChange,
                                          flat: deep || (stood && n.transform3D?.pinned != true), stand: FilmStand(n, eye: eye, origin: origin)))
                 } else if inside, n.comesApart {
                     flush()
@@ -323,7 +323,7 @@ nonisolated extension Node {
                     // Masked, faded or the like as a whole: drawn again as what it holds moves.
                     flush()
                     out.append(FilmPiece(kind: .layer, layers: [n.id], origin: origin, holders: holders,
-                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes))
+                                         changes: n.holdsMotion || n.holdsMovingShader || n.reshapes || n.looksChange))
                 } else {
                     run.append(n.id)
                 }
@@ -481,6 +481,8 @@ extension Node {
         // Its shader's inputs are inside it, and posed with what it holds, own or not; so is
         // its outline, where its points are and how much of it is drawn.
         var n = inputTracks.isEmpty ? self : withInputs(at: t)
+        // So is how it looks: its colours, widths, corners and shadows (`looked(at:)`).
+        if hasLooks { n = n.looked(at: t) }
         if reshapes { n = n.reshaped(at: t) }
         if !children.isEmpty, holdsMotion { n.children = children.map { $0.posed(at: t) } }
         guard own, isAnimated else { return n }

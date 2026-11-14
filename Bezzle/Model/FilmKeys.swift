@@ -14,15 +14,21 @@ struct FilmKeyRef: Hashable {
     var property: MotionProperty?
     /// One shader input's key, in place of a property's.
     var input: String?
+    /// One look's key, in place of a property's: a fill's colour, a border's width, the corners.
+    var look: LookTrack?
     /// The moment, in thousandths of a second.
     var ms: Int
 
-    init(_ layer: UUID, _ property: MotionProperty? = nil, input: String? = nil, at time: Double) {
+    init(_ layer: UUID, _ property: MotionProperty? = nil, input: String? = nil, look: LookTrack? = nil, at time: Double) {
         self.layer = layer
         self.property = property
         self.input = input
+        self.look = look
         ms = Int((time * 1000).rounded())
     }
+
+    /// Every key the layer has at that moment, rather than one property's, input's or look's.
+    var whole: Bool { property == nil && input == nil && look == nil }
 
     var time: Double { Double(ms) / 1000 }
 }
@@ -52,15 +58,16 @@ struct FilmRow: Identifiable, Equatable {
     var name: String
     var kind: Node.Kind?
     var marks: [Mark] = []
+    /// One look's keys alone, likewise.
+    var look: LookTrack?
 
-    /// Whether it is one property's or one input's line, opened out of its layer's.
-    var single: Bool { property != nil || input != nil }
+    /// Whether it is one property's, one input's or one look's line, opened out of its layer's.
+    var single: Bool { property != nil || input != nil || look != nil }
 
     /// Whether a picked key is on this line: one of its own, or any of its layer's on the layer's line.
     func holds(_ ref: FilmKeyRef) -> Bool {
         guard ref.layer == layer else { return false }
-        let whole = ref.property == nil && ref.input == nil
-        return whole || !single || (ref.property == property && ref.input == input)
+        return ref.whole || !single || (ref.property == property && ref.input == input && ref.look == look)
     }
 
     /// A moment with a key.
@@ -72,6 +79,9 @@ struct FilmRow: Identifiable, Equatable {
         var given: Bool
         /// How it is come to from the one before, on a property's own line.
         var pace: MotionTrack.Pace?
+        /// A look's key for what the design no longer has, a fill taken away or one colour made
+        /// a gradient: it changes nothing, and its bead is faint.
+        var gone = false
     }
 
     /// The camera's line, then one for each layer that moves, the front ones first as the
@@ -84,7 +94,8 @@ struct FilmRow: Identifiable, Equatable {
                               name: camera ? String(localized: "animate.camera", defaultValue: "Camera") : node.name,
                               kind: camera ? nil : node.kind)
             let inputs = camera ? [] : node.inputTracks
-            row.marks = marks(of: node, tracks: properties.map(\.rawValue) + inputs)
+            let looks = camera ? [] : node.looks
+            row.marks = marks(of: node, tracks: properties.map(\.rawValue) + inputs + looks.map(\.name))
             out.append(row)
             guard open.contains(node.id) else { return }
             for p in properties {
@@ -96,6 +107,11 @@ struct FilmRow: Identifiable, Equatable {
                 guard let input = ShaderFill.input(of: track) else { continue }
                 var line = FilmRow(id: row.id + ":" + track, layer: node.id, camera: false, input: input, name: input)
                 line.marks = marks(of: node, tracks: [track])
+                out.append(line)
+            }
+            for look in looks {
+                var line = FilmRow(id: row.id + ":" + look.name, layer: node.id, camera: false, name: look.title(line: node.kind == .line), look: look)
+                line.marks = marks(of: node, tracks: [look.name])
                 out.append(line)
             }
         }
@@ -122,14 +138,16 @@ struct FilmRow: Identifiable, Equatable {
             let rest = node.rest(of: name)
             // A shape whose keys hold outlines of their own is paced as it is drawn.
             let outline = name == MotionProperty.shape.rawValue && track.holdsOutlines ? node.ownOutline : nil
+            let gone = LookTrack(name: name).map { !node.fits($0) } ?? false
             for (i, key) in track.keys.enumerated() {
                 let home = MotionTiming.alike(key.v, rest)
                 if let j = out.firstIndex(where: { MotionTiming.same($0.t, key.t) }) {
                     out[j].home = out[j].home && home
                     out[j].given = out[j].given && key.given == true
+                    out[j].gone = out[j].gone && gone
                 } else {
                     let pace = names.count == 1 && i > 0 ? outline.map { track.shapePace(of: i - 1, from: $0) } ?? track.pace(of: i - 1, rest: rest) : nil
-                    out.append(Mark(t: key.t, home: home, given: key.given == true, pace: pace))
+                    out.append(Mark(t: key.t, home: home, given: key.given == true, pace: pace, gone: gone))
                 }
             }
         }
@@ -255,8 +273,8 @@ struct FilmMarquee: Equatable {
 
     /// The keys under it, as the lines show them, each line `line` points tall: a bead on a
     /// layer's line, or on the camera's, is every key that has at that moment, one on a
-    /// property's or a shader input's line that key alone. Where a layer's line and its
-    /// properties' are both under it, the layer's bead stands for them all.
+    /// property's, a shader input's or a look's line that key alone. Where a layer's line and
+    /// its properties' are both under it, the layer's bead stands for them all.
     func keys(of rows: [FilmRow], line: CGFloat, scale: FilmScale) -> Set<FilmKeyRef> {
         let near = Double(Self.reach / scale.perSecond)
         let early = min(from, to) - near, late = max(from, to) + near
@@ -267,7 +285,7 @@ struct FilmMarquee: Equatable {
             let middle = (CGFloat(i) + 0.5) * line
             guard middle >= high, middle <= low else { continue }
             for mark in row.marks where mark.t >= early && mark.t <= late {
-                let ref = FilmKeyRef(row.layer, row.property, input: row.input, at: mark.t)
+                let ref = FilmKeyRef(row.layer, row.property, input: row.input, look: row.look, at: mark.t)
                 if row.single { own.append(ref) } else { out.insert(ref) }
             }
         }
