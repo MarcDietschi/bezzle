@@ -1170,7 +1170,9 @@ struct Regions: @unchecked Sendable {
     ///
     /// And a region that one colour lies all round, a colour nothing like its own, stays at a
     /// smaller size: at `tiny` times `least`.
-    func withoutSpecks(_ labels: Labels, colors: [SIMD3<Int32>], least: Int, faint: Double = 0, tiny: Double = 1) -> Labels {
+    ///
+    /// With `pieces`, the samples across a pixel, short thin pieces between two shapes go too.
+    func withoutSpecks(_ labels: Labels, colors: [SIMD3<Int32>], least: Int, faint: Double = 0, tiny: Double = 1, pieces: Int = 0) -> Labels {
         let W = W, H = H, l = labels.label.p, id = id.p
         var area = area
         var first = [Int32](repeating: -1, count: count)
@@ -1222,6 +1224,43 @@ struct Regions: @unchecked Sendable {
                     let apart = max(gap(label[r], label[Int(target)]), 1)
                     let allowed = Double(least) * min(30, (faint / apart) * (faint / apart))
                     if Double(area[r]) >= allowed {
+                        // Unless it is a short piece of something thin lying between two
+                        // shapes, with no more of it either side: what is left of a line
+                        // along their edge that the picture did not keep. It goes to the
+                        // shapes beside it, from the outside in, and their edge is whole again.
+                        let round = borders.values.reduce(0, +), most = borders.values.max() ?? 0, thin = 1.6
+                        if pieces > 0, Int(area[r]) < 12 * least, 4 * (round - most) >= round, 2 * Double(area[r]) <= thin * Double(round * pieces) {
+                            var left = pixels
+                            while !left.isEmpty {
+                                var taken: [(Int32, Int32)] = [], next: [Int32] = []
+                                for at in left {
+                                    let i = Int(at), X = i % W, Y = i / W
+                                    var to: Int32 = -1
+                                    if X > 0, id[i - 1] >= 0 { to = id[i - 1] }
+                                    if to < 0, X < W - 1, id[i + 1] >= 0 { to = id[i + 1] }
+                                    if to < 0, Y > 0, id[i - W] >= 0 { to = id[i - W] }
+                                    if to < 0, Y < H - 1, id[i + W] >= 0 { to = id[i + W] }
+                                    if to >= 0 { taken.append((at, to)) } else { next.append(at) }
+                                }
+                                if taken.isEmpty { break }
+                                for (at, to) in taken {
+                                    id[Int(at)] = to
+                                    l[Int(at)] = label[Int(to)]
+                                    labels.near.p[Int(at)] = 255
+                                    area[Int(to)] += 1
+                                }
+                                left = next
+                            }
+                            for at in left {
+                                id[Int(at)] = target
+                                l[Int(at)] = label[Int(target)]
+                                labels.near.p[Int(at)] = 255
+                                area[Int(target)] += 1
+                            }
+                            area[r] = 0
+                            label[r] = label[Int(target)]
+                            continue
+                        }
                         target = -2
                     }
                 } else if target >= 0, Double(area[r]) >= Double(least) * tiny,

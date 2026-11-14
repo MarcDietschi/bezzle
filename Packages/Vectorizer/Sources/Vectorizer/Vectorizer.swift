@@ -297,7 +297,7 @@ public enum Vectorizer {
             // In a picture taken at its word the dot of an i, a comma and the eye of an e are
             // smaller than that and stay: down to a seventh of it, unless little detail is wanted.
             let tiny = clean ? min(1, 1.0 / 7 + 4 * bold) : 1
-            labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail), tiny: tiny)
+            labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail), tiny: tiny, pieces: clean || shrink >= 1.3 ? 0 : scale)
             regions = Regions.find(labels)
         }
         // Colours that run into each other were read as bands: each run one region again, and
