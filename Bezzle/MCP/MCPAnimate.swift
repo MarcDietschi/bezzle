@@ -26,6 +26,7 @@ extension MCPTools {
                 ("pace", choice(MotionEase.Kind.allCases.map(\.rawValue), "How the value arrives here from the key before. Left out, a new key is auto and a key already there keeps its pace.")),
                 ("bounce", number("With pace spring: how far past it goes, 0 (not at all) to 1; 0.3 otherwise.")),
                 ("to", list("The camera's key only, in place of property and value: the layers it looks at then, whole with room round them, wherever they are at that moment. Sets cameraMove and cameraZoom together, as Bezzle's own fly-to does; tilt, swing and roll stay as they are.")),
+                ("focusOn", list("The camera's key only, in place of property and value, alone or beside to: the layers it is sharp on then, wherever they stand at that moment. Sets cameraFocus to the distance their middles stand at; half way between the nearest and the furthest of several. cameraBlur stays as it is, and where that is 0 nothing shows of it.")),
                 ("input", text("In place of property: an input of the layer's shader (a uniform of its fill.shader, as get_animation lists them with what the design sets), keyed like a property. value is how far it is from the design there, as many numbers as the input has: [0.4, -0.2, 0] turns a colour input more red and less green; 0 for each is the design.")),
                 ("look", choice(Self.lookWords, "In place of property: how the layer looks, keyed like a property. value is the look itself at that time, not a change: for fill and border a colour (\"#RRGGBB\", or \"#RRGGBBAA\"), or where it is a gradient its colours, as many as the design's has, each a colour or {color, offset}; for borderWidth points; for corners one radius or four, [top left, top right, bottom right, bottom left]; for shadow {color, x, y, blur, spread}, any of them. The design's own look is the key that changes nothing.")),
                 ("which", number("With look: which of several fills, borders or shadows, counted from 1 at the bottom as get_design lists them; the first otherwise.")),
@@ -53,7 +54,10 @@ extension MCPTools {
                        chosen (auto otherwise), a spring's with its bounce, how far past the key it goes, 0 to 1. Values are changes from the design, never places of their own: move is points right \
                        and down from where the design has the layer, scale is times its size, turn is degrees clockwise added to its \
                        rotation, fade is times its opacity, lift is points nearer the eye, tilt and swing are degrees tipped back and \
-                       swung round, blur is points of blur added. A path, rectangle, ellipse or line also has draw, [from, to], how \
+                       swung round, blur is points of blur added. The camera's cameraBlur is how much it blurs what stands nearer \
+                       or further than what it is sharp at, in points of blur for every hundred points off it, and cameraFocus is \
+                       what it is sharp at, in points nearer the eye than the point of the artboard it looks at (0 is the page \
+                       there). A path, rectangle, ellipse or line also has draw, [from, to], how \
                        much of its outline is drawn, each 0 (its start) to 1 (its end), and shape, its outline changed: each shape key \
                        is given as path, its outline then in the layer's own points (its frame's top left at 0, before it is turned), \
                        which has the design's points, each moved, or other points altogether, and such a layer lists outline, its \
@@ -97,7 +101,15 @@ extension MCPTools {
                        is where it looks, in points from the artboard's middle; cameraZoom is how many times closer than seeing the \
                        whole artboard; cameraRoll, cameraTilt and cameraSwing are degrees. At rest (cameraMove [0, 0], cameraZoom 1, \
                        the others 0) it shows the whole artboard straight on, and a fly over is a few camera keys with tilt and zoom, \
-                       ending at rest. A layer filled with a shader also has its inputs keyed (input in place of property): its \
+                       ending at rest. The camera has a lens too. cameraBlur is how much it blurs what stands nearer or further than \
+                       what it is sharp at: points of blur for every hundred points off it, 0 to 100 (0, as designed, blurs nothing; 4 \
+                       is a gentle lens, 12 a strong one). cameraFocus is what it is sharp at, in points nearer the eye than the point \
+                       of the artboard it looks at, along its line of sight: 0 is the page there, a layer with lift 120 under a camera \
+                       that looks straight down stands at 120, and under a camera tipped back the foot of the page is nearer and its \
+                       top further. A camera key with focusOn in place of a value is sharp on the layers named, wherever they stand \
+                       then. Only what stands off the focus is blurred, so it shows where layers have lift or the camera is tipped or \
+                       swung, and not on a flat page seen straight on. One cameraBlur key holds for the whole film, the usual way to \
+                       give a film its lens, and a focus pulled from one layer to another is two keys with focusOn. A layer filled with a shader also has its inputs keyed (input in place of property): its \
                        colours, intensities and the like, each value a change from what the design sets, so a gradient can shift its \
                        colours as the film plays; the shader's own time runs by itself. How a layer looks is keyed too (look in \
                        place of property): its fill's and its border's colour, a gradient's colours and where they lie, a border's \
@@ -493,15 +505,18 @@ extension MCPTools {
         var keys: [FilmKey] = []
         /// Camera keys that look at layers: where, worked out once the call's moves are in place.
         var aims: [(ids: [UUID], time: Double, ease: MotionEase?)] = []
+        /// Camera keys that are sharp on layers: at what distance, worked out once the call's
+        /// other keys are in place, the camera's among them.
+        var focuses: [(ids: [UUID], time: Double, ease: MotionEase?)] = []
         /// Keys of shader inputs, each a change from the input the design sets.
         var inputKeys: [(id: UUID, input: String, change: [Double], time: Double, ease: MotionEase?)] = []
         /// Keys of how layers look, each the look itself at its moment.
         var lookKeys: [LookKey] = []
         for (i, spec) in keySpecs.enumerated() {
             let place = "keys[\(i)]"
-            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce", "to", "input", "path", "outlineOf", "look", "which"], place)
+            try Self.known(spec, ["layer", "layers", "property", "time", "value", "pace", "bounce", "to", "focusOn", "input", "path", "outlineOf", "look", "which"], place)
             if spec["look"] != nil {
-                guard spec["property"] == nil, spec["input"] == nil, spec["to"] == nil, spec["path"] == nil, spec["outlineOf"] == nil else {
+                guard spec["property"] == nil, spec["input"] == nil, spec["to"] == nil, spec["focusOn"] == nil, spec["path"] == nil, spec["outlineOf"] == nil else {
                     throw MCPError("\(place): a key is of a property, of a shader input or of a look, one of them.")
                 }
                 guard let named = try refs(spec) else { throw MCPError("\(place): say whose look, as layer.") }
@@ -516,6 +531,22 @@ extension MCPTools {
                 continue
             }
             guard spec["which"] == nil else { throw MCPError("\(place): which goes with look.") }
+            if let on = spec["focusOn"] {
+                let named = (on as? String).map { [$0] } ?? (on as? [String])
+                guard let named, !named.isEmpty else { throw MCPError("\(place).focusOn is the layers the camera is sharp on, by id or name.") }
+                guard spec["layer"] == nil, spec["layers"] == nil, spec["value"] == nil, spec["input"] == nil, spec["path"] == nil, spec["outlineOf"] == nil else {
+                    throw MCPError("\(place): a key with focusOn is the camera's, and its value is worked out: leave layer, layers and value out.")
+                }
+                // Beside to, the key is both: there, and sharp on them.
+                if spec["to"] == nil, let word = try Read.string(spec["property"], "\(place).property"), word.lowercased() != "camerafocus" {
+                    throw MCPError("\(place): focusOn sets cameraFocus; leave property out.")
+                }
+                let ids = try layers(named, place)
+                try ids.forEach(onFilm)
+                guard let time = try Self.motionTime(spec["time"], "\(place).time") else { throw MCPError("\(place) needs time: seconds from the film's start.") }
+                focuses.append((ids, time, try Self.motionEase(spec, place)))
+                if spec["to"] == nil { continue }
+            }
             if let to = spec["to"] {
                 let named = (to as? String).map { [$0] } ?? (to as? [String])
                 guard let named, !named.isEmpty else { throw MCPError("\(place).to is the layers the camera looks at, by id or name.") }
@@ -694,6 +725,10 @@ extension MCPTools {
                     n.setKey(.cameraZoom, MotionProperty.cameraZoom.clamped([seen.zoom]), at: aim.time, ease: aim.ease)
                 }
             }
+            for focus in focuses {
+                guard let now = doc.node(board.id), let sharp = now.focus(on: focus.ids, at: focus.time, pieces: now.filmPieces(loose: Set(focus.ids))) else { continue }
+                doc.update(board.id) { $0.setKey(.cameraFocus, MotionProperty.cameraFocus.clamped([sharp]), at: focus.time, ease: focus.ease) }
+            }
             if setsFilm {
                 doc.update(board.id) { n in
                     var film = n.film ?? Film()
@@ -710,7 +745,7 @@ extension MCPTools {
         if changed {
             if everything { done.append("All motion taken from \(board.name).") } else if taken > 0 { done.append("\(Self.counted(taken, "key")) taken away.") }
             for move in moves { done.append("\(move.move.rawValue) given to \(Self.counted(move.ids.count, "layer")).") }
-            let set = keys.reduce(0) { $0 + max($1.ids.count, 1) } + aims.count * 2 + inputKeys.count + lookKeys.count
+            let set = keys.reduce(0) { $0 + max($1.ids.count, 1) } + aims.count * 2 + focuses.count + inputKeys.count + lookKeys.count
             if set > 0 { done.append("\(Self.counted(set, "key")) set.") }
             if setsFilm { done.append("The film's settings changed.") }
         } else if edits {
@@ -721,6 +756,8 @@ extension MCPTools {
         for key in keys {
             for id in key.ids.isEmpty ? [board.id] : key.ids {
                 guard let n = store.doc.node(id), let track = n[track: key.property], track.keys.count == 1 else { continue }
+                // A lens that stays as it is for the whole film is the usual, and no slip.
+                guard key.property != .cameraBlur, key.property != .cameraFocus else { continue }
                 guard alone.insert("\(id.uuidString) \(key.property.rawValue)").inserted else { continue }
                 let who = key.ids.isEmpty ? "The camera" : n.name
                 let stays = key.property == .shape ? "has that outline" : "stays at \(Self.plain(track.keys[0].v))"
@@ -731,6 +768,14 @@ extension MCPTools {
             guard let n = store.doc.node(key.id), let track = n[track: key.look.name], track.keys.count == 1 else { continue }
             guard alone.insert("\(key.id.uuidString) \(key.look.name)").inserted else { continue }
             warnings.append("\(n.name) has one key of that look, so it looks so for the whole film: a change takes two keys that differ.")
+        }
+        // A focus that shows nothing: said, as nothing in the answer would tell.
+        let sharpened = focuses.map(\.time) + keys.filter { $0.property == .cameraFocus }.map(\.time)
+        let blurred = keys.contains { $0.property == .cameraBlur && ($0.value.first ?? 0) > 0 }
+        if let time = sharpened.first(where: { after.camera(at: $0).blur <= 0 }) {
+            warnings.append("The camera blurs nothing at \(Self.plain(time)) s, so what it is sharp at shows nothing there: give cameraBlur a key, 4 for a gentle lens. One key of it holds for the whole film.")
+        } else if !sharpened.isEmpty || blurred, !after.filmHasDepth {
+            warnings.append("Nothing on \(after.name) stands off the page and the camera looks straight at it, so everything is as far as its focus and nothing is blurred: give layers lift, or tip the camera with cameraTilt.")
         }
         if !keys.isEmpty || !moves.isEmpty || !lookKeys.isEmpty, let end = after.film?.length, end > 0, after.lastKey > end + 0.0042 {
             warnings.append("The film ends at \(Self.plain(end)) s, and keys after that never show: give a longer length, or null to let it run as long as its last key.")
@@ -761,7 +806,7 @@ extension MCPTools {
                 warnings.append("These keys are on layers of \(which), and post \(shown + 1) is in front, the one the film shows: each post's layers have keys of their own. deck with show brings a post to the front, and with post lists its layers' ids.")
             }
         }
-        let camera = everything || removals.contains { $0.ids == nil } || keys.contains { $0.ids.isEmpty }
+        let camera = everything || removals.contains { $0.ids == nil } || keys.contains { $0.ids.isEmpty } || !aims.isEmpty || !focuses.isEmpty
         // Shown to the person last, as the film is now.
         if shows {
             Self.showFilm(of: board.id, in: store)

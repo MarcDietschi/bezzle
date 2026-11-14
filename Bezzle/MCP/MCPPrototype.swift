@@ -462,7 +462,9 @@ extension MCPTools {
         layers part from the page like real layers of a scene.
         - The camera: cameraMove, cameraZoom, cameraRoll, cameraTilt, cameraSwing; a key with to looks at layers, framed whole. \
         A fly over is a few camera keys with tilt and zoom, ending at rest (move [0, 0], zoom 1, the rest 0).
-        - Focus: blur on a layer, or a focus move, pulls attention; blur what lies behind while what matters is sharp.
+        - Focus: the camera has a lens. One cameraBlur key (4 gentle, 12 strong) blurs what stands nearer or further than \
+        what it is sharp at, and a camera key with focusOn is sharp on layers then: lifted layers part from a soft page, and \
+        the focus is pulled from one to the next. On a flat page, blur on a layer, or a focus move, pulls attention.
         - Paths, rectangles, ellipses and lines: draw [from, to] draws the outline on as a pen does (a signature, an underline, \
         a check mark, a chart's line); shape changes its outline, one becoming another whatever points each has (a blob that \
         breathes, a wave, a star turning into a circle, an icon into the next), each key given as path in the layer's own \
