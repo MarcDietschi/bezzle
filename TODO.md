@@ -8,13 +8,6 @@ here, such as `Web/README.md` › Not done in the prototype.
 Items marked *(from notes)* were carried over from session notes and not checked again when this
 file was made (2026-11-14): look before starting on one.
 
-## In progress
-
-- **Windows: scrubbing and playing in Animate keep pace.** The Mac's speed work (66d6a3c) being
-  brought to Windows: the four film placements that still search the artboard per piece
-  (`Host/FilmStage.swift`, `Host/FilmMovie.swift`, `Host/MotionHand.swift`), a scrub measure for
-  Windows, and the Windows sides of what slowed the Mac. Not in 1.7.
-
 ## Animate
 
 ### Mac and shared
@@ -101,52 +94,48 @@ file was made (2026-11-14): look before starting on one.
 
 ### Windows
 
-- **Not done** (from the port, 2026-11-13): pinch and twist on the camera, the timeline's springs
-  and the trackpad's taps of feedback, the small blur of the Focus chip, sharper parts while the
-  film plays, time labels on the render sheet.
-- **Different from the Mac:** movies go up to 120 frames a second (the Mac's 240); the stage is
-  put together on the processor and was only measured in the VM, never on a real PC.
-- **Shapes** (2026-11-14): the Draw chip's home box is drawn solid where the Mac's is dashed, and
-  chips do not grow a little under the pointer. The AI server's shape and draw keys were built
-  but not run on Windows.
-- **The timeline shows the whole film only** (2026-11-14): no looking closer, no moving a part
-  along, no page turned as the film plays, no strokes finer than tenths. The shared `FilmWindow`
-  and `FilmScale.zoomed` and `scrolled` are there for it (`Bezzle/Model/FilmKeys.swift`, not yet
-  built for Windows or the browser); `Host/FilmHand.swift` builds its scale from the whole film
-  and moves keys by the pointer's distance, not by the moment under it.
+Brought up on 2026-11-14 (`Windows/README.md` › Animate): scrubbing and playing keep pace (in
+the VM, a film of 35 pieces: 11 steps a second before, 44 now; with the camera picked 7 before,
+28 now; playing 31 frames a second before, 43 now), the timeline looked at closer, a spring's
+bounce, Shape keys that go with the design, points added and taken away, From…, Tilt and Swing
+of several layers as one body, a look's key that is that look's alone, and the AI server keying
+outlines and looks. What is left:
+
+- **A look cannot be keyed by hand:** no look cards at the playhead, no beads and no corner dots
+  (the AI server can key looks). To build: `LookCards.swift` reads `WindowsCore.looks(ids)` and
+  changes through `WindowsCore.change`/`preview` in `Host/LookEditing.swift`; read through
+  `Node.looked(at:)`, route through `Node.poseLooks`, add to `Inspector.showAnimate()`;
+  `FilmDesk.poseLook` shows the call.
+- **The timeline has no marquee over keys,** and bare sheet dragged still moves the playhead
+  there. The shared `FilmMarquee` (`Bezzle/Model/FilmKeys.swift`) is tested and there to use.
 - **A movie's gentle tones** are still rounded twice (pieces and the frame in eight bits, then
   NV12), and there is no ten bit choice; the AI server's `codec` is the Mac's alone. What it
   takes is in e652531's report: `bz_film_frame` composing in sixteen bits, the stand-in pictures
   carrying depth, P010 and an HEVC Main 10 encoder where the PC has one, measured with
   `FilmBandingTests` and `TEST_RUNNER_ANIMATE_BANDING_MOVIE`.
-- **A spring's bounce** has no control, and choosing Spring for keys that are springs puts their
-  bounce back to 0.3 (`Host/Animating.swift`); the Mac keeps it (`setPace`). The AI server's
-  `get_animation` lists the bounce of a shader input's keys on the Mac; unchecked on Windows.
-- **Shape keys** do not follow a resized, rounded or flipped design (one call:
-  `next.followOutlines(since:start:)` in `Host/Editing.swift` after `fitCarousels`), and points
-  added or deleted in Animate, From… and the AI server's `outlineOf` are not there
-  (`Host/FilmPoints.swift` still passes `pointsFixed`, `AnimatePanel.swift` has no From… chip,
-  `MCP/MCPAnimate.swift` refuses a path with other points). A film with outline keys made on the
-  Mac plays there, since the drawing is shared; unchecked in the VM.
-- **The timeline has no marquee over keys,** and bare sheet dragged still moves the playhead
-  there. The shared `FilmMarquee` (`Bezzle/Model/FilmKeys.swift`) is tested and there to use.
-- **The film's parts:** `Host/FilmMovie.swift` and `Host/FilmStage.swift` ask
-  `insetBy(…).contains(…)` of Foundation's own `CGRect`, whose `contains` is `union(r) == self`
-  as the browser's stand-in was, so Windows may draw parts needlessly as the browser did
-  (`WebFilm.holds` is the remedy there). Not measured. The Mac was measured (2,495 askings in
-  eight films, none answered wrongly) and draws nothing needlessly.
-- **Keyed looks** (the Mac's since 2026-11-14) are not built for Windows and were never run in
-  the VM. The stage and the movie should draw them through shared code (`piece.changes`,
-  `Node.posed`) and the timeline lists their lines from the shared `FilmRow.rows`, but
-  `Host/FilmHand.swift` and `Host/Animating.swift` (`tracks(of:)`, `retime`) do not pass `look:`,
-  so a key on a look's line stands for every key of the layer at that moment when dragged, paced
-  or deleted; twice on a look's line and "Add Key Here" hold the whole layer (`holdHere`) where
-  the Mac toggles that look's key; `FilmRow.Mark.gone` is not drawn faint. There are no look
-  cards at the playhead in `AnimatePanel.swift`, no beads and no corner dots, so a look cannot
-  be keyed by hand (to call: `Node.looked(at:)`, `poseLooks(at:_:)`, `fits`, `lookValue(_:at:)`,
-  `setLookKey`). The AI server has no `look` in `animate` and lists none in `get_animation`.
-- **A double click in Prototype and Inspect** may also reach WinUI's double tap and start editing
-  the design underneath, as it did in Animate before 114d057 fixed it there.
+- **A movie's frames a second:** 172 at most, fewer for large frames (144 at 2560×1440, 64 at
+  3840×2160): H.264's levels as Media Foundation's encoder keeps them; the Mac goes to 240.
+- **A movie's frames lie one frame late** in the file as AVFoundation reads it (the first at
+  1/30 s in a 30 fps movie). Older than 2026-11-14; cause not looked into, not checked in a
+  Windows player.
+- **What Windows gives an app no way to do:** two fingers turned on the camera (a Windows
+  touchpad tells an app of no such gesture), taps of feedback on a touchpad.
+- **Different from the Mac:** no sharper parts while the film plays (pictures are drawn on the
+  main thread only; they come once the film rests); the Spring chip is not a dial (the number
+  sets the bounce); the timeline's seconds and lines do not glide when the scale changes or a
+  line opens; no two-finger double tap on the timeline, the stroke under the lines cannot be
+  dragged, no tick at the whole film; with a shape's points in hand the pointer stays the arrow
+  (the Mac shows the pen with a plus), and a shape pointed at in From…'s menu lights in the
+  layers list only.
+- **Never tried on a real touchpad** (the VM has none): the pinch on the camera, the canvas and
+  the timeline, and whether the lines' ScrollViewer swallows a pinch or a sideways pan. The
+  timeline card's height on its spring was built but not looked at in the VM.
+- **Unchecked:** a film with outline keys or look keys made on the Mac opened in the VM (ones
+  made on Windows through the shared calls play); a shader input key's bounce in the AI
+  server's `get_animation` (no shader fill could be made in the VM); the x64 build of this
+  work before the release's own.
+- **The stage** is put together on the processor and was measured in the VM only, never on a
+  real PC.
 
 ## Shaders
 
@@ -281,8 +270,7 @@ window, only in tests and in pictures the renderer made. What that left:
 - **Windows** has all three since 2026-11-14 (the card and the AI server turn bodies, the group's
   switch, the look from the side with Alt; `Windows/README.md` › The app), measured against the
   Mac's renderer (`Windows/VM/depth-agreement.sh`) and seen in the app's window. Left there:
-  Animate's Pose card keys Tilt and Swing of several layers each alone (`Host/Animating.swift`,
-  `pose(_:number:to:)` should call `poseInDepth`); Escape does not let go of what is picked in
+  Escape does not let go of what is picked in
   Design, so it looks from the front only with nothing picked; a look from the side cannot be
   begun in a read-only design or while looking back at versions; with no tiles, an artboard
   looked at from the side is drawn whole at every step of the drag (not measured on a large
@@ -295,12 +283,6 @@ window, only in tests and in pictures the renderer made. What that left:
 
 ## The welcome tour
 
-- **Windows:** the lessons on Vectorize and Animate (2026-11-14) were looked at with
-  `bezzle-render` only, never in the app's window.
-- **Windows, the tour's film:** turning to Animate keeps an artboard clear of a timeline of four
-  lines only and centres it both ways (`DesignCanvas.frameFilm`, `FilmTimelineView.foot`); the Mac
-  counts the film's lines and moves it only the way it must (5b0c1f4). The postcard's film has
-  seven lines, so its foot can lie under the timeline and its words leave the view.
 - **Windows releases 1.5 to 1.7 shipped the tour without its photo** (grey boxes in Photo editing,
   Masks, Adaptive layout and Gradients and pictures; seen in the release's build folder and with
   the render tool, not in an installed copy). `Scripts/release-windows.sh` paints the tour's
@@ -349,6 +331,9 @@ room's hands and presence, four languages, the icon library in the core, and mem
 - **The icon library** is read by the core (`bz.icons`), but no page uses it and `publish.sh`
   does not copy `Icons.deflate`; placing an icon would be editing, which the viewer leaves out
   at Erik's wish.
+- **The core's rectangles** answer `contains` by the edges since 9d78526 (Windows' fix, in the
+  `Platform` folder both compile); the viewer was built with it but its film was not compared
+  with the Mac's again after it.
 - **Unchecked:** the film with the open fonts the published page uses (compared with Apple's
   only), in Safari and Firefox, on a phone, a WebGL context lost mid-film.
 - **Windows, not checked after these commits:** the build (`Platform`, `Web` and `Bezzle/Model`
