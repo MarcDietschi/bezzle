@@ -8,6 +8,8 @@ extension DocumentStore {
         writingNote = nil
         flowPreview = nil
         if prototyping {
+            // Looking from the side is a way of designing: the table shows every artboard from the front.
+            lookFromTheFront()
             if editingText != nil { canvas?.endEditing() }
             tool = .select
             editingPath = nil

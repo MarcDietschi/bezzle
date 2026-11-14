@@ -44,12 +44,20 @@ enum Tool: String, CaseIterable {
 final class DocumentStore {
     private(set) var doc: BezzleDocument {
         didSet {
+            // A design brought back by Undo, or come from elsewhere, is looked at as this one is.
+            let looking = looks.isEmpty ? nil : looks
+            if doc.looks != looking { doc.looks = looking }
             version += 1
             if !doc.hasSameLayers(as: oldValue) { layersVersion += 1 }
             versions.presentChanged()
             if animating { filmDesignChanged() }
         }
     }
+    /// From where each artboard's scene is looked at for now, when not from the front: a way of
+    /// looking, kept here beside the design and handed to it (`BezzleDocument.looks`) so that
+    /// everything on the canvas sees layers where they show. Never an undo step, never saved,
+    /// and only while designing: seen as a prototype, inspected or animated, all is from the front.
+    private(set) var looks: [UUID: DepthLook] = [:]
     /// Counts the changes that added, took away or moved layers among the others.
     @ObservationIgnored private var layersVersion = 0
     /// Counts the document's changes, so what is worked out from it is worked out once per change.
@@ -375,6 +383,22 @@ final class DocumentStore {
 
     /// The design as the drag going on began, to tell what it has changed so far.
     var gestureBefore: BezzleDocument? { gestureStart?.doc }
+
+    /// Looks at an artboard's scene from the side (`DepthLook`), or from the front again with nil.
+    func look(at board: UUID, from look: DepthLook?) {
+        var next = looks
+        if let look, !look.isFront, doc.node(board)?.isArtboard == true { next[board] = look.held } else { next[board] = nil }
+        guard next != looks else { return }
+        looks = next
+        doc.looks = next.isEmpty ? nil : next
+    }
+
+    /// Every artboard from the front again.
+    func lookFromTheFront() {
+        guard !looks.isEmpty else { return }
+        looks = [:]
+        doc.looks = nil
+    }
 
     private func record(_ before: Snapshot, _ action: LocalizedStringResource) {
         guard let undoManager else { return }

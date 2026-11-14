@@ -468,6 +468,7 @@ extension SelectionInspector {
                 depthField("Z", range: -10_000...10_000, scrub: 1, lead: lead, get: { Double($0.z) }, set: { $0.z = CGFloat($1) })
             }
             Caption("On the canvas, drag the knob in its middle to aim it. Hold Control while you move a layer to bring it nearer or push it away. Just outside a side, a drag turns anything in depth.")
+            Caption("Hold Control and drag beside the layers to look at an artboard from the side.")
         }
     }
 

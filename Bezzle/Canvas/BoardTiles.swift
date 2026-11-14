@@ -60,6 +60,8 @@ final class BoardTiles {
         /// Counted afresh whenever it looks different, so a tile drawn away from the main thread
         /// from how it looked before is not kept.
         var version: Int
+        /// From where its tiles show it, when not from the front.
+        var look: DepthLook?
     }
 
     /// Draws tiles away from the main thread; without it, they are made in the frame.
@@ -136,23 +138,29 @@ final class BoardTiles {
     /// another thread, for an artboard left alone. Returns whether the canvas should be drawn again
     /// soon to finish the job.
     func draw(_ board: Node, in ctx: CGContext, visible: CGRect, shadowPixels: CGFloat, now: CFTimeInterval, deadline: CFTimeInterval,
-              live: Bool, still: Bool = true, make: (CGRect, CGFloat, Bool) -> CGImage?,
+              live: Bool, still: Bool = true, look: DepthLook? = nil, make: (CGRect, CGFloat, Bool) -> CGImage?,
               away: (@Sendable (CGRect, CGFloat) -> CGImage?)? = nil) -> Bool {
         // Taken out while it is worked on, so its tiles are not copied on every change.
         var entry = boards.removeValue(forKey: board.id) ?? {
             versions += 1
-            return Board(node: board, changed: -.infinity, backdrops: Damage.backdrops(of: board),
-                         overview: Self.overviewStep(board.frame.size, shadowPixels: shadowPixels), shadowPixels: shadowPixels, version: versions)
+            return Board(node: board, changed: -.infinity, backdrops: Damage.backdrops(of: board, look: look),
+                         overview: Self.overviewStep(board.frame.size, shadowPixels: shadowPixels), shadowPixels: shadowPixels, version: versions,
+                         look: look)
         }()
         /// Whether it looks different in this very frame.
         var changedNow = false
-        if entry.node != board {
+        if entry.node != board || entry.look != look {
             versions += 1
             entry.version = versions
-            let damage = Damage.between(entry.node, board)
+            var damage = Damage.between(entry.node, board, look: look)
+            // Looked at from elsewhere, what stands off the page shows elsewhere; the page stays.
+            if entry.look != look, let changed = damage {
+                damage = changed.union(Damage.looked(entry.node, from: entry.look, to: look)).union(Damage.looked(board, from: entry.look, to: look))
+            }
             forget(in: &entry, where: damage)
             entry.node = board
-            entry.backdrops = Damage.backdrops(of: board)
+            entry.look = look
+            entry.backdrops = Damage.backdrops(of: board, look: look)
             if damage?.isNull != true {
                 entry.changed = now
                 changedNow = true
@@ -449,11 +457,31 @@ final class BoardTiles {
 enum Damage {
     /// Null when they look the same; nil when they differ all over, such as when the artboard
     /// itself changed. Background blurs over what changed are left out: see `behind`.
-    static func between(_ old: Node, _ new: Node) -> CGRect? {
+    static func between(_ old: Node, _ new: Node, look: DepthLook? = nil) -> CGRect? {
         guard shell(old) == shell(new) else { return nil }
         var damage = CGRect.null
         // The artboard is as big as it was, so it is seen from where it was (`Eye.stage`).
-        compare(old.children, new.children, .zero, .zero, spread: 0, eye: Eye.stage(new.frame.size), into: &damage)
+        compare(old.children, new.children, .zero, .zero, spread: 0, eye: Eye.stage(new.frame.size).looking(look), into: &damage)
+        return damage
+    }
+
+    /// Where an artboard looks different looked at from another side (`DepthLook`): where what
+    /// stands off its page showed and shows. All that lies in the page stays as it was.
+    static func looked(_ board: Node, from old: DepthLook?, to new: DepthLook?) -> CGRect {
+        var damage = CGRect.null
+        let eyes = [Eye.stage(board.frame.size).looking(old), Eye.stage(board.frame.size).looking(new)]
+        func walk(_ nodes: [Node], _ origin: CGPoint, spread: CGFloat) {
+            for node in nodes where !node.hidden {
+                if Perspective.inDepth(node) {
+                    for eye in eyes {
+                        damage = damage.union(Renderer.reach(of: node, eye: eye.inside(origin)).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -spread - 1, dy: -spread - 1))
+                    }
+                } else if node.isGroup {
+                    walk(node.children, CGPoint(x: origin.x + node.frame.minX, y: origin.y + node.frame.minY), spread: spread + effects(node))
+                }
+            }
+        }
+        walk(board.children, .zero, spread: 0)
         return damage
     }
 
@@ -468,9 +496,9 @@ enum Damage {
     }
 
     /// Where each background blur on an artboard reaches, in its coordinates.
-    static func backdrops(of board: Node) -> [CGRect] {
+    static func backdrops(of board: Node, look: DepthLook? = nil) -> [CGRect] {
         var out: [CGRect] = []
-        let eye = Eye.stage(board.frame.size)
+        let eye = Eye.stage(board.frame.size).looking(look)
         func walk(_ nodes: [Node], _ origin: CGPoint) {
             for node in nodes where !node.hidden {
                 if let blur = node.blur, blur.on, blur.background {

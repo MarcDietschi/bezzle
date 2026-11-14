@@ -134,6 +134,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         return tool
     }()
 
+    /// Looking at an artboard from the side: the drag that turns the look, the posts under what
+    /// stands off the page, and the word that looks from the front again.
+    private(set) lazy var lookTool: LookTool = {
+        let tool = LookTool(store: store)
+        tool.redraw = { [weak self] in self?.needsDisplay = true }
+        return tool
+    }()
+
     /// A selected repeat grid's handles and gaps, and the copies of a layer selected in one of its cells.
     private(set) lazy var gridTool: GridTool = {
         let tool = GridTool(store: store)
@@ -438,6 +446,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         options.artboardShadowInk = RGBA(CanvasInk.shadow)
         // A picture wanted at a new size is read away from here; what showed it is made again then.
         options.picturesLater = true
+        // Artboards looked at from the side: here alone, on the canvas.
+        if !store.looks.isEmpty { options.looks = store.looks }
         if store.assets.ready == nil {
             store.assets.ready = { [weak self] name in
                 self?.tiles.forget(showing: name)
@@ -510,6 +520,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if developTool.animating { redrawSoon() }
         outlineTool.draw(ctx, scale: deviceScale)
         depthTool.draw(ctx, scale: deviceScale)
+        if !store.prototyping { lookTool.draw(ctx, in: bounds) }
         gridTool.draw(ctx, scale: deviceScale)
         dropTool.draw(ctx, scale: deviceScale, in: bounds)
         resourceDropTool.draw(ctx, scale: deviceScale, in: bounds)
@@ -651,7 +662,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             var alone = options
             alone.settling = false
             let more = tiles.draw(node, in: ctx, visible: visible, shadowPixels: 28 * deviceScale, now: now, deadline: deadline,
-                                  live: options.settling, still: still, make: { rect, step, changing in
+                                  live: options.settling, still: still, look: options.looks?[node.id], make: { rect, step, changing in
                 var making = options
                 // While it is being changed, its background blurs show what they last showed, and
                 // catch up once it is left alone.
@@ -1144,6 +1155,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         shapeBuilder.hover(v, flags: flags)
         outlineTool.hover(v, flags: flags)
         depthTool.hover(v, flags: flags)
+        lookTool.hover(v)
         gridTool.hover(v)
         deckTool.hover(v)
         componentTool.hover(v)
@@ -1297,6 +1309,8 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // A word offered after a change is taken before anything else.
         if deckTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
         if maskTool.offerDown(at: convert(event.locationInWindow, from: nil)) { return }
+        // The word by an artboard looked at from the side looks from the front again.
+        if lookTool.wordDown(at: convert(event.locationInWindow, from: nil)) { return }
         if !deckTool.spreading, componentTool.down(at: convert(event.locationInWindow, from: nil)) { return }
         window?.makeFirstResponder(self)
         // A selected text's handles resize it while it is typed into, and with the Text tool in
@@ -1462,6 +1476,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             return
         }
 
+        // Control on nothing takes the scene and turns the look: an artboard seen from the side.
+        if event.modifierFlags.contains(.control), lookTool.down(at: v) { return }
+
         let base = shift ? store.selection : []
         if !shift { store.selection = [] }
         interaction = .marquee(start: p, base: base, inside: store.doc.artboard(at: p)?.id)
@@ -1577,6 +1594,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if shapeBuilder.dragging { shapeBuilder.drag(to: v, flags: flags); return }
         if outlineTool.dragging { outlineTool.drag(to: v, flags: flags); return }
         if depthTool.dragging { depthTool.drag(to: v, flags: flags); return }
+        if lookTool.dragging { lookTool.drag(to: v, flags: flags); return }
         if curveTool.dragging { curveTool.drag(to: v, flags: flags); return }
         if gridTool.dragging { gridTool.drag(to: v, flags: flags); return }
         if deckTool.dragging { deckTool.drag(to: v, flags: flags); return }
@@ -1884,6 +1902,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         shapeBuilder.up(at: v)
         outlineTool.up()
         depthTool.up(at: v, adding: event.modifierFlags.contains(.shift))
+        lookTool.up()
         curveTool.up()
         gridTool.up()
         deckTool.up(at: v)
@@ -2157,6 +2176,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private func cancelToolDrag() -> Bool {
         if outlineTool.dragging { outlineTool.cancel(); return true }
         if depthTool.dragging { depthTool.cancel(); return true }
+        if lookTool.dragging { lookTool.cancel(); return true }
         if curveTool.dragging {
             store.cancelGesture()
             curveTool.cancel()
@@ -2243,6 +2263,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 else if let first = store.selection.first, store.selection.count == 1, let parent = store.doc.parent(of: first) {
                     // Out one level: from a layer to its artboard.
                     store.selection = [parent.id]
+                } else if store.selection.isEmpty, !store.looks.isEmpty {
+                    // Nothing picked, nothing in hand: what is looked at from the side, from the front again.
+                    store.lookFromTheFront()
                 } else { store.selection = [] }
             } else {
                 cancelInteraction()
@@ -2285,7 +2308,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if pathTool.dragging { pathTool.drag(to: lastViewPoint, flags: event.modifierFlags); return }
         if pictureTool.dragging { pictureTool.drag(to: lastViewPoint, flags: event.modifierFlags); return }
         if shapeBuilder.dragging || outlineTool.dragging || knifeTool.dragging || depthTool.dragging || gridTool.dragging
-            || guideTool.dragging || layoutTool.dragging {
+            || guideTool.dragging || layoutTool.dragging || lookTool.dragging {
             drag(to: lastViewPoint, flags: event.modifierFlags)
             updateCursor(lastViewPoint, flags: event.modifierFlags)
             return

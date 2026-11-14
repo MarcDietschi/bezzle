@@ -23605,6 +23605,28 @@
         }
       }
     },
+    "Hold Control and drag beside the layers to look at an artboard from the side." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hältst du die Control-Taste gedrückt und ziehst neben den Ebenen, siehst du eine Zeichenfläche von der Seite."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "En maintenant la touche Contrôle et en faisant glisser à côté des calques, vous regardez un plan de travail de côté."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tenendo premuto Ctrl e trascinando accanto ai livelli, guardi una tavola da disegno di lato."
+          }
+        }
+      }
+    },
     "Hold it and drag to move around, or just scroll" : {
       "localizations" : {
         "de" : {
@@ -28165,6 +28187,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Torna indietro nel tempo."
+          }
+        }
+      }
+    },
+    "Look from the Front" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von vorn schauen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Regarder de face"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guarda di fronte"
           }
         }
       }
