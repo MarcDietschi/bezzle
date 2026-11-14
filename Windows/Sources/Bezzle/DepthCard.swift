@@ -6,7 +6,10 @@ import BezzleCore
 
 /// The 3D card, as the Mac's (LookCards.depthCard): layers held up off the page. The drag tips
 /// them further, the way they are already turned; open, the pad aims them (the card faces the
-/// pointer), and under it the exact tip, swing and nearness.
+/// pointer), and under it the exact tip, swing and nearness. Several layers lying together are one
+/// body: the card says how its lead is turned, and what turns that turns them all about the
+/// middle they share (the core's `turning`). A group has a switch besides: whether what it holds
+/// keeps its depth, each layer standing in the scene, or the group is one card.
 extension Inspector {
     func depthCard(_ l: WindowsCore.Looks, change: @escaping @MainActor (WindowsCore.LookChange) -> Void) -> UIElement? {
         guard let d = l.depth else { return nil }
@@ -27,9 +30,34 @@ extension Inspector {
             fields.children.append(field("X", d.xs, unit: "°", range: -180...180, scrub: 0.5, width: w) { change(.depthX($0)) })
             fields.children.append(field("Y", d.ys, unit: "°", range: -180...180, scrub: 0.5, width: w) { change(.depthY($0)) })
             fields.children.append(field("Z", d.zs, range: -10_000...10_000, scrub: 1, width: w) { change(.depthZ($0)) })
-            return [aimPad(x: d.x, y: d.y, change: change), fields,
-                    Controls.caption("On the canvas, drag the knob in its middle to aim it. Hold Alt once a layer is moving to bring it nearer or push it away. Just outside a side, a drag turns anything in depth.")]
+            var rows: [UIElement] = [aimPad(x: d.x, y: d.y, change: change), fields]
+            // A group is one card, unless told that what it holds stands in the scene on its own.
+            if d.groups { rows.append(Self.switchRow("Layers keep their depth", d.keepDepth) { change(.keepDepth($0)) }) }
+            rows.append(Controls.caption("On the canvas, drag the knob in its middle to aim it. Hold Alt once a layer is moving to bring it nearer or push it away. Just outside a side, a drag turns anything in depth."))
+            return rows
         })
+    }
+
+    /// A switch with its words before it, which take what room the switch leaves and wrap: what
+    /// a group's switch says is longer than a row's column of titles, in every language.
+    private static func switchRow(_ title: String, _ on: Bool, _ set: @escaping @MainActor (Bool) -> Void) -> FrameworkElement {
+        let grid = Grid()
+        grid.minHeight = Controls.height
+        grid.columnSpacing = 8
+        for w in [GridLength(value: 1, gridUnitType: .star), GridLength(value: 1, gridUnitType: .auto)] {
+            let column = ColumnDefinition()
+            column.width = w
+            grid.columnDefinitions.append(column)
+        }
+        let words = Theme.text(Words.t(title), size: 12, ink: 2)
+        words.verticalAlignment = .center
+        words.textWrapping = .wrap
+        grid.children.append(words)
+        let toggle = Controls.toggle(on, set)
+        toggle.verticalAlignment = .center
+        try? Grid.setColumn(toggle, 1)
+        grid.children.append(toggle)
+        return grid
     }
 
     /// The Mac's CardInDepth: a card turned as the layer is, its perspective strong enough to

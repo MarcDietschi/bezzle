@@ -108,23 +108,44 @@ extension WindowsCore {
         public let blurOn: Bool?
         /// How the layers are turned in depth, while any of them is; `depthOn` whether all,
         /// none or some are.
-        public let depth: DepthLook?
+        public let depth: TurnLook?
         public let depthOn: Bool?
     }
 
-    /// A turn in depth as the 3D card shows it: the first's tip, swing and nearness, each shared
-    /// value (nil where they differ), and the line's words.
-    nonisolated public struct DepthLook: Sendable {
+    /// A turn in depth as the 3D card shows it: the tip, swing and nearness of the first, each
+    /// shared value (nil where they differ), and the line's words. Several layers lying together
+    /// are one body (`DepthBody`): the card then says how its lead is turned, and what turns that
+    /// turns them all about the middle they share. Groups have a switch besides: whether what
+    /// each holds keeps its depth, standing in the scene, or the group is one card.
+    nonisolated public struct TurnLook: Sendable {
         public let x: Double, y: Double, z: Double
         public let xs: Double?, ys: Double?, zs: Double?
         public let summary: String
+        /// Whether every one of them is a group, and whether each keeps its layers' depth.
+        public let groups: Bool
+        public let keepDepth: Bool
     }
 
-    private static func depthLook(_ nodes: [Node]) -> DepthLook? {
+    /// The layer the 3D card reads when these are one body of several: its lead. Nil for one
+    /// layer, or layers lying apart, which the card reads each for itself (the Mac's
+    /// DocumentStore.depthLead).
+    static func depthLead(of nodes: [Node]) -> Node? {
+        guard nodes.count > 1, let doc = design else { return nil }
+        let bodies = doc.depthBodies(of: nodes.map(\.id))
+        guard bodies.count == 1, bodies[0].count > 1 else { return nil }
+        return DepthBody.lead(of: bodies[0])
+    }
+
+    private static func depthLook(_ nodes: [Node]) -> TurnLook? {
         guard nodes.contains(where: { $0.transform3D != nil }) else { return nil }
-        let t = nodes.first?.transform3D ?? Transform3D()
+        let lead = depthLead(of: nodes)
+        let t = (lead ?? nodes.first)?.transform3D ?? Transform3D()
+        // A body's numbers are its lead's.
+        func number(_ value: (Transform3D) -> Double) -> Double? {
+            lead.map { value($0.transform3D ?? Transform3D()) } ?? alike(nodes) { value($0.transform3D ?? Transform3D()) }
+        }
         let summary: String
-        if let shared = alike(nodes, { $0.transform3D }) {
+        if let shared = lead.map({ $0.transform3D }) ?? alike(nodes, { $0.transform3D }) {
             // How far it is turned, and how near it is held; only held near, only that.
             let near = (shared?.z ?? 0) == 0 ? nil : "Z \(depthNumber(shared?.z ?? 0))"
             let turned = "\(Int((shared?.x ?? 0).rounded()))°, \(Int((shared?.y ?? 0).rounded()))°" + (near.map { ", \($0)" } ?? "")
@@ -139,8 +160,8 @@ extension WindowsCore {
         } else {
             summary = "Several"
         }
-        return DepthLook(x: t.x, y: t.y, z: Double(t.z), xs: alike(nodes) { $0.transform3D?.x ?? 0 }, ys: alike(nodes) { $0.transform3D?.y ?? 0 },
-                         zs: alike(nodes) { Double($0.transform3D?.z ?? 0) }, summary: summary)
+        return TurnLook(x: t.x, y: t.y, z: Double(t.z), xs: number { $0.x }, ys: number { $0.y }, zs: number { Double($0.z) }, summary: summary,
+                        groups: nodes.allSatisfy(\.isGroup), keepDepth: nodes.allSatisfy { $0.keepsDepth == true })
     }
 
     /// A card turned `x` and `y` degrees, drawn small in `size`: its corners (top left first),
@@ -378,13 +399,21 @@ extension WindowsCore {
         case blurAmount(Double), blurPreset(Int), blurBehind(Bool), blurGrowing(Bool), blurRampPreset(Int)
         case blurRamp(start: CGPoint, end: CGPoint), blurLight(Double), blurFill(Double), addBlur, removeBlur
         /// The turn in depth: tipped so far off the page (the dial), aimed, each of its numbers,
-        /// laid flat; added (held up a little), taken away.
+        /// laid flat; added (held up a little), taken away. Several layers lying together turn
+        /// as one body about the middle they share, as its lead is told to (`turning`).
         case tip(Double), aim(Double, Double), depthX(Double), depthY(Double), depthZ(Double), layFlat, addDepth, removeDepth
+        /// Whether what a group holds keeps its depth, each layer standing in the scene, or the
+        /// group is one card (`Node.keepsDepth`).
+        case keepDepth(Bool)
     }
 
     public static func change(_ ids: [UUID], _ c: LookChange) {
         // Letters picked out while typing take a colour of their own, as one change of the typing.
         if case .fillColour(0, let colour) = c, typingInto(ids), restyleTyped({ $0.color = rgba(colour) }, caret: false) { return }
+        if let turn = turning(c) {
+            edit { d in turn(&d, ids) }
+            return
+        }
         let apply = make(c)
         edit { d in for id in ids { d.update(id, apply) } }
     }
@@ -393,8 +422,48 @@ extension WindowsCore {
         guard let c else { endPreview(); return }
         // Letters picked out while typing show their colour once it is chosen, as on the Mac.
         if case .fillColour(0, _) = c, typingInto(ids), pickedLetters != nil { return }
+        if let turn = turning(c) {
+            preview { d in turn(&d, ids) }
+            return
+        }
         let apply = make(c)
         preview { d in for id in ids { d.update(id, apply) } }
+    }
+
+    /// What a change to how layers are turned in depth does to the design, as the Mac's
+    /// DocumentStore.turnSelection, layFlat and removeDepth: each body among the layers is turned
+    /// as its lead is told to, one layer about its own middle, several lying together about the
+    /// middle they share (`DepthBody`). Inside a gesture every step is made from the design as
+    /// the gesture began (`Editing.apply`), so a body is turned once from where it stood however
+    /// long the drag. Nil for any other change, which is made to each layer alone (`make`).
+    private static func turning(_ change: LookChange) -> ((inout BezzleDocument, [UUID]) -> Void)? {
+        func turn(_ aim: @escaping (Transform3D) -> Transform3D) -> (inout BezzleDocument, [UUID]) -> Void {
+            { d, ids in d.turnInDepth(ids) { _, now in aim(now) } }
+        }
+        func number(_ set: @escaping (inout Transform3D) -> Void) -> (inout BezzleDocument, [UUID]) -> Void {
+            turn { now in
+                var t = now
+                set(&t)
+                return t
+            }
+        }
+        switch change {
+        case .tip(let v): return turn { $0.tipped(v) }
+        case .aim(let x, let y): return number { $0.x = x; $0.y = y }
+        case .depthX(let v): return number { $0.x = min(max(v, -180), 180) }
+        case .depthY(let v): return number { $0.y = min(max(v, -180), 180) }
+        case .depthZ(let v): return number { $0.z = CGFloat(min(max(v, -10_000), 10_000)) }
+        case .layFlat: return { d, ids in d.layFlat(ids) }
+        case .addDepth: return turn { _ in Presets.heldUp }
+        // Laid flat first, so that a body turned together lies as it lay before, then with
+        // nothing of depth left on it.
+        case .removeDepth:
+            return { d, ids in
+                d.layFlat(ids)
+                for id in ids { d.update(id) { $0.transform3D = nil } }
+            }
+        default: return nil
+        }
     }
 
     private static func rgba(_ c: Colour) -> RGBA { RGBA(r: c.r, g: c.g, b: c.b, a: c.a) }
@@ -529,20 +598,9 @@ extension WindowsCore {
         case .blurFill(let v): return { $0.blur?.fillOpacity = min(max(v, 0), 100) / 100 }
         case .addBlur: return { Presets.applyBlur(Presets.blurs[1].radius, to: &$0) }
         case .removeBlur: return { $0.blur = nil }
-        case .tip(let v): return { $0.transform3D = ($0.transform3D ?? Transform3D()).tipped(v) }
-        case .aim(let x, let y):
-            return { n in
-                var t = n.transform3D ?? Transform3D()
-                t.x = x
-                t.y = y
-                n.transform3D = t
-            }
-        case .depthX(let v): return { n in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.x = min(max(v, -180), 180) }
-        case .depthY(let v): return { n in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.y = min(max(v, -180), 180) }
-        case .depthZ(let v): return { n in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.z = CGFloat(min(max(v, -10_000), 10_000)) }
-        case .layFlat: return { n in n.transform3D?.x = 0; n.transform3D?.y = 0 }
-        case .addDepth: return { $0.transform3D = Presets.heldUp }
-        case .removeDepth: return { $0.transform3D = nil }
+        // A turn in depth is made to the design, where several layers are one body (`turning`).
+        case .tip, .aim, .depthX, .depthY, .depthZ, .layFlat, .addDepth, .removeDepth: return { _ in }
+        case .keepDepth(let on): return { n in if n.isGroup { n.keepsDepth = on ? true : nil } }
         case .remove(let look, let slot):
             let which: Look = look == "fill" ? .fill : look == "border" ? .border : .shadow
             return { $0.remove(which, at: slot) }
