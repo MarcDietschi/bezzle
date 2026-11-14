@@ -6,6 +6,8 @@ import AppKit
 nonisolated(unsafe) private var outbox: [UInt8] = []
 nonisolated(unsafe) private var design: BezzleDocument?
 nonisolated(unsafe) private var assets = Assets(folder: nil)
+/// The film the page is showing, of one artboard of the design (Film/WebFilm.swift).
+nonisolated(unsafe) private var film: WebFilm?
 
 private func answer(_ s: String) -> Int32 {
     outbox = Array(s.utf8)
@@ -32,6 +34,7 @@ nonisolated func bz_fonts(_ p: UnsafeRawPointer, _ n: Int32) {
     let data = Data(bytes: p, count: Int(n))
     if let families = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
         NSFontManager.shared.families = families
+        film = nil
     }
 }
 
@@ -44,13 +47,17 @@ nonisolated func bz_stand_ins(_ p: UnsafeRawPointer, _ n: Int32) {
     MainActor.assumeIsolated {
         MacFonts.standIns = Set(families)
         TextLayout.forget()
+        film = nil
     }
 }
 
 /// The page has fonts it had not: texts are set again with them.
 @_expose(wasm, "bz_forget_text")
 nonisolated func bz_forget_text() {
-    MainActor.assumeIsolated { TextLayout.forget() }
+    MainActor.assumeIsolated {
+        TextLayout.forget()
+        film = nil
+    }
 }
 
 /// Opens a design from its document.json; answers its artboards.
@@ -62,11 +69,9 @@ nonisolated func bz_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
             var doc = try JSONDecoder().decode(BezzleDocument.self, from: data)
             doc.repairStyles()
             design = doc
+            film = nil
             assets = Assets(folder: URL(fileURLWithPath: "/images"))
-            let boards = doc.nodes.enumerated().filter { $0.element.isArtboard }.map { i, b in
-                "{\"index\":\(i),\"name\":\(quoted(b.name)),\"frame\":[\(b.frame.minX),\(b.frame.minY),\(b.frame.width),\(b.frame.height)]}"
-            }
-            return answer("{\"boards\":[" + boards.joined(separator: ",") + "],\"layers\":\(BezzleDocument.layerCount(doc.nodes))}")
+            return answer(boardsAnswer(doc))
         } catch {
             return answer("{\"error\":\(quoted("\(error)"))}")
         }
@@ -120,9 +125,12 @@ nonisolated private func quoted(_ s: String) -> String {
 
 // MARK: Shared designs
 
+/// The design's artboards, as the page lists them. One with a film says so, with how long it
+/// runs and whether it plays once: the page then offers to play it.
 private func boardsAnswer(_ doc: BezzleDocument, extra: String = "") -> String {
     let boards = doc.nodes.enumerated().filter { $0.element.isArtboard }.map { i, b in
-        "{\"index\":\(i),\"name\":\(quoted(b.name)),\"frame\":[\(b.frame.minX),\(b.frame.minY),\(b.frame.width),\(b.frame.height)]}"
+        "{\"index\":\(i),\"name\":\(quoted(b.name)),\"frame\":[\(b.frame.minX),\(b.frame.minY),\(b.frame.width),\(b.frame.height)]"
+            + (b.hasFilm ? ",\"film\":{\"length\":\(b.filmLength),\"once\":\(b.film?.once == true)}" : "") + "}"
     }
     return "{\"boards\":[" + boards.joined(separator: ",") + "],\"layers\":\(BezzleDocument.layerCount(doc.nodes))\(extra)}"
 }
@@ -141,6 +149,7 @@ nonisolated func bz_shared_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
         let (list, replica) = records(json)
         let (doc, unread) = WebSharing.open(list, replica: replica)
         design = doc
+        film = nil
         assets = Assets(folder: URL(fileURLWithPath: "/images"))
         return answer(boardsAnswer(doc, extra: ",\"unread\":\(unread),\"clock\":\(WebSharing.state.clock.time)"))
     }
@@ -154,6 +163,7 @@ nonisolated func bz_shared_receive(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
         guard let shown = design else { return answer("{\"error\":\"no design\"}") }
         let doc = WebSharing.receive(records(json).records, into: shown)
         design = doc
+        film = nil
         return answer(boardsAnswer(doc))
     }
 }
@@ -199,6 +209,7 @@ nonisolated func bz_test_edit() -> Int32 {
         // As every edit in the app does: groups fit what they hold again.
         doc.fitGroups()
         design = doc
+        film = nil
         return answer("{\"id\":\"\(id.uuidString)\"}")
     }
 }
@@ -211,6 +222,69 @@ nonisolated func bz_document() -> Int32 {
         encoder.outputFormatting = [.sortedKeys]
         guard let doc = design, let data = try? encoder.encode(doc) else { return answer("{}") }
         return answer(String(decoding: data, as: UTF8.self))
+    }
+}
+
+// MARK: Films
+
+/// Opens the film of one artboard, for showing its frames (`bz_film_frame`). Answers how long it
+/// runs, whether it plays once, its backdrop and the artboard's size, with the pictures of a film
+/// shown before that the page may let go; or an error for an artboard without a film.
+@_expose(wasm, "bz_film")
+nonisolated func bz_film(_ index: Int32) -> Int32 {
+    MainActor.assumeIsolated {
+        film = nil
+        guard let doc = design, doc.nodes.indices.contains(Int(index)), doc.nodes[Int(index)].isArtboard, doc.nodes[Int(index)].hasFilm else {
+            return answer("{\"error\":\"no film\",\"drop\":\(WebFilm.takeGone())}")
+        }
+        WebFilm.listen()
+        let reel = WebFilm(doc.nodes[Int(index)], assets: assets)
+        film = reel
+        return answer(String(reel.described.dropLast()) + ",\"drop\":\(WebFilm.takeGone())}")
+    }
+}
+
+/// What the open film's frame at `t` seconds is made from, `width` by `height` pixels: its
+/// pieces, the lowest first, each a picture drawn through a 3 by 3 map, with the pictures drawn
+/// for it since the last frame and those the page may let go. `playing` (not 0) leaves parts
+/// sharper than a piece's whole picture for when the film rests.
+@_expose(wasm, "bz_film_frame")
+nonisolated func bz_film_frame(_ t: Double, _ width: Int32, _ height: Int32, _ playing: Int32) -> Int32 {
+    MainActor.assumeIsolated {
+        guard let film else { return answer("{\"error\":\"no film\"}") }
+        let started = Date()
+        let (frame, images) = WebFilm.listing { film.frame(at: t, width: Int(width), height: Int(height), playing: playing != 0) }
+        let ms = Date().timeIntervalSince(started) * 1000
+        return answer(String(frame.dropLast()) + ",\"ms\":\(ms),\"images\":\(images),\"drop\":\(WebFilm.takeGone())}")
+    }
+}
+
+/// Draws one more of the open film's pieces ahead of its playing, for a frame `width` by `height`
+/// pixels: answers its picture, how many pieces are left to draw, and the pictures made for it.
+@_expose(wasm, "bz_film_warm")
+nonisolated func bz_film_warm(_ width: Int32, _ height: Int32) -> Int32 {
+    MainActor.assumeIsolated {
+        guard let film else { return answer("{\"error\":\"no film\"}") }
+        let (made, images) = WebFilm.listing { film.warm(width: Int(width), height: Int(height)) }
+        return answer(String(made.dropLast()) + ",\"images\":\(images),\"drop\":\(WebFilm.takeGone())}")
+    }
+}
+
+/// Where the open film's arithmetic has each piece at `t` seconds, for comparing with the Mac's.
+@_expose(wasm, "bz_film_placements")
+nonisolated func bz_film_placements(_ t: Double) -> Int32 {
+    MainActor.assumeIsolated {
+        guard let film else { return answer("{\"error\":\"no film\"}") }
+        return answer(film.placements(at: t))
+    }
+}
+
+/// Lets the open film go; answers the pictures the page may let go with it.
+@_expose(wasm, "bz_film_close")
+nonisolated func bz_film_close() -> Int32 {
+    MainActor.assumeIsolated {
+        film = nil
+        return answer("{\"drop\":\(WebFilm.takeGone())}")
     }
 }
 

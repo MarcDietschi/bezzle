@@ -20,6 +20,10 @@ nonisolated public enum Host {
         /// A picture as a PNG or JPEG file: its number, width, height, format (0 PNG, 1 JPEG) and
         /// quality as five doubles; the file's bytes back.
         case encodePicture = 5
+        /// A shader fill, as JSON: handed over ("define"), drawn at a moment ("draw", which
+        /// answers the picture made, as one of the page's own) or all let go ("forget"). See
+        /// Web/WebShaderPainting.swift and site/shaders.mjs.
+        case shader = 6
     }
 
     public static func call(_ function: Function, bytes: [UInt8]) -> [UInt8] {
