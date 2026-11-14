@@ -1,14 +1,18 @@
-// The welcome tour's photo for Windows: the Mac's own (Bezzle/Store/WelcomePhoto.swift), painted
-// here on the Mac as the Mac paints it for each new tour, and written where the Windows build puts
-// it beside Bezzle.exe (Resources/Generated/welcome-lake.jpg). make-welcome-photo.sh compiles the
-// two together, this as main.swift.
+// The welcome tour's pictures for Windows: the Mac's own lake photo (Bezzle/Store/WelcomePhoto.swift)
+// and its logo to trace (Bezzle/Store/WelcomeLogo.swift), painted here on the Mac as the Mac paints
+// them for each new tour, and written where the Windows build puts them beside Bezzle.exe
+// (Resources/Generated/welcome-lake.jpg and welcome-logo.png). make-welcome-photo.sh compiles the
+// three together, this as main.swift.
 import Foundation
 
-let out = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("welcome-lake.jpg")
-guard let jpeg = WelcomePhoto.jpeg() else {
-    FileHandle.standardError.write(Data("The welcome photo could not be painted.\n".utf8))
+let folder = URL(fileURLWithPath: CommandLine.arguments[1])
+guard let jpeg = WelcomePhoto.jpeg(), let png = WelcomeLogo.png() else {
+    FileHandle.standardError.write(Data("The welcome tour's pictures could not be painted.\n".utf8))
     exit(1)
 }
-try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
-try jpeg.write(to: out, options: .atomic)
-print("welcome photo:", jpeg.count, "bytes ->", out.path)
+try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+for (name, data) in [("welcome-lake.jpg", jpeg), ("welcome-logo.png", png)] {
+    let out = folder.appendingPathComponent(name)
+    try data.write(to: out, options: .atomic)
+    print("welcome picture:", data.count, "bytes ->", out.path)
+}

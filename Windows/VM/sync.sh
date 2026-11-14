@@ -20,7 +20,8 @@ $here/../Resources/make-icons.sh
 # The Mac's version (Xcode's MARKETING_VERSION), which a copy built in the VM says it is.
 sed -nE 's/^[[:space:]]*MARKETING_VERSION = "?([^";]+)"?;$/\1/p' Bezzle.xcodeproj/project.pbxproj | sort -u | head -1 \
   > $here/../Resources/Generated/version.txt
-# The welcome tour's lake photo, painted as the Mac paints it, for the build to put into Bezzle.resources.
+# The welcome tour's lake photo and its logo to trace, painted as the Mac paints them, for the build
+# to put into Bezzle.resources.
 $here/../Resources/make-welcome-photo.sh
 junction=''
 if [[ $dest != 'C:\src\Bezzle' ]]; then

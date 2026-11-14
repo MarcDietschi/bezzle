@@ -75,8 +75,10 @@ try {
     # (Bundle.main.resourceURL is Bezzle.resources beside it), as Icons.swift reads it from the Mac's bundle.
     New-Item -ItemType Directory -Force "$app\Bezzle.resources" | Out-Null
     Copy-Item 'Sources\BezzleCore\Shared\Model\Kits\Icons.deflate' "$app\Bezzle.resources" -Force
-    # The welcome tour's photo, as the Mac paints it (Resources/make-welcome-photo.sh makes it on the Mac).
-    if (Test-Path 'Resources\Generated\welcome-lake.jpg') { Copy-Item 'Resources\Generated\welcome-lake.jpg' "$app\Bezzle.resources" -Force }
+    # The welcome tour's photo and its logo to trace, as the Mac paints them (Resources/make-welcome-photo.sh makes them on the Mac).
+    foreach ($picture in 'welcome-lake.jpg', 'welcome-logo.png') {
+        if (Test-Path "Resources\Generated\$picture") { Copy-Item "Resources\Generated\$picture" "$app\Bezzle.resources" -Force }
+    }
     # Remove Background's: ONNX Runtime and DirectML beside Bezzle.exe and the tools (onnx.ps1 fetches
     # them), and the subject matte they run where Bezzle looks for it (Host/SubjectMatte.swift), made
     # on a Mac and sent by VM/send-matte.sh: the graphs of its two sizes and the weights both read,

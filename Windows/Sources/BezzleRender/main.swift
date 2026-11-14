@@ -35,8 +35,9 @@ do {
     // the out folder (or BEZZLE_IMPORT_TO), as Bezzle brings it in; what came across is said.
     var design = URL(fileURLWithPath: arguments[2])
     // "welcome": the welcome tour is made in the out folder first, as Bezzle makes it, with the
-    // photo BEZZLE_WELCOME_PHOTO names, in the language BEZZLE_LANGUAGE names (de, fr or it) from
-    // the words in BEZZLE_STRINGS (Resources/Generated/strings.json).
+    // photo BEZZLE_WELCOME_PHOTO names and the logo to trace BEZZLE_WELCOME_LOGO names, in the
+    // language BEZZLE_LANGUAGE names (de, fr or it) from the words in BEZZLE_STRINGS
+    // (Resources/Generated/strings.json).
     // "cutout": the photos BEZZLE_PHOTOS names (separated by ;) cut out as Bezzle cuts them out,
     // into the out folder, with the subject matte BEZZLE_MATTE_MODEL names (WindowsCore.tryCutouts).
     // "pictures": the picture files BEZZLE_PICTURES names (separated by ;) drawn as a picture fill
