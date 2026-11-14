@@ -533,8 +533,8 @@ final class DesignCanvas {
         inspect.titleHit = { [weak self] p in self?.titleHit(p) }
         motion.titleHit = { [weak self] p in self?.titleHit(p) }
         motion.redraw = { [weak self] in self?.drawMotion() }
-        // A shape's points moved where no pose keeps them, or Delete on them: points are added and
-        // taken away in the design.
+        // A shape's points moved where no pose keeps them, or points taken away until no outline
+        // is left, or From… with nothing to take.
         motion.beep = { _ = MessageBeep(0) }
         film.resync = { [weak self] in Probe.time("canvas.placeFilm(play)") { self?.placeFilm() } }
         session.film.run = { [weak self] in self?.film.run() }

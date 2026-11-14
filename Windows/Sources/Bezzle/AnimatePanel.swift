@@ -256,7 +256,7 @@ extension Inspector {
     private func shapeFromChip() -> FrameworkElement {
         let picked = film.posedLayers
         let ready = picked.count == 1 && !film.shapesToTake(for: picked[0]).isEmpty
-        let words = Theme.text(WindowsCore.FilmDesk.shapeFromTitle, size: 11.5, weight: 500)
+        let words = Theme.text(Words.t("From…"), size: 11.5, weight: 500)
         let ink: Brush = Theme.ink(2)
         words.foreground = ink
         words.margin = Theme.inset(9, 0, 9, 0)

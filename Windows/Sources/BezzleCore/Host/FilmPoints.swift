@@ -182,10 +182,6 @@ extension WindowsCore.FilmDesk {
 
     // MARK: Another shape's outline (the Mac's AnimateOperations)
 
-    /// The Pose card's chip that gives a shape another's outline, in the Mac's words for it,
-    /// which its catalog keeps under a name of their own.
-    public static var shapeFromTitle: String { String(localized: "animate.shape.from", defaultValue: "From…") }
-
     /// The shapes whose outline a shape can take at the playhead: the others on the film's
     /// artboard, the one in front first (`Node.shapesToTake`), each by its id and its name. None
     /// for a layer that is locked, or has no outline itself.
