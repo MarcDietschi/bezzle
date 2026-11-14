@@ -17,7 +17,7 @@ import WinSDK
 /// along, and a stroke under the lines shows which part of the film is in sight: twice clicked,
 /// or the film looked at from further off until all of it shows, the whole film is back. How
 /// close it is looked at is the viewer's own (`FilmDesk.window`). The lines are made again only
-/// when another part shows.
+/// when another part shows; the card itself grows and shrinks with its lines on the Mac's spring.
 @MainActor
 final class FilmTimelineView {
     let root = Grid()
@@ -48,7 +48,6 @@ final class FilmTimelineView {
     private let namesColumn = ColumnDefinition()
     private let rowsNamesColumn = ColumnDefinition()
     private var namesWidth = 120.0
-    private var shownRows = 4
     /// Under the lines: the stroke that shows which part of a film looked at closer is in sight
     /// (the Mac's FilmThumb). Not there while the whole film shows.
     private let foot = Canvas()
@@ -58,6 +57,15 @@ final class FilmTimelineView {
     private let tracksClip = RectangleGeometry()
     private let rulerClip = RectangleGeometry()
     private let playheadClip = RectangleGeometry()
+    /// How tall the lines' room is: as many lines as the card shows, four to seven. It grows and
+    /// shrinks on the Mac's spring (Theme.spring) as lines come and go.
+    private var tall = DeckSpring(4 * FilmFraming.rowHeight)
+    private lazy var growing = Motion.Ticker { [weak self] dt in self?.grow(dt) ?? false }
+    /// Whether the card has been laid out since it last came up: only then does it spring.
+    private var laid = false
+    /// What the card's shadow was last drawn for: the card's size, how tall the lines' room was
+    /// then, and how far the shadow reaches past the card.
+    private var shadowFor: (w: Double, h: Double, tall: Double, pad: Double)?
     /// The part of the film shown changed (`FilmDesk.looked`), and the lines are yet to be made
     /// again for it.
     private var linesOwed = false
@@ -117,8 +125,13 @@ final class FilmTimelineView {
         // A press on the card itself goes no further: the canvas under it is not clicked.
         card.pointerPressed.addHandler { _, args in args?.handled = true }
         root.sizeChanged.addHandler { [weak self] _, _ in
-            self?.drawShadow()
-            self?.refresh()
+            guard let self else { return }
+            // Growing or shrinking on its spring, the card changes only in height, frame after
+            // frame: its shadow is stretched along meanwhile (`layTall`) and drawn anew once it
+            // rests, and its lines are as they were.
+            if self.growing.running, let had = self.shadowFor, abs(self.root.actualWidth - had.w) < 0.5 { return }
+            self.drawShadow()
+            self.refresh()
         }
         hand.changed = { [weak self] in Probe.time("timeline.refresh(hand)") { self?.refresh() } }
         // Another part of the film shows, by the wheel, by a playhead put out of sight or by a
@@ -426,6 +439,8 @@ final class FilmTimelineView {
         rows.columnDefinitions.append(rowsNamesColumn)
         rows.columnDefinitions.append(cr1)
         rows.children.append(names)
+        // From the top, while the card closes over fewer lines than it still has room for.
+        rows.verticalAlignment = .top
         tracks.background = Theme.clear
         tracks.clip = tracksClip
         try? Grid.setColumn(tracks, 1)
@@ -562,14 +577,19 @@ final class FilmTimelineView {
     func refresh() {
         let on = session.mode == 3
         root.visibility = on ? .visible : .collapsed
-        guard on, session.isFront else { return }
+        guard on else {
+            // Put away: it comes up again as tall as its film's lines, at once.
+            laid = false
+            growing.stop()
+            tall = DeckSpring(tall.target)
+            return
+        }
+        guard session.isFront else { return }
         linesOwed = false
         painted = nil
         playLine = nil
         paintHeader()
         let lines = hand.lines()
-        // As many lines as `FilmFraming.foot(lines:)` keeps the film's artboard clear of.
-        shownRows = FilmFraming.shown(of: lines.count)
         let width = max(sheet.actualWidth, 300)
         namesWidth = min(150, max(104, width * 0.22))
         names.width = namesWidth
@@ -578,16 +598,31 @@ final class FilmTimelineView {
         let tracksWidth = max(width - namesWidth, 60)
         hand.width = CGFloat(tracksWidth)
         ruler.margin = Theme.inset(0, 0, 0, 0)
-        let tall = Double(shownRows) * Self.rowHeight
-        scroller.height = tall
-        rows.height = max(Double(lines.count) * Self.rowHeight, tall)
+        // As many lines as `FilmFraming.foot(lines:)` keeps the film's artboard clear of. With
+        // other lines to show the card grows or shrinks on the Mac's spring; at once when it
+        // first comes up, under a hand on the sheet and while the film plays.
+        let want = Double(FilmFraming.shown(of: lines.count)) * Self.rowHeight
+        if want != tall.target {
+            if laid, !hand.dragging, !desk.playing {
+                tall.target = want
+                growing.start()
+            } else {
+                tall = DeckSpring(want)
+                growing.stop()
+            }
+        }
+        laid = true
+        rows.height = max(Double(lines.count) * Self.rowHeight, want)
         tracks.width = tracksWidth
         tracks.height = rows.height
-        tracksClip.rect = Rect(x: 0, y: 0, width: Float(tracksWidth), height: Float(rows.height))
+        // While the card closes over lines that have gone, the paper there stays ruled.
+        let ruled = max(rows.height, tall.value)
+        tracksClip.rect = Rect(x: 0, y: 0, width: Float(tracksWidth), height: Float(ruled))
         rulerClip.rect = Rect(x: 0, y: 0, width: Float(tracksWidth), height: Float(Self.rulerHeight))
         playheadClip.rect = Rect(x: 0, y: 0, width: Float(tracksWidth), height: Float(Self.rulerHeight + 8 * Self.rowHeight))
+        layTall()
         drawNames(lines)
-        drawTracks(lines, width: tracksWidth, height: rows.height)
+        drawTracks(lines, width: tracksWidth, height: ruled)
         drawRuler(width: tracksWidth)
         placeThumb()
         movePlayhead()
@@ -617,13 +652,44 @@ final class FilmTimelineView {
         thumb.visibility = .visible
     }
 
+    // MARK: The card's height
+
+    /// A frame of the card growing or shrinking with its lines. False once it rests.
+    private func grow(_ dt: Double) -> Bool {
+        tall.step(dt, stiffness: Motion.spring.stiffness, damping: Motion.spring.damping)
+        let rests = tall.settled
+        if rests { tall = DeckSpring(tall.target) }
+        layTall()
+        if rests { rested() }
+        return !rests
+    }
+
+    /// The lines' room as tall as it is now, on its way or at rest: the room itself, the
+    /// playhead's line down it, and the card's shadow, stretched along with the picture it has
+    /// rather than drawn anew at every frame.
+    private func layTall() {
+        scroller.height = tall.value
+        playLine?.height = Self.rulerHeight + tall.value
+        if let had = shadowFor { shadow.height = max(had.h + tall.value - had.tall, 1) + 2 * had.pad }
+    }
+
+    /// The card rests at its new height: its shadow is drawn for it, once it is laid out so.
+    private func rested() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.growing.running, let had = self.shadowFor else { return }
+                if abs(self.root.actualHeight - had.h) > 0.25 || abs(self.root.actualWidth - had.w) > 0.25 { self.drawShadow() }
+            }
+        }
+    }
+
     /// The playhead alone, as the film plays or a hand scrubs through it: its line and tab, made
     /// once and moved after that, and the clock.
     func movePlayhead() {
         guard root.visibility == .visible else { return }
         showClock()
         let x = Double(hand.x(desk.live))
-        let height = Self.rulerHeight + Double(shownRows) * Self.rowHeight
+        let height = Self.rulerHeight + tall.value
         if playLine == nil || playTab == nil {
             playhead.children.clear()
             let line = Rectangle()
@@ -879,5 +945,6 @@ final class FilmTimelineView {
         shadow.width = w + 2 * Double(pad) / scale
         shadow.height = h + 2 * Double(pad) / scale
         shadow.margin = Theme.inset(-Double(pad) / scale, -Double(pad) / scale + 9, -Double(pad) / scale, -Double(pad) / scale - 9)
+        shadowFor = (w, h, tall.value, Double(pad) / scale)
     }
 }

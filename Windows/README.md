@@ -337,7 +337,10 @@ part shown waits there while the sheet creeps along under it, a step with every 
 (`FilmHand.creep`, which the hand asks the view for through `creeping`). The ruler thins out and
 fills in as the Mac's and makes only the strokes in sight. That, the stroke under the lines, what
 a turn of the wheel does and how fast the sheet creeps are numbers in and numbers out
-(`Host/FilmSheet.swift`), so `Windows/Tests` checks them too.
+(`Host/FilmSheet.swift`), so `Windows/Tests` checks them too. The card grows and shrinks with its
+lines on the Mac's spring (`Motion.spring`), its shadow stretched along and drawn anew once it
+rests; at once under a hand on the sheet and while the film plays. Lines do not glide to their
+places, nor the seconds when the scale changes: either would make every line again at each frame.
 
 To measure, as on the Mac: `BEZZLE_ANIMATE=3` and
 `BEZZLE_FILM='6:scrub=0,10,8;16:pick=Card 1;17:scrub=0,10,8;27:pick=camera;28:scrub=0,10,8;38:pick=;39:start;41:watch=8'`
