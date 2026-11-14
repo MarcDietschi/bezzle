@@ -122,7 +122,11 @@ extension SelectionInspector {
             items.append(.init(id: "add-blur", aspect: .blur, title: "Blur", help: "Add a blur", action: "Add Blur") { Presets.applyBlur(Presets.blurs[1].radius, to: &$0) })
         }
         if common({ $0.transform3D != nil }) == false {
-            items.append(.init(id: "add-3d", aspect: .depth, title: "3D", help: "Add 3D", action: "Add 3D") { $0.transform3D = Presets.heldUp })
+            // Several lying together are held up as one body.
+            let ids = nodes.map(\.id)
+            items.append(.init(id: "add-3d", aspect: .depth, title: "3D", help: "Add 3D", action: "Add 3D", change: { $0.transform3D = Presets.heldUp },
+                               add: { store.turnSelection("Add 3D") { _ in Presets.heldUp } },
+                               reshape: { doc in doc.turnInDepth(ids) { _, _ in Presets.heldUp } }))
         }
         if let mark = markForExport { items.append(mark) }
         if store.canMakeRepeatGrid {
@@ -433,10 +437,13 @@ extension SelectionInspector {
 
     /// Layers held up off the page. The drag tips them further, the way they are already turned;
     /// aimed on the pad, where the card faces the pointer, or on the canvas by the knob in each
-    /// one's middle; the exact turn, and how near, under it.
+    /// one's middle; the exact turn, and how near, under it. Several layers lying together are
+    /// one body: the card says how its lead is turned, and what turns that turns them all about
+    /// the middle they share (`DepthBody`).
     func depthCard(live: Bool) -> some View {
-        let turn = nodes.first?.transform3D ?? Transform3D()
-        let summary = common { $0.transform3D }.map { t -> String in
+        let lead = store.depthLead(of: nodes)
+        let turn = (lead ?? nodes.first)?.transform3D ?? Transform3D()
+        let summary = (lead.map { Optional($0.transform3D) } ?? common { $0.transform3D }).map { t -> String in
             // How far it is turned, and how near it is held; only held near, only that.
             let near = (t?.z ?? 0) == 0 ? nil : "Z \(CanvasView.number(t?.z ?? 0))"
             if let near, (t?.x ?? 0) == 0, (t?.y ?? 0) == 0, t?.pinned != true { return near }
@@ -446,24 +453,41 @@ extension SelectionInspector {
             return t.x == 0 && t.y == 0 ? String(localized: "Corners pinned") : String(localized: "Corners pinned, \(turned)")
         } ?? Self.several
         let dial = Dial(value: hypot(turn.x, turn.y), range: 0...60, step: 2, action: "Turn in Depth") { v in
-            store.updateSelection("Turn in Depth") { n in n.transform3D = (n.transform3D ?? Transform3D()).tipped(v) }
+            store.turnSelection("Turn in Depth") { $0.tipped(v) }
         }
         return AspectCard(aspect: .depth, title: "3D", summary: summary, dial: dial,
-                          remove: { store.updateSelection("Remove 3D") { $0.transform3D = nil } }, removal: "Remove 3D", live: live) {
+                          remove: { store.removeDepth() }, removal: "Remove 3D", live: live) {
             CardInDepth(turn: turn)
                 .frame(width: 19, height: 15)
         } picks: {
             AimPad(turn: turn)
         } exact: {
             HStack(spacing: 8) {
-                layerField("X", unit: "°", range: -180...180, scrub: 0.5, action: "Turn in Depth",
-                           get: { $0.transform3D?.x ?? 0 }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.x = v })
-                layerField("Y", unit: "°", range: -180...180, scrub: 0.5, action: "Turn in Depth",
-                           get: { $0.transform3D?.y ?? 0 }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.y = v })
-                layerField("Z", range: -10_000...10_000, scrub: 1, action: "Turn in Depth",
-                           get: { Double($0.transform3D?.z ?? 0) }, set: { n, v in n.transform3D = n.transform3D ?? Transform3D(); n.transform3D?.z = CGFloat(v) })
+                depthField("X", unit: "°", range: -180...180, scrub: 0.5, lead: lead, get: { $0.x }, set: { $0.x = $1 })
+                depthField("Y", unit: "°", range: -180...180, scrub: 0.5, lead: lead, get: { $0.y }, set: { $0.y = $1 })
+                depthField("Z", range: -10_000...10_000, scrub: 1, lead: lead, get: { Double($0.z) }, set: { $0.z = CGFloat($1) })
             }
             Caption("On the canvas, drag the knob in its middle to aim it. Hold Control while you move a layer to bring it nearer or push it away. Just outside a side, a drag turns anything in depth.")
+        }
+    }
+
+    /// One number of how layers are turned in depth or how high they stand: a body's is its
+    /// lead's, and setting it turns or lifts the whole body.
+    private func depthField(_ label: LocalizedStringResource, unit: String = "", range: ClosedRange<Double>, scrub: Double, lead: Node?,
+                            get: @escaping (Transform3D) -> Double, set: @escaping (inout Transform3D, Double) -> Void) -> NumberField {
+        let value = lead.map { get($0.transform3D ?? Transform3D()) } ?? common { get($0.transform3D ?? Transform3D()) }
+        return NumberField(label: label, value: value, unit: unit, range: range, scrub: scrub, decimals: 1, action: "Turn in Depth") { v in
+            store.turnSelection("Turn in Depth") { t in
+                var t = t
+                set(&t, v)
+                return t
+            }
+        } each: { f in
+            store.turnSelection("Turn in Depth") { t in
+                var t = t
+                set(&t, f(get(t)))
+                return t
+            }
         }
     }
 

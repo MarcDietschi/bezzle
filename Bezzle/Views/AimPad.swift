@@ -7,7 +7,7 @@ import AppKit
 /// click lays them flat again.
 struct AimPad: View {
     @Environment(DocumentStore.self) private var store
-    /// How the first of the selected layers is turned.
+    /// How the selected layer is turned: of several lying together, their lead (`DepthBody`).
     let turn: Transform3D
     @State private var grip: CGSize?
 
@@ -54,11 +54,12 @@ struct AimPad: View {
                     let at = CGPoint(x: g.location.x + (grip?.width ?? 0) - c.x, y: g.location.y + (grip?.height ?? 0) - c.y)
                     let (x, y) = DepthTool.turn(facing: CGPoint(x: at.x / radius, y: at.y / radius))
                     let (sx, sy) = DepthTool.settled(x, y, steps: NSEvent.modifierFlags.contains(.shift))
-                    store.updateSelection("Turn in Depth") { n in
-                        var t = n.transform3D ?? Transform3D()
+                    // Several lying together turn as one body, led by the layer the pad shows.
+                    store.turnSelection("Turn in Depth") { t in
+                        var t = t
                         t.x = sx
                         t.y = sy
-                        n.transform3D = t
+                        return t
                     }
                 }
                 .onEnded { _ in
@@ -67,7 +68,7 @@ struct AimPad: View {
                 })
             .simultaneousGesture(TapGesture(count: 2).onEnded {
                 withAnimation(Theme.spring) {
-                    store.updateSelection("Lay Flat") { n in n.transform3D?.x = 0; n.transform3D?.y = 0 }
+                    store.layFlat()
                 }
             })
         }

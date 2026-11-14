@@ -427,6 +427,11 @@ extension DocumentStore {
     func pose(_ property: MotionProperty, number index: Int, to v: Double, of ids: [UUID]) {
         guard index < property.rest.count, v.isFinite else { return }
         let t = filmTime
+        // Several lying together are tipped and swung as one body, as in the design (`DepthBody`).
+        if property == .tilt || property == .swing, ids.count > 1 {
+            edit(property.action) { doc in doc.poseInDepth(property, of: ids, at: t) { _ in v } }
+            return
+        }
         pose(property, of: ids) { n in
             var now = n.value(of: property, at: t)
             if property == .scale, index == 0 {
