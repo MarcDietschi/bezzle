@@ -84,6 +84,44 @@ nonisolated struct Fill: Codable, Hashable {
     /// drawn; the picture then is how it looked when it came in. See `ShaderFill`.
     var shader: ShaderFill? = nil
 
+    /// A shader is kept under "shader" when Bezzle 1.7 draws it rightly, and under "scene" when
+    /// it has what 1.7 does not know (`ShaderFill.beyondPlain`): 1.7 reads past a key it does not
+    /// know and shows the fill's picture, where a "shader" it could not read would keep it from
+    /// opening the design at all. Everything else is written as it always was.
+    enum CodingKeys: String, CodingKey {
+        case on, color, gradient, image, named, shader, scene
+    }
+
+    init(on: Bool = true, color: RGBA, gradient: Gradient? = nil, image: ImageFill? = nil, named: UUID? = nil, shader: ShaderFill? = nil) {
+        self.on = on
+        self.color = color
+        self.gradient = gradient
+        self.image = image
+        self.named = named
+        self.shader = shader
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        on = try c.decode(Bool.self, forKey: .on)
+        color = try c.decode(RGBA.self, forKey: .color)
+        gradient = try c.decodeIfPresent(Gradient.self, forKey: .gradient)
+        image = try c.decodeIfPresent(ImageFill.self, forKey: .image)
+        named = try c.decodeIfPresent(UUID.self, forKey: .named)
+        // A scene this Bezzle cannot read either (one from a later Bezzle) is left a picture.
+        shader = try c.decodeIfPresent(ShaderFill.self, forKey: .shader) ?? (try? c.decodeIfPresent(ShaderFill.self, forKey: .scene))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(on, forKey: .on)
+        try c.encode(color, forKey: .color)
+        try c.encodeIfPresent(gradient, forKey: .gradient)
+        try c.encodeIfPresent(image, forKey: .image)
+        try c.encodeIfPresent(named, forKey: .named)
+        if let shader { try c.encode(shader, forKey: shader.beyondPlain ? .scene : .shader) }
+    }
+
     /// Whether it paints with more than its one colour: a gradient, a picture or a shader.
     var paints: Bool { image != nil || shader != nil || gradient?.stops.isEmpty == false }
 
