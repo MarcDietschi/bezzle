@@ -503,6 +503,40 @@ extension MCPTools {
         return described(ids, in: store, warnings: changed ? [] : ["Nothing changed: artboards, locked layers, and text on its own do not flip."])
     }
 
+    /// Turns layers in depth as one body (`DepthBody`), in the design or, with `time`, in its film.
+    func turnLayers(_ args: Arguments) async throws -> [Content] {
+        let store = try await store(args)
+        let ids = try Self.layers(args, in: store)
+        let x = try args.number("x"), y = try args.number("y"), z = try args.number("z")
+        guard x != nil || y != nil || z != nil else { throw MCPError("Say how it shall be turned: x, y, or both; or z, how high it shall stand.") }
+        let turnable = ids.filter { store.doc.node($0).map { !$0.isArtboard && !$0.locked } == true }
+        guard !turnable.isEmpty else { throw MCPError("An artboard is the page itself, and a locked layer stays as it is: nothing here can be turned.") }
+        var warnings: [String] = []
+        if turnable.count < ids.count { warnings.append("Artboards and locked layers were left as they are.") }
+        if store.doc.depthBodies(of: turnable).count > 1 { warnings.append("These do not all lie together: each artboard's or group's layers were turned as a body of their own, and layers off any artboard each about its own middle.") }
+        if let time = try args.number("time") {
+            guard z == nil else { throw MCPError("z is the design's. In a film, pose lift with animate.") }
+            guard time >= 0 else { throw MCPError("time is seconds from the film's start, 0 or more.") }
+            let changed = try change(store, "Turn in Depth") { doc in
+                if let x { doc.poseInDepth(.tilt, of: turnable, at: time) { _ in x } }
+                if let y { doc.poseInDepth(.swing, of: turnable, at: time) { _ in y } }
+            }
+            if !changed { warnings.append("Nothing changed: they were posed so already.") }
+            return described(turnable, in: store, warnings: warnings + ["Posed in the film at \(JSONValue.number(time).text) s: get_animation lists the keys."])
+        }
+        let changed = try change(store, "Turn in Depth") { doc in
+            doc.turnInDepth(turnable) { _, now in
+                var t = now
+                if let x { t.x = x }
+                if let y { t.y = y }
+                if let z { t.z = CGFloat(z) }
+                return t
+            }
+        }
+        if !changed { warnings.append("Nothing changed: they were turned so already.") }
+        return described(turnable, in: store, warnings: warnings)
+    }
+
     func combineShapes(_ args: Arguments) async throws -> [Content] {
         let store = try await store(args)
         let ids = try Self.layers(args, in: store)
