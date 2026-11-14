@@ -19,12 +19,12 @@ Core Graphics renderer make of the six sample designs; `tools/compare.mjs` compa
 | | Result |
 |---|---|
 | Shared Swift compiled unchanged | 19,957 lines in 46 files: all of `Model/` but Live.swift, `Renderer`, `Depth`, `Blurs` |
-| Artboards drawn | 17 of 17, 0.3 to 1.7% of pixels off by more than 24 levels (antialiasing at glyph edges) |
+| Artboards drawn | 17 of 17, 0.3 to 1.1% of pixels off by more than 24 levels (antialiasing at glyph edges) |
 | Line breaks | 244 of 244 texts break exactly where the Mac breaks them (12 multi-line) |
 | Text heights, first baselines | 244 of 244 identical |
-| Text widths | 230 of 244 within 1 pt; the rest within 6 pt (SF Pro and Avenir kerning, see below) |
-| Core's time per artboard | 0 to 46 ms (release build, in Node) |
-| Download | core 12.8 MB brotli / 19.3 MB gzip (Bezzle's code < 1 MB of it, the rest Foundation's ICU data); CanvasKit 2.9 MB gzip |
+| Text widths | 243 of 244 the same in whole points; of the 232 on one line, 218 within 0.02 pt of the Mac's width and 231 within 0.1 pt (see below) |
+| Core's time per artboard | 0 to 54 ms (release build, in Node) |
+| Download | core 12.9 MB brotli / 19.8 MB gzip (Bezzle's code < 1 MB of it, the rest Foundation's ICU data); CanvasKit 2.9 MB gzip |
 
 What made text match:
 
@@ -38,8 +38,25 @@ What made text match:
   leading up from the line's bottom, raised by half the extra room when lines are further apart
   than the font's own, and not lowered when they are closer.
 
-Still open: a few SF Pro and Avenir words come out up to 0.2 pt a letter narrower. The difference
-follows kerning pairs (Yo, Ly, "1,") at some sizes, not tracking.
+Widths were measured again on 2026-11-14 with `tools/WidthTruthTests.swift`: 4000 texts on one
+line (close pairs, pairs that are not, and words, in the system font and Avenir Next at four and
+three weights and Futura, at 25 sizes from 9 to 96 pt, two of them not whole). All break as on the
+Mac and are as tall; 3967 are as wide in whole points, the rest a point off. Pairs such as Yo, Ly
+and "1," sit as on the Mac, since kerning is left out where the Mac leaves it out (a text whose
+letters are not spaced). The system font's spacing between two sizes of its table is cut to
+whole units of the font, towards nought, as Core Text cuts it: 3 at 72 pt, where the line from 64
+to 80 pt is at 3.5. Kept as a fraction it made a word a quarter of a point wider there. What is
+left is the same for every letter and follows no pairs:
+
+- At a size that is not whole, every face is up to a 64th of the size narrower (0.10 pt on a word
+  of 230 pt at 27.7 pt). FreeType, which CanvasKit measures letters with, takes sizes in 64ths of
+  a point, and Skia cuts 27.7 down to 27.6875.
+- In the heavier weights of the system font a letter is up to half a unit of 2048 wider (at Bold
+  a quarter of a unit in the mean, 0.2 pt on a word at 96 pt): its width at a weight between the
+  font's own comes from FreeType in whole units, from Core Text with its fraction.
+
+Both are inside CanvasKit. `tools/compare.mjs` says how near the texts on one line come to the
+Mac's width, which the natural width, in whole points, hides.
 
 With the open fonts (the published page, and Windows, which shares this code), lines are placed
 from the Mac's own fonts' measures, not the stand-ins' (`Web/MacFonts.swift`: ascent, descent and
@@ -55,6 +72,84 @@ narrows the layout width to whole points unless its rounding hack is off: both a
 The stand-ins' letters are spaced to the Mac's widths, by size for Inter (SF Pro is tracked by
 size, Inter is not) and once per face for the others, at most 0.03 em (`MacFonts.spacing`); the
 page tells the core which families it has stand-ins for (`bz_stand_ins`).
+
+## What the prototype left out, and what is drawn now
+
+`tools/FeatureTruthTests.swift` makes one design, as the Mac writes and draws it, with an artboard
+for each thing the prototype was said not to draw, set in the faces `tools/fonts.py` copies, so
+that what differs is the drawing and not a font. `tools/compare.mjs` sets the core's drawing
+beside the Mac's: in Node, and with `--browser` in a headless Chromium, where there is WebGL
+(`tools/headless.mjs`). Pixels off by more than 24 levels, and the mean difference of 255, on
+2026-11-14:
+
+| Artboard | Before | Now |
+|---|---|---|
+| Curves: texts on arcs and waves and riding shapes' outlines | 1.68%, 1.66 | the same to the byte |
+| Lists: bullets and numbers with their markers | 2.51%, 2.21 | the same to the byte |
+| Paragraphs set apart | 3.17%, 2.58 | the same to the byte |
+| Painted: letters filled with a gradient or a picture | 2.07%, 2.01 | the same to the byte |
+| Developed: photos developed | 0.21%, 1.27 | the same to the byte |
+| Ramp blurs: blurs that grow along a ramp, a layer's own and of what lies behind glass | 21.75%, 12.88 | 0.18%, 1.16 |
+| Mixing: plus darker and plus lighter | 26.66%, 13.08 | 0.26%, 0.71 |
+| Shaders: four shader fills as the design shows them, in a headless Chromium | 37.08%, 31.2 | 0.13%, 0.21 |
+
+Its 40 texts break as on the Mac. The first five were drawn all along: the shared code that
+lays and paints them had come to the viewer with the app's, and what is off is the edges of
+letters, as in the samples. What was mended:
+
+- **Plus darker** was drawn as multiply, which is lighter wherever either colour is not white or
+  black. Core Graphics' rule was measured (1296 cases): the alphas add up to no more than one, and
+  each colour is what that sum leaves once what source and backdrop lack of their own alphas is
+  taken away. It is a blender written for CanvasKit (`RuntimeEffect.MakeForBlender`), within one
+  step of 255 of the rule; multiply stands in should it not build.
+- **A blur that grows along a ramp** was even. The page blurs the picture at seven strengths and
+  adds them up, each weighed by how near the ramp is to it there (Windows' host does so with
+  five); Core Image's masked variable blur was measured to spread as a Gaussian of the ramp's
+  grey times the radius does.
+- **A dark rim** lay round every layer with a blur of its own: handed a blur that fades into
+  nothing on the paint of `drawImage`, CanvasKit's processor multiplies the colours by their
+  alpha once more. The layer is now blurred as a layer of its own.
+- **Shader fills** showed their picture in the design and were drawn only in a film. The core now
+  asks the page for the fill's frame in the design too, at the fill's own moment, as the Mac's
+  `ShaderPainting` does. Without WebGL (in Node), where a program does not build, and for a fill
+  beyond plain draws (see Films), the picture stands in.
+
+The 17 sample artboards are drawn the same to the byte before and after each of these.
+
+### The icon library
+
+The icon sets (Lucide, Phosphor, Material Symbols: 7340 icons) are a file beside the app,
+`Model/Kits/Icons.deflate`, 2.55 MB of raw DEFLATE. The core has nothing that unpacks DEFLATE
+and a page has no bundle to read from, so a page that wants icons fetches the file and calls
+`bz.icons(packed)`: the browser's own `DecompressionStream('deflate-raw')` unpacks it and the
+core reads it once (`bz_icons`, `WebIcons.swift`; `Icons.unpacked` in the shared code), in 50 to
+80 ms; its memory grows by 30 MB. From then on `Icons` answers there as on the Mac: its sets,
+the icons found for some words, each icon's outline at a weight. The page a link opens never
+asks, and `publish.sh` does not copy the file: an icon in a design is a path like any other, and
+only placing a new one needs the library.
+
+`tools/IconTruthTests.swift`, run as WebTruthTests is (below), writes what the Mac reads and a
+sheet of 219 icons as it draws them to `<dir>/icons`. `node tools/icons.mjs --truth <dir>`, and
+the same with `--browser`: 20 of 20. The same three sets with the same digest of every icon's
+name, words and outlines; the same icons in the same order for nine searches; 84 outlines of
+Phosphor's and Material's the sets' own; 60 outlines grown from Lucide's lines at weights 0.25 to
+6 in the Mac's box within 0.0074 on a box of 24; the sheet, made by the core of its own icons,
+0.17% of its pixels off by more than 24 levels and 0.30 of 255 in the mean, where the Mac's own
+outlines drawn by the core are 0.13% and 0.29 off.
+
+The sheet brought out three faults of the page's path operations (`pathOp` in
+`site/bezzle.mjs`), which no drawing had reached before:
+
+- Making a path simple failed: CanvasKit 0.42 has `makeSimplified` under its inner name alone.
+- What Skia combines or makes simple is for filling even-odd, and its contours run either way
+  round, so a hole filled by winding may close: a mail icon's lines came out as a filled block
+  (2.73% of the sheet off, mean 5.42). Core Graphics promises a path that fills the same by
+  either rule. Each contour is now turned by how deep it lies in the others (`wound`; CanvasKit's
+  `makeAsWinding` leaves them as they are). Windows' host hands on what Skia makes as it comes
+  (`pathOp` in `host.cpp`); whether its icons close up the same way was not tried.
+- Skia grows a line into an outline only as truly as a path shown at its own size needs: 0.17
+  off at the heaviest weight on a box of 24, which is shown many times larger. It is asked for
+  sixteen times as fine.
 
 ## Shared designs
 
@@ -194,9 +289,9 @@ card's work. What keeps it quick and true:
   CanvasKit's memory stays at 128 MB over 1800, also for a film that has a text set anew at every
   moment (a text that breaks its lines at its width, growing by a key inside a piece drawn again).
 - **Shader fills** are drawn with WebGL, which their programs were written for (`site/shaders.mjs`,
-  asked through `Web/WebShaderPainting.swift`): in a film, at the film's moment, the part of the
-  layer its picture shows. In the design itself, and where there is no WebGL, the fill's picture
-  stands in as before. So it does for a fill that draws through textures first or with depth,
+  asked through `Web/WebShaderPainting.swift`): in a film at the film's moment, in the design at
+  the fill's own, the part of the layer its picture shows. Where there is no WebGL, the fill's
+  picture stands in. So it does for a fill that draws through textures first or with depth,
   stencil, instances or textures of numbers (`ShaderFill.beyondPlain`, kept under `Fill`'s key
   `scene`): `shaders.mjs` draws a fill's draws onto its canvas and nothing more.
 - **Without WebGL** the same frames are made by Skia on the processor and put on the canvas: right,
@@ -212,16 +307,23 @@ arithmetic puts every piece; `tools/film-compare.mjs` compares. In Playwright's 
 | What it holds | a camera moving in depth, fades, a blur, springs; plays once on its own backdrop | a shader moving by itself and by a key, lines drawn on, a star and a drop reshaped, the camera drawing near and turning | Wander's first artboard, its layers rising one after another under a camera flying in close |
 | Moments compared | 9 | 7 | 8 |
 | Every piece's place, order, opacity, blur | the Mac's, 0.0 pt apart | the Mac's, 0.0 pt apart | the Mac's, 0.0 pt apart |
-| Pixels off by more than 24 levels, graphics card | 0.44% (worst frame 0.81%) | 0.20% (0.24%) | 1.17% (2.67%) |
+| Pixels off by more than 24 levels, graphics card | 0.45% (worst frame 0.81%) | 0.20% (0.24%) | 1.17% (2.67%) |
 | The same, processor | 0.36% (0.58%) | 0.34% (0.43%) | 0.63% (1.07%) |
-| Mean difference of 255, graphics card and processor | 0.57 and 0.54 | 0.47 and 0.68 | 1.62 and 1.01 |
-| Frames a second playing, graphics card | 60.0 at 960×640 | 59.9 at 840×600 | 60.2 at 786×1704 |
-| A frame there: core, making pictures, placing | 0.5, 0.2, 0.8 ms | 4.1 (3.0 of it the shader), 0.6, 0.3 ms | 0.2, 0, 0.3 ms |
-| Longest wait for a frame | 33 ms, the first | 33 ms, the first | 17 ms |
-| Frames a second, processor | 7.7 | 8.5 | 2.8 |
+| Mean difference of 255, graphics card and processor | 0.52 and 0.50 | 0.65 and 0.73 | 1.63 and 1.02 |
+| Frames a second playing, graphics card | 60.1 at 960×640 | 60.1 at 840×600 | 60.0 at 786×1704 |
+| A frame there: core, making pictures, placing | 0.6, 0.2, 0.7 ms | 3.7 (2.9 of it the shader), 0.4, 0.2 ms | 0.3, 0, 0.4 ms |
+| Longest wait for a frame | 17 ms | 17 ms | 17 ms |
+| Frames a second, processor | 10.4 | 12.1 | 4.9 |
 
-The differences lie on edges and in the photographs' detail, as the stills' do. The Mac was busy
-with other builds while this ran.
+The differences lie on edges and in the photographs' detail, as the stills' do. These are against
+the frames the Mac writes now, with the core as it stands and the Mac otherwise quiet; of six
+times Depth was played, one had a single frame 100 ms late. Since a movie cuts gentle tones to
+its steps once, from pieces kept finer than eight bits (`FilmExport`, 7ec4e10), the Mac's frames
+are up to 2 levels of 255 from what they were, in two pixels of five in Lines; the page still
+draws each piece with eight bits. That is the whole of Lines' mean going from 0.47 and 0.68 to
+0.65 and 0.73: against the frames from before that change every number of the table is as it
+was first measured (0.44%, 0.20%, 1.17% of pixels off; means 0.52 and 0.49, 0.47 and 0.68, 1.62
+and 1.01), and no more pixels are off by more than 24 levels against either.
 
 In the page a link opens it was tried through a relay on this Mac (`node tools/room.mjs <a design
 with a film> --relay <address> --edit`, then `shared.html?relay=<address>#2.<secret>` in the same
@@ -262,7 +364,7 @@ as a shared design is drawn again at each edit (CanvasKit's memory is what its h
 | The same in a headless Chromium | 270, 1139 MB | 31, 551 MB |
 | The same with an edit before each of 30 rounds, Node | 506, 1529 MB | 31, 551 MB |
 | Adoption Day Sizes, 4 artboards, Node | 161, 2027 MB | 3, 221 MB |
-| Features (below), 8 artboards, Node | 195, 1254 MB | 36, 184 MB |
+| Features (above), 8 artboards, Node | 195, 1254 MB | 36, 184 MB |
 | The same in a headless Chromium, its shaders drawn | 274 and 80 shader frames, 1246 MB | 39 and 4, 154 MB |
 | One artboard (Adoption Day) 400 times, Node | 656 MB after 20, 28 MB more a drawing | 184 MB from the 80th on |
 | A film with a text set anew at every moment, 1800 moments, Node | 1230 MB (319 MB with every text let go and the film opened again each 600) | 128 MB, 600 to 1200 texts held, 2405 let go one by one, the film never opened again |
@@ -295,9 +397,15 @@ do a frame of the film played long and the design after it.
 - `Sources/BezzleCore/Film`: a film for the page (see Films). `WebFilm.swift` is the browser's
   own; `FilmPictures.swift` links to the Mac's. Windows, which shares `Platform`, `Shared` and
   `Web`, does not take this folder: it has its own stage.
+- `Sources/BezzleCore/Main.swift`: what the page calls (`bz_…`), each answering JSON. Beside it,
+  the browser's own and not Windows': `PageKeeps.swift` (what the page may let go, see What the
+  page keeps), `WebLive.swift` (who else is there) and `WebIcons.swift` (the icon library).
 - `site/bezzle.mjs`: the page's side, for a browser or Node. A small WASI, the host calls (path
   operations, pictures, text, shaders), the playback of the recording with CanvasKit, and a
   film's frames (`film`, `filmFrame`, `filmDraw`, `filmWarm`, `filmClose`).
+- `site/shared.html`: the page a link opens (see Shared designs), with `site/share.mjs` (the
+  relay's protocol and the live room's socket), `site/live.mjs` (the others' tokens, hands and
+  outlines) and `site/words.mjs` (its words in four languages).
 - `site/film.mjs`: the bar under an artboard with a film, and the canvas its frames are drawn on,
   which lies exactly over the design's. `createScreen` alone is that canvas, for tools.
 - `site/shaders.mjs`: shader fills drawn with WebGL 1 or 2, as their programs ask, a part of the
@@ -314,13 +422,27 @@ platform-neutral half of `TextLayout.swift` (the `Node` extension at its end).
 
 ## Not done in the prototype
 
-Text on curves, list markers, paragraph spacing, letters painted with a gradient or picture,
-photo develop, blurs that grow along a ramp, "plus darker" mixing (drawn as multiply), shader
-fills outside a film (the design shows their picture), shader fills with passes into textures,
-steps that build on the frames before, tests and masks, instances or textures of numbers (their
-picture, in a film too), live co-working's pointers and presence
-(the page hears only that there are new records), the icon library (needs zlib), localization
-(English only), any editing UI.
+- **Any editing UI.** It was built once and taken out at Erik's wish: the page is for looking.
+  With it goes placing an icon, which the core could now do (The icon library, above).
+- **Shader fills** with passes into textures, steps that build on the frames before, tests and
+  masks, instances or textures of numbers: their picture stands in, in a film too. So it does
+  for every shader fill where there is no WebGL.
+- **Of the live room**: a layer moving while someone drags it (it moves when the drag ends), the
+  glow of what was just changed, the light where others look, pictures on their way, following
+  someone's view (Who else is there, above).
+- **Words** of `site/index.html`, the sample viewer for this Mac: English alone.
+- **Widths** at sizes that are not whole and in the system font's heavier weights, by up to 0.2
+  pt on a word: inside CanvasKit (What it showed, above).
+- **A film's gentle tones**: the page draws each piece of a film with eight bits, where the Mac's
+  movie keeps its pieces finer and cuts to eight once. Up to 2 levels of 255 (Films, above).
+- **Not set beside the Mac yet**: what the shared code gained on 2026-11-13 and 14 (3D bodies
+  and the look from the side, groups that keep depth, Shape keys with other outlines, looks
+  keyed in a film). It is compiled into the core as it stands; no truth design holds it.
+
+Drawn or done since, and proven against the Mac above: text on curves, list markers, paragraph
+spacing, letters painted with a gradient or a picture, developed photos, blurs that grow along a
+ramp, "plus darker", shader fills in the design, who else is there with their hands, the icon
+library, the page's words in four languages.
 
 ## Building and running
 
@@ -348,7 +470,22 @@ To compare with the Mac, copy `tools/WebTruthTests.swift` into `BezzleTests/` of
 repository (`git archive HEAD`), run it with `TEST_RUNNER_WEB_TRUTH_OUT=<dir>` and
 `TEST_RUNNER_WEB_TRUTH_DESIGNS=<AppStore/screenshots-src/designs>`, then
 `node tools/compare.mjs --truth <dir> --designs ../AppStore/screenshots-src/designs --wasm .build/out/Products/Release-webassembly-wasm32/BezzleCore.wasm`.
-Pictures and differences go to `out/`.
+Pictures and differences go to `out/`, or `--out <dir>`.
+
+The other truths are made the same way, each a test copied into `BezzleTests/` beside it and
+writing a folder of its own under `<dir>`:
+
+| Test | Writes | Compared by |
+|---|---|---|
+| `FeatureTruthTests` | `features`: a design of what the prototype left out, drawn | `tools/compare.mjs --truth <dir>/features --designs <dir>/features`, and again with `--browser` for its shader fills |
+| `WidthTruthTests` | `widths`: 4000 texts on one line, measured | the same, on `<dir>/widths`: its report has each text's `dWidth` |
+| `IconTruthTests` | `icons`: the icon sets as read, a sheet of icons drawn | `tools/icons.mjs --truth <dir> [--browser]` |
+| `LiveTruthTests` | `live`: what two Macs said in a live room and showed of each other | `tools/live.mjs --truth <dir> [--relay <a relay on this Mac>]` |
+| `FilmTruthTests` | `films`: three designs with a film, frames of each | `tools/film-compare.mjs --truth <dir>` (below) |
+
+`--browser` draws in a headless Chromium of the tools' own (`tools/headless.mjs`: Playwright's
+from `~/Library/Caches/ms-playwright`, or `--chrome <path>`; never a window of one's own Chrome),
+served from this Mac alone.
 
 Films are compared the same way: copy `tools/FilmTruthTests.swift` into `BezzleTests/`, run it
 with the same two variables (its designs, frames and `films.json` go to `<dir>/films`), then
