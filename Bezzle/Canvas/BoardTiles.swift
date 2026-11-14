@@ -699,7 +699,7 @@ nonisolated extension Renderer {
 
     /// Part of an artboard, `rect` on the canvas, drawn into a picture `scale` pixels to the point;
     /// only the layers that reach into it are drawn.
-    static func tile(of board: Node, rect: CGRect, scale: CGFloat, options: Options) -> CGImage? {
+    static func tile(of board: Node, rect: CGRect, scale: CGFloat, options: Options, screen: CGColorSpace? = nil) -> CGImage? {
         let w = Int((rect.width * scale).rounded()), h = Int((rect.height * scale).rounded())
         guard w > 0, h > 0, let ctx = bitmap(CGSize(width: w, height: h)) else { return nil }
         ctx.translateBy(x: 0, y: CGFloat(h))
@@ -708,6 +708,23 @@ nonisolated extension Renderer {
         var part = options
         part.visible = rect
         withFlippedContext(ctx) { drawArtboard(board, in: ctx, options: part) }
+        guard let made = ctx.makeImage() else { return nil }
+        return screen.flatMap { onScreen(made, in: $0) } ?? made
+    }
+
+    /// A picture drawn in sRGB, as the canvas shows it on a screen of these colours: in the
+    /// screen's own colours and its own order of bytes, the four of a pixel blue first. Drawn into
+    /// the canvas so, a picture is copied; drawn as it was made, each was turned into the screen's
+    /// colours and order again at every frame, by the queue the window's drawing waits for, which
+    /// while zooming, with every tile on screen drawn at a new size each frame, was the most of
+    /// what a frame cost. Drawn in sRGB first and turned once, it shows exactly as it did.
+    static func onScreen(_ image: CGImage, in space: CGColorSpace) -> CGImage? {
+        let info = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        guard let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: info) else { return nil }
+        ctx.setBlendMode(.copy)
+        ctx.interpolationQuality = .none
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return ctx.makeImage()
     }
 

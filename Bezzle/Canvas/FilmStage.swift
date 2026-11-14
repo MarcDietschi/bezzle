@@ -127,6 +127,24 @@ final class FilmStageView: NSView {
     private var changing = false
     /// Counts the sets of pictures asked for, so one that comes after a newer was asked for is dropped.
     private var generation = 0
+    private var zoomSettled: DispatchWorkItem?
+    /// How long a zoom by hand stays put before the pictures are made as sharp as it wants. A zoom
+    /// from the menu, a key or a glide is drawn sharp at once.
+    private static let zoomSettles: CFTimeInterval = 0.15
+
+    /// The canvas, and with it the stage, is drawn again once the zoom has stayed put.
+    private func drawWhenZoomSettles() {
+        zoomSettled?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.zoomSettled = nil
+            self?.store.canvas?.needsDisplay = true
+        }
+        zoomSettled = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.zoomSettles + 0.02, execute: work)
+    }
+
+    /// How large each piece shows at most in the whole film, by its key, for the design as it was.
+    private var stretches: (version: Int, board: UUID, fronts: [UUID: Int], loose: Set<UUID>, of: [String: (rect: CGRect, stretch: Double)])?
     private var installs = 0
     private var making = false
     /// The parts drawn sharper, by their piece; whether some are being drawn now; and a count
@@ -275,9 +293,22 @@ final class FilmStageView: NSView {
         screen = zoom * scale
         let wanted = Signature(version: store.version, board: board.id, loose: Set(store.posedLayers), fronts: store.fronts, step: step,
                                measured: !store.inGesture)
+        // Zoomed by hand a moment ago, with a pinch or the wheel, and so likely to go on.
+        let pinching = CACurrentMediaTime() - (store.canvas?.zoomedByHand ?? -.infinity) < Self.zoomSettles
         if wanted != signature {
-            signature = wanted
-            prepare(board, at: t, pixels: step, frame: rect)
+            var sharper = wanted
+            sharper.step = signature?.step ?? step
+            if pinching, sharper == signature {
+                // Only how sharp they are wanted, while a hand zooms:
+                // the pictures there are, stretched, show meanwhile, and are drawn anew once it
+                // has stayed put a moment, as the tiles are. Drawn anew at every step of
+                // sharpness, the pieces were worked out again on the main thread several times
+                // a second while zooming in and out.
+                drawWhenZoomSettles()
+            } else {
+                signature = wanted
+                prepare(board, at: t, pixels: step, frame: rect)
+            }
         } else if changing, t != drawnAt, !making {
             prepare(board, at: t, pixels: step, frame: rect, again: true)
         }
@@ -340,6 +371,22 @@ final class FilmStageView: NSView {
     /// the view's points), as sharp as it shows there, with a little room round it for a camera on
     /// its way. All of it, as sharp as it ever shows, would be drawn again at every moment too,
     /// and a large piece, such as a shader under the whole artboard, would fall behind the playhead.
+    /// How large a piece shows at most in the whole film (`Node.filmStretch`, which looks at
+    /// a hundred moments of it). That changes with the design alone, so it is kept until the
+    /// design changes: asked again for every piece whenever zooming crossed a step of sharpness,
+    /// it held the canvas up several times a second while zooming in and out.
+    private func stretch(of piece: FilmPiece, around rect: CGRect, on board: Node) -> Double {
+        let loose = Set(store.posedLayers)
+        if let had = stretches, had.version == store.version, had.board == board.id, had.fronts == store.fronts, had.loose == loose {
+            if let found = had.of[piece.key], found.rect == rect { return found.stretch }
+        } else {
+            stretches = (store.version, board.id, store.fronts, loose, [:])
+        }
+        let found = board.filmStretch(of: piece, around: rect)
+        stretches?.of[piece.key] = (rect, found)
+        return found
+    }
+
     private func prepare(_ board: Node, at t: Double, pixels: CGFloat, frame: CGRect? = nil, again: Bool = false) {
         let pieces = board.filmPieces(loose: Set(store.posedLayers))
         changing = pieces.contains(where: \.changes)
@@ -379,7 +426,7 @@ final class FilmStageView: NSView {
             var scale = pixels
             if measured || had == nil {
                 // Sharp at its largest in the whole film, within reason.
-                scale = pixels * Self.sharpness(for: min(board.filmStretch(of: piece, around: rect), 4))
+                scale = pixels * Self.sharpness(for: min(stretch(of: piece, around: rect, on: board), 4))
             } else if let had {
                 scale = had.scale
             }
@@ -421,7 +468,7 @@ final class FilmStageView: NSView {
                     guard mine == self.generation else {
                         // Asked again with what there is now.
                         self.signature = nil
-                        self.store.canvas?.needsDisplay = true
+                        self.store.canvas?.redrawForArrivals()
                         return
                     }
                     let showing = self.shownBoard == id && !self.gate.isHidden
@@ -453,7 +500,7 @@ final class FilmStageView: NSView {
     /// is; else the canvas draws again, which shows the stage.
     private func placeNew(showing: Bool) {
         guard showing, screen > 0, let board = store.filmBoard, shownBoard == board.id, let signature, signature.version == store.version else {
-            store.canvas?.needsDisplay = true
+            store.canvas?.redrawForArrivals()
             return
         }
         guard !store.film.playing else { return }
@@ -1031,6 +1078,8 @@ final class FilmStageView: NSView {
     private(set) var partsMade = 0
     /// Whether pictures are being drawn right now, away from here.
     var isDrawing: Bool { making || sharpening || lensing }
+    /// How sharp the pieces' pictures were last asked to be, in pixels to the point at the view's zoom.
+    var sharpnessAsked: CGFloat? { signature?.step }
     /// How many frames the lens has made, and how long they took, in all and the longest, in seconds.
     private(set) var lensFrames = 0
     private(set) var lensSpent = 0.0

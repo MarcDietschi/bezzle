@@ -1,5 +1,6 @@
 import Testing
 import AppKit
+import Observation
 @testable import Bezzle
 
 @MainActor
@@ -308,6 +309,108 @@ struct MenuTests {
         #expect(!host.key(key("a")))
         #expect(!host.key(key("\u{7F}", code: 51)))
         #expect(host.query.isEmpty)
+    }
+
+    // MARK: Moving about
+
+    /// The bar along the top reads the percent, not the view: moving about tells it nothing, so
+    /// the window's panels are not worked out again at every step of a pan.
+    @Test func movingAboutTellsTheBarNothingUntilThePercentChanges() {
+        let bench = Bench()
+        #expect(bench.store.zoomPercent == 100)
+        nonisolated final class Told: @unchecked Sendable { var on = false }
+        let heard = Told()
+        var told: Bool { heard.on }
+        withObservationTracking { _ = bench.store.zoomPercent } onChange: { heard.on = true }
+        bench.scroll(dx: -40, dy: -25, precise: true)
+        bench.scroll(dy: -3)
+        bench.store.viewport.origin.x += 300
+        #expect(bench.store.viewport.origin != .zero)
+        #expect(!told)
+        // Closer by less than a whole percent, it still says the same.
+        bench.store.viewport.zoom = 1.004
+        #expect(!told)
+        #expect(bench.store.zoomPercent == 100)
+        bench.store.viewport.zoom = 0.5
+        #expect(told)
+        #expect(bench.store.zoomPercent == 50)
+    }
+
+    /// The percent changes at nearly every frame of a pinch; SwiftUI hears only of the room it
+    /// takes, which is three digits from the whole design to 999 %, so the bar keeps its width.
+    @Test func theZoomButtonKeepsItsWidthUpTo999Percent() {
+        let bench = Bench()
+        #expect(bench.store.zoomDigits == 3)
+        nonisolated final class Told: @unchecked Sendable { var on = false }
+        let heard = Told()
+        withObservationTracking { _ = bench.store.zoomDigits } onChange: { heard.on = true }
+        for zoom: CGFloat in [0.02, 0.05, 0.5, 0.99, 1, 4, 9.99] {
+            bench.store.viewport.zoom = zoom
+            #expect(bench.store.zoomPercent == DocumentStore.percent(of: zoom))
+        }
+        #expect(!heard.on)
+        bench.store.viewport.zoom = 12
+        #expect(heard.on)
+        #expect(bench.store.zoomDigits == 4)
+        #expect(bench.store.zoomPercent == 1200)
+    }
+
+    @Test func aDesignOpensSayingHowCloseItWasLeft() throws {
+        let bench = Bench()
+        bench.store.viewport = Viewport(origin: CGPoint(x: 40, y: 10), zoom: 2.5)
+        bench.store.save()
+        DocumentStore.finishSaving()
+        let reopened = try DocumentStore(opening: bench.store.url)
+        #expect(reopened.viewport == bench.store.viewport)
+        #expect(reopened.zoomPercent == 250)
+        try? FileManager.default.removeItem(at: bench.store.url)
+    }
+
+    /// Where a design is looked at is kept, but the whole design is not written for it each time
+    /// moving about pauses: only once the view has rested a good while.
+    @Test func lookingAboutWritesTheDesignOnlyOnceTheViewHasRested() async throws {
+        let bench = Bench()
+        bench.store.viewRest = 80
+        let before = bench.store.savesAsked
+        bench.scroll(dx: -40, precise: true)
+        bench.scroll(dx: -40, precise: true)
+        #expect(bench.store.savesAsked == before)
+        // Rested, it is written, once.
+        for _ in 0..<200 where bench.store.savesAsked == before { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(bench.store.savesAsked == before + 1)
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(bench.store.savesAsked == before + 1)
+        DocumentStore.finishSaving()
+        let reopened = try DocumentStore(opening: bench.store.url)
+        #expect(reopened.viewport == bench.store.viewport)
+        // Opened where it was left, it has nothing to be written for.
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(reopened.savesAsked == 0)
+        try? FileManager.default.removeItem(at: bench.store.url)
+    }
+
+    @Test func aSaveTakesTheViewAlongAndLeavesNoneWaiting() async throws {
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 20, width: 30, height: 40))])
+        bench.store.viewRest = 80
+        bench.scroll(dx: -40, precise: true)
+        let before = bench.store.savesAsked
+        bench.store.save()
+        #expect(bench.store.savesAsked == before + 1)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(bench.store.savesAsked == before + 1)
+        DocumentStore.finishSaving()
+        #expect(try DocumentStore(opening: bench.store.url).viewport == bench.store.viewport)
+        try? FileManager.default.removeItem(at: bench.store.url)
+    }
+
+    /// The canvas moves on under the pointer: what it rested on is left at once, and looked for
+    /// again when the scroll has come to rest, not at each of its steps.
+    @Test func aScrollLeavesWhatThePointerRestedOn() {
+        let bench = Bench(extra: [CanvasTests.rect("R", CGRect(x: 10, y: 20, width: 30, height: 40))])
+        bench.store.hovered = bench.node("R")?.id
+        bench.scroll(dx: -40, precise: true)
+        #expect(bench.store.hovered == nil)
+        #expect(bench.store.viewport.origin.x == 40)
     }
 }
 

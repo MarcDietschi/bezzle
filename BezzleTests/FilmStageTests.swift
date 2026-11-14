@@ -169,6 +169,32 @@ struct FilmStageTests {
 
     // MARK: What it builds
 
+    /// Under a pinch the zoom changes at every frame: the pieces are not drawn again at each step
+    /// of sharpness it passes, but once it has stayed put a moment. A zoom not made by hand, as
+    /// from the menu, is drawn sharp at once.
+    @Test func aPinchIsDrawnSharpOnceTheZoomStaysPut() async throws {
+        let (bench, stage) = staged(cast())
+        try await settle(stage)
+        let store = bench.store
+        #expect(stage.sharpnessAsked == 2)
+        // One step, as from the menu: at once.
+        store.viewport.zoom = 2
+        _ = stage.sync(scale: 2)
+        #expect(stage.sharpnessAsked == 4)
+        try await settle(stage)
+        // A pinch out: the pictures there are stand in until it stops.
+        for zoom: CGFloat in [1.8, 1.4, 1.0, 0.7, 0.5] {
+            bench.canvas.zoomedByHand = CACurrentMediaTime()
+            store.viewport.zoom = zoom
+            _ = stage.sync(scale: 2)
+        }
+        #expect(stage.sharpnessAsked == 4)
+        // Stayed put, it is drawn as sharp as the zoom wants.
+        try await Task.sleep(for: .milliseconds(200))
+        try await settle(stage)
+        #expect(stage.sharpnessAsked == 1)
+    }
+
     @Test func withNoFilmToShowTheCanvasIsToldNothing() async throws {
         let bench = Bench(extra: cast())
         let stage = bench.canvas.filmStage

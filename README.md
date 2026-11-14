@@ -65,7 +65,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
   whole run ends there: "Test exceeded execution time allowance", a hundred tests counted of 1,300
   and the rest never run (`readsAPageIntoBoxesAndWords`, three times on 2026-11-10 beside a VM
   build, and nothing wrong with it). When a time limit is the only failure, run them one at a time
-  before looking for a fault.
+  before looking for a fault. Since 1.8 the full run in parallel fails even on a quiet Mac:
+  `FilmSharpTests.withTheViewCloseOnlyWhatIsInTheViewIsDrawnSharper` waits more than its minute
+  for the stage's pictures, which queue behind every other test's (2026-11-15, on 1.8.1's commit
+  as well). Run the whole suite with `-parallel-testing-enabled NO`.
 - **Debug and Release:** Debug is not sandboxed and keeps designs in `~/Documents/Bezzle`; Release is
   sandboxed and keeps them in `~/Library/Containers/com.erik.Bezzle/Data/Documents/Bezzle`, which is
   where Erik's own designs are. When designs seem missing, look in both. Test anything that reaches
@@ -80,7 +83,37 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
   prototype. The AI server (`Bezzle/MCP`, on 127.0.0.1:7412, or `BEZZLE_MCP_PORT`) drives a running copy
   like a person would.
 - **Speed:** Debug builds mislead. Build with `SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule`
-  and run `BEZZLE_STRESS` (see DebugHooks); the display is 120 Hz, so a frame has 8.3 ms.
+  and run `BEZZLE_STRESS` (see DebugHooks). Erik's main screen is 5120×1440 at 1× and 75 Hz, so a
+  frame has 13.3 ms; he runs both the released copy and Xcode's Debug build, so measure both.
+- **Moving about quickly** (measured 2026-11-15 on a copy of Lawsearch AI, 17 artboards and about
+  10,000 layers): `BEZZLE_FILM='4:zoom=fit;5:roam=40,16,8,1,40'` pans 40 points a frame while
+  pinching from the whole design to 40 % and back, once a second each way (`pan=` pans alone,
+  `zoom=` and `see=` set the view first; `AnimateHooks` has them), in step with the screen's frames,
+  and writes to `BEZZLE_SCRUB_OUT` how many steps came late, how often the canvas was drawn and
+  how long the main thread worked for each step. Launch the copy with its own bundle id, at the
+  size of Erik's window (`BEZZLE_WINDOW=5120x1400`), and compare two builds back to back. Before
+  2026-11-15 that roam came late about 100 times in 8 s in Design and in Animate; after, 1 to 10
+  times (Debug: 71 and 116 before, 4 to 8 after). What made the difference, and what keeps it so:
+  - No SwiftUI view reads what changes at every step of moving about: `store.viewport`,
+    `visibleCanvasRect`, `focusedArtboard`. One that did had SwiftUI go over the whole window for
+    every step, half of what a step cost. The bar's percent is drawn by AppKit and follows the zoom
+    by itself (`ZoomPercent` in `Workspace.swift`); SwiftUI hears only `zoomDigits`, the room it
+    takes, three digits from the whole design to 999 %. Even a change of the bar's width once a
+    tenth of a second made a frame in four late.
+  - The canvas is marked for drawing there and then when something it shows changes on the main
+    thread (`CanvasView.draw`'s observation), and tiles and pictures that arrive while the view
+    moves wait for its next step (`redrawForArrivals`): a second drawing within one frame waits
+    for the screen, and the step after it comes a frame late.
+  - Tiles are kept in the screen's colours and byte order (`Renderer.onScreen`), turned once where
+    they are made. Kept in sRGB, every tile in sight was turned into the screen's colours again at
+    every frame on the queue the window's drawing waits for. Shrunk artboards far out are a touch
+    crisper since; everything else is within 2 levels of 255.
+  - The film's stage keeps how large each piece ever shows in the film until the design changes,
+    and under a pinch (three changes of zoom within 0.15 s) leaves its pictures stretched until the
+    zoom stays put, as the tiles do.
+  - A change of where the design is looked at alone is written after 30 s of rest, or with the next
+    change, or on closing, not 2 s after each pause: the whole `document.json` (8 MB for Lawsearch
+    AI) was written each time, 2 GB in an afternoon of looking about.
 
 ### Animate
 

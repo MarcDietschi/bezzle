@@ -51,6 +51,19 @@ import AppKit
 ///                                  and under a camera that blurs, how many frames the stage's lens
 ///                                  made meanwhile and how long one took
 ///       watch=seconds              the same without moving the playhead, while the film plays
+///       pan=dx,dy,seconds[,rate]   move the view as two fingers on the canvas do, by so many points
+///                                  with each frame of the screen (or `rate` times a second, by
+///                                  a timer), there and back four times, in whatever mode the
+///                                  design is seen; how often the app found the time to, how
+///                                  often the canvas was drawn, how long the main thread worked
+///                                  for a step, and how often the design was asked to be saved
+///                                  meanwhile, is written to BEZZLE_SCRUB_OUT (or the log)
+///       roam=dx,dy,seconds,low,high   pan as `pan` does and pinch out and in at once, once a second
+///                                  each way, between two zooms: below 1.5 a multiple of the zoom
+///                                  that shows the whole design (1 is that zoom), else a percent;
+///                                  written as `pan` writes, with the least and most zoom reached
+///       zoom=0.5 | zoom=fit        zoom there about the view's middle, or to the whole design
+///       see=artboard               bring an artboard's middle to the view's middle
 ///       movie=path | movie=ask[:folder]   save the film as a movie there, or where the save panel
 ///                                  says (opened in a folder), as Save as Movie… does but without
 ///                                  showing it in the Finder; how it ended is written to
@@ -226,6 +239,130 @@ enum AnimateHooks {
         }
     }
 
+    /// Moves the view as two fingers on the canvas do, with the pointer over its middle, there and
+    /// back, and writes how often the app found the time to: each step waits for the one before,
+    /// and for what it left the app to draw. A step comes with each frame of the screen, in step
+    /// with it as the system sends a scroll (the canvas's own display link), unless a rate is
+    /// asked for, which a timer keeps. It writes, too, how long the main thread worked for a
+    /// step, which is the measure to compare two builds by. A timer is not in step with the
+    /// screen: a canvas quick enough to draw again before the screen has taken its last picture
+    /// waits for it (`CABackingStoreSynchronize`, most of a frame), so under a timer the quicker
+    /// canvas can show fewer steps a second and more of them late.
+    @MainActor private final class Panner: NSObject {
+        static var running: Panner?
+        let store: DocumentStore
+        let dx: Double, dy: Double, seconds: Double, rate: Double
+        /// While roaming: the view also zooms out and in between these, a pinch with every step.
+        var zooms: (low: Double, high: Double)?
+        var began = 0.0
+        var steps: [Double] = []
+        var timer: Timer?
+        var link: CADisplayLink?
+        var pictures = 0, parts = 0, saves = 0, draws = 0
+        /// How long the main thread had worked when the first step began.
+        var worked: UInt64 = 0
+
+        init(_ store: DocumentStore, dx: Double, dy: Double, seconds: Double, rate: Double) {
+            self.store = store
+            self.dx = dx
+            self.dy = dy
+            self.seconds = seconds
+            self.rate = rate
+            super.init()
+        }
+
+        static func run(_ store: DocumentStore, dx: Double, dy: Double, seconds: Double, rate: Double, zooms: (low: Double, high: Double)? = nil) {
+            let p = Panner(store, dx: dx, dy: dy, seconds: seconds, rate: rate)
+            p.zooms = zooms
+            p.startZoom = Double(store.viewport.zoom)
+            running = p
+            p.began = CACurrentMediaTime()
+            p.worked = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            p.pictures = store.canvas?.filmStage.picturesMade ?? 0
+            p.parts = store.canvas?.filmStage.partsMade ?? 0
+            p.saves = store.savesAsked
+            p.draws = store.canvas?.drawsMade ?? 0
+            if rate <= 0, let canvas = store.canvas, canvas.window != nil {
+                let link = canvas.displayLink(target: p, selector: #selector(frame))
+                link.add(to: .main, forMode: .common)
+                p.link = link
+                // A window wholly behind others is shown no frames: a timer then, at the screen's pace.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    guard p.steps.isEmpty, Panner.running === p else { return }
+                    p.link?.invalidate()
+                    p.link = nil
+                    p.keepTime(Double(canvas.window?.screen?.maximumFramesPerSecond ?? 60))
+                }
+            } else {
+                p.keepTime(rate > 0 ? rate : 60)
+            }
+        }
+
+        func keepTime(_ rate: Double) {
+            paced = rate
+            let timer = Timer(timeInterval: 1.0 / rate, repeats: true) { [self] _ in MainActor.assumeIsolated { tick() } }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+        }
+
+        /// The pace a timer keeps; nil with the screen's frames.
+        var paced: Double?
+        var startZoom = 1.0
+        var leastZoom = Double.infinity, mostZoom = 0.0
+
+        @objc func frame(_ link: CADisplayLink) { tick() }
+
+        func tick() {
+            let now = CACurrentMediaTime()
+            steps.append(now)
+            let k = min((now - began) / seconds, 1)
+            // There and back, four times over, as a hand looking about a design goes.
+            let there = Int(k * 8) % 2 == 0
+            if k < 1, let canvas = store.canvas, canvas.window != nil, let first = NSScreen.screens.first,
+               let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32((there ? dy : -dy).rounded()),
+                                wheel2: Int32((there ? dx : -dx).rounded()), wheel3: 0) {
+                // An event made here names no window, so where it says it is in its window is where
+                // it is on the screens: put where the canvas's middle is in the window.
+                let middle = canvas.convert(CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY), to: nil)
+                cg.location = CGPoint(x: middle.x, y: first.frame.maxY - middle.y)
+                if let event = NSEvent(cgEvent: cg) { canvas.scrollWheel(with: event) }
+                // Roaming, two fingers pinch as they move: out to the low zoom and in to the high
+                // one and out again, once a second each way, as a hand looks about a large design.
+                if let zooms {
+                    let t = now - began
+                    let tri = abs(t.truncatingRemainder(dividingBy: 2) - 1)
+                    let target = zooms.low * pow(zooms.high / zooms.low, 1 - tri)
+                    let current = Double(store.viewport.zoom)
+                    if let pinch = AnimateHooks.fingers(pinch: target / current - 1, phase: 2, at: cg.location) {
+                        canvas.magnify(with: pinch)
+                    }
+                }
+                leastZoom = min(leastZoom, Double(store.viewport.zoom))
+                mostZoom = max(mostZoom, Double(store.viewport.zoom))
+            }
+            guard k >= 1 else { return }
+            timer?.invalidate()
+            link?.invalidate()
+            Panner.running = nil
+            var gaps: [Double] = []
+            for i in 1..<steps.count { gaps.append((steps[i] - steps[i - 1]) * 1000) }
+            let sorted = gaps.sorted()
+            func at(_ q: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * q))] }
+            let stage = store.canvas?.filmStage
+            let work = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - worked) / 1_000_000 / Double(max(steps.count, 1))
+            // A step is late once it comes more than half a step after its time.
+            let pace = paced ?? Double(store.canvas?.window?.screen?.maximumFramesPerSecond ?? 60)
+            let late = gaps.filter { $0 > 1500 / pace }.count
+            AnimateHooks.say(String(format: "%@%@ at %.0f%%: steps %d in %.2f s, %.1f a second of %.0f %@, late %d, canvas drawn %d times; main thread %.2f ms a step; gap ms p50 %.1f p90 %.1f p99 %.1f max %.1f; over 17 ms %d, over 34 ms %d, over 100 ms %d; pictures %d, parts %d, saves %d",
+                                    zooms == nil ? "panned" : String(format: "roamed %.1f%% to %.1f%%", leastZoom * 100, mostZoom * 100),
+                                    store.animating ? " in Animate" : store.prototyping ? " in Prototype" : "", startZoom * 100,
+                                    steps.count, now - began, Double(steps.count) / (now - began), pace, paced == nil ? "with the screen" : "by a timer", late,
+                                    (store.canvas?.drawsMade ?? 0) - draws, work, at(0.5), at(0.9), at(0.99), sorted.last ?? 0,
+                                    gaps.filter { $0 > 17 }.count, gaps.filter { $0 > 34 }.count, gaps.filter { $0 > 100 }.count,
+                                    (stage?.picturesMade ?? 0) - pictures, (stage?.partsMade ?? 0) - parts, store.savesAsked - saves))
+        }
+    }
+
     private static func numbers(_ s: String) -> [Double] { s.split(separator: ",").compactMap { Double($0) } }
 
     // MARK: Two fingers and the wheel
@@ -371,6 +508,33 @@ enum AnimateHooks {
             guard n.count == 3 else { return }
             Scrubber.run(store, from: n[0], to: n[1], seconds: n[2])
         case "watch": Scrubber.run(store, from: 0, to: nil, seconds: Double(rest) ?? 5)
+        case "pan":
+            let n = numbers(rest)
+            guard n.count == 3 || n.count == 4 else { return }
+            // With the screen's frames, unless told how often.
+            Panner.run(store, dx: n[0], dy: n[1], seconds: n[2], rate: n.count == 4 ? n[3] : 0)
+        case "roam":
+            // Panning and pinching out and in at once: dx,dy,seconds,lowZoom,highZoom, where a
+            // zoom of 0 is the whole design's (`zoomToFit`) and the others are multiples of it
+            // when below 1.5 (`f`), else plain zooms.
+            let n = numbers(rest)
+            guard n.count == 5, let canvas = store.canvas else { return }
+            var fitted = store.viewport
+            if let bounds = store.doc.contentBounds { fitted.fit(bounds, in: canvas.bounds.size) }
+            let fit = Double(fitted.zoom)
+            func zoom(_ v: Double) -> Double { v < 1.5 ? max(v, 0.0001) * fit : v / 100 }
+            Panner.run(store, dx: n[0], dy: n[1], seconds: n[2], rate: 0, zooms: (zoom(n[3]), zoom(n[4])))
+        case "zoom":
+            // To this zoom about the view's middle, or "fit" for the whole design.
+            if rest == "fit" { store.zoomToFit() } else if let z = Double(rest), let canvas = store.canvas {
+                store.viewport.zoom(to: CGFloat(z), keeping: CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY))
+            }
+        case "see":
+            // Looks at an artboard by name, its middle in the view's middle, at the zoom there is.
+            if let board = store.doc.artboards.first(where: { $0.name == rest }), let canvas = store.canvas {
+                let zoom = store.viewport.zoom
+                store.viewport = Viewport(origin: CGPoint(x: board.frame.midX - canvas.bounds.width / 2 / zoom, y: board.frame.midY - canvas.bounds.height / 2 / zoom), zoom: zoom)
+            }
         case "movie": movie(rest, store)
         case "pinch":
             guard fields.count == 2, let p = onScreen(numbers(fields[0]), store) else { return }

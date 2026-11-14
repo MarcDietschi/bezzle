@@ -410,7 +410,8 @@ struct FilmSharpTests {
         let rect = try await settle(stage)
         #expect(rect == CGRect(x: -1500, y: -1000, width: 4000, height: 3000))
         let pieces = try staged(on: stage)
-        #expect(pieces.count == 2)
+        // Required, not expected: with no pieces the lines below would stop every test after this one.
+        try #require(pieces.count == 2)
         // The view shows the artboard from 150 to 270 across and 100 to 180 down.
         let window = CGRect(x: 150, y: 100, width: bench.canvas.frame.width / 10, height: bench.canvas.frame.height / 10)
         let over = try #require(pieces[0].over)
@@ -426,6 +427,7 @@ struct FilmSharpTests {
         bench.store.viewport = Viewport(origin: CGPoint(x: 120, y: 110), zoom: 10)
         try await settle(stage)
         let moved = try staged(on: stage)
+        try #require(moved.count == 2)
         #expect(stage.partsMade > 1)
         #expect(try #require(moved[0].over).bounds.contains(CGRect(x: 20, y: 10, width: window.width, height: window.height)))
         // The box is in the view now. Small as it is, its whole picture is sharp enough, and no

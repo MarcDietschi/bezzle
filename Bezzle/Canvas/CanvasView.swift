@@ -287,7 +287,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         layer?.masksToBounds = true
         // Tiles are drawn on other threads, and the canvas is drawn again as they come.
         tiles.maker = TileMaker.shared
-        tiles.arrived = { [weak self] in self?.needsDisplay = true }
+        tiles.arrived = { [weak self] in self?.redrawForArrivals() }
         registerForDraggedTypes([.fileURL, .string, ResourceDrag.type])
     }
 
@@ -389,12 +389,28 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     // MARK: - Drawing
 
+    #if DEBUG
+    /// How often the canvas was drawn, for a test run to tell (`AnimateHooks`).
+    private(set) var drawsMade = 0
+    #endif
+
     override func draw(_ dirtyRect: NSRect) {
+        #if DEBUG
+        drawsMade += 1
+        #endif
         withObservationTracking {
             render()
         } onChange: { [weak self] in
+            // Told as something the canvas shows is about to change. On the main thread, where the
+            // design is changed, the canvas is marked there and then, so the frame being put
+            // together draws the change. Marked a moment later, as it was, the canvas was often
+            // drawn twice for one step of a pan: with the frame, which already showed the step,
+            // and again for the mark. A second drawing within one frame of the screen waits for
+            // the screen, and so the step after it came a frame late.
+            let here = Thread.isMainThread
+            if here { MainActor.assumeIsolated { self?.needsDisplay = true } }
             Task { @MainActor in
-                self?.needsDisplay = true
+                if !here { self?.needsDisplay = true }
                 self?.syncEditor()
                 self?.syncNaming()
             }
@@ -638,6 +654,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         // they change from frame to frame, leaving those layers out.
         let typingOn = Set(([store.editingText].compactMap { $0 } + curveTool.flying).compactMap { doc.artboard(of: $0)?.id })
         var again = false
+        // Tiles are kept in the colours of the screen the window is on (`Renderer.onScreen`); on
+        // another screen, all of them are made again.
+        let space = window?.colorSpace?.cgColorSpace
+        if !Self.sameSpace(space, tileSpace.space) {
+            tileSpace = TileSpace(space: space)
+            tiles.forget()
+        }
+        let screen = tileSpace
         tiles.begin(scale: store.viewport.zoom * deviceScale, now: now, artboards: Set(doc.nodes.lazy.filter(\.isArtboard).map(\.id)))
         for whole in doc.nodes where !whole.hidden {
             guard whole.isArtboard else {
@@ -667,14 +691,28 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 // While it is being changed, its background blurs show what they last showed, and
                 // catch up once it is left alone.
                 making.settling = changing
-                return Renderer.tile(of: node, rect: rect, scale: step, options: making)
-            }, away: { [alone] rect, step in Renderer.tile(of: node, rect: rect, scale: step, options: alone) })
+                return Renderer.tile(of: node, rect: rect, scale: step, options: making, screen: screen.space)
+            }, away: { [alone] rect, step in Renderer.tile(of: node, rect: rect, scale: step, options: alone, screen: screen.space) })
             again = again || more
         }
         if again { redrawSoon() }
     }
 
     let tiles = BoardTiles()
+    /// The screen's colours, which the tiles are kept in; handed to the threads that make them.
+    private struct TileSpace: @unchecked Sendable {
+        let space: CGColorSpace?
+    }
+    private var tileSpace = TileSpace(space: nil)
+
+    private static func sameSpace(_ a: CGColorSpace?, _ b: CGColorSpace?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): true
+        case let (a?, b?): a === b || CFEqual(a, b)
+        default: false
+        }
+    }
+
     private var lastViewport = Viewport()
     private var viewportMoved: CFTimeInterval = 0
     private var redrawPending = false
@@ -688,10 +726,22 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let timer = Timer(timeInterval: 0.016, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.redrawPending = false
-                self?.needsDisplay = true
+                self?.redrawForArrivals()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// How long after a step of the view the canvas counts as moving still.
+    private static let moving: CFTimeInterval = 0.05
+
+    /// Something made away from the main thread has come (tiles, a film's pictures), or more is
+    /// wanted with the next frame: the canvas is drawn again. Not while the view moves, though:
+    /// each step of a pan or zoom draws the canvas anyway, with whatever has come by then, and a
+    /// drawing more in between is a second one within one frame of the screen, which waits for the
+    /// screen and makes the next step late. So it waits until the view has paused.
+    func redrawForArrivals() {
+        if CACurrentMediaTime() - viewportMoved < Self.moving { redrawSoon() } else { needsDisplay = true }
     }
 
     private static let titleFont = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -2113,6 +2163,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if flags.contains(.command) || flags.contains(.option) || flags.contains(.control) {
             let step = event.hasPreciseScrollingDeltas ? 0.012 : 0.1
             let factor = exp(event.scrollingDeltaY * step)
+            zoomedByHand = CACurrentMediaTime()
             store.viewport.zoom(to: store.viewport.zoom * factor, keeping: v)
         } else {
             var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
@@ -2120,10 +2171,46 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             // Shift scrolls sideways. A mouse wheel usually arrives already turned by the system;
             // a trackpad, or a mouse whose driver leaves it, still scrolls up and down.
             if flags.contains(.shift), dx == 0 { dx = dy; dy = 0 }
-            store.viewport.origin.x -= dx / store.viewport.zoom
-            store.viewport.origin.y -= dy / store.viewport.zoom
+            // Both ways in one change: each change of the view is told to everything that follows it.
+            var view = store.viewport
+            view.origin.x -= dx / view.zoom
+            view.origin.y -= dy / view.zoom
+            store.viewport = view
+            // The canvas moves on under the pointer: what it rested on is left.
+            if hoverWaiting == nil { leaveHover() }
         }
-        updateHover(v)
+        hoverOnceRested()
+    }
+
+    /// The look for what the pointer rests on, waiting for a scroll to come to rest.
+    private var hoverWaiting: DispatchWorkItem?
+
+    /// What the pointer rests on is looked for once a scroll has come to rest, not at each of its
+    /// steps: a search through the design at every step, and each layer passing under the pointer
+    /// outlined and lit in the layers list, whose rows were then worked out again while the canvas
+    /// was to move.
+    private func hoverOnceRested() {
+        hoverWaiting?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.hoverWaiting = nil
+            // Only while the pointer is still over the canvas, in this window and nothing over it:
+            // gone meanwhile, it rests on nothing here.
+            guard let window = self.window, window.isVisible,
+                  NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber else { return }
+            let at = window.mouseLocationOutsideOfEventStream
+            guard window.contentView?.hitTest(at) === self else { return }
+            self.updateHover(self.convert(at, from: nil))
+        }
+        hoverWaiting = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
+    /// Nothing is pointed at for now, in whichever way the design is seen.
+    private func leaveHover() {
+        if store.hovered != nil { store.hovered = nil }
+        guard store.prototyping, case .none = interaction else { return }
+        if store.animating { motionTool.hover(nil) } else if store.inspecting { inspectTool.hover(nil) } else { flowTool.hover(nil) }
     }
 
     // MARK: - Middle button
@@ -2154,8 +2241,13 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let v = convert(event.locationInWindow, from: nil)
         // With the camera in hand, a pinch on its film brings it closer.
         if store.animating, motionTool.magnify(event, at: v) { return }
+        zoomedByHand = CACurrentMediaTime()
         store.viewport.zoom(to: store.viewport.zoom * (1 + event.magnification), keeping: v)
     }
+
+    /// When the view was last zoomed by hand, with a pinch or the wheel, which goes on for a
+    /// while: the film's stage leaves its pictures stretched meanwhile (`FilmStageView.sync`).
+    var zoomedByHand: CFTimeInterval = -.infinity
 
     /// Two fingers turned on the film roll the camera, while it is in hand.
     override func rotate(with event: NSEvent) {

@@ -199,8 +199,7 @@ struct DesignBarControls: View {
             } else if let mark = store.sharing?.mark {
                 SharingTag(mark: mark)
             }
-            MenuButton(id: "zoom", title: .verbatim("\(Int((store.viewport.zoom * 100).rounded()))%"), width: 220) { zoomMenu }
-                .help("Zoom")
+            ZoomButton(store: store)
             VersionsButton(store: store)
             if Sharing.isAvailable || store.isReadOnly { ShareButton(store: store) }
             ModeSwitch(store: store)
@@ -208,6 +207,20 @@ struct DesignBarControls: View {
         }
         .animation(Theme.pop, value: store.sharing?.mark)
         .animation(Theme.pop, value: store.sharing?.live?.hasPeople)
+    }
+}
+
+/// How close the design is seen, and the menu of zooms. The percent is written by a label of
+/// AppKit's (`ZoomPercent`), which follows the zoom by itself: SwiftUI hears only how many digits
+/// it takes room for, three up to 999 % and more beyond, which is when the button's width changes.
+private struct ZoomButton: View {
+    let store: DocumentStore
+
+    var body: some View {
+        let digits = store.zoomDigits
+        MenuButton(id: "zoom", title: "Zoom", width: 220,
+                   label: AnyView(ZoomPercent(store: store).frame(width: ZoomPercent.width(digits), height: ZoomPercent.height))) { zoomMenu }
+            .help("Zoom")
     }
 
     private var zoomMenu: [MenuEntry] {
@@ -224,6 +237,75 @@ struct DesignBarControls: View {
             .item(.verbatim("400%"), checked: abs(store.viewport.zoom - 4) < 0.001) { store.zoom(to: 4) },
             .separator,
         ] + Helpers.shared.entries(for: store)
+    }
+}
+
+/// The zoom's percent, in the bar's words: drawn by AppKit and changed as the zoom changes,
+/// without SwiftUI being told (`DocumentStore.zoomPercent`). Its digits are all as wide as each
+/// other, so it keeps its width until it has another number of them.
+private struct ZoomPercent: NSViewRepresentable {
+    let store: DocumentStore
+
+    static let font = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+    static let height = ceil(font.ascender - font.descender + font.leading)
+
+    static func width(_ digits: Int) -> CGFloat {
+        ceil((String(repeating: "0", count: max(digits, 1)) + "%" as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    func makeNSView(context: Context) -> Label { Label(store: store) }
+    func updateNSView(_ label: Label, context: Context) { label.follow(store) }
+
+    final class Label: NSView {
+        private weak var store: DocumentStore?
+        private var text = ""
+        /// Counts the stores followed, so a change told of one no longer followed is let go.
+        private var watching = 0
+
+        init(store: DocumentStore) {
+            super.init(frame: .zero)
+            setAccessibilityElement(true)
+            setAccessibilityRole(.staticText)
+            follow(store)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override var isFlipped: Bool { true }
+        override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+
+        func follow(_ store: DocumentStore) {
+            guard store !== self.store else { return }
+            self.store = store
+            watching += 1
+            watch(watching)
+        }
+
+        private func watch(_ mine: Int) {
+            guard mine == watching, let store else { return }
+            withObservationTracking {
+                let now = "\(store.zoomPercent)%"
+                if now != text {
+                    text = now
+                    needsDisplay = true
+                    setAccessibilityValue(now)
+                }
+            } onChange: { [weak self] in
+                Task { @MainActor in self?.watch(mine) }
+            }
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            needsDisplay = true
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let attributes: [NSAttributedString.Key: Any] = [.font: ZoomPercent.font, .foregroundColor: Theme.inkNS]
+            let width = (text as NSString).size(withAttributes: attributes).width
+            // At the right, beside the chevron, as the bar's other titles end there.
+            (text as NSString).draw(at: CGPoint(x: bounds.width - width, y: (bounds.height - ZoomPercent.height) / 2), withAttributes: attributes)
+        }
     }
 }
 

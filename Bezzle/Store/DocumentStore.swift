@@ -89,9 +89,29 @@ final class DocumentStore {
         }
     }
     var viewport = Viewport() {
-        // Where the design was looked at is kept too, but there is no hurry about it.
-        didSet { if viewport != oldValue { scheduleSave(after: 2000) } }
+        didSet {
+            guard viewport != oldValue else { return }
+            if viewport.zoom != oldValue.zoom {
+                let percent = Self.percent(of: viewport.zoom)
+                if percent != zoomPercent { zoomPercent = percent }
+                let digits = Self.room(for: percent)
+                if digits != zoomDigits { zoomDigits = digits }
+            }
+            // Where the design was looked at is kept too, but there is no hurry about it.
+            keepView()
+        }
     }
+    /// How close the design is seen, in whole percent, as the bar along the top says it. Kept
+    /// apart from `viewport`, which changes at every step of moving about. Only the bar's own
+    /// label reads it, outside SwiftUI (`ZoomPercent`): SwiftUI going over the bar for every new
+    /// percent while zooming made one frame in four late.
+    private(set) var zoomPercent = 100
+    /// How many digits of room the percent takes: all SwiftUI hears of it, for the width of the
+    /// bar's button. Three at least, so that it keeps its width from the whole design to 999 %.
+    private(set) var zoomDigits = 3
+
+    static func percent(of zoom: CGFloat) -> Int { Int((zoom * 100).rounded()) }
+    static func room(for percent: Int) -> Int { max(3, String(percent).count) }
     /// The post each deck shows, by its number, where it is not the first: here alone, so that
     /// everyone sharing a design turns through its decks as they like. See `Deck`.
     var fronts: [UUID: Int] = [:]
@@ -285,6 +305,11 @@ final class DocumentStore {
         bookmark = Self.bookmark(of: url)
         assets = Assets(design: url)
         if let v = document.viewport { viewport = v }
+        zoomPercent = Self.percent(of: viewport.zoom)
+        zoomDigits = Self.room(for: zoomPercent)
+        // Opened where it was last looked at, it has nothing new to be written for.
+        viewTask?.cancel()
+        viewTask = nil
         versions.attach(self)
         if DesignPreview.exists(for: url) { previewed = version }
     }
@@ -581,6 +606,11 @@ final class DocumentStore {
 
     // MARK: Saving
 
+    #if DEBUG
+    /// How often the design was asked to be saved, for a test run to tell (`AnimateHooks`).
+    @ObservationIgnored var savesAsked = 0
+    #endif
+
     func scheduleSave(after milliseconds: Int = 600) {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
@@ -590,9 +620,37 @@ final class DocumentStore {
         }
     }
 
+    /// How long the view rests, in milliseconds, before the design is written for where it is
+    /// looked at alone.
+    @ObservationIgnored var viewRest = 30_000
+
+    @ObservationIgnored private var viewTask: Task<Void, Never>?
+
+    /// The design is looked at from somewhere else. That is saved with the next change, or when
+    /// the design is closed; on its own only once the view has rested a good while, since the
+    /// whole design is written for it: after every two seconds' rest, as it was, a large design
+    /// was written again whenever moving about paused (megabytes each time, and a save's work
+    /// just as moving resumed).
+    private func keepView() {
+        viewTask?.cancel()
+        let rest = viewRest
+        viewTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(rest))
+            guard !Task.isCancelled, let self else { return }
+            self.viewTask = nil
+            // A change waiting to be saved takes the view along.
+            if self.saveTask == nil { self.save() }
+        }
+    }
+
     func save() {
         saveTask?.cancel()
         saveTask = nil
+        viewTask?.cancel()
+        viewTask = nil
+        #if DEBUG
+        savesAsked += 1
+        #endif
         follow()
         var copy = withShapeBack(doc)
         // Saved for where it was looked at alone, the design has nothing new for sharing to take

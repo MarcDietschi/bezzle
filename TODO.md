@@ -415,7 +415,34 @@ there.
   were never committed: 8 and 39 of their files differ from main's. Another session's, so left
   as they were; look before removing them.
 
+## Moving about
+
+Made quick on 2026-11-15 (`README.md` › The Mac app › Moving about quickly has the numbers and
+the rules). What that left:
+
+- **Never felt:** measured with made scroll and pinch events in a copy in the background, on a
+  copy of Lawsearch AI, never with a hand on a trackpad. Not in a release yet: Erik's installed
+  1.8.1 has none of it.
+- **For Erik, the zoom button** keeps the width it has at 100 % from the whole design to 999 %
+  (a few points wider at 50 % than before, the number at its right), so that the bar never moves
+  while zooming. Say if it should hug its number again; that costs a late frame now and then
+  while zooming.
+- **Left on a frame while zooming:** the rulers' numbers and the artboards' names (2 to 3 % of the
+  main thread each, CoreText setting them), and tiles shrunk with the finest resampling on the
+  queue the window's drawing waits for (tried the quicker way while moving: no difference
+  measured, so not kept).
+- **Where the design was looked at** is written after 30 s of rest; Bezzle closed by a crash meanwhile
+  opens it where it was looked at before that.
+- **Windows** was not looked at for the same causes (WinUI reading the view at every step, tiles
+  in another format than the screen's, the zoom's number).
+
 ## Housekeeping
+
+- **The full test run in parallel** fails on a quiet Mac since 1.8 (found 2026-11-15, on 1.8.1's
+  commit too): `FilmSharpTests.withTheViewCloseOnlyWhatIsInTheViewIsDrawnSharper` waits more than
+  a minute for pictures from the film stage's one queue, which every test's stage shares. It no
+  longer stops the run when it does (`#require`); one at a time it passes. To fix: a queue for
+  each stage, or a longer wait in that test when others share the queue.
 
 - **The VM's disk** has 42.8 GB free of 127 since 2026-11-14, when every finished agent's
   folder in `C:\src` was removed (`win-*`, `shader-check`). Left there beside `Bezzle` and

@@ -11,13 +11,18 @@ struct MenuButton: View {
     var fills = false
     /// Typing narrows the menu, which opens on the entry checked; for long lists such as fonts.
     var searchable = false
+    /// Shown in place of the title, for one that changes too often for SwiftUI to be told of
+    /// each change (`ZoomButton`).
+    var label: AnyView?
     let entries: () -> [MenuEntry]
     @State private var hovering = false
 
     var body: some View {
         let isOpen = host.open?.id == id
         HStack(spacing: fills ? 0 : 6) {
-            Text(title)
+            Group {
+                if let label { label } else { Text(title) }
+            }
                 .font(.system(size: 12.5, weight: prominent ? .medium : .regular))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)

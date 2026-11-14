@@ -248,7 +248,7 @@ final class Rulers {
             ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil))
             ctx.setFillColor(CanvasInk.pencil.cgColor)
             ctx.fillPath()
-            Self.drawText(text, font: Self.pillFont, color: .white, centeredIn: rect, vertical: !across, ctx: ctx)
+            Self.drawText(text, font: Self.pillFont, color: NSColor.white.cgColor, centeredIn: rect, vertical: !across, ctx: ctx)
             ctx.restoreGState()
         }
     }
@@ -272,12 +272,29 @@ final class Rulers {
 
         func along(_ v: CGFloat) -> CGFloat { across ? vp.toView(CGPoint(x: v, y: 0)).x : vp.toView(CGPoint(x: 0, y: v)).y }
         func onSheet(_ v: CGFloat) -> Bool { sheetLo.map { v >= $0 - 0.01 && v <= sheetHi! + 0.01 } ?? false }
-        func tick(_ v: CGFloat, length: CGFloat, alpha: CGFloat) {
+        // The ink as this window shows it, found once: asked of the colour for every tick, with
+        // each tick filled on its own, the scale was a good part of what a frame cost while the
+        // view moved. The ticks of one length are gathered, on the sheet and off it, and filled
+        // together; none of them lies on another.
+        let solid = ink.cgColor
+        var onTicks: [CGRect] = [], offTicks: [CGRect] = []
+        func tick(_ v: CGFloat, length: CGFloat) {
             let p = (along(v) * scale).rounded() / scale + 0.5 / scale
-            let a = alpha * (onSheet(v) ? 1 : 0.55)
-            ctx.setFillColor(ink.withAlphaComponent(a).cgColor)
-            if across { ctx.fill(CGRect(x: p - 0.5 / scale, y: inner - length, width: 1 / scale, height: length)) }
-            else { ctx.fill(CGRect(x: inner - length, y: p - 0.5 / scale, width: length, height: 1 / scale)) }
+            let rect = across ? CGRect(x: p - 0.5 / scale, y: inner - length, width: 1 / scale, height: length)
+                              : CGRect(x: inner - length, y: p - 0.5 / scale, width: length, height: 1 / scale)
+            if onSheet(v) { onTicks.append(rect) } else { offTicks.append(rect) }
+        }
+        func fillTicks(alpha: CGFloat) {
+            if !onTicks.isEmpty, let color = solid.copy(alpha: alpha) {
+                ctx.setFillColor(color)
+                ctx.fill(onTicks)
+            }
+            if !offTicks.isEmpty, let color = solid.copy(alpha: alpha * 0.55) {
+                ctx.setFillColor(color)
+                ctx.fill(offTicks)
+            }
+            onTicks.removeAll(keepingCapacity: true)
+            offTicks.removeAll(keepingCapacity: true)
         }
 
         let smallAlpha = min(max((small * zoom - 3) / 5, 0), 1) * 0.22
@@ -285,14 +302,15 @@ final class Rulers {
         if smallAlpha > 0.01 {
             var k = ((start - o) / small).rounded(.down)
             while o + k * small <= end {
-                let v = k * small
-                if (v / mid).rounded() * mid != v || true { tick(o + v, length: 3, alpha: smallAlpha) }
+                tick(o + k * small, length: 3)
                 k += 1
             }
+            fillTicks(alpha: smallAlpha)
         }
         if midAlpha > 0.01 {
             var k = ((start - o) / mid).rounded(.down)
-            while o + k * mid <= end { tick(o + k * mid, length: 5, alpha: midAlpha); k += 1 }
+            while o + k * mid <= end { tick(o + k * mid, length: 5); k += 1 }
+            fillTicks(alpha: midAlpha)
         }
         // The numbers, and those between them as they come into reach.
         let fine = min(max((mid * zoom - 34) / 20, 0), 1)
@@ -304,14 +322,18 @@ final class Rulers {
                 defer { k += 1 }
                 let isMajor = (v / labelStep).rounded() * labelStep == v
                 if step != labelStep && isMajor { continue }
-                if step == labelStep { tick(o + v, length: 8, alpha: 0.4) }
+                if step == labelStep {
+                    tick(o + v, length: 8)
+                    fillTicks(alpha: 0.4)
+                }
                 let text = label(v)
                 let p = along(o + v)
                 let w = Self.width(text, Self.font)
                 let box = across ? CGRect(x: p + 3, y: strip.minY + 2, width: w, height: 11) : CGRect(x: strip.minX + 2, y: p + 3, width: 11, height: w)
                 if avoid.contains(where: { $0.insetBy(dx: -3, dy: -3).intersects(box) }) { continue }
                 let a = alpha * (onSheet(o + v) ? 0.62 : 0.38)
-                Self.drawText(text, font: Self.font, color: ink.withAlphaComponent(a), at: box, vertical: !across, ctx: ctx)
+                guard let color = solid.copy(alpha: a) else { continue }
+                Self.drawText(text, font: Self.font, color: color, at: box, vertical: !across, ctx: ctx)
             }
         }
     }
@@ -401,22 +423,41 @@ final class Rulers {
         return w
     }
 
-    /// Text along a ruler: as it reads across the top, and turned to read up the left.
-    private static func drawText(_ text: String, font: NSFont, color: NSColor, at box: CGRect, vertical: Bool, ctx: CGContext) {
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-        if !vertical {
-            (text as NSString).draw(at: CGPoint(x: box.minX, y: box.minY), withAttributes: attrs)
-            return
-        }
+    /// The rulers' words as lines of type, each set once and drawn in whatever ink it is given.
+    private static var lines: [String: CTLine] = [:]
+
+    private static func line(_ text: String, _ font: NSFont) -> CTLine {
+        let key = "\(font.pointSize)\(font.fontName)|\(text)"
+        if let line = lines[key] { return line }
+        if lines.count > 4000 { lines.removeAll() }
+        let inContextColor = NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font, inContextColor: true]))
+        lines[key] = line
+        return line
+    }
+
+    /// Text along a ruler: as it reads across the top, and turned to read up the left. Its line
+    /// is kept from frame to frame (`line`): set anew for every number at every frame, the
+    /// numbers were most of what the rulers cost while the view moved. Drawn so, it lies where
+    /// `NSString.draw(at:)` puts it, to the pixel.
+    private static func drawText(_ text: String, font: NSFont, color: CGColor, at box: CGRect, vertical: Bool, ctx: CGContext) {
         ctx.saveGState()
-        // Reading upward, its start at the bottom of the box.
-        ctx.translateBy(x: box.minX, y: box.maxY)
-        ctx.rotate(by: -.pi / 2)
-        (text as NSString).draw(at: .zero, withAttributes: attrs)
+        ctx.setFillColor(color)
+        if vertical {
+            // Reading upward, its start at the bottom of the box.
+            ctx.translateBy(x: box.minX, y: box.maxY)
+            ctx.rotate(by: -.pi / 2)
+        } else {
+            ctx.translateBy(x: box.minX, y: box.minY)
+        }
+        // The canvas counts downwards; type stands on its baseline, counted upwards.
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        ctx.textPosition = CGPoint(x: 0, y: ceil(font.ascender))
+        CTLineDraw(line(text, font), ctx)
         ctx.restoreGState()
     }
 
-    private static func drawText(_ text: String, font: NSFont, color: NSColor, centeredIn rect: CGRect, vertical: Bool, ctx: CGContext) {
+    private static func drawText(_ text: String, font: NSFont, color: CGColor, centeredIn rect: CGRect, vertical: Bool, ctx: CGContext) {
         let w = width(text, font), h = ceil(font.ascender - font.descender)
         if vertical {
             drawText(text, font: font, color: color,

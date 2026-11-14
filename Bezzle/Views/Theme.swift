@@ -10,7 +10,9 @@ enum Theme {
     static let panel = dynamic(0xF6F4EF, 0x22211F)
     static let card = dynamic(0xFCFBF8, 0x2A2926)
     static let well = dynamic(0xE5E1D9, 0x141312)
-    static let ink = dynamic(0x1C1B19, 0xEDEAE4)
+    static let ink = Color(nsColor: inkNS)
+    /// The ink for AppKit's drawing.
+    static let inkNS = dynamicNS(0x1C1B19, 0xEDEAE4)
     static let ink2 = ink.opacity(0.64)
     static let ink3 = ink.opacity(0.44)
     static let ink4 = ink.opacity(0.22)
