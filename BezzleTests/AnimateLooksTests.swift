@@ -1,5 +1,6 @@
 import Testing
 import AppKit
+import SwiftUI
 @testable import Bezzle
 
 /// How layers look, keyed in Animate as it is used: the design's own cards changing a colour, a
@@ -377,6 +378,53 @@ struct AnimateLooksTests {
         f.hover(f.middle("Card"))
         f.drag(CGPoint(x: corner.x + 10, y: corner.y + 10), CGPoint(x: corner.x + 30, y: corner.y + 30))
         #expect(f.undo.undoActionName != "Change Corners" && keys != nil && f.node("Card")[track: "corners"] == keys)
+    }
+
+    // MARK: The cards as SwiftUI draws them
+
+    /// The cards in a window nobody sees, as the Animate panel shows them.
+    private func shown(_ f: FilmBench) -> (window: NSWindow, host: NSView) {
+        let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 300, height: 900), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ScrollView { SelectionInspector(store: f.store, filming: true).frame(width: 280) }
+            .environment(MenuHost())
+            .environment(GradientSession())
+            .environment(f.store))
+        window.contentView = host
+        // Behind everything, off every screen and clear through.
+        window.alphaValue = 0
+        window.orderBack(nil)
+        host.layoutSubtreeIfNeeded()
+        host.display()
+        return (window, host)
+    }
+
+    /// SwiftUI draws a pile's cards once more when the selection has just gone, before the panel
+    /// takes them away, and a card reads the selection as it is then. Picking the camera lets go
+    /// of the layers with their cards showing (1.8 broke off there, 2026-11-14).
+    @Test func theCardsLetGoWhenTheCameraIsPicked() async throws {
+        let f = bench()
+        let (window, host) = shown(f)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(looked(f).count == 1)
+        f.step { f.store.pickCamera() }
+        host.layoutSubtreeIfNeeded()
+        host.display()
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(f.store.film.camera && f.store.lookedSelection.isEmpty)
+        // And back to a layer, to one with fewer looks, and to nothing at all.
+        f.step { f.store.selection = [f.id("Card")] }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        f.step { f.store.selection = [f.id("Badge")] }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        f.step { f.store.selection = [] }
+        host.layoutSubtreeIfNeeded()
+        host.display()
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(f.store.lookedSelection.isEmpty)
     }
 
     // MARK: The assistant

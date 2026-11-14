@@ -18,26 +18,34 @@ extension SelectionInspector {
         if !fills.isEmpty {
             VStack(alignment: .leading, spacing: Self.pileGap) {
                 ForEach(fills, id: \.self) { slot in
-                    fillCard(slot: slot, removable: false, live: live.contains(.fill(slot)))
+                    if stillPicked { fillCard(slot: slot, removable: false, live: live.contains(.fill(slot))) }
                 }
             }
         }
         if !borders.isEmpty {
             VStack(alignment: .leading, spacing: Self.pileGap) {
                 ForEach(borders, id: \.self) { slot in
-                    borderCard(slot: slot, lineOnly: kinds == [.line], removable: false, live: live.contains(.border(slot)))
+                    if stillPicked { borderCard(slot: slot, lineOnly: kinds == [.line], removable: false, live: live.contains(.border(slot))) }
                 }
             }
         }
         if !shadows.isEmpty {
             VStack(alignment: .leading, spacing: Self.pileGap) {
                 ForEach(shadows, id: \.self) { slot in
-                    shadowCard(slot: slot, canInset: !kinds.contains(.line), canSpread: kinds.isSubset(of: [.rectangle, .ellipse, .path, .line]),
-                               live: live.contains(.shadow(slot)))
+                    if stillPicked {
+                        shadowCard(slot: slot, canInset: !kinds.contains(.line), canSpread: kinds.isSubset(of: [.rectangle, .ellipse, .path, .line]),
+                                   live: live.contains(.shadow(slot)))
+                    }
                 }
             }
         }
     }
+
+    /// SwiftUI draws a pile's cards once more when the selection has just gone (the camera
+    /// picked, the layers deleted), before the panel takes the pile away, and a card reads the
+    /// selection as it is then (`pile` in Design keeps the same watch). With nothing picked
+    /// there is nothing to show.
+    private var stillPicked: Bool { !nodes.isEmpty }
 
     /// Whether the picked layers have any look to key, and so any card here.
     static func keysLooks(_ nodes: [Node]) -> Bool {
