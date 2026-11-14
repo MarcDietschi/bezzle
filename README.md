@@ -371,7 +371,11 @@ pieces that stand where it puts them (`FilmPiece.stand`), so the camera at rest 
 design does and sees between the layers when it moves; with keys of its own it is one card. The
 layers lying in the group next to one another are one piece, and where the group is turned the
 film asks about each of them as the design does (`FilmStand.lying`, made by the same
-`DepthOrder.face`), so it draws the pieces in the design's order. The
+`DepthOrder.face`), so it draws the pieces in the design's order. A layer's keys there are
+measured where its place is, in the group (`FilmStand.posed`): a Move slides it along the
+group's plane, a Lift raises it along the way the group faces, a Tilt or a Swing is added to its
+own turn inside the group, so the film shows at every moment what the same change shows made in
+the design, and what the same keys show with the group as one card. The
 flag is one optional key on a group, written only when set, and one more property shared on its
 own (`LayerField`): a Bezzle that does not know it reads the same group as one card.
 

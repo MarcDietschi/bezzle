@@ -254,6 +254,9 @@ nonisolated struct FilmPiece: Equatable, Hashable, Sendable {
 nonisolated struct FilmStand: Equatable, Hashable, Sendable {
     var middle: CGPoint
     var tip = 0.0, swing = 0.0, twist = 0.0, height = 0.0
+    /// How the group's own plane is turned in the scene: what its layers lie in or stand off,
+    /// and so what their places, heights and turns are measured in, and their keys with them.
+    var plane = Spin.none
     /// A run lying in a group that is turned: each of its layers as the design orders it
     /// (`DepthOrder.face`), bottom first, for the film to order the run as the design orders
     /// them (`filmOrder`). None in a group that only lifts what it holds, which is all as high.
@@ -274,6 +277,27 @@ nonisolated struct FilmStand: Equatable, Hashable, Sendable {
         swing = angles.swing
         twist = angles.twist
         height = stood.z
+        plane = space.spin
+    }
+
+    /// Where its layer stands posed by its keys: as the same change made in the design would
+    /// stand it (`Node.posed`). A Move slides it along the group's plane and a Lift raises it
+    /// along that plane's normal, so it stays on what lies in the group however the group is
+    /// turned; a Tilt or a Swing is added to the layer's own, inside the group.
+    func posed(_ pose: MotionPose, of layer: Node) -> FilmStand {
+        guard pose.move != .zero || pose.inDepth else { return self }
+        var out = self
+        let by = plane(ScenePoint(x: Double(pose.move.x), y: Double(pose.move.y), z: pose.lift))
+        out.middle = CGPoint(x: middle.x + CGFloat(by.x), y: middle.y + CGFloat(by.y))
+        out.height = height + by.z
+        if pose.tilt != 0 || pose.swing != 0 {
+            let t = layer.transform3D.flatMap { $0.pinned ? nil : $0 }
+            let angles = plane.after(Spin.tip((t?.x ?? 0) + pose.tilt).after(.swing((t?.y ?? 0) + pose.swing))).angles()
+            out.tip = angles.tip
+            out.swing = angles.swing
+            out.twist = angles.twist
+        }
+        return out
     }
 
     func hash(into hasher: inout Hasher) {
@@ -282,6 +306,7 @@ nonisolated struct FilmStand: Equatable, Hashable, Sendable {
         hasher.combine(swing)
         hasher.combine(twist)
         hasher.combine(height)
+        hasher.combine(plane)
     }
 }
 
@@ -407,12 +432,22 @@ nonisolated extension Node {
             }
             return FilmPlacement(map: FilmLens.ground(camera, size: frame.size))
         }
-        let pose = layer.pose(at: t)
+        var pose = layer.pose(at: t)
+        let (fade, blur) = (pose.fade, pose.blur)
         let center = CGPoint(x: piece.origin.x + layer.frame.midX, y: piece.origin.y + layer.frame.midY)
-        let depth = piece.stand?.depth ?? (piece.flat ? layer.transform3D : nil)
-        let twist = piece.stand?.twist ?? 0, stands = piece.stand?.middle ?? center
+        // In a group that keeps depth its keys are measured in the group, as its place is: it
+        // stands where they put it there, and only grows and turns in its own plane besides.
+        let stand = piece.stand?.posed(pose, of: layer)
+        if stand != nil {
+            pose.move = .zero
+            pose.lift = 0
+            pose.tilt = 0
+            pose.swing = 0
+        }
+        let depth = stand?.depth ?? (piece.flat ? layer.transform3D : nil)
+        let twist = stand?.twist ?? 0, stands = stand?.middle ?? center
         let map = FilmLens.layer(center: center, rotation: layer.isGroup ? 0 : layer.rotation, depth: depth, pose: pose, camera: camera, size: frame.size,
-                                 twist: twist, stands: piece.stand?.middle)
+                                 twist: twist, stands: stand?.middle)
         let height = pose.lift + Double(depth?.z ?? 0)
         // Tipped or swung, by the design or its keys: where it stands, for the order.
         let tip = pose.tilt + (depth?.x ?? 0), swing = pose.swing + (depth?.y ?? 0)
@@ -422,7 +457,7 @@ nonisolated extension Node {
                                    size: CGSize(width: layer.frame.width * pose.scale.x, height: layer.frame.height * pose.scale.y),
                                    rotation: (layer.isGroup ? 0 : layer.rotation) + pose.turn + twist, turn: Spin.tip(tip).after(.swing(swing)))
         }
-        return FilmPlacement(map: map, opacity: pose.fade, blur: pose.blur, height: height, face: face)
+        return FilmPlacement(map: map, opacity: fade, blur: blur, height: height, face: face)
     }
 
     /// Artboards: the layer each piece places, found in one walk through it: nil for the ground,

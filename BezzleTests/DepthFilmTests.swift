@@ -4,7 +4,9 @@ import AppKit
 
 /// Films of groups that keep their layers' depth (`Node.keepsDepth`): at rest the film is the
 /// design's own picture, in the order the design draws it, also where layers lying in a turned
-/// group are drawn as one piece.
+/// group are drawn as one piece; and a layer's keys are measured where its place is, in its
+/// group, so a Move slides it along the group's plane and a Lift raises it off that plane, and
+/// the film shows at every moment what the same change shows made in the design.
 @MainActor
 struct DepthFilmTests {
     /// A 400 by 300 artboard, seen from 800 points in front of its middle.
@@ -84,6 +86,24 @@ struct DepthFilmTests {
     private func corners(_ n: Node) -> [CGPoint] { Geometry.corners(of: n.frame, rotation: n.rotation) }
     private func flat(_ p: CGPoint) -> ScenePoint { ScenePoint(x: Double(p.x), y: Double(p.y)) }
     private func near(_ a: CGPoint, _ b: CGPoint, _ tolerance: CGFloat = 1e-5) -> Bool { hypot(a.x - b.x, a.y - b.y) < tolerance }
+
+    /// A layer with the change its keys make at a moment made in the design instead, by hand:
+    /// moved in what holds it, and its own turn and height added to.
+    private func changed(_ n: Node, at t: Double) -> Node {
+        var out = n
+        let pose = n.isArtboard ? MotionPose.rest : n.pose(at: t)
+        out.motion = nil
+        out.children = n.children.map { changed($0, at: t) }
+        out.frame = out.frame.offsetBy(dx: pose.move.x, dy: pose.move.y)
+        if pose.lift != 0 || pose.tilt != 0 || pose.swing != 0 {
+            var turn = out.transform3D ?? Transform3D()
+            turn.x += pose.tilt
+            turn.y += pose.swing
+            turn.z += CGFloat(pose.lift)
+            out.transform3D = turn
+        }
+        return out
+    }
 
     // MARK: Pictures
 
@@ -216,5 +236,126 @@ struct DepthFilmTests {
             let apart = try film(other, at: 0).distance(to: design(other))
             #expect(apart.mean < 0.25 && apart.block < 24, "\(turn): \(apart)")
         }
+    }
+
+    // MARK: Keys
+
+    /// The scene filmed: the card lying on the plate slides, the standing one rises, the disc is
+    /// tipped and swung, and the card in the group inside slides and rises there, all in a second.
+    private func keyed(keeps: Bool = true) -> Node {
+        var stage = scene(keeps: keeps)
+        func key(_ name: String, _ property: MotionProperty, _ value: [Double]) {
+            func set(_ n: inout Node) {
+                if n.name == name {
+                    n.setKey(property, property.rest, at: 0, ease: .linear)
+                    n.setKey(property, value, at: 1, ease: .linear)
+                }
+                for i in n.children.indices { set(&n.children[i]) }
+            }
+            set(&stage)
+        }
+        key("Lying", .move, [-30, 10])
+        key("Standing", .lift, [45])
+        key("Standing", .move, [12, 6])
+        key("Disc", .tilt, [-20])
+        key("Disc", .swing, [30])
+        key("Deep", .move, [10, -4])
+        key("Deep", .lift, [12])
+        stage.film = Film(length: 2, once: true, backdrop: nil)
+        return stage
+    }
+
+    @Test func aKeyedMoveSlidesInTheGroupsPlaneAndALiftRisesFromIt() throws {
+        let stage = keyed()
+        let pieces = stage.filmPieces()
+        func piece(_ name: String) throws -> Int { try #require(pieces.firstIndex { $0.layers == [layer(stage, name).id] }) }
+        // Seen straight on, and by a camera that has gone aside: two looks tell where a thing stands.
+        var aside = FilmCamera()
+        aside.x = 15
+        aside.zoom = 1.2
+        aside.swing = 22
+        aside.tilt = 18
+        for t in [0, 0.5, 1, 1.6] {
+            let now = changed(stage, at: t)
+            let g = layer(now, "Group"), inner = layer(now, "Inner")
+            for camera in [FilmCamera.rest, aside] {
+                let placements = pieces.map { stage.placement(of: $0, at: t, camera: camera) }
+                /// Where the film shows a point of a layer's drawing, which is made as the design has the layer at rest.
+                func shown(_ name: String, _ p: CGPoint) throws -> CGPoint { try placements[piece(name)].map(p + pieces[piece(name)].origin) }
+                /// Where the camera shows a place in the scene: where a sheet lying level that high shows it.
+                func sight(_ p: ScenePoint) -> CGPoint {
+                    let there = FilmLens.ground(camera, size: size, height: p.z)(CGPoint(x: p.x, y: p.y))
+                    if camera.isRest { #expect(near(there, seen(p))) }
+                    return there
+                }
+                // Each where the same change stands it in the design: worked out by hand, a step for each layer.
+                for name in ["Lying", "Standing", "Disc"] {
+                    let rest = layer(stage, name), posed = layer(now, name)
+                    for (p, q) in zip(corners(rest), corners(posed)) {
+                        #expect(try near(shown(name, p), sight(out(stood(flat(q), in: posed), of: g))), "\(name) at \(t)")
+                    }
+                }
+                let rest = layer(stage, "Deep"), posed = layer(now, "Deep")
+                for (p, q) in zip(corners(rest), corners(posed)) {
+                    #expect(try near(shown("Deep", p), sight(out(out(stood(flat(q), in: posed), of: inner), of: g))), "Deep at \(t)")
+                }
+            }
+        }
+        // Moved, the card that lay on the plate still lies on it: in the group's plane, 30 and 10
+        // along it from where it lay, and not 30 and 10 across the page, through the plate.
+        let g = layer(stage, "Group"), lying = layer(stage, "Lying")
+        let placements = pieces.map { stage.placement(of: $0, at: 1, camera: .rest) }
+        let at = try piece("Lying")
+        for p in corners(lying) {
+            let slid = out(flat(p) + ScenePoint(x: -30, y: 10), of: g)
+            #expect(near(placements[at].map(p + pieces[at].origin), seen(slid)))
+            let across = out(flat(p), of: g) + ScenePoint(x: -30, y: 10)
+            #expect(!near(seen(slid), seen(across), 1))
+        }
+        // As high as the plate's own plane is there, so it is ordered as lying on it: over it, as listed.
+        let plane = Spin(g.transform3D!).facing
+        let middle = out(flat(lying.frame.center) + ScenePoint(x: -30, y: 10), of: g), plate = out(flat(layer(stage, "Plate").frame.center), of: g)
+        #expect(abs(placements[at].height - middle.z) < 1e-9)
+        #expect(abs((middle.x - plate.x) * plane.x + (middle.y - plate.y) * plane.y + (middle.z - plate.z) * plane.z) < 1e-9)
+        let order = filmed(stage, at: 1)
+        #expect(try #require(order.firstIndex(of: "Lying")) > #require(order.firstIndex(of: "Plate")), "\(order)")
+        // A lift goes along the way the group faces, 45 from where it stood, and the move with it along the plane.
+        let standing = layer(stage, "Standing"), up = try piece("Standing")
+        let raised = out(flat(standing.frame.center) + ScenePoint(x: 12, y: 6, z: 50 + 45), of: g)
+        let before = out(flat(standing.frame.center) + ScenePoint(z: 50), of: g)
+        #expect(near(placements[up].map(standing.frame.center + pieces[up].origin), seen(raised)))
+        let along = Spin(g.transform3D!)(ScenePoint(x: 12, y: 6, z: 45))
+        #expect(abs(raised.x - before.x - along.x) < 1e-9 && abs(raised.y - before.y - along.y) < 1e-9 && abs(raised.z - before.z - along.z) < 1e-9)
+        #expect(abs(placements[up].height - raised.z) < 1e-9)
+    }
+
+    @Test func atEveryMomentTheFilmShowsWhatTheSameChangeShowsInTheDesign() throws {
+        let stage = keyed()
+        for t in [0.5, 1] {
+            // The order the design draws the changed layers in, and its picture.
+            let now = changed(stage, at: t)
+            #expect(filmed(stage, at: t) == drawn(now), "\(t): \(filmed(stage, at: t)) for \(drawn(now))")
+            let apart = try film(stage, at: t).distance(to: design(now))
+            #expect(apart.mean < 0.25 && apart.block < 24, "\(t): \(apart)")
+            // Under a camera that has moved, each piece is where the changed design's film has it.
+            var camera = FilmCamera()
+            camera.swing = 22
+            camera.tilt = 18
+            camera.zoom = 1.2
+            let pieces = stage.filmPieces(), there = now.filmPieces(loose: Set(pieces.filter { $0.kind == .layer }.flatMap(\.layers)))
+            #expect(pieces.map(\.layers) == there.map(\.layers))
+            for (piece, other) in zip(pieces, there) where piece.kind == .layer {
+                let rest = try #require(stage.descendant(piece.layers[0])), posed = try #require(now.descendant(piece.layers[0]))
+                let a = stage.placement(of: piece, at: t, camera: camera).map, b = now.placement(of: other, at: 0, camera: camera).map
+                for (p, q) in zip(corners(rest), corners(posed)) {
+                    #expect(near(a(p + piece.origin), b(q + other.origin), 1e-4), "\(rest.name) at \(t)")
+                }
+            }
+        }
+        // With the group as one card the card lying on it slides on the card: the same place.
+        let asCard = keyed(keeps: false), lying = layer(stage, "Lying").id
+        let kept = try #require(stage.filmCorners(of: lying, at: 1, pieces: stage.filmPieces()))
+        let onCard = try #require(asCard.filmCorners(of: layer(asCard, "Lying").id, at: 1, pieces: asCard.filmPieces()))
+        for (a, b) in zip(kept, onCard) { #expect(near(a, b, 1e-4)) }
     }
 }
