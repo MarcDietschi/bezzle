@@ -153,6 +153,22 @@ struct AnimateStressTests {
             // What the stage would draw is whole at the playhead, whatever the keys say.
             let seen = board.camera(at: store.film.live)
             if ![seen.x, seen.y, seen.zoom, seen.roll, seen.tilt, seen.swing].allSatisfy(\.isFinite) || seen.zoom <= 0 { out.append("a camera of \(seen)") }
+            // So is what it blurs: a focus and a blur that are numbers within what a camera takes,
+            // and for every piece a blur across the frame that is one, never below nothing nor
+            // past the most, and none at all under a camera that blurs nothing.
+            if !(seen.focus.isFinite && abs(seen.focus) <= 100_000 && seen.blur >= 0 && seen.blur <= 100) { out.append("a lens of \(seen)") }
+            let pieces = board.filmPieces(loose: Set(store.posedLayers)), drawn = board.filmLayers(of: pieces)
+            let frame = CGRect(origin: .zero, size: board.frame.size)
+            for (piece, layer) in zip(pieces, drawn) {
+                guard let soft = board.placement(of: piece, layer: layer, at: store.film.live, camera: seen).soft else { continue }
+                if seen.blur <= 0 { out.append("a piece is blurred under a camera that blurs nothing") }
+                let range = soft.range(in: frame)
+                if ![soft.across, soft.down, soft.level, range.least, range.most].allSatisfy(\.isFinite) || range.least < 0 || range.most > FilmSoft.most || range.least > range.most {
+                    out.append("a piece is blurred by \(soft)")
+                }
+            }
+            // What it would have to be sharp at for the picked layers is a distance, where there is one.
+            if let sharp = board.focus(on: store.posedLayers, at: store.film.live, pieces: pieces), !sharp.isFinite { out.append("sharp on the picked layers at \(sharp)") }
             for n in board.children {
                 let pose = n.pose(at: store.film.live)
                 if ![Double(pose.move.x), Double(pose.move.y), Double(pose.scale.x), Double(pose.scale.y), pose.turn, pose.fade, pose.lift, pose.tilt, pose.swing, pose.blur].allSatisfy(\.isFinite) {
@@ -284,7 +300,7 @@ struct AnimateStressTests {
                 bench.step { store.edit("Show") { $0.update(hidden.id) { $0.hidden = false } } }
                 return
             }
-            switch whole(0...35) {
+            switch whole(0...37) {
             case 0, 1:
                 let t = moment()
                 did("seek \(t)")
@@ -323,6 +339,22 @@ struct AnimateStressTests {
                 guard let id = store.posedLayers.first, let other = store.shapesToTake(for: id).randomElement(using: &dice) else { return }
                 did("take the outline of \(other.name)")
                 bench.step { store.takeShape(of: other.id, for: id) }
+            case 36:
+                // The camera made sharp on what is picked, as its card under Fly the Camera Here does.
+                did("focus")
+                bench.step { store.focusCamera(on: store.posedLayers) }
+            case 37:
+                // A lens as a hand would set it, and something for it to tell apart: a blur, a
+                // focus, or a picked layer lifted off the page.
+                let what = whole(0...2), v = one([0, 4, 12, 60, number(-200...200)])
+                did("lens \(what) \(v)")
+                bench.step {
+                    switch what {
+                    case 0: store.poseCamera(.cameraBlur, [abs(v)])
+                    case 1: store.poseCamera(.cameraFocus, [v])
+                    default: store.pose(.lift, of: store.posedLayers) { _ in [v] }
+                    }
+                }
             case 33, 34, 35:
                 // How the picked layers look, changed as their cards change it. The cards are there
                 // with a film, for the layers a pose goes to, and each only for what every one of
