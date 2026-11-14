@@ -1167,7 +1167,10 @@ struct Regions: @unchecked Sendable {
     /// A region hardly apart from the neighbour it would go to, as a blotch in a picture kept
     /// coarsely is, goes at a larger size: one whose colour is `faint` or less from its
     /// neighbour's at up to thirty times `least`, by the square of how alike the two are.
-    func withoutSpecks(_ labels: Labels, colors: [SIMD3<Int32>], least: Int, faint: Double = 0) -> Labels {
+    ///
+    /// And a region that one colour lies all round, a colour nothing like its own, stays at a
+    /// smaller size: at `tiny` times `least`.
+    func withoutSpecks(_ labels: Labels, colors: [SIMD3<Int32>], least: Int, faint: Double = 0, tiny: Double = 1) -> Labels {
         let W = W, H = H, l = labels.label.p, id = id.p
         var area = area
         var first = [Int32](repeating: -1, count: count)
@@ -1218,7 +1221,14 @@ struct Regions: @unchecked Sendable {
                     // Too large to go for its size alone: only when it is faint enough.
                     let apart = max(gap(label[r], label[Int(target)]), 1)
                     let allowed = Double(least) * min(30, (faint / apart) * (faint / apart))
-                    if Double(area[r]) >= allowed { target = -2 }
+                    if Double(area[r]) >= allowed {
+                        target = -2
+                    }
+                } else if target >= 0, Double(area[r]) >= Double(least) * tiny,
+                          gap(label[r], label[Int(target)]) >= 120, borders.keys.allSatisfy({ label[Int($0)] == label[Int(target)] }) {
+                    // Small, but in one colour all round and nothing like it: the dot of an i,
+                    // a comma, the eye of an e. Between two colours it would be their edge.
+                    target = -2
                 }
                 for i in pixels {
                     id[Int(i)] = target >= 0 ? target : me

@@ -294,7 +294,10 @@ public enum Vectorizer {
             let most = Int(300 + 12000 * detail * detail)
             let sizes = regions.area.sorted(by: >)
             if sizes.count > most { least = max(least, Int(sizes[most])) }
-            labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail))
+            // In a picture taken at its word the dot of an i, a comma and the eye of an e are
+            // smaller than that and stay: down to a seventh of it, unless little detail is wanted.
+            let tiny = clean ? min(1, 1.0 / 7 + 4 * bold) : 1
+            labels = regions.withoutSpecks(labels, colors: palette.colors, least: least, faint: clean ? 0 : 40 + 122 * (1 - detail), tiny: tiny)
             regions = Regions.find(labels)
         }
         // Colours that run into each other were read as bands: each run one region again, and
