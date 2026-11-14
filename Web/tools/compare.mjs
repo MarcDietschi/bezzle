@@ -3,11 +3,17 @@
 // each artboard pixel by pixel, and each text by where its lines break and how big it is.
 //
 //   node tools/compare.mjs --truth <dir with truth.json and PNGs> --designs <dir of .bezzle> [--no-trak] [--no-opsz]
+//        [--browser] [--chrome <path>] [--wasm <path>] [--out <dir>]
+//
+// In Node there is no WebGL, so a shader fill shows its picture. With --browser the artboards are
+// drawn by the same page module in a headless Chromium (tools/headless.mjs), where they are drawn
+// as a browser shows them.
 
 import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { createBezzle } from '../site/bezzle.mjs'
+import { launch } from './headless.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : fallback }
@@ -30,8 +36,69 @@ const fonts = {
   system: { ...manifest.system, data: await readFile(path.join(fontsDir, manifest.system.file)) },
 }
 
-const bz = await createBezzle({ CanvasKit: CK, wasm: await readFile(wasmPath), fonts, options: { trak: !flag('no-trak'), opsz: !flag('no-opsz') } })
+const options = { trak: !flag('no-trak'), opsz: !flag('no-opsz') }
 const truth = JSON.parse(await readFile(path.join(truthDir, 'truth.json'), 'utf8'))
+
+// The viewer: here in Node, or a page in a headless Chromium answering the same three questions.
+const HARNESS = `<!doctype html><meta charset="utf-8"><title>Compare</title><body>
+<script type="module">
+import { createBezzle } from '/site/bezzle.mjs'
+try {
+  await new Promise((ok, fail) => { const s = document.createElement('script'); s.src = '/canvaskit/canvaskit.js'; s.onload = ok; s.onerror = fail; document.head.append(s) })
+  const CK = await window.CanvasKitInit({ locateFile: (f) => '/canvaskit/' + f })
+  const bytes = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer())
+  const manifest = await (await fetch('/site/fonts/manifest.json')).json()
+  const fonts = {
+    families: manifest.families,
+    faces: await Promise.all(manifest.faces.map(async (f) => ({ ...f, data: await bytes('/site/fonts/' + f.file) }))),
+    system: { ...manifest.system, data: await bytes('/site/fonts/' + manifest.system.file) },
+  }
+  const bz = await createBezzle({ CanvasKit: CK, wasm: await bytes('/core.wasm'), fonts, options: ${JSON.stringify(options)} })
+  window.harness = {
+    async open(pkg, images) {
+      const pictures = new Map(await Promise.all(images.map(async (n) => [n, await bytes('/designs/' + encodeURIComponent(pkg) + '/images/' + encodeURIComponent(n))])))
+      return bz.open(await bytes('/designs/' + encodeURIComponent(pkg) + '/document.json'), pictures)
+    },
+    render(index, scale) {
+      const r = bz.render(index, scale)
+      const png = r.image.encodeToBytes()
+      let s = ''
+      for (let k = 0; k < png.length; k += 0x8000) s += String.fromCharCode.apply(null, png.subarray(k, k + 0x8000))
+      return { png: btoa(s), coreMs: r.coreMs, totalMs: r.totalMs }
+    },
+    texts: () => bz.texts(),
+    card() {
+      const gl = document.createElement('canvas').getContext('webgl')
+      const ext = gl?.getExtension('WEBGL_debug_renderer_info')
+      return gl ? (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) : 'no WebGL'
+    },
+  }
+  window.ready = true
+} catch (e) { window.failed = String(e?.stack ?? e) }
+</script>`
+
+let viewer, browser = null
+if (flag('browser')) {
+  browser = await launch({ chrome: arg('chrome'), pages: { '/harness.html': HARNESS }, files: { '/core.wasm': wasmPath },
+    roots: { '/site/': path.join(here, '..', 'site'), '/canvaskit/': path.dirname(require.resolve('canvaskit-wasm/bin/canvaskit.js')), '/designs/': designsDir } })
+  const page = await browser.open('/harness.html')
+  console.log('Headless Chromium, WebGL on:', await page.call('card'))
+  viewer = {
+    open: (name, pictures) => page.call('open', `${name}.bezzle`, [...pictures.keys()]),
+    async render(index) {
+      const r = await page.call('render', index, scale)
+      return { ...r, image: CK.MakeImageFromEncoded(Buffer.from(r.png, 'base64')) }
+    },
+    texts: () => page.call('texts'),
+  }
+} else {
+  const bz = await createBezzle({ CanvasKit: CK, wasm: await readFile(wasmPath), fonts, options })
+  viewer = {
+    async open(name, pictures) { return bz.open(await readFile(path.join(designsDir, `${name}.bezzle`, 'document.json')), pictures) },
+    async render(index) { return bz.render(index, scale) },
+    async texts() { return bz.texts() },
+  }
+}
 
 function pixels(img) {
   return img.readPixels(0, 0, { width: img.width(), height: img.height(), colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB })
@@ -40,16 +107,15 @@ function pixels(img) {
 const report = { boards: [], texts: [] }
 for (const [name, t] of Object.entries(truth)) {
   const pkg = path.join(designsDir, `${name}.bezzle`)
-  const json = await readFile(path.join(pkg, 'document.json'))
   const pictures = new Map()
   try {
     for (const f of await readdir(path.join(pkg, 'images'))) pictures.set(f, await readFile(path.join(pkg, 'images', f)))
   } catch {}
-  const opened = bz.open(json, pictures)
+  const opened = await viewer.open(name, pictures)
   if (opened.error) { console.log(name, 'could not open:', opened.error); continue }
 
   for (const b of t.boards) {
-    const r = bz.render(b.index, scale)
+    const r = await viewer.render(b.index)
     const web = r.image
     const png = web.encodeToBytes()
     await writeFile(path.join(out, `${name}-${b.index}.web.png`), png)
@@ -80,7 +146,7 @@ for (const [name, t] of Object.entries(truth)) {
     report.boards.push(entry)
   }
 
-  const webTexts = new Map(bz.texts().map((x) => [x.id, x]))
+  const webTexts = new Map((await viewer.texts()).map((x) => [x.id, x]))
   for (const m of t.texts) {
     const w = webTexts.get(m.id)
     if (!w) continue
@@ -95,6 +161,7 @@ for (const [name, t] of Object.entries(truth)) {
   }
 }
 
+await browser?.close()
 await writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 1))
 const T = report.texts
 const same = T.filter((x) => x.sameBreaks).length
