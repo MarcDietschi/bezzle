@@ -3,10 +3,10 @@ import Foundation
 /// Shader fills (`ShaderFill`), which the Mac draws with Metal and Windows with Direct3D (the
 /// engine in Packages/Shaders, through Bezzle/Canvas/ShaderPainting.swift). In the browser the
 /// page draws them, with WebGL, which is what their programs were written for (site/shaders.mjs):
-/// in a film, at the film's moment, for the part of the layer a picture shows and as sharp as it
-/// shows there, as the Mac's does. In the design, which is drawn as it always was, and where the
-/// page has no WebGL (Node), the fill's picture stands in, as it came in. Bezzle for Windows
-/// leaves this file out and compiles the Mac's own.
+/// in the design at the fill's own moment and in a film at the film's, for the part of the layer
+/// a picture shows and as sharp as it shows there, as the Mac's does. Where the page has no WebGL
+/// (Node), or a program does not build, the fill's picture stands in, as it came in. Bezzle for
+/// Windows leaves this file out and compiles the Mac's own.
 nonisolated enum ShaderPainting {
     /// What of a fill stays the same from moment to moment (its programs, vertices and pictures),
     /// by the number the page knows it by: handed over once, and after that only the inputs.
@@ -21,14 +21,14 @@ nonisolated enum ShaderPainting {
     private static let most: CGFloat = 4096
 
     /// Draws a shader fill inside an outline, a layer of `size` with its top left at zero, at the
-    /// film's moment `film`: placed as its picture is, or in the whole box. Says whether it drew,
-    /// so that the picture is drawn when it did not: always, outside a film.
+    /// film's moment `film` (the design's moment when nil): placed as its picture is, or in the
+    /// whole box. Says whether it drew, so that the picture is drawn when it did not.
     static func paint(_ shader: ShaderFill, picture: ImageFill?, in path: CGPath, size: CGSize, rule: CGPathFillRule,
                       in ctx: CGContext, film: Double?, assets: Assets?, box: CGRect? = nil) -> Bool {
         // What a fill holds beyond draws onto its canvas (passes into textures, depth and
         // stencil, instances, textures of numbers: `ShaderFill.beyondPlain`) the page does not
         // draw yet, and would draw wrongly: its picture stands in.
-        guard let film, !unavailable, !shader.beyondPlain else { return false }
+        guard !unavailable, !shader.beyondPlain else { return false }
         let box = box ?? CGRect(origin: .zero, size: size)
         let drawn = picture.map { Renderer.imageRect($0, in: box.size).offsetBy(dx: box.minX, dy: box.minY) } ?? box
         guard drawn.width > 0, drawn.height > 0, shader.size.width >= 1, shader.size.height >= 1 else { return false }
