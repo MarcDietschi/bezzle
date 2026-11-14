@@ -278,10 +278,11 @@ window, only in tests and in pictures the renderer made. What that left:
 
 ## Housekeeping
 
-- **The VM's disk is nearly full** (11.8 GB free of 127 on 2026-11-14, and a working copy with
-  its build takes 5): the source folders of agents finished on 2026-11-13 are still in `C:\src`
-  (`win-shaders`, `win-browser`, `win-shapes`, `win-animate`, `win-vectorize` and their small
-  side folders, about 22 GB; their work is on main).
+- **The VM's disk** had 5.5 GB free of 127 on 2026-11-14, with a working copy and its build
+  taking 5. The build folders of agents finished before 1.7 (`win-shaders`, `win-browser`,
+  `win-animate`, `win-vectorize`) were removed then, which left 21.9 GB; their small side folders
+  of designs and pictures, `cutout-samples`, `import-samples` and about 250 old
+  `C:\bezzle\BezzleDesktop-*.log` files are still there.
 
 - **A word nobody reads:** "Twenty-six lessons, about a minute each." is still in
   `Localizable.xcstrings`; neither platform's tour uses it since it has 28 lessons.
