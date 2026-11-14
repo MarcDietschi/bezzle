@@ -53,7 +53,7 @@ struct SnapTargets {
             // artboard is under its own middle, and what is on it moves with it.
             if let id = first, doc.node(id)?.isArtboard == false, let frame = doc.absoluteFrame(of: id), let board = doc.artboard(at: frame.center) {
                 for child in board.children where !ids.contains(child.id) && !child.hidden {
-                    neighbours.append(Geometry.bounds(of: child, eye: Eye.stage(board.frame.size)).offsetBy(dx: board.frame.minX, dy: board.frame.minY))
+                    neighbours.append(Geometry.bounds(of: child, eye: doc.stage(of: board)).offsetBy(dx: board.frame.minX, dy: board.frame.minY))
                 }
                 onto = board
             }

@@ -78,6 +78,11 @@ nonisolated struct BezzleDocument: Codable, Equatable, Sendable {
     /// Notes written in its margins, and their answers; nil while there are none. See `MarginNote`.
     var notes: [MarginNote]?
     private var index = PathIndex()
+    /// From where each artboard's scene is looked at for now, when not from the front
+    /// (`DepthLook`), by its id. A way of looking, not part of the design: no file has it (it is
+    /// not among the coding keys), two designs are the same whatever each is looked at from, and
+    /// whoever holds the design open keeps it (`DocumentStore.looks`). Nil for all from the front.
+    var looks: [UUID: DepthLook]?
 
     enum CodingKeys: String, CodingKey { case version, nodes, viewport, styles, components, notes }
 

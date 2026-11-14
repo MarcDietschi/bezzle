@@ -48,7 +48,7 @@ struct Picking {
                 guard inside || !node.clips else { continue }
                 let local = p - node.frame.origin
                 // Nearer before further, as they are drawn (`DepthOrder`), each seen from the artboard's eye.
-                let eye = Eye.stage(node.frame.size)
+                let eye = doc.stage(of: node)
                 for child in DepthOrder.stacked(node.seenLayers(fronts: fronts)).reversed() where !child.hidden && !child.locked {
                     if Geometry.contains(child, local, tolerance: tolerance, eye: eye) { return child.id }
                 }
@@ -146,7 +146,7 @@ struct Picking {
     func marquee(_ rect: CGRect, inside: UUID?) -> [UUID] {
         if let inside, let board = doc.node(inside) {
             let local = rect.offsetBy(dx: -board.frame.minX, dy: -board.frame.minY)
-            let eye = Eye.stage(board.frame.size)
+            let eye = doc.stage(of: board)
             return board.seenLayers(fronts: fronts).filter { !$0.hidden && !$0.locked && Geometry.bounds(of: $0, eye: eye).intersects(local) }.map(\.id)
         }
         return doc.nodes.filter { n in !n.hidden && !n.locked && (n.isArtboard ? rect.contains(n.frame) : Geometry.bounds(of: n).intersects(rect)) }.map(\.id)

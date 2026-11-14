@@ -270,11 +270,11 @@ nonisolated extension BezzleDocument {
     /// seen layer by layer from in front of each one's middle.
     func eye(inside id: UUID) -> Eye? {
         guard let container = node(id) else { return nil }
-        if container.isArtboard { return Eye.stage(container.frame.size) }
+        if container.isArtboard { return stage(of: container) }
         let chain = ancestors(of: id)
         guard let top = chain.first, top.isArtboard else { return nil }
         let origin = (chain.dropFirst() + [container]).reduce(CGPoint.zero) { $0 + $1.frame.origin }
-        return Eye.stage(top.frame.size).inside(origin)
+        return stage(of: top).inside(origin)
     }
 
     /// Where a layer's parent is seen from, in the parent's coordinates, in which the layer's
@@ -285,12 +285,12 @@ nonisolated extension BezzleDocument {
 
     /// Where each of a run of layers from the canvas down, each holding the next, is seen from
     /// in what holds it: the first, on the canvas itself, from in front of its own middle; the
-    /// rest from their artboard's eye, if they are on one.
-    static func eyes(along chain: [Node]) -> [Eye?] {
+    /// rest from their artboard's eye, if they are on one, looking from where `look` says.
+    static func eyes(along chain: [Node], look: DepthLook? = nil) -> [Eye?] {
         guard let top = chain.first else { return [] }
         guard top.isArtboard else { return Array(repeating: nil, count: chain.count) }
         var out: [Eye?] = [nil]
-        var eye = Eye.stage(top.frame.size)
+        var eye = Eye.stage(top.frame.size).looking(look)
         for c in chain.dropFirst() {
             out.append(eye)
             eye = eye.inside(c.frame.origin)
@@ -303,7 +303,7 @@ nonisolated extension BezzleDocument {
     func shown(_ p: CGPoint, inside id: UUID) -> CGPoint {
         guard let container = node(id) else { return p }
         let chain = ancestors(of: id) + [container]
-        let eyes = Self.eyes(along: chain)
+        let eyes = Self.eyes(along: chain, look: chain.first.flatMap { looks?[$0.id] })
         return chain.indices.reversed().reduce(p) { q, i in Perspective.shown(q + chain[i].frame.origin, of: chain[i], eye: eyes[i]) }
     }
 
@@ -319,7 +319,7 @@ nonisolated extension BezzleDocument {
     func placed(_ p: CGPoint, inside id: UUID) -> CGPoint? {
         guard let container = node(id) else { return p }
         let chain = ancestors(of: id) + [container]
-        let eyes = Self.eyes(along: chain)
+        let eyes = Self.eyes(along: chain, look: chain.first.flatMap { looks?[$0.id] })
         var q = p
         for (c, eye) in zip(chain, eyes) {
             guard let flat = Perspective.flat(q, of: c, eye: eye) else { return nil }

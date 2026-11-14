@@ -14,7 +14,8 @@ nonisolated enum Inspect {
         guard let n = doc.node(id) else { return nil }
         if n.isArtboard { return n.frame }
         let o = doc.parentOrigin(of: id)
-        return Geometry.bounds(of: n, eye: doc.eye(forParentOf: id)).offsetBy(dx: o.x, dy: o.y)
+        // As the design draws it, from the front: a hand-off is of the design, not of a way of looking at it.
+        return Geometry.bounds(of: n, eye: doc.front.eye(forParentOf: id)).offsetBy(dx: o.x, dy: o.y)
     }
 
     /// How far each side of a box lies inside another's; less than nothing where it sticks out.

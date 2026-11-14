@@ -48,9 +48,14 @@ nonisolated enum Renderer {
         /// in depth inside a group, whose picture `Depth.swift` makes with eight.)
         var deep = false
 
+        /// From where artboards are looked at for now, when not from the front (`DepthLook`):
+        /// the canvas alone says, so nothing else that is drawn, a picture exported, a film, a
+        /// thumbnail, is ever seen from the side.
+        var looks: [UUID: DepthLook]?
+
         /// Where the layers being drawn are seen from in depth, in what holds them: in front of
         /// their artboard's middle (`Eye.stage`). Off any artboard, nil: each from its own middle.
-        var eye: Eye? { board.map { Eye.stage($0.frame.size).inside(offset) } }
+        var eye: Eye? { board.map { Eye.stage($0.frame.size).looking(looks?[$0.id]).inside(offset) } }
     }
 
     static func draw(_ doc: BezzleDocument, in ctx: CGContext, options: Options = Options()) {
