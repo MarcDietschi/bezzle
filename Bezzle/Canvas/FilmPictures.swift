@@ -75,6 +75,15 @@ nonisolated enum FilmPictures {
         /// Whether it draws tones that run gently into one another (`Node.hasGentleTones`): its
         /// picture for a movie is then made deep, with sixteen bits to a colour.
         var hasGentleTones: Bool { kind == .ground ? board.hasGentleTones : layers.contains(where: \.hasGentleTones) }
+
+        /// Whether a deep picture of it would be the picture eight bits make, only finer
+        /// (`Node.drawsDeepAsPlain`): its own layers and, where one of them blurs what lies behind
+        /// it, all that lies on the artboard, which is then drawn into its picture too.
+        var drawsDeepAsPlain: Bool {
+            guard kind != .ground else { return board.drawsDeepAsPlain }
+            guard layers.allSatisfy(\.drawsDeepAsPlain) else { return false }
+            return !layers.contains(where: \.blursBehind) || board.drawsDeepAsPlain
+        }
     }
 
     /// The longest side a picture is made with, in pixels.
@@ -181,7 +190,9 @@ nonisolated enum FilmPictures {
     /// `deep` is for a picture a movie is made of: where the subject has gentle tones, a
     /// gradient, a shadow, a blur or a shader, it is drawn with sixteen bits to a colour, so that
     /// they come to the movie whole and are cut to its steps once, and not to eight bits' here
-    /// and to the movie's again after fading, blurring and the camera have worked on them.
+    /// and to the movie's again after fading, blurring and the camera have worked on them. Not
+    /// where a blend in it would then come out as other colours than the canvas shows
+    /// (`BlendMode.mixesDeepAsPlain`): that is drawn with eight bits, as the canvas is.
     static func picture(of subject: Subject, scale: CGFloat, assets: Assets?, part: Part? = nil, space: CGColorSpace? = nil, deep: Bool = false) -> Picture? {
         let whole = rect(of: subject)
         guard whole.width > 0, whole.height > 0, !whole.isNull else { return nil }
@@ -196,8 +207,8 @@ nonisolated enum FilmPictures {
             scale = min(scale, most / max(r.width, r.height))
             size = CGSize(width: max(1, (r.width * scale).rounded(.up)), height: max(1, (r.height * scale).rounded(.up)))
         }
-        // Twice the memory, so only where there is something to keep.
-        let deep = deep && subject.hasGentleTones
+        // Twice the memory, so only where there is something to keep, and never other colours.
+        let deep = deep && subject.hasGentleTones && subject.drawsDeepAsPlain
         guard let ctx = Renderer.bitmap(size, space: space, deep: deep) else { return nil }
         ctx.translateBy(x: 0, y: size.height)
         ctx.scaleBy(x: size.width / r.width, y: -size.height / r.height)
@@ -236,6 +247,23 @@ nonisolated extension Node {
         return children.contains { !$0.hidden && $0.hasGentleTones }
     }
 
+    /// Whether a bitmap with sixteen bits to a colour draws it as one with eight does, only
+    /// finer: nothing in it mixes its colours in a way that leaves nought to one there
+    /// (`BlendMode.mixesDeepAsPlain`), and no background blur is made lighter or darker, which
+    /// is done by adding.
+    var drawsDeepAsPlain: Bool {
+        if let blend, !blend.mixesDeepAsPlain { return false }
+        if let blur, blur.on, blur.background, blur.brightness != 0 { return false }
+        if mask?.contains(where: { !$0.drawsDeepAsPlain }) == true { return false }
+        return children.allSatisfy { $0.hidden || $0.drawsDeepAsPlain }
+    }
+
+    /// Whether it, or anything it holds, blurs what lies behind it.
+    var blursBehind: Bool {
+        if let blur, blur.on, blur.background { return true }
+        return children.contains { !$0.hidden && $0.blursBehind }
+    }
+
     /// The layer with no keys, nor any in what it holds: what its drawing is made from.
     var withoutMotion: Node {
         guard motion != nil || film != nil || holdsMotion else { return self }
@@ -244,5 +272,22 @@ nonisolated extension Node {
         n.film = nil
         n.children = children.map(\.withoutMotion)
         return n
+    }
+}
+
+nonisolated extension BlendMode {
+    /// Whether a bitmap with sixteen bits to a colour mixes with it as one with eight does. Core
+    /// Graphics counts in half floats there and stops at neither end, where eight bits stop at
+    /// both: the two that add run past white and under black, so that what is drawn over them
+    /// or fades them comes out lighter or darker; the four that take hue, saturation or
+    /// lightness from one side come out as other colours altogether; and the two that divide
+    /// lie up to eight of eight bits' steps apart. The others agree to within eight bits' own
+    /// rounding (measured on macOS 27, 2026-11-14: every pair of seven colours, each shown
+    /// whole, half and faintly).
+    var mixesDeepAsPlain: Bool {
+        switch self {
+        case .multiply, .screen, .overlay, .darken, .lighten, .hardLight, .softLight, .difference, .exclusion: true
+        case .colorDodge, .colorBurn, .hue, .saturation, .color, .luminosity, .plusDarker, .plusLighter: false
+        }
     }
 }

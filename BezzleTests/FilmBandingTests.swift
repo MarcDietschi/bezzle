@@ -412,6 +412,74 @@ struct FilmBandingTests {
         #expect(bordered.hasGentleTones)
     }
 
+    /// Sixteen bits to a colour are half floats to Core Graphics, which stop at neither white
+    /// nor black: two light layers added come to more than white, and what lies over them, or a
+    /// fade, then leaves them lighter than the canvas shows. A piece with such a blend in it is
+    /// drawn with eight bits, as it always was, and the movie's frame is the canvas's.
+    @Test func aBlendThatLeavesTheRangeIsDrawnAsTheCanvasDrawsIt() throws {
+        var board = Node(kind: .artboard, name: "Blends", frame: CGRect(x: 0, y: 0, width: 240, height: 80))
+        board.fill.color = Self.page
+        board.film = Film(length: 1)
+        func patch(_ name: String, _ x: CGFloat, _ color: RGBA, _ blend: BlendMode? = nil) -> Node {
+            var n = Node(kind: .rectangle, name: name, frame: CGRect(x: x, y: 20, width: 40, height: 40))
+            n.fill.color = color
+            n.blend = blend
+            return n
+        }
+        let light = RGBA(r: 0.8, g: 0.8, b: 0.8), half = RGBA(r: 0, g: 0, b: 0, a: 0.5)
+        // In one group, so in one picture: a gradient, which asks for a deep one, and beside it
+        // light added to light with half a black over it, and light taken from dark likewise.
+        var group = Node(kind: .group, name: "Mixed", frame: CGRect(x: 0, y: 0, width: 240, height: 80))
+        group.children = [
+            Self.ramp("Ramp", CGRect(x: 0, y: 0, width: 240, height: 12)),
+            patch("Under", 20, light), patch("Added", 20, light, .plusLighter), patch("Shade", 20, half),
+            patch("Dark", 100, RGBA(r: 0.1, g: 0.1, b: 0.1)), patch("Taken", 100, RGBA(r: 0.1, g: 0.1, b: 0.1), .plusDarker),
+            patch("Veil", 100, RGBA(r: 1, g: 1, b: 1, a: 0.5)),
+            patch("Rose", 180, RGBA(r: 0.9, g: 0.1, b: 0.5)), patch("Tinted", 180, RGBA(r: 0.2, g: 0.8, b: 0.95, a: 0.5), .color),
+        ]
+        group.setKey(.fade, [0.5], at: 0, ease: .linear)
+        group.setKey(.fade, [1], at: 1, ease: .linear)
+        board.children = [group]
+
+        #expect(group.hasGentleTones && !group.drawsDeepAsPlain)
+        for piece in board.filmPieces() {
+            let subject = FilmPictures.subject(of: piece, on: board, at: 0)
+            #expect(FilmPictures.picture(of: subject, scale: 1, assets: nil, deep: true)?.image.bitsPerComponent == 8, "\(piece.kind)")
+        }
+        // So the frame a movie is made of is the design as the canvas draws it: at the end, where
+        // the group shows whole, and at the start, where it is half faded.
+        let size = board.frame.size
+        var faint = board
+        faint.children[0].opacity = 0.5
+        for (t, design) in [(1.0, board), (0.0, faint)] {
+            let canvas = try Planes(#require(Renderer.image(of: design, scale: 1)))
+            for deep in [false, true] {
+                let frame = try Planes(#require(FilmExport.frame(of: board, at: t, size: size, assets: nil, deep: deep)))
+                #expect(frame.width == canvas.width && frame.height == canvas.height)
+                var furthest: Float = 0
+                for i in frame.y.indices { furthest = max(furthest, abs(frame.y[i] - canvas.y[i])) }
+                #expect(furthest <= 2, "at \(t), deep \(deep): \(furthest)")
+            }
+        }
+
+        // Which blends those are, and that they are found wherever they lie.
+        let apart: Set<BlendMode> = [.plusLighter, .plusDarker, .hue, .saturation, .color, .luminosity, .colorDodge, .colorBurn]
+        for blend in BlendMode.allCases { #expect(blend.mixesDeepAsPlain != apart.contains(blend), "\(blend)") }
+        var plain = group
+        plain.children = [Self.ramp("Ramp", CGRect(x: 0, y: 0, width: 240, height: 12)), patch("Under", 20, light), patch("Over", 20, light, .multiply)]
+        #expect(plain.drawsDeepAsPlain)
+        plain.children[2].blend = .plusLighter
+        #expect(!plain.drawsDeepAsPlain)
+        plain.children[2].hidden = true
+        #expect(plain.drawsDeepAsPlain)
+        // A background blur made lighter adds, too; one left as it is does not.
+        var glass = patch("Glass", 20, RGBA(r: 1, g: 1, b: 1, a: 0.2))
+        glass.blur = Blur(radius: 12, background: true)
+        #expect(glass.drawsDeepAsPlain && glass.blursBehind)
+        glass.blur?.brightness = 0.2
+        #expect(!glass.drawsDeepAsPlain)
+    }
+
     // MARK: The movie
 
     @Test func anH264MovieCutsGentleTonesToItsStepsOnce() async throws {

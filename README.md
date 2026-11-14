@@ -124,7 +124,12 @@ along one artboard's film. Its keys are changes from the design and never the de
   as bands where its values are cut to whole steps, and as wider, uneven ones when they are cut
   twice. So a movie's are cut once. A piece that has such tones (`Node.hasGentleTones`: a
   gradient, a shadow, a blur, a shader) is drawn for the movie with sixteen bits to a colour
-  (`FilmPictures.picture(deep:)`, `Renderer.Options.deep`; the stage's pictures keep eight),
+  (`FilmPictures.picture(deep:)`, `Renderer.Options.deep`; the stage's pictures keep eight).
+  Not a piece that holds a blend which comes out otherwise there, Plus Lighter and Plus Darker,
+  Color Dodge and Color Burn, or the four that take hue, saturation or lightness
+  (`BlendMode.mixesDeepAsPlain`), nor a background blur made lighter or darker: Core Graphics
+  counts in half floats there and stops at neither white nor black, so those keep eight bits
+  and the canvas's colours (87 of a movie's 219 steps apart otherwise, in the test's patches).
   Core Image puts the frame together in half floats and writes it straight into the luma and
   chroma planes the movie packs (`FilmExport.Codec`), eight bits for H.264 and ten for HEVC.
   Handed over as BGRA, as it was, every value was rounded a second time by the packing. No
