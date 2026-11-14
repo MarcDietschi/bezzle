@@ -176,25 +176,70 @@ model needs whatever the allocator. On this Mac's processor (18 cores, ONNX Runt
 
 So the 10 GB the VM showed at 2,048 pixels (below) was the limit of its 12 GB, not what the model
 needed, and its 63 to 72 s were partly paging. What is left at the peak is Swin's first stage (its
-attention over every window at once), which is the model's own. A process holds less than is
-alive by this count, as ONNX Runtime writes one layer's result over the one before where it can.
+attention over every window at once), which is the model's own.
 
-On Windows itself, in the test VM (Windows 11 for Arm, 8 cores, 12 GB, no graphics card;
-2026-11-10), `bezzle-render <fonts> cutout <out>` cutting out photos of 1,600 and 2,400 pixels:
+A process holds more than is alive by this count, though, and how much more is ONNX Runtime's
+doing, not the model's. On the processor it plans ahead to give a layer's memory, once the layer
+is done with, to a later layer whose result is the same size, and holds it until then (its
+`enable_mem_reuse`, which only its Python API can switch off). With this model that more than
+doubles what is held. Its parallel mode plans without, and as the whole graph runs on the
+processor, it runs the same layers in the same order one at a time: on this Mac ONNX Runtime's own
+record shows all 9,388 layers in the same order, none begun before the one before had ended, and
+the matte the same bit for bit. So Bezzle runs the processor's sessions in that mode
+(`CBezzleHost/matte.cpp`, with two threads between layers, as with one ONNX Runtime goes back to
+its plan), in one of two ways:
 
-| Way | Model and matte | The process at its peak |
-|---|---|---|
-| 2,048 on the processor, as shipped up to 1.6 | 63 to 72 s | 10 to 10.7 GB, the VM's limit |
-| 2,048 on the processor (`cpu2048`) | 43 to 54 s, 1.3 s of it loading | 1.9 GB |
-| 1,024 on the processor (`cpu1024`), what the VM takes | 10 to 11 s, 1.3 s of it loading | 1.9 to 2.0 GB |
+- **The quick way** keeps what a layer lets go in ONNX Runtime's arena for the layers after it.
+- **The lean way** does without the arena: each layer's memory is asked of Windows and given
+  back, so no more is held than is alive, and a matte takes two to three times as long.
 
-So memory is no longer what the fine size asks of a processor, but time is: four times the light
-size's. In Bezzle itself, cutting out a photo of 2,400 pixels there took 16 s from the click to
-the cutout, and Bezzle's working set peaked at 3.0 GB (0.4 GB before and after). Tried there
-too: a card that cannot (`BEZZLE_MATTE_MACHINE=16:8:8` on the VM, which has none) is followed by
-the processor in the same cut; the fine size on the processor, having taken 47 s, is passed over
-the next time; and the tool stopped by force in the middle of a fine matte says so when it next
-runs and takes the light size.
+Measured in the test VM (Windows 11 for Arm, 8 cores, 12 GB, no graphics card; 2026-11-14) with
+the model alone: a small program that runs one photo's matte through ONNX Runtime 1.24.4 as
+`matte.cpp` does, each run a process of its own, and what Windows counted for the process at its
+peak, in memory (its working set) and asked for (committed). Other builds ran in the VM
+meanwhile, so the times are longer than a quiet PC's and compare only with one another:
+
+| | A matte | In memory at its peak | Asked of Windows |
+|---|---|---|---|
+| 1,024, as shipped in 1.7 (no arena, ONNX Runtime's plan) | 21 to 24 s | 2.6 GB | 2.6 GB |
+| 1,024, the quick way | 16 to 21 s | 1.7 GB | 2.2 GB |
+| 1,024, the lean way | 47 to 50 s | 1.2 GB | 1.1 GB |
+| 2,048, as shipped in 1.7 | 156 s | 7.7 GB | 10.0 GB |
+| 2,048, the quick way | 95 s | 6.9 GB | 7.7 GB |
+| 2,048, the lean way | 190 s | 3.9 GB | 3.9 GB |
+
+At each size the three mattes are the same bit for bit (every one of the 1,048,576 and 4,194,304
+values). The fine size as shipped in 1.7 asked for 10 GB, which the VM's 12 GB could not all keep
+in memory: part of its time was paging. With the arena and ONNX Runtime's plan together, the light
+size held 3.2 GB. Tried and left out: an arena that grows by what is asked or in small steps holds
+more, not less (2.1 to 2.3 GB at 1,024 pixels); ONNX Runtime without constant folding holds 1.0 GB
+at 1,024 but changes the matte by 0.000003 and loads in 30 s; without memory patterns or
+prepacking nothing changes.
+
+The measures that stood here before (2026-11-10: 1.9 GB at either size) were wrong. The script
+that read the process's peak kept it in a 32-bit number, which took no value over 2 GB and so
+kept the last one under it. `bezzle-render` now says the peak itself after each matte.
+
+A whole cut there, `bezzle-render <fonts> cutout <out>` with a photo of 2,400 pixels at the light
+size, the tool at its peak: 2.7 GB in memory as shipped in 1.7, 1.74 GB the quick way (2.30 GB
+asked of Windows) and 1.27 GB the lean way (1.14 GB asked). The matte took 18 to 47 s the quick
+way, by how much else ran in the VM, and 47 to 56 s the lean way (one after the other: 17.7 s and
+55.9 s); on 2026-11-10, alone in the VM, the light size took 10 to 11 s and the fine size 43 to
+54 s. Six photos' mattes and cutouts are byte for byte those of the build shipped as 1.7, and
+the lean way's matte and cutout of a seventh are the quick way's. At the fine size
+(`BEZZLE_MATTE_ROUTE=cpu2048`) the tool held 6.97 GB (7.69 GB asked), the matte took 75 s, and it
+is byte for byte the matte made as shipped in 1.7.
+`BEZZLE_MATTE_LEFT=1.5` there takes the lean way by itself, and as a PC of 16 GB and 16 cores
+with 5 GB left (`BEZZLE_MATTE_MACHINE=16:16`, `BEZZLE_MATTE_LEFT=5`) a large photo takes the light
+size, not the fine one. Should ONNX Runtime be raised (`Windows/onnx.ps1`), measure again: that
+its parallel mode plans without handing memory on, and runs one layer at a time, is how 1.24.4
+is made, not a promise.
+
+So the fine size asks both memory and time of a processor: 7 GB, and four times the light size's
+time. Tried in the VM on 2026-11-10: a card that cannot (`BEZZLE_MATTE_MACHINE=16:8:8` on the VM,
+which has none) is followed by the processor in the same cut; the fine size on the processor,
+having taken 47 s, is passed over the next time; and the tool stopped by force in the middle of a
+fine matte says so when it next runs and takes the light size.
 
 The rearranged graphs give the matte the shipped one gave: on three photos, at 2,048 pixels
 against the graph shipped up to 1.6 and at 1,024 against the same export not rearranged, no value
@@ -213,8 +258,16 @@ graphics share the PC's memory and were what took small PCs down:
   less than 8 GB of memory:** the card is left alone. The processor makes the matte, at the fine
   size only for a large picture on a PC with 16 fast cores (and 16 GB), where it should take
   about 25 s, at the light size on all the others.
-- **Last on every PC:** the light size on the processor (`cpu1024`), 2 GB while it runs. It is
+- **Last on every PC:** the light size on the processor (`cpu1024`), 1.7 GB while it runs. It is
   never passed over, as Windows has no way without the model.
+
+And no way on the processor is taken without the memory for it (`MatteWays.fit`): before each
+matte Bezzle asks Windows what it has left to hand out, and a way needs what it holds and half a
+gigabyte beside for the rest of the cut. The fine size, with less than 7.5 GB left, is passed
+over for the light one: the lean way would take it minutes. The light size, with less than 2.2 GB
+left, is made the lean way, 1.2 GB, however little there is. So a PC with 8 GB that has 3 GB left
+is asked for 1.7 GB, and one with 4 GB that has 1.5 GB left for 1.2 GB, where 1.7 asked 2.6 GB of
+both.
 
 Each measure sits a little under the round number (11.5, 5.5, 7.5 and 15.5 GB), as Windows counts
 less memory than a PC is sold with. The card's are estimates until measured on real PCs.
@@ -234,14 +287,72 @@ three pictures' mattes are kept, so picking other subjects asks the model nothin
 alone; `BEZZLE_MATTE_MACHINE=16:8` takes the ways of a PC with 16 GB and 8 fast cores, and
 `32:12:8` those of one with a card of 8 GB besides; `BEZZLE_MATTE_DEVICE=cpu` keeps to the
 processor, `gpu` goes through DirectML on any adapter, Windows' software one too;
+`BEZZLE_MATTE_LEAN=1` takes the processor's lean way whatever is left (`0`: never), and
+`BEZZLE_MATTE_LEFT=1.5` the ways of a PC with 1.5 GB of memory left;
 `BEZZLE_MATTE_MODEL` takes other graphs, a folder of them with their weights or one graph that
 every way then runs. The ways, what is remembered of them and the cutouts' names are tested on a
 Mac too: `swift test --package-path Windows/Tests`.
 
+**On x64:** tried under Windows' emulation in the Arm VM (2026-11-14), there being no x64 PC here:
+`build.ps1 -Arch x64 -Jobs 2 -Product bezzle-render`, then cutouts as above with
+`.build\x64\Bezzle\bezzle-render.exe`. It loads ONNX Runtime for x64 and cuts photos out at the
+light size: 21 to 22 s a matte after 3.6 to 4.0 s of loading, 1.8 GB in memory (2.4 GB asked).
+Given the very input the Arm build gave the model, ONNX Runtime for x64 makes Arm's matte to
+within 0.0000035, and its quick and lean ways make the same matte bit for bit as it did as
+shipped in 1.7 (1.70 GB and 1.23 GB in memory for 2.69 GB). In a whole cut the x64 build scales
+a photo a level or two differently at some 800 of the 3 million numbers the model is given, so
+the matte differs by up to 0.007, and 2 values of a million at most fall on the other side of
+half. The cutouts' colours are Arm's wherever both are solid, a Display P3 photo's profile and
+numbers kept, and their alpha differs at 0.04 to 0.06% of the pixels. Emulation says nothing of
+a real x64 processor's speed.
+
 **Not measured:** DirectML has never run this model on a real graphics card, at either size, so
-what a card needs and how long it takes are guesses; and no PC of 4 or 8 GB has run it, where the
-light size's 2 GB are a large share. On the processor, the times of PCs other than the VM are
-worked out from their cores.
+what a card needs and how long it takes are guesses; no PC of 4 or 8 GB has run it; and no real
+x64 processor. On the processor, the times of PCs other than the VM are worked out from their
+cores.
+
+### Measuring a graphics card
+
+The VM has no Direct3D 12 adapter, so this waits for a real PC: one with a card of 6 GB or more
+of its own, and one with integrated graphics. It takes an installed Bezzle (the first version
+after 1.7, which says what a matte took and held), a photo of 2,000 pixels or more, and a
+Command Prompt:
+
+```
+set BEZZLE_TRACE=1
+set BEZZLE_MATTE_ROUTE=gpu1024
+del "%TEMP%\bezzle-trace.log"
+"%LOCALAPPDATA%\Programs\Bezzle\Bezzle.exe"
+```
+
+In Bezzle, put the photo into a design and take its background away; then, within half a minute,
+a second photo's, whose matte is made with the model still loaded. Quit Bezzle, and read what it
+wrote:
+
+```
+findstr /c:"subject matte" "%TEMP%\bezzle-trace.log"
+```
+
+Three kinds of line answer the questions. What Windows says the PC is:
+`subject matte: this PC has … GB, … fast cores, <the card> with … GB of its own`. How long
+DirectML took to fit the model to the card:
+`subject matte: BiRefNet-1024.onnx at 1024 pixels on DirectML on <the card> (gpu1024), loaded in … s`.
+And for each matte, its time and the memory:
+`subject matte: gpu1024 on DirectML on <the card>, made in … s; Bezzle has held … GB at most and asked Windows for … GB; the graphics card holds … GB of its own for it now and … GB of the PC's; … GB were free before`.
+The first two numbers of memory are the most since Bezzle started, so start it anew for each way.
+A way the card cannot make says why instead
+(`Bezzle could not make a subject matte (gpu1024): …`), and with the way named alone the cut then
+fails rather than taking another.
+
+Do the same with `set BEZZLE_MATTE_ROUTE=gpu2048`, and once without the line, for the way the PC
+takes by itself (the last line names it). On integrated graphics `gpu2048` is the way that took
+small PCs down up to 1.6: close everything else first. What to bring back for each PC and way:
+the three lines, and whether the cutout looks right. The numbers then replace the guesses in
+`MatteWays` (`cardForFine`, `cardForLight`, `memoryForCard`, `holds` and `first(cores:)` for the
+card). Whether a card's matte is the model's own is checked with a build rather than an installed
+Bezzle: `bezzle-render <fonts> cutout <out>` with `BEZZLE_MATTE_RAW` writes the matte's floats,
+once with `BEZZLE_MATTE_ROUTE=gpu1024` and once with `cpu1024`, and `compare_mattes.py` compares
+the two.
 
 ### Measured on Windows (2026-11-08)
 

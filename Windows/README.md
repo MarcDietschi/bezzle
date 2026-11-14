@@ -139,8 +139,9 @@ is a template with a placeholder, not the password.
   profile. Done this way before 1.5 (2026-11-08): the installer registered Windows App Runtime 1.7
   for a new user without administrator rights.
 - **What the VM cannot show:** a graphics card (it has no Direct3D 12, so DirectML and its speed are
-  untested, and shader fills are drawn by WARP there), a real x64 PC, Smart App Control, and
-  Windows in German, French or Italian.
+  untested, and shader fills are drawn by WARP there; `Scripts/subject-matte/README.md` › Measuring
+  a graphics card says how Remove Background is measured on a real one), a real x64 PC, Smart App
+  Control, and Windows in German, French or Italian.
 
 ## The app
 
@@ -223,11 +224,23 @@ SubjectMatte and SubjectModel):
 the same model, the same edges and colours, the same outlines, and cutouts named as the Mac names
 them, so a design shared between the two finds the other's. What differs is how the subject is
 found: the Mac asks Apple's Vision, which Windows lacks; here the matte's own regions are the parts a
-click keeps or drops, so subjects that touch are one part. `bezzle-render <fonts> cutout <out>` cuts
-the photos `BEZZLE_PHOTOS` names out as Bezzle does and says the way each took and how long the
-model and the matte took (`BEZZLE_MATTE_MODEL`, `BEZZLE_MATTE_DEVICE=cpu` or `gpu`,
-`BEZZLE_MATTE_ROUTE` for one way alone, `BEZZLE_MATTE_MACHINE` for another PC's ways, `BEZZLE_PICKS`,
-`BEZZLE_MATTE_RAW` for the matte's floats). Which way a PC takes, what it remembers of the ways
+click keeps or drops, so subjects that touch are one part. A photo in wider colours than sRGB's
+(an iPhone's Display P3, Adobe RGB) is cut out in its own, as on the Mac: the cutout carries the
+photo's profile and keeps its numbers, and only the model sees it in sRGB. Checked against the Mac
+on 2026-11-14 with photos made for it, patches of known colours in each: a P3 PNG's cutout has
+the photo's profile byte for byte, the patches' very numbers, and wherever the subject is solid
+not one colour value other than the Mac's cutout by the same matte; a JPEG's differs only as the
+two read JPEGs (as much for an sRGB JPEG). Grey and CMYK photos are cut out in sRGB, as on the
+Mac, and so are those whose light goes past white (`ownColors` in `CBezzleHost/host.cpp`).
+`bezzle-render <fonts> cutout <out>` cuts
+the photos `BEZZLE_PHOTOS` names out as Bezzle does and says the way each took, how long the
+model and the matte took and what memory the tool held (`BEZZLE_MATTE_MODEL`,
+`BEZZLE_MATTE_DEVICE=cpu` or `gpu`, `BEZZLE_MATTE_ROUTE` for one way alone, `BEZZLE_MATTE_MACHINE`
+for another PC's ways, `BEZZLE_MATTE_LEFT` for those of a PC with so many gigabytes left,
+`BEZZLE_MATTE_LEAN=1` for the processor's lean way, `BEZZLE_PICKS`, `BEZZLE_MATTE_RAW` for the
+matte's floats). The app says the same of each matte in its trace (`BEZZLE_TRACE`), which is how a
+graphics card is measured on a real PC (`Scripts/subject-matte/README.md` › Measuring a graphics
+card). Which way a PC takes, what it remembers of the ways
 and what cutouts are called ask Windows nothing (`Host/MatteWays.swift`, `CutoutCells.swift`), so
 their tests run on a Mac too: `swift test --package-path Windows/Tests`.
 

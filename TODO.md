@@ -82,12 +82,18 @@ file was made (2026-11-14): look before starting on one.
 - Gradients become bands of flat colour (`Blend` is unused).
 - 10 point text loses pieces.
 
-## Remove Background on Windows *(from notes, 2026-11-08)*
+## Remove Background on Windows
 
-- DirectML not measured on real hardware: speed, memory, integrated graphics at 2,048 pixels.
-- Not tried on x64 processors.
-- On the processor a picture takes about 10 GB, too much for PCs with 8 to 16 GB.
-- Photos in Display P3 are cut in sRGB.
+- DirectML is not measured on real hardware (speed, memory, integrated graphics at 2,048 pixels),
+  so the card's measures in `MatteWays` are guesses. It takes a real PC and the first version
+  after 1.7: `Scripts/subject-matte/README.md` › Measuring a graphics card.
+- Not run on a real x64 processor: under emulation in the VM it cuts out correctly (2026-11-14),
+  which says nothing of its speed.
+- No PC of 4 or 8 GB has run it: in the VM the light size holds 1.7 GB, and 1.2 GB the lean way,
+  taken with less than 2.2 GB left (`BEZZLE_MATTE_LEFT` tries the choice, not real pressure).
+- The new ways (2026-11-14) ran through `bezzle-render`, not the app: the line the app writes to
+  its trace after each matte was not read from an app's own trace file, and their times were not
+  taken in a quiet VM.
 
 ## 3D scenes *(from notes, 2026-11-13)*
 
