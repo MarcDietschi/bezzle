@@ -909,13 +909,13 @@ extension DocumentStore {
 
     /// Asks where, and saves the film there as a movie, while the desk tells how far it is; then
     /// shows the movie in the Finder.
-    func saveFilm(scale: CGFloat, fps: Int) {
+    func saveFilm(scale: CGFloat, fps: Int, codec: FilmExport.Codec = .h264) {
         guard film.saving == nil, let board = filmBoard else { return }
         pauseFilm()
         // A film too long for a movie is said before asking where, not after.
         do { try FilmExport.check(board) } catch { NSAlert(error: error).runModal(); return }
         guard let url = askFilmPlace(for: board) else { return }
-        writeFilm(to: url, scale: scale, fps: fps)
+        writeFilm(to: url, scale: scale, fps: fps, codec: codec)
     }
 
     /// Asks where the film of `board` is to be saved as a movie; nil when the answer is nowhere.
@@ -936,7 +936,7 @@ extension DocumentStore {
     /// nothing when the movie is whole, with `CancellationError` when it was stopped, or with
     /// what went wrong. Left out, the movie is shown in the Finder, and what went wrong is said.
     @discardableResult
-    func writeFilm(to url: URL, scale: CGFloat, fps: Int, after: (@MainActor (Error?) -> Void)? = nil) -> Bool {
+    func writeFilm(to url: URL, scale: CGFloat, fps: Int, codec: FilmExport.Codec = .h264, after: (@MainActor (Error?) -> Void)? = nil) -> Bool {
         guard film.saving == nil, let board = filmBoard else { return false }
         pauseFilm()
         film.exporting = 0
@@ -944,7 +944,7 @@ extension DocumentStore {
         film.saving = Task { [weak self] in
             var failure: Error?
             do {
-                try await FilmExport.write(board, assets: assets, to: url, settings: FilmExport.Settings(scale: scale, fps: fps)) { done in
+                try await FilmExport.write(board, assets: assets, to: url, settings: FilmExport.Settings(scale: scale, fps: fps, codec: codec)) { done in
                     self?.film.exporting = done
                 }
             } catch {

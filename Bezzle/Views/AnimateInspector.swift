@@ -705,6 +705,7 @@ private struct FilmCard: View {
     let board: Node
     @AppStorage("film.movie.scale") private var scale = 2
     @AppStorage("film.movie.fps") private var fps = 60
+    @AppStorage("film.movie.codec") private var codec = FilmExport.Codec.h264
 
     var body: some View {
         let fixed = board.film?.length != nil
@@ -753,13 +754,18 @@ private struct FilmCard: View {
                     .help("Pictures a second")
             }
             .disabled(exporting != nil)
+            // Eight bits to a colour, which everything plays, or ten, whose steps are a quarter
+            // as large: for gentle tones that eight show as bands.
+            SegmentedWell(selection: $codec, options: [(.h264, "H.264"), (.hevc, "HEVC 10 bit")])
+                .help("H.264 plays everywhere. HEVC with 10 bits keeps gentle gradients, soft shadows and slow fades smooth where H.264 shows bands, and plays on Apple devices and in most browsers.")
+                .disabled(exporting != nil)
             let size = FilmExport.size(of: board, settings: FilmExport.Settings(scale: CGFloat(scale), fps: fps))
             Text("\(String(Int(size.width))) × \(String(Int(size.height))) pixels, \(fps) a second")
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.ink3)
                 .frame(maxWidth: .infinity, alignment: .center)
             PrimaryButton(title: exporting == nil ? "Save as Movie…" : "Stop Saving", progress: exporting) {
-                if exporting == nil { store.saveFilm(scale: CGFloat(scale), fps: fps) } else { store.stopSavingFilm() }
+                if exporting == nil { store.saveFilm(scale: CGFloat(scale), fps: fps, codec: codec) } else { store.stopSavingFilm() }
             }
         }
     }

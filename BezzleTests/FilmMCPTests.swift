@@ -80,10 +80,19 @@ struct FilmMCPTests {
         let movie = try #require((json(saved.text)["movies"] as? [[String: Any]])?.first)
         let file = try #require(movie["file"] as? String)
         #expect(file.hasSuffix("/A.mp4") && FileManager.default.fileExists(atPath: file))
-        #expect(movie["pixels"] as? String == "200×150" && movie["fps"] as? Int == 10)
+        #expect(movie["pixels"] as? String == "200×150" && movie["fps"] as? Int == 10 && movie["codec"] as? String == "h264")
         // Again, beside it, numbered.
         let again = await call("export", ["layers": ["A"], "format": "mp4", "fps": 10, "scale": 0.5, "folder": folder.path])
         #expect((json(again.text)["movies"] as? [[String: Any]])?.first?["file"] as? String == folder.appendingPathComponent("A 2.mp4").path)
+        // With ten bits to a colour when asked, and nothing made of a kind there is not.
+        let deep = await call("export", ["layers": ["A"], "format": "mp4", "fps": 10, "scale": 0.5, "codec": "HEVC", "folder": folder.path])
+        let deepMovie = try #require((json(deep.text)["movies"] as? [[String: Any]])?.first)
+        #expect(deepMovie["codec"] as? String == "hevc")
+        let read = try await FilmBandingTests.read([], of: URL(fileURLWithPath: try #require(deepMovie["file"] as? String)))
+        #expect(read.codec == .hevc && read.bits == 10 && read.count == 5)
+        let unknown = await call("export", ["layers": ["A"], "format": "mp4", "codec": "gif", "folder": folder.path])
+        #expect(unknown.failed && unknown.text.contains("h264 or hevc"))
+        #expect((try FileManager.default.contentsOfDirectory(atPath: folder.path)).count == 3)
     }
 
     @Test func theAskBringsTheFilmAndHowToDoItWell() async throws {

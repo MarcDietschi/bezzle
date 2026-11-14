@@ -100,7 +100,8 @@ along one artboard's film. Its keys are changes from the design and never the de
   `TEST_RUNNER_ANIMATE_RUNS=800` before `xcodebuild test` for 800 more seeds (about 3 minutes),
   `TEST_RUNNER_ANIMATE_RUN=<seed>` to follow one, and `TEST_RUNNER_ANIMATE_DEEP=<every>,<from>` to
   undo and redo the whole session every so many steps. `TEST_RUNNER_ANIMATE_FILM_TIMING=1` also
-  times the writing of a three second movie, into `$TMPDIR/bezzle-film-timing.txt`, and
+  times the writing of a three second movie of each kind, and the memory it takes, into
+  `$TMPDIR/bezzle-film-timing.txt` (2026-11-14, M5 Pro: 1.5 s either kind, some 700 MB), and
   `TEST_RUNNER_ANIMATE_FILM_DESIGN=<a design>` plays that design's own film on the stage in real
   time and writes what a frame costs and how sharp it shows into `$TMPDIR/bezzle-film-stage.txt`
   (give it a copy, never one of Erik's designs). A switch for tests never begins with `BEZZLE_`:
@@ -119,6 +120,25 @@ along one artboard's film. Its keys are changes from the design and never the de
   film's frame, as sharp as it is seen (`FilmStageView.seenPart`). The stage draws its pictures in
   the screen's own colour space: in sRGB, Core Animation matched every colour of each new picture
   again on the main thread, which was most of a scrub's time on a screen that is not sRGB.
+- **Gentle tones in a movie:** a wide dark gradient, a soft shadow, a blur or a slow fade shows
+  as bands where its values are cut to whole steps, and as wider, uneven ones when they are cut
+  twice. So a movie's are cut once. A piece that has such tones (`Node.hasGentleTones`: a
+  gradient, a shadow, a blur, a shader) is drawn for the movie with sixteen bits to a colour
+  (`FilmPictures.picture(deep:)`, `Renderer.Options.deep`; the stage's pictures keep eight),
+  Core Image puts the frame together in half floats and writes it straight into the luma and
+  chroma planes the movie packs (`FilmExport.Codec`), eight bits for H.264 and ten for HEVC.
+  Handed over as BGRA, as it was, every value was rounded a second time by the packing. No
+  noise is laid over the steps: what packs movies on a Mac irons fine noise out again unless
+  the movie is many times larger. H.264 stays what a movie is, and shows the steps eight bits
+  have; the Film card's other choice, HEVC with 10 bits (the AI server's `codec`), has steps a
+  quarter as large. `FilmBandingTests` measures all of this on a film of such tones, in steps
+  of eight bits by which the mean of every 8 by 8 block is off, and writes the numbers into
+  `$TMPDIR/bezzle-film-banding-….txt` (2026-11-14, on average: 0.35 before, 0.29 as H.264, which
+  is what one rounding leaves, 0.07 as HEVC). `TEST_RUNNER_ANIMATE_BANDING_STILLS=1` also
+  writes down what exported pictures and the stage's pictures hold,
+  `TEST_RUNNER_ANIMATE_BANDING_KEEP=<a folder>` keeps the movies it makes there, and
+  `TEST_RUNNER_ANIMATE_BANDING_MOVIE=<a file>` measures a movie of the same film made
+  elsewhere: on Windows, or one of the kept ones after a video site packed it again.
 - **Keeping it quick:** what is placed at every frame is found once (`Node.filmLayers`, not a
   search through the artboard per piece); new pictures are placed on the stage without drawing
   the canvas again; what is watched by views (`film.playing`, the timeline's hand) is set only

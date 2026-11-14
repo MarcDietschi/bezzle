@@ -225,7 +225,8 @@ extension MCPTools {
         CTLineDraw(line, ctx)
     }
 
-    /// Films saved as movies, as Animate's Save as Movie does: an .mp4 each, H.264.
+    /// Films saved as movies, as Animate's Save as Movie does: an .mp4 each, H.264 or, when
+    /// `codec` says so, HEVC with ten bits to a colour.
     private func exportMovies(_ args: Arguments, _ store: DocumentStore) async throws -> [Content] {
         let boards = try filmBoards(args, store, all: true)
         let still = boards.filter { !Self.moves($0) }
@@ -234,6 +235,14 @@ extension MCPTools {
         }
         let scale = CGFloat(min(max(try args.number("scale") ?? 2, 0.25), 4))
         let fps = min(max(try args.int("fps") ?? 60, 1), FilmExport.fastest)
+        var codec = FilmExport.Codec.h264
+        if let word = try args.string("codec")?.lowercased().filter({ $0.isLetter || $0.isNumber }) {
+            // "H.264" and "h265" are taken as they are meant.
+            guard let named = FilmExport.Codec(rawValue: ["h265": "hevc", "avc": "h264"][word] ?? word) else {
+                throw MCPError("codec is h264 or hevc.")
+            }
+            codec = named
+        }
         let replacing = try args.bool("replace") == true
         let (folder, hint) = try Self.exportFolder(args)
         var written: [JSONValue] = []
@@ -245,7 +254,7 @@ extension MCPTools {
                 url = folder.appendingPathComponent("\(base) \(n).mp4")
                 n += 1
             }
-            let settings = FilmExport.Settings(scale: scale, fps: fps)
+            let settings = FilmExport.Settings(scale: scale, fps: fps, codec: codec)
             do {
                 try await FilmExport.write(board, assets: store.assets, to: url, settings: settings) { _ in }
             } catch {
@@ -253,7 +262,7 @@ extension MCPTools {
             }
             let size = FilmExport.size(of: board, settings: settings)
             written.append(.compact([("file", .string(url.path)), ("seconds", .number(board.filmLength)), ("fps", .number(fps)),
-                                     ("pixels", .string("\(Int(size.width))×\(Int(size.height))"))]))
+                                     ("pixels", .string("\(Int(size.width))×\(Int(size.height))")), ("codec", .string(codec.rawValue))]))
         }
         return [.text(JSONValue.compact([("movies", .array(written))]).text)]
     }

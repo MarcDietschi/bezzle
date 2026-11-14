@@ -800,8 +800,8 @@ struct FilmExportTests {
     /// Saves the bench's film through the store, as the panel does once it knows where, and
     /// notes how it ended. Always with someone to tell: left to itself the store shows the movie
     /// in the Finder, or says what went wrong in a window.
-    private func save(_ bench: Bench, to url: URL, fps: Int = 30, _ told: Told) -> Bool {
-        bench.store.writeFilm(to: url, scale: 1, fps: fps) { failure in
+    private func save(_ bench: Bench, to url: URL, fps: Int = 30, codec: FilmExport.Codec = .h264, _ told: Told) -> Bool {
+        bench.store.writeFilm(to: url, scale: 1, fps: fps, codec: codec) { failure in
             told.failure = failure
             told.clear = bench.store.film.exporting == nil && bench.store.film.saving == nil
             told.ended = true
@@ -809,6 +809,29 @@ struct FilmExportTests {
     }
 
     private func isThere(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
+
+    /// The Film card's other kind of movie, saved through the store: HEVC with ten bits to a
+    /// colour, the same frames.
+    @Test func savingAsHEVCMakesAMovieWithTenBits() async throws {
+        let bench = desk(0.5), url = scratch(), told = Told()
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(save(bench, to: url, codec: .hevc, told))
+        try await wait(for: "the movie") { told.ended }
+        #expect(told.failure == nil && told.clear)
+        let asset = AVURLAsset(url: url)
+        let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let format = try #require(try await track.load(.formatDescriptions).first)
+        #expect(format.mediaSubType == .hevc)
+        #expect(CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_BitsPerComponent) as? Int == 10)
+        #expect(CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String
+                == kCMFormatDescriptionTransferFunction_sRGB as String)
+        #expect(try await asset.load(.isPlayable))
+        let movie = try await read(url)
+        #expect(movie.frames == 15 && movie.size == CGSize(width: 400, height: 300), "\(movie)")
+        // Its first frame is the film's start, in the colours of the design.
+        let first = try await frame(0, of: url, fps: 30)
+        #expect(first.shows(red, at: 60, 60, within: 30) && first.shows(blue, at: 330, 50, within: 30) && first.shows(.white, at: 200, 250, within: 30))
+    }
 
     @Test func savingTellsTheDeskHowFarItIsAndClearsItWhenTheMovieIsWhole() async throws {
         let bench = desk(1.5), store = bench.store, url = scratch(), told = Told()
@@ -951,9 +974,10 @@ struct FilmExportTests {
         #expect(store.film.exporting == nil && store.film.saving == nil && fresh.store.film.exporting == nil)
     }
 
-    /// How long a film takes to write: three seconds at 60 frames a second of an 800 by 600
-    /// artboard at two pixels to the point. Run with `TEST_RUNNER_ANIMATE_FILM_TIMING=1` before
-    /// `xcodebuild`; the answer is written to `$TMPDIR/bezzle-film-timing.txt`.
+    /// How long a film takes to write, and how much memory: three seconds at 60 frames a second
+    /// of an 800 by 600 artboard at two pixels to the point, as each kind of movie. Run with
+    /// `TEST_RUNNER_ANIMATE_FILM_TIMING=1` before `xcodebuild`; the answer is written to
+    /// `$TMPDIR/bezzle-film-timing.txt`.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ANIMATE_FILM_TIMING"] != nil))
     func timesAThreeSecondFilm() async throws {
         var b = board(CGSize(width: 800, height: 600))
@@ -983,11 +1007,35 @@ struct FilmExportTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let clock = ContinuousClock()
         var lines: [String] = []
-        for run in 1...3 {
-            let took = try await clock.measure { try await FilmExport.write(b, assets: nil, to: url) { _ in } }
-            let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
-            lines.append("run \(run): \(took) for \(FilmExport.moments(of: b, fps: 60).count) frames of \(FilmExport.size(of: b, settings: FilmExport.Settings())), \(b.filmPieces().count) pieces, \(bytes) bytes")
+        for codec in FilmExport.Codec.allCases {
+            for run in 1...3 {
+                // The most the app holds while the movie is written, looked at a hundred times a second.
+                let before = Self.footprint()
+                let watch = Task.detached { () -> Double in
+                    var most = 0.0
+                    while !Task.isCancelled {
+                        most = max(most, Self.footprint())
+                        try? await Task.sleep(for: .milliseconds(10))
+                    }
+                    return most
+                }
+                let took = try await clock.measure { try await FilmExport.write(b, assets: nil, to: url, settings: FilmExport.Settings(codec: codec)) { _ in } }
+                watch.cancel()
+                let most = await watch.value
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                lines.append("\(codec) run \(run): \(took) for \(FilmExport.moments(of: b, fps: 60).count) frames of \(FilmExport.size(of: b, settings: FilmExport.Settings())), \(b.filmPieces().count) pieces, \(bytes) bytes, memory \(Int(before)) MB before and \(Int(most)) MB at most")
+            }
         }
         try lines.joined(separator: "\n").write(to: FileManager.default.temporaryDirectory.appendingPathComponent("bezzle-film-timing.txt"), atomically: true, encoding: .utf8)
+    }
+
+    /// The memory the app holds, as Activity Monitor counts it, in megabytes.
+    nonisolated private static func footprint() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : 0
     }
 }

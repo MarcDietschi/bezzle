@@ -23165,6 +23165,50 @@
         }
       }
     },
+    "H.264" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "H.264"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "H.264"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "H.264"
+          }
+        }
+      }
+    },
+    "H.264 plays everywhere. HEVC with 10 bits keeps gentle gradients, soft shadows and slow fades smooth where H.264 shows bands, and plays on Apple devices and in most browsers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "H.264 läuft überall. HEVC mit 10 Bit hält sanfte Verläufe, weiche Schatten und langsames Einblenden glatt, wo H.264 Streifen zeigt, und läuft auf Apple-Geräten und in den meisten Browsern."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "H.264 se lit partout. HEVC en 10 bits garde lisses les dégradés doux, les ombres diffuses et les fondus lents, là où H.264 montre des bandes, et se lit sur les appareils Apple et dans la plupart des navigateurs."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "H.264 si vede ovunque. HEVC a 10 bit mantiene uniformi le sfumature delicate, le ombre morbide e le dissolvenze lente, dove H.264 mostra bande, e si vede sui dispositivi Apple e nella maggior parte dei browser."
+          }
+        }
+      }
+    },
     "Hard Light" : {
       "localizations" : {
         "de" : {
@@ -23381,6 +23425,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sezione hero"
+          }
+        }
+      }
+    },
+    "HEVC 10 bit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HEVC 10 Bit"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HEVC 10 bits"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HEVC 10 bit"
           }
         }
       }
@@ -39314,6 +39380,28 @@
         }
       }
     },
+    "Save it as H.264 instead." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sichere es stattdessen als H.264."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistrez-la plutôt en H.264."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salvalo invece come H.264."
+          }
+        }
+      }
+    },
     "Saved" : {
       "localizations" : {
         "de" : {
@@ -48110,6 +48198,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Questo link non porta a nessun design."
+          }
+        }
+      }
+    },
+    "This Mac cannot save a movie of this kind." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Mac kann ein solches Video nicht sichern."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce Mac ne peut pas enregistrer une vidéo de ce type."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo Mac non può salvare un video di questo tipo."
           }
         }
       }
