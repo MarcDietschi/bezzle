@@ -254,6 +254,10 @@ nonisolated struct FilmPiece: Equatable, Hashable, Sendable {
 nonisolated struct FilmStand: Equatable, Hashable, Sendable {
     var middle: CGPoint
     var tip = 0.0, swing = 0.0, twist = 0.0, height = 0.0
+    /// A run lying in a group that is turned: each of its layers as the design orders it
+    /// (`DepthOrder.face`), bottom first, for the film to order the run as the design orders
+    /// them (`filmOrder`). None in a group that only lifts what it holds, which is all as high.
+    var lying: [DepthOrder.Face] = []
 
     var depth: Transform3D { Transform3D(x: tip, y: swing, z: CGFloat(height)) }
 
@@ -270,6 +274,14 @@ nonisolated struct FilmStand: Equatable, Hashable, Sendable {
         swing = angles.swing
         twist = angles.twist
         height = stood.z
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(middle)
+        hasher.combine(tip)
+        hasher.combine(swing)
+        hasher.combine(twist)
+        hasher.combine(height)
     }
 }
 
@@ -288,11 +300,18 @@ nonisolated extension Node {
         func holdsLoose(_ n: Node) -> Bool { n.children.contains { loose.contains($0.id) || holdsLoose($0) } }
         func walk(_ nodes: [Node], origin: CGPoint, holders: [UUID], eye: Eye) {
             var run: [UUID] = []
+            // The run's layers as the design orders them, where the group they lie in is turned:
+            // their middles then stand at different heights, and one piece is drawn of them all.
+            var lying: [DepthOrder.Face] = []
+            let turned = eye.space.map { $0.spin != Spin.none } ?? false
             func flush() {
                 if !run.isEmpty {
-                    out.append(FilmPiece(kind: .run, layers: run, origin: origin, holders: holders, stand: FilmStand(nil, eye: eye, origin: origin)))
+                    var stand = FilmStand(nil, eye: eye, origin: origin)
+                    stand?.lying = lying
+                    out.append(FilmPiece(kind: .run, layers: run, origin: origin, holders: holders, stand: stand))
                 }
                 run = []
+                lying = []
             }
             // In a group that keeps its layers' depth, every piece stands where the group puts it.
             let stood = eye.space != nil
@@ -326,6 +345,7 @@ nonisolated extension Node {
                                          changes: n.holdsMotion || n.holdsMovingShader || n.reshapes || n.looksChange))
                 } else {
                     run.append(n.id)
+                    if turned { lying.append(DepthOrder.face(of: n, eye: eye, origin: origin)) }
                 }
             }
             flush()
@@ -380,14 +400,10 @@ nonisolated extension Node {
             if piece.kind == .run, let stand = piece.stand {
                 let map = FilmLens.layer(center: piece.origin, rotation: 0, depth: stand.depth, pose: .rest, camera: camera, size: frame.size,
                                          twist: stand.twist, stands: stand.middle)
-                var face: DepthOrder.Face?
-                if stand.tip != 0 || stand.swing != 0 {
-                    // All of the plane: whatever of the group stands over it is ordered as a body's faces are.
-                    face = DepthOrder.Face(middle: ScenePoint(x: Double(stand.middle.x), y: Double(stand.middle.y), z: stand.height),
-                                           size: CGSize(width: 100_000, height: 100_000), rotation: stand.twist,
-                                           turn: Spin.tip(stand.tip).after(.swing(stand.swing)))
-                }
-                return FilmPlacement(map: map, height: stand.height, face: face)
+                // In a group that is turned its layers' middles stand at different heights. Lying
+                // in one plane, they are as near as the highest of them (`DepthOrder.nearness`),
+                // and among what is turned beside them `filmOrder` asks about each (`lying`).
+                return FilmPlacement(map: map, height: stand.lying.map(\.middle.z).max() ?? stand.height)
             }
             return FilmPlacement(map: FilmLens.ground(camera, size: frame.size))
         }
@@ -438,12 +454,26 @@ nonisolated extension Node {
     /// design draws it (`DepthOrder`): so the camera at rest sees what the design shows.
     func filmOrder(_ pieces: [FilmPiece], _ placements: [FilmPlacement]) -> [Int] {
         guard placements.contains(where: { $0.height != 0 }) else { return Array(pieces.indices) }
-        // The faces of a body turned as one are as near as they would be laid flat.
+        // The faces of a body turned as one are as near as they would be laid flat. What is
+        // turned is asked about as the design asks: a layer's piece by its face, and a run lying
+        // in a turned group that keeps depth by each of its layers, as near as the nearest.
         var heights = placements.map(\.height)
-        let turned = placements.indices.filter { placements[$0].face != nil }
-        if turned.count > 1 {
-            let near = DepthOrder.nearness(turned.compactMap { placements[$0].face })
-            for (k, i) in turned.enumerated() where k < near.count { heights[i] = near[k] }
+        var faces: [DepthOrder.Face] = [], turned: [Int] = []
+        for i in placements.indices {
+            if let face = placements[i].face {
+                faces.append(face)
+                turned.append(i)
+            } else if pieces[i].kind == .run, let lying = pieces[i].stand?.lying, !lying.isEmpty {
+                faces += lying
+                turned += Array(repeating: i, count: lying.count)
+            }
+        }
+        if faces.count > 1 {
+            let near = DepthOrder.nearness(faces)
+            for (k, i) in turned.enumerated() where k < near.count {
+                // A run's first layer says how near it is, and any nearer one after it.
+                heights[i] = k > 0 && turned[k - 1] == i ? max(heights[i], near[k]) : near[k]
+            }
         }
         return pieces.indices.sorted { a, b in
             let ga = pieces[a].kind == .ground, gb = pieces[b].kind == .ground

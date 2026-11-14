@@ -178,8 +178,9 @@ nonisolated enum DepthOrder {
     }
 
     /// A layer as it stands in the scene of what holds it, for the order: inside a group that
-    /// keeps depth, where the group's turn and height put it.
-    private static func face(of node: Node, eye: Eye, origin: CGPoint) -> Face {
+    /// keeps depth, where the group's turn and height put it. A film asks the same of the layers
+    /// it draws together (`FilmStand.lying`), so that it orders them as the design does.
+    static func face(of node: Node, eye: Eye, origin: CGPoint) -> Face {
         var face: Face
         if let space = eye.space {
             let t = node.isArtboard ? nil : node.transform3D

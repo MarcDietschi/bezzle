@@ -369,6 +369,9 @@ and `contains`, and `Renderer.reach` all go through; a click on such a layer tak
 inside the group the layer. In a film, such a group with no keys of its own comes apart into
 pieces that stand where it puts them (`FilmPiece.stand`), so the camera at rest shows what the
 design does and sees between the layers when it moves; with keys of its own it is one card. The
+layers lying in the group next to one another are one piece, and where the group is turned the
+film asks about each of them as the design does (`FilmStand.lying`, made by the same
+`DepthOrder.face`), so it draws the pieces in the design's order. The
 flag is one optional key on a group, written only when set, and one more property shared on its
 own (`LayerField`): a Bezzle that does not know it reads the same group as one card.
 
@@ -393,7 +396,8 @@ own (`LayerField`): a Bezzle that does not know it reads the same group as one c
   middle moves it. In Animate, Control while moving keys Lift. On Windows the key is Alt, pressed
   once the drag is under way (Alt at the press duplicates).
 - **Its tests** are `DepthSceneTests`, `DepthTests`, `DepthBodyTests`, `DepthLookTests` and
-  `DepthKeepTests`, with `MotionLensTests` for the film.
+  `DepthKeepTests`, with `MotionLensTests` for the film and `DepthFilmTests` for films of groups
+  that keep depth, held against the design's own order and picture.
 - **Driving a copy:** `BEZZLE_CLICKS` takes `^x,y>x,y` for a drag with Control held.
 
 ### Mac parity
