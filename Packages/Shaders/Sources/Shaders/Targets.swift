@@ -301,6 +301,13 @@ extension ShaderFrame {
     }
 }
 
+extension ShaderDraw {
+    /// The scissor box from plain numbers, for a caller whose rectangles are not the engine's.
+    public mutating func setScissor(x: Double, y: Double, width: Double, height: Double) {
+        scissor = CGRect(x: x, y: y, width: width, height: height)
+    }
+}
+
 /// Of a recording whose frames build on the frames before them, the state after every so many
 /// steps is kept, so that going back to a step draws no more than these on the way.
 enum Feedback {

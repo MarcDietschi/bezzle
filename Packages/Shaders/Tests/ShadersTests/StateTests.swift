@@ -146,6 +146,11 @@ import Testing
         white.viewport = CGRect(x: 0, y: 0, width: 4, height: 8)
         let both = try draw(Self.canvas([white]))
         #expect((0..<64).filter { both.bytes[$0 * 4 + 3] == 255 } == [26, 27, 34, 35, 42, 43])
+        // The box from plain numbers is the same box, and the frame's bytes are the picture's.
+        var plain = white
+        plain.scissor = nil
+        plain.setScissor(x: 2, y: 2, width: 4, height: 3)
+        #expect(try renderer.pixels(of: Self.canvas([plain]), width: 8, height: 8) == both.bytes)
     }
 
     @Test func instancesEachTakeTheirOwn() throws {

@@ -128,6 +128,17 @@ public final class ShaderRenderer: @unchecked Sendable {
         return image
     }
 
+    /// The whole frame drawn `width` by `height`, as its bytes: RGBA premultiplied, top row first.
+    /// For telling two frames apart, the same on the Mac and on Windows.
+    public func pixels(of frame: ShaderFrame, width: Int, height: Int,
+                       earlier: ((Int) throws -> ShaderFrame)? = nil) throws -> [UInt8] {
+        let image = try image(of: frame, pixels: CGSize(width: width, height: height), earlier: earlier)
+        guard let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else {
+            throw ShaderError("The frame's picture could not be read.")
+        }
+        return Array(UnsafeBufferPointer(start: bytes, count: CFDataGetLength(data)))
+    }
+
     /// The same into a texture the caller owns (a 2D render target, BGRA8 or RGBA8 and not sRGB,
     /// from `device`), for the film's stage and movies. Encodes into `commandBuffer`; the caller
     /// commits it. Throws before encoding anything when a program does not translate or build.
