@@ -36,6 +36,19 @@ file was made (2026-11-14): look before starting on one.
   never felt on a trackpad (the creep's pace, the four times of the double tap, the catch at the
   whole film). A pinch over the canvas while the timeline listens was checked in `FilmZoomTests`
   only. The Bounce number and the Spring chip were photographed in German at one window size.
+- **Gentle tones in a movie** (2026-11-14: kept in sixteen bits until the one cut to the movie's
+  steps, and HEVC with ten bits beside H.264). Still cut twice, with eight bits: a layer turned
+  in depth inside a piece (`Depth.swift`), and a piece holding Plus Lighter, Plus Darker, Color
+  Dodge, Color Burn, Hue, Saturation, Color or Luminosity, or a background blur made lighter or
+  darker. Core Graphics casts a shadow's mask with eight bits even then. Such pieces take twice
+  the memory in a movie. Not built: grain in the design, the only remedy once a video site packs
+  a movie again with eight bits (tried with x264 standing in for a site, never with a real one).
+- **HEVC with ten bits, unchecked:** read back with AVFoundation, ffmpeg and headless Chrome, but
+  not opened in QuickTime Player's window, Safari, iOS, Windows, Firefox or VLC; "This Mac cannot
+  save a movie of this kind" was never seen for real.
+- **Bands outside movies** (measured 2026-11-14, not changed): shadows and blurs in an exported
+  PNG are plain eight bits, a JPEG wipes out the dither Core Graphics gives gradients, and what
+  the stage shows on screen was not measured beyond its pieces being eight bits.
 - **Driving a copy:** `press=` of `BEZZLE_FILM` does not reach SwiftUI's gestures in the
   timeline's header; `AnimateBounceTests.theChipItselfTellsADragFromAClick` shows a way that does.
 - **Unchecked:** a movie saved from the sandboxed build onto another disk, where it is copied into
@@ -60,6 +73,11 @@ file was made (2026-11-14): look before starting on one.
   and `FilmScale.zoomed` and `scrolled` are there for it (`Bezzle/Model/FilmKeys.swift`, not yet
   built for Windows or the browser); `Host/FilmHand.swift` builds its scale from the whole film
   and moves keys by the pointer's distance, not by the moment under it.
+- **A movie's gentle tones** are still rounded twice (pieces and the frame in eight bits, then
+  NV12), and there is no ten bit choice; the AI server's `codec` is the Mac's alone. What it
+  takes is in e652531's report: `bz_film_frame` composing in sixteen bits, the stand-in pictures
+  carrying depth, P010 and an HEVC Main 10 encoder where the PC has one, measured with
+  `FilmBandingTests` and `TEST_RUNNER_ANIMATE_BANDING_MOVIE`.
 - **A spring's bounce** has no control, and choosing Spring for keys that are springs puts their
   bounce back to 0.3 (`Host/Animating.swift`); the Mac keeps it (`setPace`). The AI server's
   `get_animation` lists the bounce of a shader input's keys on the Mac; unchecked on Windows.

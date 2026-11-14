@@ -313,8 +313,9 @@ enum AnimateHooks {
         guard let place else { return say("movie: nowhere") }
         let defaults = UserDefaults.standard
         let scale = defaults.object(forKey: "film.movie.scale") as? Int ?? 2, fps = defaults.object(forKey: "film.movie.fps") as? Int ?? 60
+        let codec = defaults.string(forKey: "film.movie.codec").flatMap(FilmExport.Codec.init(rawValue:)) ?? .h264
         let began = ContinuousClock.now
-        let started = store.writeFilm(to: place, scale: CGFloat(scale), fps: fps) { failure in
+        let started = store.writeFilm(to: place, scale: CGFloat(scale), fps: fps, codec: codec) { failure in
             let took = began.duration(to: .now)
             say(failure.map { "movie: failed after \(took): \($0)" } ?? "movie: saved \(place.path) in \(took)")
         }
