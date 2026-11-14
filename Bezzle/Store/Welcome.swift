@@ -4,8 +4,8 @@ import AppKit
 /// another. The first says hello and how to get about; each after it is a lesson, with what to try
 /// in two or three steps down its left, and on its right the real thing to try it on: a sun to put
 /// in the sky, a tile to round, a star to draw, a lemon to cut, a card to repeat, a stack of posts,
-/// a card to tip in depth, a frame for a photo. Notes in blue pencil mark the sheets up, as a
-/// designer marks up a proof.
+/// a card to tip in depth, a frame for a photo, a picture to trace, a postcard that is a film.
+/// Notes in blue pencil mark the sheets up, as a designer marks up a proof.
 ///
 /// What is there to read stays put, locked; what is there to try is free. Every word is in the
 /// language Bezzle speaks when the tour is made: the first time Bezzle starts with no designs,
@@ -35,20 +35,26 @@ enum Welcome {
     static func make() -> URL? {
         let url = Library.shared.freeURL(named: String(localized: "Welcome to Bezzle"))
         do {
-            let doc = design()
-            try DesignFile.write(doc, to: url)
-            // How the poster in the lesson on versions came to be, to look back through.
-            try keepHistory(of: doc, at: url)
-            // The photo some lessons are tried on, into the design's own images.
-            if let photo = WelcomePhoto.jpeg() {
-                try photo.write(to: url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true).appendingPathComponent(photoAsset))
-            }
+            try write(to: url)
             Library.shared.refresh()
             return url
         } catch {
             NSLog("Bezzle could not make the welcome tour at %@: %@", url.path, error.localizedDescription)
             return nil
         }
+    }
+
+    /// Writes the tour as a design of its own at `url`, with all it brings along.
+    static func write(to url: URL) throws {
+        let doc = design()
+        try DesignFile.write(doc, to: url)
+        // How the poster in the lesson on versions came to be, to look back through.
+        try keepHistory(of: doc, at: url)
+        // The photo some lessons are tried on, into the design's own images, and the picture
+        // the lesson on Vectorize traces.
+        let images = url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+        if let photo = WelcomePhoto.jpeg() { try photo.write(to: images.appendingPathComponent(photoAsset)) }
+        if let logo = WelcomeLogo.png() { try logo.write(to: images.appendingPathComponent(logoAsset)) }
     }
 
     // MARK: The sheets
@@ -91,7 +97,7 @@ enum Welcome {
         let (stack, own) = stackSheet(number: number)
         // Room under the stack for the posts behind it, which show below its foot.
         place(stack, after: 60)
-        lessons([lining, adapting, tipping, lifting, developing, framing, marking, inspecting, noting, remembering, sharing])
+        lessons([lining, adapting, tipping, lifting, developing, tracing, framing, animating, marking, inspecting, noting, remembering, sharing])
 
         // The stack is made as the app makes one, from the sheet and the words for each post.
         let store = DocumentStore(url: FileManager.default.temporaryDirectory, document: doc)
@@ -146,7 +152,7 @@ enum Welcome {
             y = max(y + 24, line.frame.maxY) + 10
         }
         y += 26
-        let count = words(String(localized: "Twenty-six lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
+        let count = words(String(localized: "Twenty-eight lessons, about a minute each."), Style.small, Ink.ink3, at: CGPoint(x: left, y: y))
         let start = note(String(localized: "Scroll down to start"), at: CGPoint(x: left, y: count.frame.maxY + 10), tilt: -3)
         // The note goes with its arrow, not with the words to read, so it is there once.
         layers.append(count)
@@ -1105,6 +1111,201 @@ enum Welcome {
         var mark = note(String(localized: "mark me too"), at: CGPoint(x: 0, y: c.y - 140), tilt: -5)
         mark.frame.origin.x = (min(c.x - mark.frame.width / 2, m.maxX - 24 - mark.frame.width)).rounded()
         return [icon, sticker, marked, mark]
+    }
+
+    // MARK: Vectorize and Animate
+
+    private static let tracing = Lesson(
+        name: { String(localized: "\($0). Vectorize") },
+        title: String(localized: "Turn pixels into shapes."),
+        steps: [
+            String(localized: "Click the logo. It is only a picture: zoom in, and its edges turn to pixels. Then click Vectorize at the foot of the inspector."),
+            String(localized: "A pencil goes over the picture, and it comes back as shapes. Drag sideways across its Vector card in the inspector: the shapes keep more or less of the picture’s detail."),
+            String(localized: "Double-click the sun: it is a layer of its own now, to recolour, reshape or move like any other."),
+        ],
+        tip: String(localized: "While the design stays open, × on the Vector card brings the picture back."),
+        scene: logo)
+
+    /// The picture the lesson on Vectorize traces (`WelcomeLogo`), as it is named in the design's images.
+    static let logoAsset = "welcome-logo.png"
+
+    /// A club's badge that is only a picture yet, lying on the mat like a card.
+    private static func logo(_ m: CGRect) -> [Node] {
+        let side: CGFloat = 288
+        let f = CGRect(x: (m.midX - side / 2).rounded(), y: (m.midY - side / 2 - 18).rounded(), width: side, height: side)
+        var picture = shape(.rectangle, f, .white)
+        picture.name = String(localized: "Logo")
+        picture.fill.image = ImageFill(asset: logoAsset, mode: .cover, size: WelcomeLogo.size)
+        picture.shadow = Shadow(on: true, color: RGBA(r: 0.23, g: 0.2, b: 0.15, a: 0.16), x: 0, y: 10, blur: 26)
+        // Under the picture, pointing up at it, its right end kept on the mat however long the words.
+        var hint = note(String(localized: "nothing but pixels"), at: CGPoint(x: 0, y: f.maxY + 30), tilt: -3)
+        hint.frame.origin.x = (min(f.minX + 30, m.maxX - 18 - hint.frame.width)).rounded()
+        let pointer = arrow(from: CGPoint(x: hint.frame.maxX + 8, y: hint.frame.midY - 2), to: CGPoint(x: min(hint.frame.maxX + 46, f.maxX - 20), y: f.maxY + 8), bend: 14)
+        return [picture, pointing(hint, pointer)]
+    }
+
+    private static let animating = Lesson(
+        name: { String(localized: "\($0). Animate") },
+        title: String(localized: "Set it in motion."),
+        steps: [
+            String(localized: "Click the name above the postcard’s corner, then switch to Animate at the top, or press ⌃A. The postcard is a small film: press Space to play it."),
+            String(localized: "Press Space again to stop it. Drag along the ruler of the timeline to another moment, then move the small cloud. From then on it drifts there from where the design has it."),
+            String(localized: "A bead on the timeline marks that moment: a key. Drag it sideways to change when the cloud arrives. The camera is posed the same way: click the small camera above the postcard, then drag the picture."),
+        ],
+        keys: ["⌃", "A"], tip: String(localized: "Goes back to designing. A film never changes the design itself."),
+        beside: postcard,
+        towards: String(localized: "this postcard is a film"))
+
+    /// The colours of the postcard that are its own.
+    private enum Air {
+        static let sky = RGBA(hex: "9CCDEA")!
+        static let fold = RGBA(hex: "D3E6F2")!
+    }
+
+    /// When the postcard's plane is where on its way in, in seconds and in the artboard's points:
+    /// a dip, then a climb to where the design has it.
+    static let flightTimes: [Double] = [0, 0.45, 0.95, 1.6]
+    private static let flightPoints = [CGPoint(x: 36, y: 262), CGPoint(x: 118, y: 296), CGPoint(x: 216, y: 222), CGPoint(x: 300, y: 104)]
+
+    /// A postcard sent by air, and a film: a paper plane flies in along a trail that is drawn as
+    /// it comes, the camera drawing back from it to the whole card, then the sun pops up, the
+    /// words rise and the label drops into place. All of it keys as Animate makes them, on the
+    /// card as the design has it, which is the film's last picture. One cloud drifts and one has
+    /// no keys yet: that one is there to be posed.
+    private static func postcard() -> Node {
+        let w: CGFloat = 380, h: CGFloat = 475, size = CGSize(width: w, height: h)
+        var sun = shape(.ellipse, CGRect(x: 46, y: 48, width: 58, height: 58), Ink.sun)
+        sun.name = String(localized: "Sun")
+        var drifting = cloud(String(localized: "Cloud"), at: CGPoint(x: 226, y: 262), width: 104)
+        let still = cloud(String(localized: "Small cloud"), at: CGPoint(x: 150, y: 132), width: 62)
+
+        // The plane's way in, and the plane at its end, heading as it arrives.
+        let times = flightTimes, last = times.count - 1
+        let flown = flight(through: flightPoints, at: times)
+        var trail = path(flown.way, fill: nil)
+        trail.name = String(localized: "Trail")
+        trail.border = Border(on: true, color: .white, width: 2.5, position: .center, dash: 7, gap: 6)
+        var plane = paperPlane(at: flightPoints[last], heading: flown.heading[last])
+
+        var said = words("PAR AVION", TextStyle(face: "Bold", size: 10, tracking: 160), .white, at: .zero)
+        var tag = shape(.rectangle, CGRect(x: 30, y: 338, width: (said.frame.width + 20).rounded(), height: 22), Ink.navy)
+        tag.cornerRadius = 4
+        said.frame.origin = CGPoint(x: (tag.frame.midX - said.frame.width / 2).rounded(), y: (tag.frame.midY - said.frame.height / 2).rounded())
+        var label = group(String(localized: "Air mail"), [tag, said].map { var n = $0; n.locked = false; return n })
+        label = BezzleDocument.turned(label, by: -4, about: label.frame.center)
+        var headline = words(String(localized: "Off we go."), TextStyle(family: "Charter", face: "Bold", size: 40, lineSpacing: 44), Ink.navy,
+                             at: CGPoint(x: 30, y: 372))
+
+        // The edge of an air letter along its foot: slanted stripes, red and blue by turns.
+        func stripes(_ name: String, from start: CGFloat, _ colour: RGBA) -> Node {
+            var trace = Trace()
+            for x in stride(from: start, through: w - 30, by: 60) {
+                trace.move(x + 8, h - 22)
+                trace.line(x + 26, h - 22)
+                trace.line(x + 18, h - 12)
+                trace.line(x, h - 12)
+                trace.close()
+            }
+            var n = path(trace, fill: colour)
+            n.name = name
+            return n
+        }
+        let edge = [stripes(String(localized: "Stripes"), from: 12, Ink.coral), stripes(String(localized: "Stripes"), from: 42, Ink.navy)]
+
+        // The film. The plane is where each key of its flight has it, and heads the way it goes;
+        // the trail is drawn as far as the plane has come.
+        for (i, t) in times.enumerated() {
+            trail.setKey(.draw, [0, flown.along[i]], at: t)
+            plane.setKey(.move, [Double(flightPoints[i].x - flightPoints[last].x), Double(flightPoints[i].y - flightPoints[last].y)], at: t)
+            plane.setKey(.turn, [flown.heading[i] - flown.heading[last]], at: t)
+        }
+        // What comes on once the plane is nearly there, each with a move of Animate's own.
+        sun.apply(.pop, at: 1.45, frame: sun.frame, board: size)
+        headline.apply(.rise, at: 1.75, frame: headline.frame, board: size)
+        label.apply(.drop, at: 2.05, frame: label.frame, board: size)
+        drifting.setKey(.move, [-26, 0], at: 0)
+        drifting.setKey(.move, [0, 0], at: 3, ease: .linear)
+
+        var board = Node(kind: .artboard, name: String(localized: "Postcard"), frame: CGRect(x: 0, y: 0, width: w, height: h))
+        board.fill.color = Air.sky
+        board.children = ([sun, drifting, still, trail, plane] + edge + [label, headline]).map { var n = $0; n.locked = false; return n }
+        // The camera begins close on the plane, low on the left, and draws back to the whole card.
+        board.setKey(.cameraMove, [-70, 44], at: 0)
+        board.setKey(.cameraZoom, [1.6], at: 0)
+        board.setKey(.cameraMove, [0, 0], at: 1.7, ease: .smooth)
+        board.setKey(.cameraZoom, [1], at: 1.7, ease: .smooth)
+        return board
+    }
+
+    /// A cloud: two puffs on a flat foot, `width` wide.
+    private static func cloud(_ name: String, at o: CGPoint, width: CGFloat) -> Node {
+        let k = width / 84
+        var foot = shape(.rectangle, CGRect(x: o.x, y: o.y + 18 * k, width: 84 * k, height: 20 * k), .white)
+        foot.cornerRadius = 10 * k
+        let puffs = [CGRect(x: 12, y: 5, width: 28, height: 28), CGRect(x: 32, y: -4, width: 38, height: 38)].map {
+            shape(.ellipse, CGRect(x: o.x + $0.minX * k, y: o.y + $0.minY * k, width: $0.width * k, height: $0.height * k), .white)
+        }
+        return group(name, [foot] + puffs)
+    }
+
+    /// A paper plane folded along its middle, its middle at `middle`, heading `heading` degrees
+    /// clockwise from the right.
+    private static func paperPlane(at middle: CGPoint, heading: Double) -> Node {
+        let angle = CGFloat(heading * .pi / 180)
+        func wing(_ corners: [CGPoint], _ colour: RGBA) -> Node {
+            var trace = Trace()
+            for (i, c) in corners.enumerated() {
+                let p = CGPoint(x: c.x * cos(angle) - c.y * sin(angle), y: c.x * sin(angle) + c.y * cos(angle))
+                if i == 0 { trace.move(p.x, p.y) } else { trace.line(p.x, p.y) }
+            }
+            trace.close()
+            return path(trace, fill: colour)
+        }
+        let nose = CGPoint(x: 25, y: 0), notch = CGPoint(x: -11, y: 0)
+        var plane = group(String(localized: "Plane"), [wing([nose, notch, CGPoint(x: -21, y: 15)], Air.fold),
+                                                        wing([nose, CGPoint(x: -21, y: -15), notch], .white)])
+        plane.frame.origin = CGPoint(x: middle.x - plane.frame.width / 2, y: middle.y - plane.frame.height / 2)
+        return plane
+    }
+
+    /// A flight through points reached at these moments, as a film flies a layer through keys
+    /// whose pace is left to it (`MotionTrack.value`): the way itself as an outline, how far along
+    /// it each point lies, 0 to 1, and which way the flight heads there, in degrees clockwise.
+    /// For points that lead on from one to the next without turning back, as the film asks of a
+    /// flight (`MotionTrack.flows`).
+    private static func flight(through points: [CGPoint], at times: [Double]) -> (way: Trace, along: [Double], heading: [Double]) {
+        let last = points.count - 1
+        // The speed through a point: from the one before it to the one after, over the time
+        // between; at either end, the speed of its one stretch.
+        func speed(_ i: Int) -> CGPoint {
+            let a = max(i - 1, 0), b = min(i + 1, last), span = CGFloat(times[b] - times[a])
+            return CGPoint(x: (points[b].x - points[a].x) / span, y: (points[b].y - points[a].y) / span)
+        }
+        var way = Trace()
+        way.move(points[0].x, points[0].y)
+        var lengths: [CGFloat] = [0]
+        for i in 0..<last {
+            let third = CGFloat(times[i + 1] - times[i]) / 3
+            let a = points[i], d = points[i + 1], out = speed(i), into = speed(i + 1)
+            let b = CGPoint(x: a.x + out.x * third, y: a.y + out.y * third), c = CGPoint(x: d.x - into.x * third, y: d.y - into.y * third)
+            way.curve(b.x, b.y, c.x, c.y, d.x, d.y)
+            // How long the stretch is, walked in small steps.
+            var length: CGFloat = 0, from = a
+            for step in 1...64 {
+                let t = CGFloat(step) / 64, u = 1 - t
+                let p = CGPoint(x: u * u * u * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t * t * t * d.x,
+                                y: u * u * u * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t * t * t * d.y)
+                length += hypot(p.x - from.x, p.y - from.y)
+                from = p
+            }
+            lengths.append(lengths[i] + length)
+        }
+        let whole = max(lengths[last], 1)
+        let headings = (0...last).map { i -> Double in
+            let v = speed(i)
+            return Double(atan2(v.y, v.x)) * 180 / .pi
+        }
+        return (way, lengths.map { Double($0 / whole) }, headings)
     }
 
     // MARK: Libraries, inspecting, versions

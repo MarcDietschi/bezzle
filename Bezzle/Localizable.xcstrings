@@ -2283,6 +2283,28 @@
         }
       }
     },
+    "%lld. Animate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Animieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Animer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Anima"
+          }
+        }
+      }
+    },
     "%lld. Components" : {
       "localizations" : {
         "de" : {
@@ -2785,6 +2807,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld. Testo"
+          }
+        }
+      }
+    },
+    "%lld. Vectorize" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Vektorisieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Vectoriser"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld. Vettorizza"
           }
         }
       }
@@ -3519,6 +3563,28 @@
         }
       }
     },
+    "A bead on the timeline marks that moment: a key. Drag it sideways to change when the cloud arrives. The camera is posed the same way: click the small camera above the postcard, then drag the picture." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine Perle in der Zeitleiste markiert diesen Moment: ein Keyframe. Zieh sie seitwärts, um zu ändern, wann die Wolke ankommt. Die Kamera bekommt ihre Posen genauso: Klick auf die kleine Kamera über der Postkarte und zieh dann am Bild."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une perle sur la timeline marque ce moment : une image clé. Faites-la glisser de côté pour changer le moment où le nuage arrive. La caméra se pose de la même façon : cliquez sur la petite caméra au-dessus de la carte postale, puis faites glisser l’image."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una perla sulla timeline segna quel momento: un fotogramma chiave. Trascinala di lato per cambiare quando arriva la nuvola. La camera si mette in posa allo stesso modo: fai clic sulla piccola camera sopra la cartolina, poi trascina l’immagine."
+          }
+        }
+      }
+    },
     "a bitstream" : {
       "localizations" : {
         "de" : {
@@ -4131,6 +4197,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "una parte va oltre la fine"
+          }
+        }
+      }
+    },
+    "A pencil goes over the picture, and it comes back as shapes. Drag sideways across its Vector card in the inspector: the shapes keep more or less of the picture’s detail." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Bleistift fährt über das Bild, und es kommt als Formen zurück. Zieh im Inspektor seitwärts über seine Karte Vektor: Die Formen behalten mehr oder weniger von den Details des Bilds."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un crayon passe sur l’image, qui revient en formes. Faites glisser latéralement sur sa carte Vecteur dans l’inspecteur : les formes gardent plus ou moins de détails de l’image."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una matita passa sull’immagine, che torna fatta di forme. Trascina di lato sulla sua scheda Vettore nell’ispettore: le forme tengono più o meno dettagli dell’immagine."
           }
         }
       }
@@ -6296,6 +6384,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Orienta in profondità"
+          }
+        }
+      }
+    },
+    "Air mail" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Luftpost"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Par avion"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Posta aerea"
           }
         }
       }
@@ -13071,6 +13181,28 @@
         }
       }
     },
+    "Click the logo. It is only a picture: zoom in, and its edges turn to pixels. Then click Vectorize at the foot of the inspector." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf das Logo. Es ist nur ein Bild: Zoom hinein, und seine Kanten werden zu Pixeln. Klick dann unten im Inspektor auf Vektorisieren."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le logo. Ce n’est qu’une image : zoomez, et ses bords deviennent des pixels. Cliquez ensuite sur Vectoriser en bas de l’inspecteur."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sul logo. È solo un’immagine: ingrandisci, e i suoi bordi diventano pixel. Poi fai clic su Vettorizza in fondo all’ispettore."
+          }
+        }
+      }
+    },
     "Click the name above the flyer’s corner and drag its right edge out. Bezzle lays the design out again as it grows: given room, the photo moves beside the words." : {
       "localizations" : {
         "de" : {
@@ -13089,6 +13221,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fai clic sul nome sopra l’angolo del volantino e trascina il suo bordo destro verso l’esterno. Bezzle ricompone il design mentre cresce: se c’è spazio, la foto si sposta accanto al testo."
+          }
+        }
+      }
+    },
+    "Click the name above the postcard’s corner, then switch to Animate at the top, or press ⌃A. The postcard is a small film: press Space to play it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klick auf den Namen über der Ecke der Postkarte und wechsle oben zu Animieren, oder drück ⌃A. Die Postkarte ist ein kleiner Film: Drück die Leertaste, um ihn abzuspielen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur le nom au-dessus du coin de la carte postale, puis passez en mode Animer en haut, ou appuyez sur ⌃A. La carte postale est un petit film : appuyez sur Espace pour le lire."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai clic sul nome sopra l’angolo della cartolina, poi passa ad Anima in alto, o premi ⌃A. La cartolina è un piccolo film: premi Spazio per riprodurlo."
           }
         }
       }
@@ -13596,6 +13750,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chiuso"
+          }
+        }
+      }
+    },
+    "Cloud" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wolke"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nuage"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nuvola"
           }
         }
       }
@@ -17306,6 +17482,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fai doppio clic sulla ricetta e trascina su qualche parola per sceglierla. Cambia colore, carattere o dimensione nell’ispettore: cambiano solo quelle lettere."
+          }
+        }
+      }
+    },
+    "Double-click the sun: it is a layer of its own now, to recolour, reshape or move like any other." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doppelklick auf die Sonne: Sie ist jetzt eine eigene Ebene, die du umfärben, umformen und verschieben kannst wie jede andere."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Double-cliquez sur le soleil : c’est maintenant un calque à part entière, à recolorer, remodeler ou déplacer comme n’importe quel autre."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fai doppio clic sul sole: ora è un livello a sé, da ricolorare, rimodellare o spostare come qualsiasi altro."
           }
         }
       }
@@ -22338,6 +22536,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Va dopo il nome del livello, come @2x. Una / mette il file in una cartella."
+          }
+        }
+      }
+    },
+    "Goes back to designing. A film never changes the design itself." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Führt zurück zum Gestalten. Ein Film verändert das Design selbst nie."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revient à la conception. Un film ne modifie jamais le design lui-même."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Torna al design. Un film non cambia mai il design stesso."
           }
         }
       }
@@ -27839,6 +28059,28 @@
         }
       }
     },
+    "Logo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Logo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Logo"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Logo"
+          }
+        }
+      }
+    },
     "Look back in time." : {
       "localizations" : {
         "de" : {
@@ -31204,6 +31446,28 @@
         }
       }
     },
+    "nothing but pixels" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nichts als Pixel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "rien que des pixels"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nient’altro che pixel"
+          }
+        }
+      }
+    },
     "nothing came back." : {
       "localizations" : {
         "de" : {
@@ -31531,6 +31795,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Oggetto"
+          }
+        }
+      }
+    },
+    "Off we go." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los geht’s."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "C’est parti."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si parte."
           }
         }
       }
@@ -34548,6 +34834,28 @@
         }
       }
     },
+    "Plane" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flieger"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avion"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aeroplano"
+          }
+        }
+      }
+    },
     "Play" : {
       "localizations" : {
         "de" : {
@@ -34940,6 +35248,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Preparazione…"
+          }
+        }
+      }
+    },
+    "Press Space again to stop it. Drag along the ruler of the timeline to another moment, then move the small cloud. From then on it drifts there from where the design has it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drück die Leertaste noch einmal, um ihn anzuhalten. Zieh im Lineal der Zeitleiste zu einem anderen Moment und verschieb dann die kleine Wolke. Von da an zieht sie von ihrem Platz im Design dorthin."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appuyez encore sur Espace pour l’arrêter. Faites glisser le long de la règle de la timeline jusqu’à un autre moment, puis déplacez le petit nuage. Dès lors, il y dérive depuis sa place dans le design."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Premi di nuovo Spazio per fermarlo. Trascina lungo il righello della timeline fino a un altro momento, poi sposta la nuvola piccola. Da lì in poi ci arriva dal suo posto nel design."
           }
         }
       }
@@ -39827,6 +40157,28 @@
         }
       }
     },
+    "Set it in motion." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bring es in Bewegung."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mettez-le en mouvement."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mettilo in movimento."
+          }
+        }
+      }
+    },
     "Set White Balance" : {
       "localizations" : {
         "de" : {
@@ -41770,6 +42122,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Maiuscoletto"
+          }
+        }
+      }
+    },
+    "Small cloud" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kleine Wolke"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Petit nuage"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nuvola piccola"
           }
         }
       }
@@ -43740,6 +44114,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Barra  ⇧⌘X"
+          }
+        }
+      }
+    },
+    "Stripes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Streifen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rayures"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Strisce"
           }
         }
       }
@@ -47784,6 +48180,28 @@
         }
       }
     },
+    "this postcard is a film" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "diese Postkarte ist ein Film"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "cette carte postale est un film"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "questa cartolina è un film"
+          }
+        }
+      }
+    },
     "This sheet has a layout grid. Move a block: the columns light up and the block catches on their edges." : {
       "localizations" : {
         "de" : {
@@ -48667,6 +49085,28 @@
         }
       }
     },
+    "Trail" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spur"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sillage"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scia"
+          }
+        }
+      }
+    },
     "Trash" : {
       "localizations" : {
         "de" : {
@@ -48909,6 +49349,28 @@
         }
       }
     },
+    "Turn pixels into shapes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mach aus Pixeln Formen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changez les pixels en formes."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trasforma i pixel in forme."
+          }
+        }
+      }
+    },
     "Turn the lights down." : {
       "localizations" : {
         "de" : {
@@ -49051,6 +49513,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tutorial"
+          }
+        }
+      }
+    },
+    "Twenty-eight lessons, about a minute each." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Achtundzwanzig Lektionen, je etwa eine Minute."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vingt-huit leçons, environ une minute chacune."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ventotto lezioni, circa un minuto l’una."
           }
         }
       }
@@ -51219,6 +51703,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dove inizia il prototipo. Sull’area di lavoro, trascina la bandierina su un’altra schermata."
+          }
+        }
+      }
+    },
+    "While the design stays open, × on the Vector card brings the picture back." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solange das Design offen bleibt, bringt × auf der Karte Vektor das Bild zurück."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tant que le design reste ouvert, le × de la carte Vecteur ramène l’image."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finché il design resta aperto, la × sulla scheda Vettore riporta l’immagine."
           }
         }
       }
