@@ -318,6 +318,9 @@ nonisolated struct FilmPlacement: Equatable, Sendable {
     var blur = 0.0
     /// How far above the artboard it is, which says what covers what once layers are lifted.
     var height = 0.0
+    /// A layer's piece as it stands in the scene, turned and all: the faces of a body turned as
+    /// one are ordered as the design orders them (`DepthOrder.nearness`).
+    var face: DepthOrder.Face?
 }
 
 nonisolated extension Node {
@@ -336,7 +339,16 @@ nonisolated extension Node {
         let center = CGPoint(x: piece.origin.x + layer.frame.midX, y: piece.origin.y + layer.frame.midY)
         let depth = piece.flat ? layer.transform3D : nil
         let map = FilmLens.layer(center: center, rotation: layer.isGroup ? 0 : layer.rotation, depth: depth, pose: pose, camera: camera, size: frame.size)
-        return FilmPlacement(map: map, opacity: pose.fade, blur: pose.blur, height: pose.lift + Double(depth?.z ?? 0))
+        let height = pose.lift + Double(depth?.z ?? 0)
+        // Tipped or swung, by the design or its keys: where it stands, for the order.
+        let tip = pose.tilt + (depth?.x ?? 0), swing = pose.swing + (depth?.y ?? 0)
+        var face: DepthOrder.Face?
+        if tip != 0 || swing != 0 {
+            face = DepthOrder.Face(middle: ScenePoint(x: Double(center.x + pose.move.x), y: Double(center.y + pose.move.y), z: height),
+                                   size: CGSize(width: layer.frame.width * pose.scale.x, height: layer.frame.height * pose.scale.y),
+                                   rotation: (layer.isGroup ? 0 : layer.rotation) + pose.turn, turn: Spin.tip(tip).after(.swing(swing)))
+        }
+        return FilmPlacement(map: map, opacity: pose.fade, blur: pose.blur, height: height, face: face)
     }
 
     /// Artboards: the layer each piece places, found in one walk through it: nil for the ground,
@@ -368,10 +380,17 @@ nonisolated extension Node {
     /// design draws it (`DepthOrder`): so the camera at rest sees what the design shows.
     func filmOrder(_ pieces: [FilmPiece], _ placements: [FilmPlacement]) -> [Int] {
         guard placements.contains(where: { $0.height != 0 }) else { return Array(pieces.indices) }
+        // The faces of a body turned as one are as near as they would be laid flat.
+        var heights = placements.map(\.height)
+        let turned = placements.indices.filter { placements[$0].face != nil }
+        if turned.count > 1 {
+            let near = DepthOrder.nearness(turned.compactMap { placements[$0].face })
+            for (k, i) in turned.enumerated() where k < near.count { heights[i] = near[k] }
+        }
         return pieces.indices.sorted { a, b in
             let ga = pieces[a].kind == .ground, gb = pieces[b].kind == .ground
             if ga != gb { return ga }
-            return placements[a].height != placements[b].height ? placements[a].height < placements[b].height : a < b
+            return heights[a] != heights[b] ? heights[a] < heights[b] : a < b
         }
     }
 

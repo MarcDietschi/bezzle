@@ -307,6 +307,14 @@ nonisolated extension BezzleDocument {
         return chain.indices.reversed().reduce(p) { q, i in Perspective.shown(q + chain[i].frame.origin, of: chain[i], eye: eyes[i]) }
     }
 
+    /// Where a place in the scene of what `id` holds shows on the canvas: a point of it held
+    /// that high above it, seen from its eye.
+    func shown(_ place: ScenePoint, inside id: UUID) -> CGPoint {
+        let flat = CGPoint(x: CGFloat(place.x), y: CGFloat(place.y))
+        guard place.z != 0, let eye = eye(inside: id) else { return shown(flat, inside: id) }
+        return shown(Perspective(Transform3D(z: CGFloat(place.z)), center: flat, eye: eye).shown(flat), inside: id)
+    }
+
     /// The other way: a point of the canvas in what `id` holds. Nil where that is seen edge on.
     func placed(_ p: CGPoint, inside id: UUID) -> CGPoint? {
         guard let container = node(id) else { return p }

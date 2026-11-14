@@ -38,7 +38,8 @@ enum DepthMeasure: Equatable {
 ///
 /// Turning: just outside the middle of a side, a drag turns what is picked in depth, flat or not,
 /// as a ball turns under the hand, its face toward where the pointer goes, as the knob does.
-/// Every layer picked turns alike, each about its own middle.
+/// Several layers picked that lie together turn as one body about the middle they share, each
+/// going where a real body's face would (`DepthBody`); layers lying apart, each with its own.
 final class DepthTurning {
     private let host: DepthHost
     var redraw: () -> Void = {}
@@ -48,7 +49,8 @@ final class DepthTurning {
     private enum Drag {
         /// `grip` is from the pointer to the knob's middle, so the knob does not jump to it.
         case aim(id: UUID, center: CGPoint, grip: CGPoint, original: Transform3D, start: CGPoint)
-        case turn(originals: [UUID: Transform3D], center: CGPoint, radius: CGFloat, start: CGPoint, started: Bool)
+        /// `from` is the design as the press found it, which every step of the drag turns from.
+        case turn(from: BezzleDocument, ids: [UUID], center: CGPoint, radius: CGFloat, start: CGPoint, started: Bool)
     }
 
     private var drag: Drag?
@@ -109,14 +111,21 @@ final class DepthTurning {
     func startTurn(at v: CGPoint) {
         let nodes = turnable
         guard !nodes.isEmpty, let box = host.doc.bounds(of: host.selection) else { return }
-        var originals: [UUID: Transform3D] = [:]
-        for n in nodes { originals[n.id] = n.transform3D ?? Transform3D() }
+        let ids = nodes.map(\.id)
+        let bodies = host.doc.depthBodies(of: ids)
         // A ball as big as what is picked, and never so small on screen that it spins away. One
-        // layer is turned about its own middle, wherever a group turned in depth shows it.
-        let center = nodes.count == 1 ? host.toView(host.doc.shown(CGPoint(x: nodes[0].frame.midX, y: nodes[0].frame.midY), inParentOf: nodes[0].id))
-            : host.toView(CGPoint(x: box.midX, y: box.midY))
+        // layer is turned about its own middle, wherever a group turned in depth shows it;
+        // several lying together about the middle they share, where that shows.
+        let center: CGPoint
+        if nodes.count == 1 {
+            center = host.toView(host.doc.shown(CGPoint(x: nodes[0].frame.midX, y: nodes[0].frame.midY), inParentOf: nodes[0].id))
+        } else if bodies.count == 1, let lead = DepthBody.lead(of: bodies[0]), let parent = host.doc.parent(of: lead.id) {
+            center = host.toView(host.doc.shown(DepthBody.middle(of: bodies[0], lead: lead), inside: parent.id))
+        } else {
+            center = host.toView(CGPoint(x: box.midX, y: box.midY))
+        }
         let radius = max(max(box.width, box.height) * host.zoom / 2, 60)
-        drag = .turn(originals: originals, center: center, radius: radius, start: v, started: false)
+        drag = .turn(from: host.doc, ids: ids, center: center, radius: radius, start: v, started: false)
     }
 
     /// The pointer at `v` on screen while it is held; `option` brings the face nearer instead.
@@ -141,27 +150,30 @@ final class DepthTurning {
             host.edit("Turn in Depth") { doc in doc.update(id) { $0.transform3D = next } }
             show(next, of: [id], depth: option)
 
-        case .turn(let originals, let center, let radius, let start, let started):
+        case .turn(let from, let ids, let center, let radius, let start, let started):
             if !started {
                 guard hypot(v.x - start.x, v.y - start.y) > 3 else { return }
                 host.beginGesture()
-                drag = .turn(originals: originals, center: center, radius: radius, start: start, started: true)
+                drag = .turn(from: from, ids: ids, center: center, radius: radius, start: start, started: true)
             }
             // Round a ball under the hand, and on past its rim as far as the pointer goes.
             func around(_ s: CGFloat) -> CGFloat { abs(s) <= 1 ? asin(s) : (s > 0 ? 1 : -1) * (.pi / 2 + abs(s) - 1) }
             var swing = Double(around((v.x - center.x) / radius) - around((start.x - center.x) / radius)) * 180 / .pi
             var tip = -Double(around((v.y - center.y) / radius) - around((start.y - center.y) / radius)) * 180 / .pi
             if shift { if abs(swing) > abs(tip) { tip = 0 } else { swing = 0 } }
-            var last = Transform3D()
+            // Each body's lead turns as one layer would, from how the press found it, and the
+            // rest of the body goes with it.
+            var turns: [Transform3D] = []
             host.edit("Turn in Depth") { doc in
-                for (id, original) in originals {
-                    var next = original
+                turns = doc.turnInDepth(ids, from: from) { lead, now in
+                    let original = lead.transform3D ?? Transform3D()
+                    // As high as it stands: a body's lead goes higher or lower as the body turns.
+                    var next = now
                     (next.x, next.y) = DepthAim.settled(Self.normalized(original.x + tip), Self.normalized(original.y + swing), steps: shift)
-                    last = next
-                    doc.update(id) { $0.transform3D = next }
+                    return next
                 }
             }
-            show(originals.count == 1 ? last : nil, of: Array(originals.keys), depth: false)
+            show(turns.count == 1 ? turns[0] : nil, of: ids, depth: false)
         }
         redraw()
     }
@@ -179,7 +191,7 @@ final class DepthTurning {
         switch drag {
         case .aim:
             host.endGesture("Turn in Depth")
-        case .turn(_, _, _, _, let started):
+        case .turn(_, _, _, _, _, let started):
             if started {
                 host.endGesture("Turn in Depth")
             } else if let id = pick(host.toCanvas(v)) {
@@ -198,7 +210,7 @@ final class DepthTurning {
 
     /// Escape during a drag: back as it was.
     func cancel() {
-        if case .turn(_, _, _, _, false) = drag {} else { host.cancelGesture() }
+        if case .turn(_, _, _, _, _, false) = drag {} else { host.cancelGesture() }
         drag = nil
         host.measure(nil, .zero)
         redraw()
@@ -236,7 +248,7 @@ final class DepthTurning {
 
     func overlay() -> Overlay {
         var o = Overlay()
-        if case .turn(_, let center, let radius, _, true) = drag {
+        if case .turn(_, _, let center, let radius, _, true) = drag {
             o.ball = (center, radius)
             return o
         }
