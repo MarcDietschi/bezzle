@@ -295,6 +295,8 @@ extension MCPTools {
                 let from = y * cw * 4, to = ((y0 + y) * sw + x0) * 4
                 sheet.replaceSubrange(to..<(to + cw * 4), with: frame[from..<(from + cw * 4)])
             }
+            // Each frame of a sheet says its moment, as on the Mac.
+            if times.count > 1 { Self.mark(String(format: "%.2f s", times[i]), cell: (x0, y0, cw, ch), on: &sheet, width: sw) }
         }
         guard let png = Self.png(sheet, width: sw, height: sh) else { throw MCPError("The film could not be drawn.") }
         let note: JSONValue = .compact([
@@ -305,6 +307,52 @@ extension MCPTools {
             ("pixelsPerPoint", .number((Double(scale) * 1000).rounded() / 1000)),
         ])
         return [.png(png), .text(note.text)]
+    }
+
+    /// A moment written small in the top left of a frame of a sheet, on a dark chip, as the Mac's
+    /// `mark`: in bold, six hundredths of the frame's shorter side tall and ten pixels at least.
+    /// The chip is drawn as a design's layers are and laid over the sheet's pixels.
+    private static func mark(_ words: String, cell: (x: Int, y: Int, w: Int, h: Int), on sheet: inout [UInt8], width sw: Int) {
+        let size = max(10, Double(min(cell.w, cell.h)) * 0.06), pad = size * 0.45
+        var text = Node(kind: .text, name: "", frame: .zero)
+        text.text = words
+        var style = TextStyle()
+        style.face = "Bold"
+        style.size = CGFloat(size)
+        text.style = style
+        text.fill.on = true
+        text.fill.color = RGBA(r: 1, g: 1, b: 1, a: 1)
+        text.refit()
+        text.frame.origin = CGPoint(x: pad, y: pad)
+        let box = CGSize(width: (Double(text.frame.width) + pad * 2).rounded(.up), height: (Double(text.frame.height) + pad * 2).rounded(.up))
+        var chip = Node(kind: .rectangle, name: "", frame: CGRect(origin: .zero, size: box))
+        chip.fill.on = true
+        chip.fill.color = RGBA(r: 0, g: 0, b: 0, a: 0.62)
+        chip.cornerRadius = CGFloat(pad)
+        var raw: UnsafeMutableRawPointer?
+        defer { raw?.deallocate() }
+        var w = 0, h = 0
+        let drawn = WindowsCore.drawGlyph([chip, text], size: box, scale: 1) { pw, ph in
+            w = pw
+            h = ph
+            raw = UnsafeMutableRawPointer.allocate(byteCount: max(pw * ph * 4, 4), alignment: 4)
+            return raw
+        }
+        guard drawn, let raw, w > 0, h > 0 else { return }
+        // Premultiplied, blue first as panels take their pictures, over the sheet's red first;
+        // cut where the frame ends.
+        let pixels = raw.assumingMemoryBound(to: UInt8.self)
+        let left = cell.x + Int(pad), top = cell.y + Int(pad)
+        guard cell.y + cell.h > top, cell.x + cell.w > left else { return }
+        for y in 0..<min(h, cell.y + cell.h - top) {
+            for x in 0..<min(w, cell.x + cell.w - left) {
+                let s = (y * w + x) * 4, d = ((top + y) * sw + left + x) * 4
+                let rest = 255 - Int(pixels[s + 3])
+                for (to, from) in [(0, 2), (1, 1), (2, 0), (3, 3)] {
+                    sheet[d + to] = UInt8(min(255, Int(pixels[s + from]) + (Int(sheet[d + to]) * rest + 127) / 255))
+                }
+            }
+        }
     }
 
     /// Films saved as movies, as Animate's Save as Movie does: an .mp4 each, H.264.
