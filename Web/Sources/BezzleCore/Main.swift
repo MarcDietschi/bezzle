@@ -25,6 +25,7 @@ private func show(_ doc: BezzleDocument, anew: Bool) {
         assets = Assets(folder: URL(fileURLWithPath: "/images"))
     }
     mostTexts = max(1200, BezzleDocument.layerCount(doc.nodes) * 3)
+    WebLive.designChanged()
 }
 
 private func answer(_ s: String) -> Int32 {
@@ -175,15 +176,18 @@ nonisolated func bz_shared_open(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
     }
 }
 
-/// Takes in others' change records, as `bz_shared_open` takes them.
+/// Takes in others' change records, as `bz_shared_open` takes them. `same` says that the design
+/// is as it was (records that held nothing new, as when a change came through the live room
+/// first): the page need not draw it again.
 @_expose(wasm, "bz_shared_receive")
 nonisolated func bz_shared_receive(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
     let json = Data(bytes: p, count: Int(n))
     return MainActor.assumeIsolated {
         guard let shown = design else { return answer("{\"error\":\"no design\"}") }
         let doc = WebSharing.receive(records(json).records, into: shown)
-        show(doc, anew: false)
-        return answer(boardsAnswer(doc, extra: "," + PageKeeps.gone()))
+        let same = doc == shown
+        if !same { show(doc, anew: false) }
+        return answer(boardsAnswer(doc, extra: ",\"same\":\(same)," + PageKeeps.gone()))
     }
 }
 
@@ -241,6 +245,46 @@ nonisolated func bz_document() -> Int32 {
         guard let doc = design, let data = try? encoder.encode(doc) else { return answer("{}") }
         return answer(String(decoding: data, as: UTF8.self))
     }
+}
+
+// MARK: The live room
+
+/// What someone in the design's live room said, its seal opened by the page (`plain`, as
+/// `LiveMessage.packed` makes it), with their place in the room. Answers what it was, and what the
+/// page shows of it (`WebLive.take`).
+@_expose(wasm, "bz_live_message")
+nonisolated func bz_live_message(_ peer: Int32, _ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
+    let plain = Data(bytes: p, count: Int(n))
+    return MainActor.assumeIsolated { answer(WebLive.take(plain, from: UInt32(bitPattern: peer), in: design)) }
+}
+
+/// Everyone in the room who said who they are, as the page shows them: their name, their pencil,
+/// where their hand is and what they hold on the design as it is now.
+@_expose(wasm, "bz_live_people")
+nonisolated func bz_live_people() -> Int32 {
+    MainActor.assumeIsolated { answer(WebLive.people(in: design)) }
+}
+
+/// Someone left the room; answers who is there now.
+@_expose(wasm, "bz_live_left")
+nonisolated func bz_live_left(_ peer: Int32) -> Int32 {
+    MainActor.assumeIsolated {
+        WebLive.left(UInt32(bitPattern: peer))
+        return answer(WebLive.people(in: design))
+    }
+}
+
+/// The room was left, or its connection lost: nobody is there.
+@_expose(wasm, "bz_live_clear")
+nonisolated func bz_live_clear() {
+    MainActor.assumeIsolated { WebLive.clear() }
+}
+
+/// For testing the live room without a Mac in it (`WebLive.test`).
+@_expose(wasm, "bz_test_live")
+nonisolated func bz_test_live(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
+    let json = Data(bytes: p, count: Int(n))
+    return MainActor.assumeIsolated { answer(WebLive.test(json, in: design)) }
 }
 
 // MARK: Films

@@ -1342,7 +1342,23 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       take(pictures)
       return took(reply(send(x.bz_shared_open, JSON.stringify({ records, replica }))))
     },
+    /** Takes in others' records. `same` in the answer says the design is as it was: nothing to draw again. */
     receive(records) { return took(reply(send(x.bz_shared_receive, JSON.stringify({ records })))) },
+
+    // The design's live room (site/live.mjs). The page listens there and opens what is sealed
+    // (share.mjs); what a message says, whose pencil is whose and where on the design someone
+    // holds a layer is the core's to work out, with the Mac's own code.
+    /** What someone at `peer`, their place in the room, said: `plain` is the message with its seal
+        opened. Answers { kind }: `hello`, `presence` with that `person` as they are now, `wink` with
+        its loop, `changes` with a `record` for `receive`, or `other`. */
+    liveMessage(peer, plain) { return reply(send((p, n) => x.bz_live_message(peer, p, n), plain)) },
+    /** Everyone in the room who said who they are, in the order they came: name, initial, pencil
+        colour, and once they said where they are, their pointer and what they hold on the design. */
+    livePeople() { return reply(x.bz_live_people()) },
+    /** Someone left; answers who is there now. */
+    liveLeft(peer) { return reply(x.bz_live_left(peer)) },
+    /** The room was left or its connection lost: nobody is there. */
+    liveClear() { x.bz_live_clear() },
     /** What was changed here since last time, packed for a change record: { data, upTo } or {}. */
     changes() { return reply(x.bz_shared_changes()) },
     snapshot() { return reply(x.bz_shared_snapshot()) },
@@ -1366,6 +1382,8 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     /** Names of the pictures drawings asked for that are not here yet. */
     missingPictures() { return [...missing] },
     testEdit() { return reply(x.bz_test_edit()) },
+    /** For testing the live room without a Mac in it (the core's WebLive.test). */
+    testLive(asked) { return reply(send(x.bz_test_live, JSON.stringify(asked))) },
     document() { return reply(x.bz_document()) },
     /** The design as the core encodes it, sorted keys, as the Mac writes it. */
     documentBytes() { const n = x.bz_document(); return bytes().slice(x.bz_outbox(), x.bz_outbox() + n) },
