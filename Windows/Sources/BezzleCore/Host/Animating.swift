@@ -988,10 +988,11 @@ extension WindowsCore {
             poseCamera([(.cameraTilt, [0]), (.cameraSwing, [0])])
         }
 
-        /// Has the camera see the whole artboard, straight on, from the playhead on.
+        /// Has the camera see the whole artboard, straight on, from the playhead on. Its focus and
+        /// blur stay as they are, as on the Mac (`MotionProperty.view`).
         public func restCamera() {
             guard filmBoard?.hasCamera == true else { return }
-            poseCamera(MotionProperty.camera.map { ($0, $0.rest) })
+            poseCamera(MotionProperty.view.map { ($0, $0.rest) })
         }
 
         // MARK: Moves made in one go
