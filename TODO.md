@@ -56,7 +56,6 @@ file was made (2026-11-14): look before starting on one.
   `BEZZLE_FILM` › `movie=`: a new movie through the save panel, one replacing another, and a place
   the sandbox refuses, which is said and leaves nothing behind. The save panel brings the copy to
   the front, so `movie=ask` is for when Erik is not at the Mac.)
-- **The browser viewer** keeps a film's keys and shows the design without its film.
 
 ### Windows
 
@@ -139,6 +138,29 @@ file was made (2026-11-14): look before starting on one.
 
 ## The browser viewer
 
+- **Its film is not published:** bezzle.ch/app shows the design without its film until
+  `Web/publish.sh` is run and bezzle-web pushed, at Erik's word (the film plays in the viewer since
+  2026-11-14, `Web/README.md` › Films).
+- **Shader fills** are drawn live only in a film; the design itself shows the fill's picture. A
+  moving shader's frame is read back from the graphics card each moment (about 3 ms at 840×600).
+  Cube maps, matrix attributes, `#version 300 es` programs and antialias off are written in
+  `site/shaders.mjs`, but no test design has them.
+- **A film without WebGL** plays at 3 to 9 frames a second on the processor.
+- **A film's sharpness while playing:** a piece's whole picture is capped at 4,096 pixels a side
+  and 16 megapixels; past that it is sharp only when the film rests.
+- **A text set anew at every moment of a film** (wrapped, scaled by a key inside a piece drawn
+  again): all text is let go every 600 settings and the film opened again, a wait as at its
+  start. Letting go of those texts alone needs `WebText`'s `kept`, shared with Windows, to say
+  which; whether Windows grows the same way is unchecked. Each text the page sets costs about
+  0.3 MB of CanvasKit's memory.
+- **Pictures of the design are never let go:** every artboard drawn stays in the page (`made`,
+  `images`), so a shared design drawn again at each edit grows. Older than the film.
+- **The film, unchecked:** with the open fonts the published page uses (compared with Apple's
+  only), in Safari and Firefox, on a phone, a WebGL context lost mid-film, and the Windows build
+  after these commits.
+- **Mac, `FilmExport.Reel`:** `core.insetBy(dx: -0.01, dy: -0.01).contains(seen.part)` answered
+  false from rounding in the browser's stand-in and drew parts needlessly there (now
+  `WebFilm.holds`); whether the Mac draws parts needlessly for the same reason is not measured.
 - `Web/README.md` › Not done in the prototype lists what it does not draw or do.
 - A few SF Pro and Avenir words come out up to 0.2 pt a letter narrower (`Web/README.md`).
 
