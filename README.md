@@ -201,6 +201,15 @@ along one artboard's film. Its keys are changes from the design and never the de
   flip of an ellipse leaves its outline as it was, so only the flip itself can tell). Keys that
   fit no outline change nothing. Its tests are `MotionOutlineTests`, and `AnimateStressTests`
   resizes, rounds and flips layers under its films.
+- **One outline into another with other points** (a star into a circle) is `BezierPath.matched`
+  and `mixed`, in `PathMotion.swift`: both are given the same points, neither changing its shape.
+  An anchor both have in one place is one anchor; between such anchors each lies as far along its
+  stretch as it does, two that come to lie close are one, and any other gets a point on the other
+  outline there. Outlines that share no anchor are laid along each other whole, begun where and
+  run the way their points go least far; a run with none to go with shrinks to its middle. Outlines
+  with the same runs of as many points go point by point as they are numbered, so an outline taken
+  from another shape is first numbered like the one it comes from (`laid(along:)`). Its tests are
+  `MotionMatchingTests`. No key holds an outline of its own yet, so nothing in the app asks for it.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
   `/given` for a key the app placed itself), so two people keying one layer both keep theirs

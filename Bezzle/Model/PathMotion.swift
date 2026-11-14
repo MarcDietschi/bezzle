@@ -619,3 +619,670 @@ nonisolated extension BezierPath {
         return out
     }
 }
+
+// MARK: - One outline into another that has other points
+
+// Two outlines with the same runs of as many points go into each other point by point. Any other
+// two are first given the same points, neither changing its shape by it (`matched`). An anchor
+// both have in one place is one anchor. The stretches between such anchors are laid along each
+// other, each anchor by how far along its stretch it is: two that come to lie close are one, and
+// where one outline has an anchor the other has none for, the other gets a point there, on its
+// curve. Outlines with no anchor in one place are laid along each other whole, begun at the place
+// and run the way that takes their points least far. A run with none to go with shrinks to its
+// middle, or grows from it. Then the one goes into the other as any two with the same points do
+// (`mixed`).
+
+nonisolated extension BezierPath {
+    /// Whether the two have the same runs of anchors: as many runs, each of as many anchors, and
+    /// closed or open alike. Such outlines go into each other point by point.
+    func hasRuns(of other: BezierPath) -> Bool {
+        subpaths.count == other.subpaths.count
+            && zip(subpaths, other.subpaths).allSatisfy { $0.anchors.count == $1.anchors.count && $0.closed == $1.closed }
+    }
+
+    /// The outline `p` of the way from this one to `other`, which has the same runs
+    /// (`hasRuns(of:)`): every anchor and handle that far on its way. At 0 it is this one and at
+    /// 1 the other, exactly; past either it goes on as it went, as a spring's pace asks. Where an
+    /// anchor is smooth in both, its handles stay in one line on the way.
+    func mixed(with other: BezierPath, _ p: Double) -> BezierPath {
+        guard hasRuns(of: other), p.isFinite else { return p >= 0.5 ? other : self }
+        if p == 0 { return self }
+        if p == 1 { return other }
+        let q = CGFloat(p)
+        // Lined up wholly on the way, and less and less towards either end, where each outline
+        // is as it was keyed, handles a hair out of line too.
+        let lined = CGFloat(min(1, 10 * max(0, min(p, 1 - p))))
+        var out = self
+        for s in subpaths.indices {
+            for i in subpaths[s].anchors.indices {
+                let a = subpaths[s].anchors[i], b = other.subpaths[s].anchors[i]
+                let point = a.point + (b.point - a.point) * q
+                var handleIn = (a.handleIn ?? a.point) + ((b.handleIn ?? b.point) - (a.handleIn ?? a.point)) * q
+                var handleOut = (a.handleOut ?? a.point) + ((b.handleOut ?? b.point) - (a.handleOut ?? a.point)) * q
+                let at = PathPoint(subpath: s, index: i)
+                if lined > 0, a.handleIn != nil, a.handleOut != nil, b.handleIn != nil, b.handleOut != nil, isSmooth(at), other.isSmooth(at) {
+                    let across = Self.length(handleOut - handleIn)
+                    if across > 0.0001 {
+                        let way = (handleOut - handleIn) * (1 / across)
+                        let straightIn = point - way * Self.length(handleIn - point), straightOut = point + way * Self.length(handleOut - point)
+                        handleIn = handleIn + (straightIn - handleIn) * lined
+                        handleOut = handleOut + (straightOut - handleOut) * lined
+                    }
+                }
+                out.subpaths[s].anchors[i] = Anchor(point, in: Self.same(handleIn, point) ? nil : handleIn,
+                                                    out: Self.same(handleOut, point) ? nil : handleOut)
+            }
+        }
+        return out
+    }
+
+    /// The two outlines with the same runs of anchors, each the shape it was: what `mixed` takes
+    /// one into the other by. Outlines that have the same runs already are returned as they are:
+    /// their points are the same points, each numbered as the other's.
+    static func matched(_ a: BezierPath, _ b: BezierPath) -> (BezierPath, BezierPath) {
+        if a.hasRuns(of: b) { return (a, b) }
+        let runs = OutlineMatching.matched(a, b, anew: false)
+        return (BezierPath(subpaths: runs.map(\.first)), BezierPath(subpaths: runs.map(\.second)))
+    }
+
+    /// This outline, the shape it is, with its points as they best come from `other`'s: what
+    /// an outline taken from another shape is given, whose points are numbered as that shape
+    /// had them and not as the outline it is to come from. Its runs are in the order of the runs
+    /// of `other` they go with, each begun where and drawn the way that takes the points least
+    /// far. Where that falls between two of its anchors, it has the points more that `matched`
+    /// would give it, so that what comes from `other` comes without turning on the way; where
+    /// it falls on its anchors, it has its own and no more.
+    func laid(along other: BezierPath) -> BezierPath {
+        BezierPath(subpaths: OutlineMatching.matched(other, self, anew: true).filter(\.own).map(\.second))
+    }
+}
+
+/// How two runs of anchors are given the same anchors (`BezierPath.matched`).
+nonisolated private enum OutlineMatching {
+    typealias Run = BezierPath.Subpath
+    typealias Anchor = BezierPath.Anchor
+    typealias Curve = (CGPoint, CGPoint, CGPoint, CGPoint)
+
+    static func curve(_ run: Run, _ i: Int) -> Curve {
+        let a = run.anchors[i], b = run.anchors[(i + 1) % run.anchors.count]
+        return (a.point, a.handleOut ?? a.point, b.handleIn ?? b.point, b.point)
+    }
+
+    static func straight(_ run: Run, _ i: Int) -> Bool {
+        run.anchors[i].handleOut == nil && run.anchors[(i + 1) % run.anchors.count].handleIn == nil
+    }
+
+    /// A run measured along itself.
+    struct Measure {
+        var run: Run
+        /// Each curve's length at places along it, from none of it to all.
+        var lengths: [[Double]] = []
+        /// How much of the run lies before each anchor, and last, all of it.
+        var before: [Double] = [0]
+        static let steps = 16
+
+        init(_ run: Run) {
+            self.run = run
+            for i in 0..<run.segmentCount {
+                let c = OutlineMatching.curve(run, i)
+                var table = [0.0]
+                if OutlineMatching.straight(run, i) {
+                    table.append(Double(hypot(c.3.x - c.0.x, c.3.y - c.0.y)))
+                } else {
+                    var last = c.0
+                    for k in 1...Self.steps {
+                        let p = BezierPath.point(on: c, at: CGFloat(k) / CGFloat(Self.steps))
+                        table.append(table[table.count - 1] + Double(hypot(p.x - last.x, p.y - last.y)))
+                        last = p
+                    }
+                }
+                lengths.append(table)
+                before.append(before[before.count - 1] + table[table.count - 1])
+            }
+        }
+
+        var total: Double { before[before.count - 1] }
+
+        /// How far along curve `i` a length of it reaches, 0 to 1.
+        func time(_ i: Int, _ length: Double) -> CGFloat {
+            let table = lengths[i], whole = table[table.count - 1]
+            guard whole > 1e-12, length > 0 else { return 0 }
+            guard length < whole else { return 1 }
+            if table.count == 2 { return CGFloat(length / whole) }
+            var k = 1
+            while k < table.count - 1, table[k] < length { k += 1 }
+            let a = table[k - 1], b = table[k]
+            return CGFloat((Double(k - 1) + (b > a ? (length - a) / (b - a) : 0)) / Double(table.count - 1))
+        }
+
+        /// The curve a length along the run lies on.
+        func curve(at length: Double) -> Int {
+            var i = 0
+            while i < run.segmentCount - 1, before[i + 1] <= length { i += 1 }
+            return i
+        }
+
+        /// `count` places evenly along it: round a closed run from its first anchor to just short
+        /// of there again, along an open one from end to end.
+        func points(_ count: Int) -> [CGPoint] {
+            guard run.segmentCount > 0, total > 1e-12 else { return Array(repeating: run.anchors.first?.point ?? .zero, count: count) }
+            let step = total / Double(run.closed ? count : max(count - 1, 1))
+            var out: [CGPoint] = []
+            out.reserveCapacity(count)
+            var i = 0
+            for k in 0..<count {
+                let at = min(Double(k) * step, total)
+                while i < run.segmentCount - 1, before[i + 1] <= at { i += 1 }
+                let c = OutlineMatching.curve(run, i), t = time(i, at - before[i])
+                out.append(OutlineMatching.straight(run, i) ? c.0 + (c.3 - c.0) * t : BezierPath.point(on: c, at: t))
+            }
+            return out
+        }
+
+        /// How far an anchor is from the nearer of the anchors either side, as a part of the run.
+        func room(of i: Int) -> Double {
+            guard total > 1e-12 else { return 0 }
+            let n = run.anchors.count
+            var gaps: [Double] = []
+            if run.closed {
+                gaps = [lengths[(i - 1 + n) % n].last ?? 0, lengths[i % n].last ?? 0]
+            } else {
+                if i > 0 { gaps.append(lengths[i - 1].last ?? 0) }
+                if i < n - 1 { gaps.append(lengths[i].last ?? 0) }
+            }
+            return (gaps.min() ?? 0) / total
+        }
+    }
+
+    /// A run with new anchors on its curves, which leave its shape as it is: `cuts[i]` says how
+    /// far along curve `i` each lies, 0 to 1 and in their order. And where each of the run's own
+    /// anchors comes to be among them all.
+    static func cut(_ run: Run, at cuts: [[CGFloat]]) -> (run: Run, own: [Int]) {
+        var anchors = run.anchors
+        var added = [[Anchor]](repeating: [], count: anchors.count)
+        func handle(_ h: CGPoint, of p: CGPoint) -> CGPoint? { BezierPath.same(h, p) ? nil : h }
+        for i in 0..<run.segmentCount where i < cuts.count && !cuts[i].isEmpty {
+            let j = (i + 1) % anchors.count
+            if straight(run, i) {
+                let a = anchors[i].point, b = anchors[j].point
+                added[i] = cuts[i].map { Anchor(a + (b - a) * min(max($0, 0), 1)) }
+                continue
+            }
+            // Cut the way de Casteljau does, one place after another along what is left.
+            var rest = curve(run, i)
+            var done: CGFloat = 0
+            for t in cuts[i] {
+                let t = min(max(t, done), 1)
+                let local = done < 1 ? (t - done) / (1 - done) : 0
+                let (p0, c1, c2, p3) = rest
+                let p01 = p0 + (c1 - p0) * local, p12 = c1 + (c2 - c1) * local, p23 = c2 + (p3 - c2) * local
+                let p012 = p01 + (p12 - p01) * local, p123 = p12 + (p23 - p12) * local
+                let p = p012 + (p123 - p012) * local
+                if added[i].isEmpty { anchors[i].handleOut = handle(p01, of: p0) } else { added[i][added[i].count - 1].handleOut = handle(p01, of: p0) }
+                added[i].append(Anchor(p, in: handle(p012, of: p)))
+                rest = (p, p123, p23, p3)
+                done = t
+            }
+            added[i][added[i].count - 1].handleOut = handle(rest.1, of: rest.0)
+            anchors[j].handleIn = handle(rest.2, of: rest.3)
+        }
+        var out: [Anchor] = [], own: [Int] = []
+        for i in anchors.indices {
+            own.append(out.count)
+            out.append(anchors[i])
+            out += added[i]
+        }
+        return (Run(anchors: out, closed: run.closed), own)
+    }
+
+    /// A run with every anchor at one place: what a run grows from, or shrinks to.
+    static func gathered(_ run: Run, at point: CGPoint) -> Run {
+        Run(anchors: run.anchors.map { _ in Anchor(point) }, closed: run.closed)
+    }
+
+    /// The box round a run's anchors.
+    static func box(_ run: Run) -> CGRect {
+        var box = CGRect.null
+        for a in run.anchors { box = box.union(CGRect(origin: a.point, size: .zero)) }
+        return box
+    }
+
+    static func middle(_ run: Run) -> CGPoint {
+        let box = box(run)
+        return box.isNull ? .zero : CGPoint(x: box.midX, y: box.midY)
+    }
+
+    /// A closed run begun at another of its anchors, and run the other way round if `turned`.
+    static func begun(_ run: Run, at k: Int, turned: Bool) -> Run {
+        let n = run.anchors.count
+        guard n > 0 else { return run }
+        var anchors = (0..<n).map { run.anchors[(k + $0) % n] }
+        if turned { anchors = ([anchors[0]] + anchors.dropFirst().reversed()).map { Anchor($0.point, in: $0.handleOut, out: $0.handleIn) } }
+        return Run(anchors: anchors, closed: run.closed)
+    }
+
+    /// Where anchor `k` of a closed run of `count` comes to be in the run begun at `start`.
+    static func place(of k: Int, begunAt start: Int, turned: Bool, count: Int) -> Int {
+        turned ? (start - k + count) % count : (k - start + count) % count
+    }
+
+    /// An open run drawn the other way.
+    static func turned(_ run: Run) -> Run {
+        Run(anchors: run.anchors.reversed().map { Anchor($0.point, in: $0.handleOut, out: $0.handleIn) }, closed: run.closed)
+    }
+
+    /// A closed run as an open one that ends where it begins.
+    static func opened(_ run: Run) -> Run {
+        guard let first = run.anchors.first else { return run }
+        var anchors = run.anchors
+        anchors[0].handleIn = nil
+        anchors.append(Anchor(first.point, in: first.handleIn))
+        return Run(anchors: anchors, closed: false)
+    }
+
+    /// For each anchor of `x`, the anchor of `y` that lies where it does, if one does: each of
+    /// `y`'s for one of `x`'s, the earlier first.
+    static func twins(_ x: Run, _ y: Run) -> [Int?] {
+        struct Place: Hashable {
+            var x: Int
+            var y: Int
+        }
+        func place(_ p: CGPoint) -> Place? {
+            guard p.x.isFinite, p.y.isFinite, abs(p.x) < 1e9, abs(p.y) < 1e9 else { return nil }
+            return Place(x: Int((p.x * 100).rounded()), y: Int((p.y * 100).rounded()))
+        }
+        var at: [Place: [Int]] = [:]
+        for (k, a) in y.anchors.enumerated().reversed() {
+            if let p = place(a.point) { at[p, default: []].append(k) }
+        }
+        return x.anchors.map { a in place(a.point).flatMap { at[$0]?.popLast() } }
+    }
+
+    /// The longest choice of `values`, in their order, in which each is more than the one before:
+    /// which of them.
+    static func rising(_ values: [Int]) -> [Int] {
+        var tails: [Int] = [], before = [Int](repeating: -1, count: values.count)
+        for (i, v) in values.enumerated() {
+            var lo = 0, hi = tails.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if values[tails[mid]] < v { lo = mid + 1 } else { hi = mid }
+            }
+            before[i] = lo > 0 ? tails[lo - 1] : -1
+            if lo == tails.count { tails.append(i) } else { tails[lo] = i }
+        }
+        var out: [Int] = []
+        var i = tails.last ?? -1
+        while i >= 0 {
+            out.append(i)
+            i = before[i]
+        }
+        return out.reversed()
+    }
+
+    /// Places about their own middle, so that where two outlines lie does not count in how well
+    /// they lie along each other.
+    static func centred(_ points: [CGPoint]) -> [CGPoint] {
+        guard !points.isEmpty else { return points }
+        let sum = points.reduce(CGPoint.zero) { $0 + $1 }
+        let middle = sum * (1 / CGFloat(points.count))
+        return points.map { $0 - middle }
+    }
+
+    /// Which way round a closed run goes: the area its anchors enclose, with its sign.
+    static func area(_ run: Run) -> CGFloat {
+        var sum: CGFloat = 0
+        for i in run.anchors.indices {
+            let a = run.anchors[i].point, b = run.anchors[(i + 1) % run.anchors.count].point
+            sum += a.x * b.y - b.x * a.y
+        }
+        return sum / 2
+    }
+
+    /// Where along a closed run to begin it, and whether to run it the other way round, so that
+    /// it lies along `other` with its points going least far: tried at places evenly along it,
+    /// both ways round. Of ways as good as each other, the one that turns it least.
+    static func lay(_ m: Measure, along other: Measure) -> (at: Double, turned: Bool) {
+        let count = 64
+        let mine = centred(m.points(count)), theirs = centred(other.points(other.run.closed ? count : count + 1))
+        // The more, the nearer: how far apart they lie, less what no way of laying them changes.
+        func fit(_ j: Int, _ turned: Bool) -> Double {
+            var sum = 0.0
+            for i in theirs.indices {
+                let p = mine[((turned ? j - i : j + i) % count + count) % count], q = theirs[i]
+                sum += Double(p.x * q.x + p.y * q.y)
+            }
+            return sum
+        }
+        let size = (mine + theirs).reduce(0.0) { $0 + Double($1.x * $1.x + $1.y * $1.y) }
+        var best = (j: 0, turned: false, fit: fit(0, false))
+        for turned in [false, true] {
+            for d in 0...(count / 2) {
+                for j in (d == 0 || d * 2 == count ? [d] : [d, count - d]) where turned || j != 0 {
+                    let f = fit(j, turned)
+                    if f > best.fit + size * 1e-9 { best = (j, turned, f) }
+                }
+            }
+        }
+        // Between the places tried: where the ones either side say the best is.
+        let before = fit(best.j - 1, best.turned), after = fit(best.j + 1, best.turned)
+        let bend = before - 2 * best.fit + after
+        let off = bend < -size * 1e-12 ? min(max(0.5 * (before - after) / bend, -0.5), 0.5) : 0
+        var at = (Double(best.j) + off) / Double(count)
+        at -= at.rounded(.down)
+        return (at, best.turned)
+    }
+
+    /// How far apart two open runs lie, laid along each other end to end, where they are.
+    static func apart(_ a: Measure, _ b: Measure, turned: Bool = false) -> Double {
+        let count = 33
+        let p = a.points(count), q = b.points(count)
+        var sum = 0.0
+        for i in 0..<count {
+            let d = p[i] - q[turned ? count - 1 - i : i]
+            sum += Double(d.x * d.x + d.y * d.y)
+        }
+        return sum
+    }
+
+    /// A closed run begun at a place along it, 0 to 1: at the anchor there, when one is within
+    /// `room` of it, and else at a new anchor put there.
+    static func begun(_ m: Measure, atPlace at: Double, turned: Bool, room: Double) -> Run {
+        let run = m.run, n = run.anchors.count
+        guard m.total > 1e-12, n > 0 else { return run }
+        var near = 0, least = Double.infinity
+        for k in 0..<n {
+            let d = abs(m.before[k] / m.total - at), round = min(d, 1 - d)
+            if round < least {
+                near = k
+                least = round
+            }
+        }
+        if least <= 0.3 * min(room, m.room(of: near)) { return begun(run, at: near, turned: turned) }
+        let length = at * m.total, i = m.curve(at: length)
+        let made = cut(run, at: (0..<run.segmentCount).map { $0 == i ? [m.time(i, length - m.before[i])] : [] })
+        return begun(made.run, at: made.own[i] + 1, turned: turned)
+    }
+
+    /// For each of `values`, which of `others` is nearest it; both in rising order.
+    static func nearest(_ values: [Double], in others: [Double]) -> [Int?] {
+        guard !others.isEmpty else { return Array(repeating: nil, count: values.count) }
+        var k = 0
+        return values.map { v in
+            while k < others.count - 1, abs(others[k + 1] - v) <= abs(others[k] - v) { k += 1 }
+            return k
+        }
+    }
+
+    /// Two runs, both closed or both open, given the same anchors, each staying the shape it is.
+    /// `fixed` are anchors known to be the same in both, as (which of `x`'s, which of `y`'s),
+    /// rising in both: the first of them the runs' first anchors, and of open runs the last
+    /// their last. Between two of them, as many anchors in the one as in the other are the same
+    /// anchors in their order; otherwise each lies as far along the stretch as it does, two that
+    /// lie close are one, and any other is given a point on the other run there. Also where each
+    /// of `x`'s own anchors comes to be.
+    static func zipped(_ x: Run, _ y: Run, fixed: [(Int, Int)]) -> (x: Run, y: Run, own: [Int]) {
+        let mx = Measure(x), my = Measure(y)
+        var cutsX = [[CGFloat]](repeating: [], count: x.segmentCount), cutsY = [[CGFloat]](repeating: [], count: y.segmentCount)
+        var stops = fixed
+        if x.closed { stops.append((x.anchors.count, y.anchors.count)) }
+        for (from, to) in zip(stops, stops.dropFirst()) {
+            let xs = Array((from.0 + 1)..<max(to.0, from.0 + 1)), ys = Array((from.1 + 1)..<max(to.1, from.1 + 1))
+            guard xs.count != ys.count else { continue }
+            let lx = mx.before[to.0] - mx.before[from.0], ly = my.before[to.1] - my.before[from.1]
+            // How far along the stretch each anchor is, 0 to 1; where the stretch is one place, by its number.
+            let ax = xs.map { lx > 1e-12 ? (mx.before[$0] - mx.before[from.0]) / lx : Double($0 - from.0) / Double(to.0 - from.0) }
+            let ay = ys.map { ly > 1e-12 ? (my.before[$0] - my.before[from.1]) / ly : Double($0 - from.1) / Double(to.1 - from.1) }
+            func room(_ at: [Double], _ i: Int) -> Double {
+                min(at[i] - (i > 0 ? at[i - 1] : 0), (i < at.count - 1 ? at[i + 1] : 1) - at[i])
+            }
+            // Two that are each the other's nearest, and close for how far their neighbours are: one anchor.
+            let nearY = nearest(ax, in: ay), nearX = nearest(ay, in: ax)
+            var pair = [Int?](repeating: nil, count: xs.count)
+            var paired = [Bool](repeating: false, count: ys.count)
+            var last = -1
+            for a in xs.indices {
+                guard let b = nearY[a], b > last, nearX[b] == a, abs(ax[a] - ay[b]) <= 0.3 * min(room(ax, a), room(ay, b)) else { continue }
+                pair[a] = b
+                paired[b] = true
+                last = b
+            }
+            // Along both at once, each anchor in its turn; one with none to go with gets a point
+            // on the other run, on the curve after the last anchor passed there.
+            var a = 0, b = 0, lastX = from.0, lastY = from.1
+            func cutX(_ at: Double) {
+                let t = mx.time(lastX, mx.before[from.0] + at * lx - mx.before[lastX])
+                cutsX[lastX].append(max(t, cutsX[lastX].last ?? 0))
+            }
+            func cutY(_ at: Double) {
+                let t = my.time(lastY, my.before[from.1] + at * ly - my.before[lastY])
+                cutsY[lastY].append(max(t, cutsY[lastY].last ?? 0))
+            }
+            while a < xs.count || b < ys.count {
+                if a < xs.count, let with = pair[a] {
+                    if b < with {
+                        cutX(ay[b])
+                        lastY = ys[b]
+                        b += 1
+                    } else {
+                        lastX = xs[a]
+                        lastY = ys[with]
+                        a += 1
+                        b = with + 1
+                    }
+                } else if a < xs.count, b >= ys.count || paired[b] || ax[a] <= ay[b] {
+                    cutY(ax[a])
+                    lastX = xs[a]
+                    a += 1
+                } else {
+                    cutX(ay[b])
+                    lastY = ys[b]
+                    b += 1
+                }
+            }
+        }
+        let made = cut(x, at: cutsX)
+        return (made.run, cut(y, at: cutsY).run, made.own)
+    }
+
+    /// Two closed runs given the same anchors.
+    static func round(_ x: Run, _ y: Run, _ mx: Measure, _ my: Measure) -> (Run, Run) {
+        let n = x.anchors.count, m = y.anchors.count
+        let twin = twins(x, y)
+        let both = twin.indices.filter { twin[$0] != nil }
+        guard let start = both.first, let begin = twin[start] else {
+            // No anchor of the one lies where one of the other does: laid along each other whole.
+            let lay = lay(my, along: mx)
+            let made = zipped(x, begun(my, atPlace: lay.at, turned: lay.turned, room: mx.room(of: 0)), fixed: [(0, 0)])
+            return (made.x, made.y)
+        }
+        // Both begun at an anchor they share, the other run the way that keeps more of the
+        // anchors they share in their order: the way both go round, where that does not tell.
+        func kept(_ turned: Bool) -> [(Int, Int)] {
+            let pairs = both.map { (($0 - start + n) % n, place(of: twin[$0] ?? 0, begunAt: begin, turned: turned, count: m)) }
+            return rising(pairs.map(\.1)).map { pairs[$0] }
+        }
+        let same = kept(false), other = kept(true)
+        let turned = other.count != same.count ? other.count > same.count : area(x) * area(y) < 0
+        let made = zipped(begun(x, at: start, turned: false), begun(y, at: begin, turned: turned), fixed: turned ? other : same)
+        // Back to where `x` begins.
+        guard start > 0 else { return (made.x, made.y) }
+        let first = made.own[(n - start) % n]
+        return (begun(made.x, at: first, turned: false), begun(made.y, at: first, turned: false))
+    }
+
+    /// Two open runs given the same anchors. With `decided`, they run the same way already.
+    static func along(_ x: Run, _ y: Run, _ mx: Measure, _ my: Measure, decided: Bool = false) -> (Run, Run) {
+        let m = y.anchors.count
+        let twin = twins(x, y)
+        func kept(_ turned: Bool) -> [(Int, Int)] {
+            let pairs = twin.indices.compactMap { i in twin[i].map { (i, turned ? m - 1 - $0 : $0) } }
+            return rising(pairs.map(\.1)).map { pairs[$0] }
+        }
+        var fixed = kept(false)
+        var back = false
+        if !decided {
+            // The way that keeps more of the anchors they share in their order, or else the way
+            // they lie nearer each other.
+            let other = kept(true)
+            back = other.count != fixed.count ? other.count > fixed.count : apart(mx, my, turned: true) < apart(mx, my) * (1 - 1e-9)
+            if back { fixed = other }
+        }
+        var x = x, y = back ? turned(y) : y
+        // A run that goes on past the other's end, where the other has that anchor too: the
+        // other's end waits there for each anchor more, so the line grows out of its end.
+        func grown(_ run: inout Run, by count: Int, atStart: Bool) {
+            if atStart {
+                run.anchors[0].handleIn = nil
+                run.anchors.insert(contentsOf: Array(repeating: Anchor(run.anchors[0].point), count: count), at: 0)
+            } else {
+                run.anchors[run.anchors.count - 1].handleOut = nil
+                run.anchors.append(contentsOf: Array(repeating: Anchor(run.anchors[run.anchors.count - 1].point), count: count))
+            }
+        }
+        if let first = fixed.first, first.0 == 0, first.1 > 0 {
+            grown(&x, by: first.1, atStart: true)
+            fixed = (0..<first.1).map { ($0, $0) } + fixed.map { ($0.0 + first.1, $0.1) }
+        } else if let first = fixed.first, first.1 == 0, first.0 > 0 {
+            grown(&y, by: first.0, atStart: true)
+            fixed = (0..<first.0).map { ($0, $0) } + fixed.map { ($0.0, $0.1 + first.0) }
+        } else if fixed.first.map({ $0 != (0, 0) }) ?? true {
+            fixed = [(0, 0)] + fixed.filter { $0.0 > 0 && $0.1 > 0 }
+        }
+        let nx = x.anchors.count, ny = y.anchors.count
+        if let last = fixed.last, last.0 == nx - 1, last.1 < ny - 1 {
+            grown(&x, by: ny - 1 - last.1, atStart: false)
+            fixed += (1...(ny - 1 - last.1)).map { (last.0 + $0, last.1 + $0) }
+        } else if let last = fixed.last, last.1 == ny - 1, last.0 < nx - 1 {
+            grown(&y, by: nx - 1 - last.0, atStart: false)
+            fixed += (1...(nx - 1 - last.0)).map { (last.0 + $0, last.1 + $0) }
+        } else if fixed.last.map({ $0 != (nx - 1, ny - 1) }) ?? true {
+            fixed = fixed.filter { $0.0 < nx - 1 && $0.1 < ny - 1 } + [(nx - 1, ny - 1)]
+        }
+        let made = zipped(x, y, fixed: fixed)
+        return (made.x, made.y)
+    }
+
+    /// A closed run opened so as to lie along an open one: at the anchor the open one begins at,
+    /// if it has that one, or else where its points go least far.
+    static func unrolled(_ c: Run, _ mc: Measure, along o: Run, _ mo: Measure) -> Run {
+        let twin = twins(o, c), n = c.anchors.count
+        guard let start = twin.first ?? nil else {
+            let lay = lay(mc, along: mo)
+            return opened(begun(mc, atPlace: lay.at, turned: lay.turned, room: mo.room(of: 0)))
+        }
+        func kept(_ turned: Bool) -> Int {
+            rising(twin.compactMap { $0.map { place(of: $0, begunAt: start, turned: turned, count: n) } }).count
+        }
+        let same = kept(false), other = kept(true)
+        let a = opened(begun(c, at: start, turned: false)), b = opened(begun(c, at: start, turned: true))
+        if same != other { return other > same ? b : a }
+        return apart(Measure(b), mo) < apart(Measure(a), mo) * (1 - 1e-9) ? b : a
+    }
+
+    /// The runs of two outlines, each with the one of the other it goes with, given the same
+    /// anchors: `a`'s in their order, then those of `b` that none of `a` goes with. A run with
+    /// none to go with has itself gathered in its middle for company, to shrink to or grow from;
+    /// `own` says whether the second of a pair is a run `b` has. With `anew`, runs with as many
+    /// anchors are looked at too, which else are taken point by point as they are numbered.
+    static func matched(_ a: BezierPath, _ b: BezierPath, anew: Bool) -> [(first: Run, second: Run, own: Bool)] {
+        let xs = a.subpaths.filter { !$0.anchors.isEmpty }, ys = b.subpaths.filter { !$0.anchors.isEmpty }
+        let partner = partners(xs, ys)
+        var out: [(first: Run, second: Run, own: Bool)] = []
+        var taken = Set<Int>()
+        for (i, x) in xs.enumerated() {
+            if let j = partner[i] {
+                let (p, q) = matched(x, ys[j], anew: anew)
+                out.append((p, q, true))
+                taken.insert(j)
+            } else {
+                out.append((x, gathered(x, at: middle(x)), false))
+            }
+        }
+        for (j, y) in ys.enumerated() where !taken.contains(j) { out.append((gathered(y, at: middle(y)), y, true)) }
+        return out
+    }
+
+    /// Two runs given the same anchors.
+    static func matched(_ x: Run, _ y: Run, anew: Bool = false) -> (Run, Run) {
+        if !anew, x.anchors.count == y.anchors.count, x.closed == y.closed { return (x, y) }
+        let mx = Measure(x), my = Measure(y)
+        // A run that is one place: the other grows from it, or shrinks to it.
+        if x.anchors.count < 2 || mx.total < 1e-9 { return (gathered(y, at: x.anchors[0].point), y) }
+        if y.anchors.count < 2 || my.total < 1e-9 { return (x, gathered(x, at: y.anchors[0].point)) }
+        switch (x.closed, y.closed) {
+        case (true, true):
+            return round(x, y, mx, my)
+        case (false, false):
+            return along(x, y, mx, my)
+        case (true, false):
+            let open = unrolled(x, mx, along: y, my)
+            return along(open, y, Measure(open), my, decided: true)
+        case (false, true):
+            let open = unrolled(y, my, along: x, mx)
+            return along(x, open, mx, Measure(open), decided: true)
+        }
+    }
+
+    /// Which run of `ys` each run of `xs` goes with, if any: those nearest each other in place
+    /// and size, a closed one with a closed one before an open one. Few runs are tried every
+    /// way; many take the nearest first.
+    static func partners(_ xs: [Run], _ ys: [Run]) -> [Int?] {
+        guard !xs.isEmpty, !ys.isEmpty else { return Array(repeating: nil, count: xs.count) }
+        if xs.count == 1, ys.count == 1 { return [0] }
+        // Each run's box, from the middle of its whole outline: where the outlines lie does not count.
+        func boxes(_ runs: [Run]) -> [CGRect] {
+            let all = runs.map(box)
+            let whole = all.reduce(CGRect.null) { $0.union($1) }
+            return all.map { $0.offsetBy(dx: -whole.midX, dy: -whole.midY) }
+        }
+        let bx = boxes(xs), by = boxes(ys)
+        // How unlike two runs are: closed and open first, then how far apart and how other in size.
+        func cost(_ i: Int, _ j: Int) -> (Int, Double) {
+            let p = bx[i], q = by[j]
+            let apart = hypot(p.midX - q.midX, p.midY - q.midY), sized = hypot(p.width - q.width, p.height - q.height)
+            return (xs[i].closed != ys[j].closed ? 1 : 0, Double(apart * apart + sized * sized))
+        }
+        var out = [Int?](repeating: nil, count: xs.count)
+        if max(xs.count, ys.count) <= 6 {
+            // Every way of giving each of the fewer one of the more.
+            let fewer = xs.count <= ys.count
+            let small = fewer ? xs.count : ys.count, large = fewer ? ys.count : xs.count
+            var best: [Int] = [], least = (Int.max, Double.infinity)
+            var chosen: [Int] = [], used = [Bool](repeating: false, count: large)
+            func choose(_ sum: (Int, Double)) {
+                guard sum < least else { return }
+                if chosen.count == small {
+                    best = chosen
+                    least = sum
+                    return
+                }
+                let s = chosen.count
+                for l in 0..<large where !used[l] {
+                    used[l] = true
+                    chosen.append(l)
+                    let c = fewer ? cost(s, l) : cost(l, s)
+                    choose((sum.0 + c.0, sum.1 + c.1))
+                    chosen.removeLast()
+                    used[l] = false
+                }
+            }
+            choose((0, 0))
+            for (s, l) in best.enumerated() {
+                if fewer { out[s] = l } else { out[l] = s }
+            }
+            return out
+        }
+        var all: [(cost: (Int, Double), x: Int, y: Int)] = []
+        for i in xs.indices {
+            for j in ys.indices { all.append((cost(i, j), i, j)) }
+        }
+        all.sort { ($0.cost.0, $0.cost.1, $0.x, $0.y) < ($1.cost.0, $1.cost.1, $1.x, $1.y) }
+        var taken = Set<Int>()
+        for (_, i, j) in all where out[i] == nil && !taken.contains(j) {
+            out[i] = j
+            taken.insert(j)
+        }
+        return out
+    }
+}
