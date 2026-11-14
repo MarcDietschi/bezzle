@@ -3,6 +3,7 @@ import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 @testable import Bezzle
+import Vectorizer
 
 /// Vectorize: a layer's picture made shapes lying where the picture did, looking as it did;
 /// undone in one step, traced again another way, given back, and asked for by an assistant.
@@ -157,6 +158,78 @@ struct VectorTests {
         // Dots of a few pixels, all edge: a little more of them differs than of large shapes.
         #expect(seen.mean < 0.6, "\(seen)")
         #expect(seen.clearly < 0.004, "\(seen)")
+    }
+
+    /// A sky running from blue to peach, a ball lit from its upper left and a white bar, 800 × 600.
+    static func sunset() -> CGImage {
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let ctx = CGContext(data: nil, width: 800, height: 600, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        func run(_ colors: [CGColor]) -> CGGradient { CGGradient(colorsSpace: space, colors: colors as CFArray, locations: nil)! }
+        let both: CGGradientDrawingOptions = [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+        ctx.drawLinearGradient(run([CGColor(srgbRed: 0.14, green: 0.24, blue: 0.5, alpha: 1), CGColor(srgbRed: 0.95, green: 0.66, blue: 0.5, alpha: 1)]),
+                               start: CGPoint(x: 0, y: 600), end: CGPoint(x: 300, y: 0), options: both)
+        ctx.saveGState()
+        ctx.addEllipse(in: CGRect(x: 120, y: 180, width: 280, height: 280))
+        ctx.clip()
+        ctx.drawRadialGradient(run([CGColor(srgbRed: 1, green: 0.9, blue: 0.62, alpha: 1), CGColor(srgbRed: 0.7, green: 0.26, blue: 0.08, alpha: 1)]),
+                               startCenter: CGPoint(x: 220, y: 370), startRadius: 0, endCenter: CGPoint(x: 220, y: 370), endRadius: 200, options: both)
+        ctx.restoreGState()
+        ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 480, y: 120, width: 240, height: 48))
+        return ctx.makeImage()!
+    }
+
+    @Test func coloursThatRunBecomeGradients() async throws {
+        let (store, _) = try design(Self.sunset())
+        let id = try #require(photo(store)).id
+        let before = try shown(store, scale: 4)
+        try await store.vectorize([id])
+        let group = try #require(store.node(id))
+        // The sky, the ball and the bar: three layers, two of them with colours running.
+        #expect(group.children.count == 3)
+        let sky = try #require(group.children.first { $0.fill.gradient?.kind == .linear })
+        #expect(abs(sky.frame.width - 200) < 0.1 && abs(sky.frame.height - 150) < 0.1)
+        let run = try #require(sky.fill.gradient)
+        // Down the picture and half as far to the right, as drawn.
+        let right = (run.end.x - run.start.x) * 200, down = (run.end.y - run.start.y) * 150
+        #expect(right > 0 && down > 0 && abs(2 * right - down) < 0.05 * down, "\(run.start) \(run.end)")
+        let ball = try #require(group.children.first { $0.fill.gradient?.kind == .radial })
+        #expect(ball.kind == .ellipse)
+        #expect(abs(ball.frame.midX - 65) < 0.1 && abs(ball.frame.midY - 70) < 0.1 && abs(ball.frame.width - 70) < 0.2, "\(ball.frame)")
+        let lit = try #require(ball.fill.gradient)
+        // The light's middle, in the ball's own frame: left of its middle and above it.
+        #expect(abs(lit.start.x - (55.0 - 30) / 70) < 0.02 && abs(lit.start.y - (57.5 - 35) / 70) < 0.02, "\(lit.start)")
+        let bar = try #require(group.children.first { $0.fill.gradient == nil })
+        #expect(bar.kind == .rectangle && bar.fill.color.hex.lowercased().contains("ffffff"))
+        // And it looks as the picture did.
+        let seen = apart(before, try shown(store, scale: 4))
+        #expect(seen.mean < 1.2, "\(seen)")
+        #expect(seen.clearly < 0.002, "\(seen)")
+    }
+
+    @Test func aBlendLiesInItsLayersFrame() {
+        func near(_ a: CGPoint, _ x: CGFloat, _ y: CGFloat) -> Bool { abs(a.x - x) < 1e-6 && abs(a.y - y) < 1e-6 }
+        let red = Tint(r: 255, g: 0, b: 0), blue = Tint(r: 0, g: 0, b: 255)
+        let stops = [Blend.Stop(offset: 0, color: red), Blend.Stop(offset: 1, color: blue)]
+        // Across a picture of 100 by 50 pixels, two points each, on the layer that fills it.
+        let across = VectorMaker.gradient(Blend(kind: .linear, start: Spot(0, 0), end: Spot(100, 0), stops: stops),
+                                          middle: CGPoint(x: 100, y: 50), size: CGSize(width: 200, height: 100), turned: 0, sx: 2, sy: 2)
+        #expect(across.kind == .linear && near(across.start, 0, 0) && near(across.end, 1, 0))
+        #expect(across.stops.map(\.color) == [RGBA(r: 1, g: 0, b: 0), RGBA(r: 0, g: 0, b: 1)])
+        // On a layer turned a quarter, it runs down the layer's own frame.
+        let turned = VectorMaker.gradient(Blend(kind: .linear, start: Spot(50, 0), end: Spot(50, 50), stops: stops),
+                                          middle: CGPoint(x: 100, y: 50), size: CGSize(width: 100, height: 200), turned: 90, sx: 2, sy: 2)
+        #expect(near(turned.start, 0, 0.5) && near(turned.end, 1, 0.5))
+        // Pixels twice as wide as high: the lines of one colour stay the picture's.
+        let slanted = VectorMaker.gradient(Blend(kind: .linear, start: Spot(0, 0), end: Spot(10, 10), stops: stops),
+                                           middle: CGPoint(x: 20, y: 10), size: CGSize(width: 40, height: 20), turned: 0, sx: 2, sy: 1)
+        #expect(near(slanted.start, 0, 0) && near(slanted.end, 8.0 / 40, 16.0 / 20))
+        // A round one is a circle in the picture, whatever the layer's shape.
+        let round = VectorMaker.gradient(Blend(kind: .radial, start: Spot(50, 25), end: Spot(60, 25), stops: stops),
+                                         middle: CGPoint(x: 100, y: 25), size: CGSize(width: 200, height: 50), turned: 0, sx: 2, sy: 1)
+        #expect(round.kind == .radial && near(round.start, 0.5, 0.5) && near(round.end, 0.6, 0.5))
+        #expect(round.across.map { near($0, 0.5, 0.7) } == true)
     }
 
     @Test func tracedAgainAnotherWayInOneStep() async throws {

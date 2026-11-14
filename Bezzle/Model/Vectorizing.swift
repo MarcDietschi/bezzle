@@ -144,6 +144,37 @@ nonisolated enum VectorMaker {
         return made(of: tracing, replacing: picture)
     }
 
+    /// The colours a tracing found running across a shape, as the gradient of the layer made of
+    /// it: a layer's gradient is placed in the layer's own frame, 0,0 its top left and 1,1 its
+    /// bottom right, and the tracing's in the picture's pixels, `sx` and `sy` points each. The
+    /// layer's middle lies at `middle` in the picture's points, it is `size` large and `turned`
+    /// degrees about its middle. A round blend is a circle in the picture, so on a layer that
+    /// is not square it has both its radii (`across`); and where a point is not as wide as it
+    /// is high, a straight blend ends where its lines of one colour stay the picture's.
+    static func gradient(_ blend: Blend, middle: CGPoint, size: CGSize, turned: Double, sx: CGFloat, sy: CGFloat) -> Gradient {
+        let back = CGAffineTransform(rotationAngle: -turned * .pi / 180)
+        func own(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x - middle.x, y: p.y - middle.y).applying(back) }
+        func unit(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x / size.width + 0.5, y: p.y / size.height + 0.5) }
+        let stops = blend.stops.map {
+            GradientStop(offset: min(max($0.offset, 0), 1), color: RGBA(r: Double($0.color.r) / 255, g: Double($0.color.g) / 255, b: Double($0.color.b) / 255))
+        }
+        let start = CGPoint(x: blend.start.x * sx, y: blend.start.y * sy)
+        switch blend.kind {
+        case .linear:
+            // How far along a place is, by its points: the way to the end in pixels, each
+            // pixel `sx` by `sy` points.
+            let dx = blend.end.x - blend.start.x, dy = blend.end.y - blend.start.y, long = dx * dx + dy * dy
+            let gx = long > 0 ? dx / sx / long : 0, gy = long > 0 ? dy / sy / long : 0, g = gx * gx + gy * gy
+            let end = g > 0 ? CGPoint(x: start.x + gx / g, y: start.y + gy / g) : CGPoint(x: blend.end.x * sx, y: blend.end.y * sy)
+            return Gradient(kind: .linear, stops: stops, start: unit(own(start)), end: unit(own(end)))
+        case .radial:
+            let centre = own(start)
+            let reach = hypot(blend.end.x - blend.start.x, blend.end.y - blend.start.y)
+            return Gradient(kind: .radial, stops: stops, start: unit(centre), end: unit(CGPoint(x: centre.x + reach * sx, y: centre.y)),
+                            radius: reach * sx / size.width, across: unit(CGPoint(x: centre.x, y: centre.y + reach * sy)))
+        }
+    }
+
     /// A tracing as a group of layers in place of `picture`, whose frame the tracing fills.
     static func made(of tracing: Tracing, replacing picture: Node) -> Made? {
         guard tracing.width > 0, tracing.height > 0 else { return nil }
@@ -166,9 +197,14 @@ nonisolated enum VectorMaker {
         // In the group, which lies where the picture did until it is fitted round its layers; a
         // group is never turned, so each layer is, about the picture's middle.
         let placement = picture.placement.concatenating(CGAffineTransform(translationX: -picture.frame.minX, y: -picture.frame.minY))
-        func layer(_ kind: Node.Kind, _ color: Tint, middle: CGPoint, size: CGSize, turned: Double = 0) -> Node {
+        func rgba(_ color: Tint) -> RGBA { RGBA(r: Double(color.r) / 255, g: Double(color.g) / 255, b: Double(color.b) / 255) }
+        func layer(_ kind: Node.Kind, _ color: Tint, _ blend: Blend?, middle: CGPoint, size: CGSize, turned: Double = 0) -> Node {
             var n = Node(kind: kind, name: kind.title, frame: CGRect(center: middle.applying(placement), size: size))
-            n.fill = Fill(on: true, color: RGBA(r: Double(color.r) / 255, g: Double(color.g) / 255, b: Double(color.b) / 255))
+            n.fill = Fill(on: true, color: rgba(color))
+            // Colours that run across it are the layer's gradient, its one colour the one halfway.
+            if let blend, size.width > 0, size.height > 0 {
+                n.fill.gradient = Self.gradient(blend, middle: middle, size: size, turned: turned, sx: sx, sy: sy)
+            }
             n.border.on = false
             n.rotation = picture.rotation + turned
             return n
@@ -177,17 +213,17 @@ nonisolated enum VectorMaker {
         for traced in tracing.layers(most: ownLayers) {
             switch traced.figure {
             case .rectangle(let c, let w, let h, let radius, let angle)? where even || abs(angle) < 0.01:
-                var n = layer(.rectangle, traced.color, middle: point(c), size: CGSize(width: w * sx, height: h * sy), turned: angle)
+                var n = layer(.rectangle, traced.color, traced.blend, middle: point(c), size: CGSize(width: w * sx, height: h * sy), turned: angle)
                 n.cornerRadius = ((radius * min(sx, sy)) * 100).rounded() / 100
                 children.append(n)
             case .ellipse(let c, let rx, let ry, let angle)? where even || abs(angle) < 0.01:
-                children.append(layer(.ellipse, traced.color, middle: point(c), size: CGSize(width: 2 * rx * sx, height: 2 * ry * sy), turned: angle))
+                children.append(layer(.ellipse, traced.color, traced.blend, middle: point(c), size: CGSize(width: 2 * rx * sx, height: 2 * ry * sy), turned: angle))
             default:
                 let path = CGMutablePath()
                 add(traced.outlines, to: path)
                 let box = path.boundingBoxOfPath
                 guard !box.isNull, box.width > 0, box.height > 0, box.width.isFinite, box.height.isFinite else { continue }
-                var n = layer(.path, traced.color, middle: box.center, size: box.size)
+                var n = layer(.path, traced.color, traced.blend, middle: box.center, size: box.size)
                 n.path = PathData.string(path)
                 n.pathBox = box
                 children.append(n)
