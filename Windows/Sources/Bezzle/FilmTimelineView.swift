@@ -11,6 +11,13 @@ import WinSDK
 /// and hollow where it is as designed. Everything is taken by the core's hand (`FilmHand`): a press
 /// on the ruler or the bare sheet moves the playhead, a bead dragged moves its key, a line's band
 /// its whole motion, the flag at the end how long the film runs.
+///
+/// The wheel with Ctrl held, as on the canvas, or two fingers pinched on a touchpad look at the
+/// film closer about the moment under the pointer; sideways or with Shift the wheel then moves it
+/// along, and a stroke under the lines shows which part of the film is in sight: twice clicked,
+/// or the film looked at from further off until all of it shows, the whole film is back. How
+/// close it is looked at is the viewer's own (`FilmDesk.window`). The lines are made again only
+/// when another part shows.
 @MainActor
 final class FilmTimelineView {
     let root = Grid()
@@ -42,6 +49,25 @@ final class FilmTimelineView {
     private let rowsNamesColumn = ColumnDefinition()
     private var namesWidth = 120.0
     private var shownRows = 4
+    /// Under the lines: the stroke that shows which part of a film looked at closer is in sight
+    /// (the Mac's FilmThumb). Not there while the whole film shows.
+    private let foot = Canvas()
+    private let thumb = Border()
+    /// The sheet's sides: a film looked at closer goes on past them, and its lines, its ruler and
+    /// its playhead are cut there.
+    private let tracksClip = RectangleGeometry()
+    private let rulerClip = RectangleGeometry()
+    private let playheadClip = RectangleGeometry()
+    /// The part of the film shown changed (`FilmDesk.looked`), and the lines are yet to be made
+    /// again for it.
+    private var linesOwed = false
+    /// Moves a sheet looked at closer along under what is dragged past either end of the part
+    /// shown, with every frame for as long as the hand has reason to (`FilmHand.creeps`).
+    private lazy var creeper = Motion.Ticker { [weak self] dt in
+        guard let self, self.hand.creeps else { return false }
+        self.hand.creep(dt)
+        return self.hand.creeps
+    }
     private var lastPress: (at: Point, time: DWORD, clicks: Int)?
     private var pressAt: Double?
     /// The row above as it was last painted, so that what did not change is left as it is.
@@ -65,6 +91,8 @@ final class FilmTimelineView {
 
     static let rowHeight = 24.0
     static let rulerHeight = 24.0
+    /// The room under the lines (the six points `FilmFraming.foot` counts).
+    static let footHeight = 6.0
 
     init(session: DesignSession) {
         self.session = session
@@ -93,6 +121,10 @@ final class FilmTimelineView {
             self?.refresh()
         }
         hand.changed = { [weak self] in Probe.time("timeline.refresh(hand)") { self?.refresh() } }
+        // Another part of the film shows, by the wheel, by a playhead put out of sight or by a
+        // film playing out of what showed: the lines are made again, once.
+        desk.looked = { [weak self] in self?.owesLines() }
+        hand.creeping = { [weak self] in self?.creeper.start() }
         session.listenToFilm { [weak self] in Probe.time("timeline.refresh(film)") { self?.refresh() } }
         // A hand scrubbing through the film moves the playhead alone at every step, and the row
         // above, which shows the panels' moment, no more than thirty times a second: not every
@@ -371,15 +403,19 @@ final class FilmTimelineView {
         c1.width = GridLength(value: 1, gridUnitType: .star)
         sheet.columnDefinitions.append(namesColumn)
         sheet.columnDefinitions.append(c1)
-        let r0 = RowDefinition(), r1 = RowDefinition()
+        // The ruler, the lines, and six points under them, where the stroke lies that shows which
+        // part of the film is in sight.
+        let r0 = RowDefinition(), r1 = RowDefinition(), r2 = RowDefinition()
         r0.height = GridLength(value: Self.rulerHeight, gridUnitType: .pixel)
         r1.height = GridLength(value: 1, gridUnitType: .auto)
+        r2.height = GridLength(value: Self.footHeight, gridUnitType: .pixel)
         sheet.rowDefinitions.append(r0)
         sheet.rowDefinitions.append(r1)
-        sheet.margin = Theme.inset(0, 0, 0, 6)
+        sheet.rowDefinitions.append(r2)
 
         ruler.height = Self.rulerHeight
         ruler.background = Theme.clear
+        ruler.clip = rulerClip
         try? Grid.setColumn(ruler, 1)
         sheet.children.append(ruler)
 
@@ -391,6 +427,7 @@ final class FilmTimelineView {
         rows.columnDefinitions.append(cr1)
         rows.children.append(names)
         tracks.background = Theme.clear
+        tracks.clip = tracksClip
         try? Grid.setColumn(tracks, 1)
         rows.children.append(tracks)
         scroller.content = rows
@@ -400,11 +437,38 @@ final class FilmTimelineView {
         try? Grid.setColumnSpan(scroller, 2)
         sheet.children.append(scroller)
 
+        // Within the sheet: moved along, a film looked at closer takes the playhead out of sight.
         playhead.isHitTestVisible = false
+        playhead.clip = playheadClip
         try? Grid.setColumn(playhead, 1)
         try? Grid.setRowSpan(playhead, 2)
         sheet.children.append(playhead)
 
+        // Which part of the film shows, while not all of it does: as long against the sheet as
+        // that part is against the film. Twice clicked, the whole film shows again.
+        foot.height = Self.footHeight
+        try? Grid.setColumn(foot, 1)
+        try? Grid.setRow(foot, 2)
+        sheet.children.append(foot)
+        let stroke = Rectangle()
+        stroke.height = 3
+        stroke.radiusX = 1.5
+        stroke.radiusY = 1.5
+        stroke.fill = Theme.brush(Theme.ink, 0.2)
+        stroke.verticalAlignment = .center
+        stroke.isHitTestVisible = false
+        thumb.height = Self.footHeight
+        thumb.background = Theme.clear
+        thumb.child = stroke
+        thumb.visibility = .collapsed
+        thumb.doubleTapped.addHandler { [weak self] _, args in
+            args?.handled = true
+            self?.later { self?.hand.showWhole() }
+        }
+        foot.children.append(thumb)
+
+        tracks.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args, ruler: false) }
+        ruler.pointerWheelChanged.addHandler { [weak self] _, args in self?.wheel(args, ruler: true) }
         tracks.pointerPressed.addHandler { [weak self] _, args in self?.pressed(args, ruler: false) }
         tracks.pointerMoved.addHandler { [weak self] _, args in self?.moved(args, ruler: false) }
         tracks.pointerReleased.addHandler { [weak self] _, args in self?.released(args) }
@@ -471,6 +535,27 @@ final class FilmTimelineView {
         hand.ended(shift: keys & 4 != 0)
     }
 
+    /// The wheel over the lines or the ruler. With Ctrl held it looks at the film closer or from
+    /// further off about the moment under the pointer, as it zooms the canvas; two fingers
+    /// pinched on a touchpad do the same, which Windows tells an app as the wheel with Ctrl said
+    /// to be held while no key is down. Turned sideways (two fingers moved sideways on a
+    /// touchpad) or with Shift held it moves a film looked at closer along. Up and down it is
+    /// left to the lines, which scroll as before: only a turn that was used goes no further.
+    private func wheel(_ args: PointerRoutedEventArgs?, ruler onRuler: Bool) {
+        guard let args, let current = try? args.getCurrentPoint(onRuler ? ruler : tracks), let properties = current.properties else { return }
+        let delta = Double(properties.mouseWheelDelta)
+        let said = UInt32(truncatingIfNeeded: args.keyModifiers.rawValue)
+        if said & 1 != 0 || GetKeyState(Int32(VK_CONTROL)) < 0 {
+            hand.zoom(by: FilmSheet.closer(byWheel: delta), at: Double(current.position.x))
+            args.handled = true
+        } else if properties.isHorizontalMouseWheel || said & 4 != 0 || GetKeyState(Int32(VK_SHIFT)) < 0 {
+            // The whole film has nowhere to go.
+            guard hand.zoomed else { return }
+            hand.scroll(by: FilmSheet.along(byWheel: delta))
+            args.handled = true
+        }
+    }
+
     // MARK: Showing it
 
     /// The card shown as the film is now.
@@ -478,6 +563,7 @@ final class FilmTimelineView {
         let on = session.mode == 3
         root.visibility = on ? .visible : .collapsed
         guard on, session.isFront else { return }
+        linesOwed = false
         painted = nil
         playLine = nil
         paintHeader()
@@ -497,10 +583,38 @@ final class FilmTimelineView {
         rows.height = max(Double(lines.count) * Self.rowHeight, tall)
         tracks.width = tracksWidth
         tracks.height = rows.height
+        tracksClip.rect = Rect(x: 0, y: 0, width: Float(tracksWidth), height: Float(rows.height))
+        rulerClip.rect = Rect(x: 0, y: 0, width: Float(tracksWidth), height: Float(Self.rulerHeight))
+        playheadClip.rect = Rect(x: 0, y: 0, width: Float(tracksWidth), height: Float(Self.rulerHeight + 8 * Self.rowHeight))
         drawNames(lines)
         drawTracks(lines, width: tracksWidth, height: rows.height)
         drawRuler(width: tracksWidth)
+        placeThumb()
         movePlayhead()
+    }
+
+    /// The part of the film shown changed (`FilmDesk.looked`): the lines are made again once what
+    /// is being done is done, unless that makes them again itself, as a key dragged along while
+    /// the sheet creeps under it does. So a step draws them once, not twice.
+    private func owesLines() {
+        guard !linesOwed else { return }
+        linesOwed = true
+        later { [weak self] in
+            guard let self, self.linesOwed else { return }
+            self.linesOwed = false
+            Probe.time("timeline.refresh(looked)") { self.refresh() }
+        }
+    }
+
+    /// The stroke under the lines: which part of the film is in sight, while not all of it is.
+    private func placeThumb() {
+        guard let part = hand.thumb else {
+            thumb.visibility = .collapsed
+            return
+        }
+        thumb.width = part.long
+        try? Canvas.setLeft(thumb, part.x)
+        thumb.visibility = .visible
     }
 
     /// The playhead alone, as the film plays or a hand scrubs through it: its line and tab, made
@@ -594,8 +708,12 @@ final class FilmTimelineView {
             y += Self.rowHeight
         }
         add(ruled, stroke: Theme.ink(1), alpha: 0.07, width: 0.5, to: tracks)
+        // Where moments lie along the sheet, read once for all its lines: the film's start, and
+        // how wide a second is (`FilmHand.x`).
+        let origin = Double(hand.x(0)), perSecond = Double(hand.perSecond)
+        func along(_ t: Double) -> Double { origin + t * perSecond }
         // Past the film's end, the sheet is in shade: what is keyed there does not play.
-        let end = Double(hand.x(desk.length))
+        let end = max(along(desk.length), 0)
         if end < width {
             let past = Rectangle()
             past.width = width - end
@@ -621,16 +739,21 @@ final class FilmTimelineView {
             if let first = line.marks.first, let last = line.marks.last, last.t > first.t {
                 let band = hot.band == line.id || (hand.holdsBand && hot.row == line.id)
                 let h = own ? 11.0 : 15.0
-                let capsule = Rectangle()
-                capsule.width = Double(hand.x(last.t) - hand.x(first.t)) + h
-                capsule.height = h
-                capsule.radiusX = h / 2
-                capsule.radiusY = h / 2
-                capsule.fill = Theme.brush(Theme.ink, band ? 0.13 : own ? 0.05 : 0.075)
-                capsule.isHitTestVisible = false
-                try? Canvas.setLeft(capsule, Double(hand.x(first.t)) - h / 2)
-                try? Canvas.setTop(capsule, mid - h / 2)
-                tracks.children.append(capsule)
+                // As much of it as shows: on a film looked at closer a band goes on far past
+                // the sheet's sides.
+                let from = max(along(first.t) - h / 2, -h), to = min(along(last.t) + h / 2, width + h)
+                if to > from {
+                    let capsule = Rectangle()
+                    capsule.width = to - from
+                    capsule.height = h
+                    capsule.radiusX = h / 2
+                    capsule.radiusY = h / 2
+                    capsule.fill = Theme.brush(Theme.ink, band ? 0.13 : own ? 0.05 : 0.075)
+                    capsule.isHitTestVisible = false
+                    try? Canvas.setLeft(capsule, from)
+                    try? Canvas.setTop(capsule, mid - h / 2)
+                    tracks.children.append(capsule)
+                }
             }
             if own, line.marks.count > 1 {
                 // How each key is come to, drawn between it and the one before.
@@ -638,12 +761,15 @@ final class FilmTimelineView {
                 let rise = 7.0
                 for k in 1..<line.marks.count {
                     guard let curve = line.marks[k].pace else { continue }
-                    let a = Double(hand.x(line.marks[k - 1].t)) + 5, b = Double(hand.x(line.marks[k].t)) - 5
-                    guard b - a > 10 else { continue }
-                    let steps = max(8, Int((b - a) / 3))
+                    let a = along(line.marks[k - 1].t) + 5, b = along(line.marks[k].t) - 5
+                    // Only what is in sight: a film looked at closer has long stretches out of it.
+                    guard b - a > 10, b > 0, a < width else { continue }
+                    // The part of the stretch in sight, a point for every three across it.
+                    let from = max(a, -3), to = min(b, width + 3)
+                    let steps = max(8, Int((to - from) / 3))
                     for s in 0...steps {
-                        let u = Double(s) / Double(steps)
-                        let x = a + (b - a) * u, py = mid + rise / 2 - rise * curve(u)
+                        let x = from + (to - from) * Double(s) / Double(steps)
+                        let py = mid + rise / 2 - rise * curve((x - a) / (b - a))
                         if s == 0 { pace.move(x, py) } else { pace.line(x, py) }
                     }
                 }
@@ -654,7 +780,9 @@ final class FilmTimelineView {
                 let ink: UInt32 = mark.picked ? Theme.pencil : Theme.ink
                 let alpha = mark.picked ? 1 : mark.given ? 0.44 : 1
                 let grown = mark.hot ? 1.3 : 1.0
-                let x = Double(hand.x(mark.t))
+                let x = along(mark.t)
+                // Only the beads in sight are made.
+                guard x > -12, x < width + 12 else { continue }
                 if mark.picked {
                     let halo = Ellipse()
                     halo.width = d + 9
@@ -690,54 +818,40 @@ final class FilmTimelineView {
         canvas.children.append(p)
     }
 
-    /// The seconds between numbered strokes, and how many parts each is ruled in, so the numbers
-    /// stand clear of each other.
-    private static func step(_ perSecond: Double) -> (Double, Int) {
-        let steps: [(Double, Int)] = [(0.1, 2), (0.2, 4), (0.5, 5), (1, 10), (2, 4), (5, 5), (10, 10), (20, 4), (30, 6), (60, 6), (120, 4), (300, 5)]
-        return steps.first { $0.0 * perSecond >= 52 } ?? (600, 10)
-    }
-
-    private static func label(_ t: Double) -> String {
-        if t >= 60 {
-            let s = Int(t.rounded())
-            return String(format: "%d:%02d", s / 60, s % 60)
-        }
-        return Inspector.number(t, places: 2)
-    }
-
     /// The seconds along the top, and the flag where the film ends: hollow while the film is as
-    /// long as its keys, filled once its length was set.
+    /// long as its keys, filled once its length was set. Its numbers thin out and fill in with
+    /// how close the film is looked at, from one a minute down to one every twentieth of a second
+    /// with a stroke every hundredth, and only the strokes in sight are made (`FilmSheet.step`,
+    /// `strokes`, the Mac's FilmRuler).
     private func drawRuler(width: Double) {
         ruler.children.clear()
-        let perSecond = Double(hand.perSecond)
-        let (major, parts) = Self.step(perSecond)
-        let minor = major / Double(parts)
+        let perSecond = Double(hand.perSecond), origin = Double(hand.x(0))
+        let rule = FilmSheet.strokes(perSecond: perSecond, origin: origin, width: width)
+        let minor = rule.major / Double(rule.parts)
         let length = desk.length
         let h = Self.rulerHeight
         var strokes = PathData(), fine = PathData()
-        var i = 0
-        while true {
+        for i in rule.first..<rule.end {
             let t = Double(i) * minor
-            let x = Double(hand.x(t))
-            if x > width - 2 || i > 2000 { break }
-            let whole = i % parts == 0
+            let x = origin + t * perSecond
+            if x > width - 2 { break }
+            let whole = i % rule.parts == 0
             let past = t > length + 0.0001
             if past { fine.move(x, h - (whole ? 7 : 3.5)); fine.line(x, h) } else { strokes.move(x, h - (whole ? 7 : 3.5)); strokes.line(x, h) }
             if whole {
-                let label = Theme.text(Self.label(t), size: 9.5, weight: 500)
+                let label = Theme.text(FilmSheet.label(t, step: rule.major), size: 9.5, weight: 500)
                 label.foreground = Theme.brush(Theme.ink, past ? 0.22 : 0.46)
                 label.isHitTestVisible = false
                 try? Canvas.setLeft(label, x + 3.5)
                 try? Canvas.setTop(label, h - 12 - 7)
                 ruler.children.append(label)
             }
-            i += 1
         }
         add(strokes, stroke: Theme.ink(1), alpha: 0.3, width: 1, to: ruler)
         add(fine, stroke: Theme.ink(1), alpha: 0.14, width: 1, to: ruler)
         // The film's end.
         let hot = hand.hot.end || hand.holdsLength
-        let x = Double(hand.x(length))
+        let x = origin + length * perSecond
         var pole = PathData()
         pole.move(x, 5); pole.line(x, h)
         add(pole, stroke: Theme.ink(1), alpha: hot ? 0.9 : 0.55, width: 1.25, to: ruler)

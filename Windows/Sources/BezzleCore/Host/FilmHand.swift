@@ -4,6 +4,11 @@ import Foundation
 // it is on, and what a press has in hand. The timeline's lines and where moments lie along them
 // are the shared FilmRow and FilmScale (Model/FilmKeys.swift); the app's timeline only draws them
 // and tells the hand where the pointer is.
+//
+// The sheet shows the whole film, or the part of it looked at closer (`FilmDesk.window`, the
+// shared FilmWindow): the hand looks closer and moves along for the wheel and two fingers
+// (`zoom`, `scroll`, `showWhole`), and moves the sheet along under what is dragged past either
+// end of the part shown (`creep`).
 
 extension WindowsCore {
     /// One line of the timeline as it is drawn: the camera, a layer that moves, or one property
@@ -64,6 +69,10 @@ extension WindowsCore {
         /// Shown again: what the pointer is on, or what is in hand, changed.
         public var changed: () -> Void = {}
 
+        /// The sheet has reason to creep along under what is dragged (`creeps`): whoever draws it
+        /// steps `creep` with every frame of the screen for as long as it has.
+        public var creeping: () -> Void = {}
+
         public init(desk: FilmDesk) { self.desk = desk }
 
         /// How near the pointer takes a bead, and how near a moment catches the playhead.
@@ -78,6 +87,8 @@ extension WindowsCore {
             public var x: CGFloat = 0
             /// On the flag at the film's end.
             public var end = false
+            /// On the ruler, rather than on the lines under it.
+            public var ruler = false
             public init() {}
         }
 
@@ -86,8 +97,13 @@ extension WindowsCore {
         struct Drag: Equatable {
             enum Kind { case scrub, keys, band, length, nothing }
             var kind: Kind
+            /// The keys as they were when taken.
             var refs: [FilmKeyRef] = []
+            /// The moment of the one under the pointer, which is what catches on others.
             var anchor = 0.0
+            /// The moment the pointer was at when it took them: they keep their distance from it,
+            /// however the sheet is moved along or looked at meanwhile.
+            var grip = 0.0
             var moved = false
             var caught: Double?
         }
@@ -97,15 +113,55 @@ extension WindowsCore {
         /// A band taken in hand, for its pointer.
         public var holdsBand: Bool { drag?.kind == .band }
         public var holdsLength: Bool { drag?.kind == .length }
+        /// Where the press last was and what was held down with it: what a drag goes on from
+        /// when the sheet moves under a pointer that holds still.
+        private var last: (p: CGPoint, dx: CGFloat, free: Bool, fine: Bool)?
+
+        // MARK: The sheet
+
+        /// The film's length as it was last read, kept while the design and the artboard are as
+        /// they were: where a moment lies is asked for every bead of every line, and for the
+        /// playhead at every step of a scrub, and reading the length goes through every layer.
+        private var lengthWorkedOut: (version: Int, fronts: [UUID: Int], board: UUID?, length: Double)?
+
+        private var length: Double {
+            if let had = lengthWorkedOut, had.version == WindowsCore.designVersion, had.fronts == WindowsCore.fronts, had.board == desk.board {
+                return had.length
+            }
+            let length = desk.length
+            lengthWorkedOut = (WindowsCore.designVersion, WindowsCore.fronts, desk.board, length)
+            return length
+        }
+
+        /// The seconds the film's whole sheet shows: the film, and a little past its end.
+        private var whole: Double { FilmScale.span(for: length) }
+
+        /// The part of the film the card shows, looked at closer; nil while it shows all of it.
+        private var part: FilmWindow? { desk.window?.fitted(to: whole) }
+
+        /// Whether the card shows a part of the film, looked at closer, rather than all of it.
+        public var zoomed: Bool { part != nil }
 
         /// The seconds the sheet shows.
-        public var span: Double { held ?? FilmScale.span(for: desk.length) }
+        public var span: Double { scale.span }
 
-        var scale: FilmScale { FilmScale(width: width, span: span) }
+        /// Where moments lie along the sheet, as the card shows it now: the part of the film
+        /// looked at; or the whole film, held as it was while something is dragged.
+        var scale: FilmScale {
+            if let part { return FilmScale(width: width, span: part.span, start: part.start) }
+            return FilmScale(width: width, span: held ?? whole)
+        }
 
         public func x(_ t: Double) -> CGFloat { scale.x(t) }
         public func t(_ x: CGFloat) -> Double { scale.t(x) }
         public var perSecond: CGFloat { scale.perSecond }
+
+        /// The stroke under the lines that shows which part of the film is in sight: where it
+        /// begins along the sheet and how long it is. Nil while the whole film shows.
+        public var thumb: (x: Double, long: Double)? {
+            guard let part else { return nil }
+            return FilmSheet.thumb(width: Double(width), inset: Double(FilmScale.inset), start: part.start, span: part.span, whole: whole)
+        }
 
         /// The lines as they were last read, kept while the design, the artboard and the lines
         /// opened are as they were: a scrub asks for them at every step.
@@ -177,8 +233,23 @@ extension WindowsCore {
         public func pointRuler(_ p: CGPoint) -> Hot {
             var out = Hot()
             out.x = p.x
-            out.end = abs(p.x - scale.x(desk.length)) <= 8
+            out.end = abs(p.x - scale.x(length)) <= 8
+            out.ruler = true
             return out
+        }
+
+        /// What the pointer is on, found again where it rests: after the sheet has moved under it.
+        private func pointAgain() {
+            guard drag == nil else { return }
+            var now = hot
+            if hot.ruler {
+                now = pointRuler(CGPoint(x: hot.x, y: 0))
+            } else if let id = hot.row {
+                let rows = rows
+                guard let i = rows.firstIndex(where: { $0.id == id }) else { return }
+                now = point(CGPoint(x: hot.x, y: (CGFloat(i) + 0.5) * Self.rowHeight), rows: rows)
+            }
+            if now != hot { hot = now }
         }
 
         private func pick(_ row: FilmRow, adding: Bool = false) {
@@ -208,7 +279,7 @@ extension WindowsCore {
                     keys = [ref]
                 }
                 desk.keys = keys
-                drag = keys.contains(ref) ? Drag(kind: .keys, refs: Array(keys), anchor: ref.time) : Drag(kind: .nothing)
+                drag = keys.contains(ref) ? Drag(kind: .keys, refs: Array(keys), anchor: ref.time, grip: scale.t(p.x)) : Drag(kind: .nothing)
             } else if let row, clicks >= 2 {
                 pick(row)
                 desk.keys = []
@@ -219,7 +290,7 @@ extension WindowsCore {
                 pick(row)
                 let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, at: $0.t) }
                 desk.keys = Set(refs)
-                drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0)
+                drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0, grip: scale.t(p.x))
             } else {
                 if !desk.keys.isEmpty { desk.keys = [] }
                 drag = Drag(kind: .scrub)
@@ -250,12 +321,17 @@ extension WindowsCore {
             guard var d = drag else { return }
             let rows = Probe.time("hand.rows") { self.rows }
             let scale = scale
-            let length = desk.length
+            let length = length
+            // On a sheet looked at closer, what is dragged past either end of the part shown waits
+            // at that end, in sight, while the sheet moves along under it (`creep`).
+            let zoomed = zoomed
+            last = (p, dx, free, fine)
             switch d.kind {
             case .nothing:
                 break
             case .scrub:
-                desk.seek(moment(p.x, scale, rows, free: free, fine: fine, caught: &d.caught, length: length))
+                // The sheet is moved along by this hand alone, not to wherever the playhead lands.
+                desk.seek(moment(p.x, scale, rows, free: free, fine: fine, caught: &d.caught, length: length), following: false)
             case .keys, .band:
                 if !d.moved {
                     guard abs(dx) >= 3 else { break }
@@ -263,7 +339,10 @@ extension WindowsCore {
                     held = scale.span
                     WindowsCore.beginGesture()
                 }
-                var to = d.anchor + Double(dx / scale.perSecond)
+                // As far from where they were as the pointer is from the moment it took them at.
+                var at = scale.t(p.x)
+                if zoomed { at = min(max(at, scale.start), scale.start + scale.span) }
+                var to = d.anchor + at - d.grip
                 if !free {
                     let taken = Set(d.refs.map(\.ms))
                     var stops = [desk.filmTime]
@@ -298,22 +377,25 @@ extension WindowsCore {
                         t = (t / grid).rounded() * grid
                     }
                 }
-                t = min(max(t, 0.25), scale.span)
+                t = min(max(t, 0.25), scale.start + scale.span)
                 desk.setLength(MotionTiming.time(t))
             }
             // Only when it changed: the timeline is made again each time it is told, and a hand
             // scrubbing through the film moves on many times a second with nothing else changed.
-            guard drag != d else { return }
-            drag = d
-            // Nor for the playhead catching on a key or letting go of it: the timeline shows
-            // nothing of that, and the playhead tells of itself (`FilmDesk.moved`).
-            if d.kind != .scrub { Probe.time("hand.changed") { changed() } }
+            if drag != d {
+                drag = d
+                // Nor for the playhead catching on a key or letting go of it: the timeline shows
+                // nothing of that, and the playhead tells of itself (`FilmDesk.moved`).
+                if d.kind != .scrub { Probe.time("hand.changed") { changed() } }
+            }
+            if creeps { creeping() }
         }
 
         /// The press let go.
         public func ended(shift: Bool = false) {
             guard let d = drag else { return }
             drag = nil
+            last = nil
             switch d.kind {
             case .keys:
                 if d.moved { endGesture() } else if !shift { desk.seek(d.anchor) }
@@ -338,6 +420,7 @@ extension WindowsCore {
         public func cancel() {
             guard let d = drag else { return }
             drag = nil
+            last = nil
             if d.moved, WindowsCore.inGesture {
                 WindowsCore.cancelGesture()
                 desk.edited()
@@ -346,10 +429,81 @@ extension WindowsCore {
             changed()
         }
 
+        /// The drag gone on from where the pointer rests, after the sheet has moved under it.
+        private func again() {
+            guard drag != nil, let last else { return }
+            dragged(to: last.p, by: last.dx, free: last.free, fine: last.fine)
+        }
+
+        // MARK: Past the ends of a sheet looked at closer
+
+        private func creepRate(at x: CGFloat) -> Double {
+            FilmSheet.creepRate(at: Double(x), width: Double(width), inset: Double(FilmScale.inset))
+        }
+
+        /// Whether the sheet has reason to creep: something in hand on a sheet looked at closer,
+        /// and the pointer past the first or the last moment it shows.
+        public var creeps: Bool {
+            guard let d = drag, d.kind != .nothing, let last, zoomed else { return false }
+            return creepRate(at: last.p.x) != 0
+        }
+
+        /// Moves a sheet looked at closer along under what is dragged past either end of the part
+        /// it shows, as far as it goes in `seconds`, and has the drag go on from there: the
+        /// playhead, the keys or the film's end stay at that end of the sheet, and the film runs
+        /// by under them. False where nothing moved: nothing in hand, the whole film showing, the
+        /// pointer within the sheet, or the film's own end reached.
+        @discardableResult
+        public func creep(_ seconds: Double) -> Bool {
+            guard creeps, let last else { return false }
+            let before = scale
+            let to = before.scrolled(by: CGFloat(-creepRate(at: last.p.x) * seconds), whole: whole)
+            guard to != before else { return false }
+            desk.look(at: to)
+            again()
+            return true
+        }
+
+        // MARK: The wheel, and two fingers
+
+        /// The sheet looked at `factor` times closer (or, under 1, from further off) about the
+        /// moment at `x`, which stays where it is: the wheel turned with Ctrl held, as on the
+        /// canvas, or two fingers pinched on a touchpad. No closer than a key steps, and back
+        /// out it stops at the whole film.
+        public func zoom(by factor: Double, at x: CGFloat) {
+            look(at: scale.zoomed(by: factor, at: x, whole: whole))
+        }
+
+        /// The sheet moved along by so many points, the way its moments go: two fingers moved
+        /// sideways, or the wheel with Shift. Only while it is looked at closer, as the whole
+        /// film has nowhere to go, and not past either end of the film.
+        public func scroll(by dx: CGFloat) {
+            look(at: scale.scrolled(by: dx, whole: whole))
+        }
+
+        /// Back to the whole film at once.
+        public func showWhole() {
+            look(at: FilmScale(width: width, span: whole))
+        }
+
+        /// Has the card show what a scale shows.
+        private func look(at scale: FilmScale) {
+            guard scale.window(of: whole) != part else { return }
+            desk.look(at: scale)
+            if drag != nil {
+                // What is in hand goes on from where the pointer rests.
+                again()
+            } else {
+                // What was under the pointer has moved away from it.
+                pointAgain()
+            }
+        }
+
         private func snapped(_ t: Double) -> Double { max((t / 0.05).rounded() * 0.05, 0) }
 
         private func moment(_ x: CGFloat, _ scale: FilmScale, _ rows: [FilmRow], free: Bool, fine: Bool, caught: inout Double?, length: Double) -> Double {
-            let t = min(max(scale.t(x), 0), length)
+            // Within the film, and within what of it the sheet shows.
+            let t = min(max(scale.t(x), max(scale.start, 0)), min(length, scale.start + scale.span))
             guard !free else { return t }
             var stops = [0, length]
             for row in rows { stops.append(contentsOf: row.marks.map(\.t)) }

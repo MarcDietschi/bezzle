@@ -44,6 +44,10 @@ extension WindowsCore {
         public var going = false { didSet { if going != oldValue { changed() } } }
         /// How many seconds apart several layers are given a move, one after another.
         public var apart = 0.06 { didSet { if apart != oldValue { changed() } } }
+        /// The part of the film the timeline shows, when it is looked at closer than whole (the
+        /// Mac's FilmDesk.window). The viewer's own, as the canvas's zoom is: never in the design.
+        /// Whoever sets it tells of it (`looked`, or `changed` with all the rest).
+        private(set) var window: FilmWindow?
         /// How far saving the film as a movie has come, 0 to 1, while it is being saved.
         public internal(set) var exporting: Double? {
             didSet {
@@ -82,6 +86,10 @@ extension WindowsCore {
         /// The panels' moment (`panelTime`) caught up with the playhead: what they show at it,
         /// shown again.
         public var panelMoved: () -> Void = {}
+        /// The timeline shows another part of the film (`window`), and nothing else changed: its
+        /// lines are drawn again, and nothing but they. A film playing out of the part shown
+        /// tells of it once a page, never at every frame.
+        public var looked: () -> Void = {}
         /// The design was changed through the film: shown and saved.
         public var edited: () -> Void = {}
         /// The film began to play, or show something: the stage runs frame by frame.
@@ -104,6 +112,7 @@ extension WindowsCore {
             on = animating
             if on {
                 focus()
+                fitWindow()
                 frameIt()
             } else {
                 pause()
@@ -151,6 +160,8 @@ extension WindowsCore {
             board = id
             keys = []
             camera = false
+            // Another film is seen whole first.
+            window = nil
             time = 0
             shown = 0
             live = 0
@@ -165,9 +176,19 @@ extension WindowsCore {
             guard on else { return }
             if let id = board, let n = doc?.node(id), n.isArtboard, !n.hidden {
                 if !playing, let length = filmBoard?.filmLength, max(time, live) > length + 1e-9 { seek(length) }
+                fitWindow()
             } else {
                 focus()
             }
+        }
+
+        /// A timeline looked at closer shows no more than there is of a film that got shorter,
+        /// while it was worked on or while the design was seen another way. Told of by whatever
+        /// tells of the design's change.
+        private func fitWindow() {
+            guard let window else { return }
+            let fitted = window.fitted(to: filmWhole)
+            if fitted != window { self.window = fitted }
         }
 
         private func frameIt() {
@@ -226,7 +247,10 @@ extension WindowsCore {
         /// Puts the playhead at a moment, and stops the film there. A film that played stops, which
         /// everything is told of; else only that the playhead moved, as a hand scrubbing through
         /// the film moves it many times a second, and the panels catch up at their own pace.
-        public func seek(_ t: Double) {
+        /// A timeline looked at closer is moved along to show the moment, unless `following` is
+        /// false: under a hand that drags the playhead the timeline moves by that hand alone, and
+        /// a film only stopped stays as it is looked at.
+        public func seek(_ t: Double, following: Bool = true) {
             let stopped = playing || pass != nil
             playing = false
             pass = nil
@@ -236,13 +260,17 @@ extension WindowsCore {
             time = to
             live = to
             head = to
+            let turned = following && showInTimeline(to, length: length)
             if stopped {
                 shown = to
                 shownAt = WindowsCore.now
                 changed()
-            } else if !same {
-                moved()
-                catchUpPanels()
+            } else {
+                if !same {
+                    moved()
+                    catchUpPanels()
+                }
+                if turned { looked() }
             }
         }
 
@@ -274,10 +302,10 @@ extension WindowsCore {
         /// Whether what plays is only a look at something just made.
         public var looking: Bool { pass?.to != nil }
 
-        /// Stops the film where it is.
+        /// Stops the film where it is; the timeline stays as it is looked at.
         public func pause() {
             guard playing else { return }
-            seek(pass?.back ?? live)
+            seek(pass?.back ?? live, following: false)
         }
 
         public func toggle() {
@@ -312,7 +340,46 @@ extension WindowsCore {
             } else {
                 head = min(t.truncatingRemainder(dividingBy: length + Self.breath), length)
             }
+            // Playing out of the part a timeline looked at closer shows, it takes the timeline
+            // along: a page at a time, as moving it with every frame would draw every line again
+            // each frame. One moved away from the playhead by hand is left where it was put.
+            if let part = window?.fitted(to: FilmScale.span(for: length)), part.holds(live), !part.holds(head),
+               showInTimeline(head, ahead: true, length: length) {
+                looked()
+            }
             live = head
+            return true
+        }
+
+        // MARK: The timeline, looked at closer
+
+        /// The seconds the film's whole sheet shows: the film, and a little past its end.
+        public var filmWhole: Double { FilmScale.span(for: length) }
+
+        /// The part of the film the timeline shows while it is looked at closer, the moment it
+        /// begins at and how many seconds; nil while it shows the whole film.
+        public var shownPart: (start: Double, span: Double)? {
+            guard let part = window?.fitted(to: filmWhole) else { return nil }
+            return (part.start, part.span)
+        }
+
+        /// Has the timeline show what a scale shows, a part of the film or all of it, and tells
+        /// of it (`looked`): only when it is another part, as every line is drawn again for it.
+        func look(at scale: FilmScale) {
+            let to = scale.window(of: filmWhole)
+            guard window != to else { return }
+            window = to
+            looked()
+        }
+
+        /// Moves a timeline looked at closer along so that a moment shows. Whether it moved;
+        /// telling of it is left to whoever asked.
+        private func showInTimeline(_ t: Double, ahead: Bool = false, length: Double) -> Bool {
+            guard let window else { return false }
+            let whole = FilmScale.span(for: length)
+            let to = window.fitted(to: whole)?.showing(t, ahead: ahead, whole: whole)
+            guard window != to else { return false }
+            self.window = to
             return true
         }
 
@@ -362,7 +429,10 @@ extension WindowsCore {
         private func edit(_ change: (inout BezzleDocument) -> Void) {
             let before = WindowsCore.design
             WindowsCore.edit(change)
-            if WindowsCore.design != before { edited() }
+            guard WindowsCore.design != before else { return }
+            // A film made shorter is not looked at past its end.
+            fitWindow()
+            edited()
         }
 
         // MARK: Posing

@@ -19,8 +19,22 @@ import BezzleCore
 ///                                  passes, as a bare hand's does (else as with Ctrl held)
 ///       watch=seconds              the same without moving the playhead, while the film plays
 ///       mode=0…3                   Design, Prototype, Inspect or Animate
-///   BEZZLE_SCRUB_OUT=<file>        where a scrub or a watch writes how the app kept up (else the
-///                                  trace, BEZZLE_TRACE)
+///       zoom=factor[,x]            look at the timeline that many times closer (under 1, from
+///                                  further off) about a point of its sheet, x points from where
+///                                  its lines begin (else its middle), as the wheel with Ctrl and
+///                                  two fingers pinched do
+///       along=points               move a timeline looked at closer along by so many points, the
+///                                  way its moments go (under 0, later ones come into sight), as
+///                                  the wheel with Shift and two fingers moved sideways do
+///       whole                      show the whole film again, as two clicks on the stroke under
+///                                  the lines do
+///       timeline                   write which part of the film the timeline shows, and where
+///                                  the playhead is
+///   BEZZLE_SCRUB_OUT=<file>        where a scrub, a watch or `timeline` writes (else the trace,
+///                                  BEZZLE_TRACE)
+/// zoom, along and whole call what the wheel calls (`FilmHand.zoom`, `scroll`, `showWhole`), so a
+/// run needs no touchpad. A film playing out of the part shown turns the page: the measure of a
+/// watch counts each under `timeline.refresh(looked)`, once a page and never once a frame.
 /// A scrub's line says how many steps the app found the time for a second, the gaps between them,
 /// how long the steps themselves took on the main thread, and how much of the main thread's time
 /// went on anything at all (its processor time over the time that passed).
@@ -90,7 +104,34 @@ enum AnimateHooks {
             guard n.count == 3 else { return }
             Scrubber.run(session, film, from: n[0], to: n[1], seconds: n[2], free: !rest.hasSuffix(",caught"))
         case "watch": Scrubber.run(session, film, from: 0, to: nil, seconds: Double(rest) ?? 5)
+        case "zoom":
+            let n = numbers(rest)
+            guard let factor = n.first else { return }
+            let hand = session.filmHand
+            hand.zoom(by: factor, at: n.count > 1 ? n[1] : hand.width / 2)
+        case "along":
+            guard let points = Double(rest) else { return }
+            session.filmHand.scroll(by: points)
+        case "whole": session.filmHand.showWhole()
+        case "timeline":
+            let whole = desk.filmWhole
+            if let part = desk.shownPart {
+                say(String(format: "timeline: from %.3f s, %.3f s of %.3f; playhead %.3f\n", part.start, part.span, whole, desk.filmTime))
+            } else {
+                say(String(format: "timeline: whole, %.3f s; playhead %.3f\n", whole, desk.filmTime))
+            }
         default: break
+        }
+    }
+
+    /// A line for whoever drives the run: after what `BEZZLE_SCRUB_OUT` holds, or into the trace.
+    private static func say(_ line: String) {
+        if let path = ProcessInfo.processInfo.environment["BEZZLE_SCRUB_OUT"], !path.isEmpty {
+            let url = URL(fileURLWithPath: path)
+            let had = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            try? (had + line).write(to: url, atomically: true, encoding: .utf8)
+        } else {
+            Trace.say(line)
         }
     }
 
@@ -181,13 +222,7 @@ enum AnimateHooks {
                 at(work, 0.5), at(work, 0.9), work.last ?? 0, spent / max(took, 1e-6) * 100,
                 film.picturesMade - pictures, film.partsMade - parts)
             line += costs
-            if let path = ProcessInfo.processInfo.environment["BEZZLE_SCRUB_OUT"], !path.isEmpty {
-                let url = URL(fileURLWithPath: path)
-                let had = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-                try? (had + line).write(to: url, atomically: true, encoding: .utf8)
-            } else {
-                Trace.say(line)
-            }
+            AnimateHooks.say(line)
         }
     }
 }

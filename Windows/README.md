@@ -317,12 +317,36 @@ thirty times a second at most, and each number, bead and summary puts itself rig
 (`Inspector.filmFollowers`): making the cards again, as every other change does, took longer than
 a frame.
 
+The timeline is looked at closer as on the Mac (`README.md` › Animate, The timeline looked at
+closer). Which part of the film shows is `FilmDesk.window`, the shared `FilmWindow`: the viewer's
+own and never saved, nil for the whole film; another artboard's film is seen whole first, and a
+film that gets shorter is not looked at past its end. Over the lines or the ruler, the wheel with
+Ctrl held looks closer about the moment under the pointer, as it zooms the canvas, and so do two
+fingers pinched on a touchpad (told as the wheel with Ctrl said to be held while no key is down);
+turned sideways, or with Shift, it moves a film looked at closer along and stops at the film's
+ends; up and down stays the lines' own scrolling (`FilmTimelineView.wheel`, `FilmHand.zoom`,
+`scroll`). Back to the whole film: looking from further off stops there, and two clicks on the
+stroke under the lines, which shows which part is in sight, go there at once (`showWhole`). The
+playhead stays in sight: `seek` brings the part along (not under a hand on the playhead), and a
+film playing out of it turns the page, the playhead an eighth in. `FilmDesk.looked` tells of
+another part showing apart from everything else, and only then are the lines made again, once
+(`FilmTimelineView.owesLines`): once a page while a film plays and never at every frame, and a
+step of a scrub still moves the playhead alone. Keys, bands and the film's end are moved by the
+moment under the pointer, not by how far it has gone, and what is dragged past either end of the
+part shown waits there while the sheet creeps along under it, a step with every frame
+(`FilmHand.creep`, which the hand asks the view for through `creeping`). The ruler thins out and
+fills in as the Mac's and makes only the strokes in sight. That, the stroke under the lines, what
+a turn of the wheel does and how fast the sheet creeps are numbers in and numbers out
+(`Host/FilmSheet.swift`), so `Windows/Tests` checks them too.
+
 To measure, as on the Mac: `BEZZLE_ANIMATE=3` and
 `BEZZLE_FILM='6:scrub=0,10,8;16:pick=Card 1;17:scrub=0,10,8;27:pick=camera;28:scrub=0,10,8;38:pick=;39:start;41:watch=8'`
 (`Sources/Bezzle/AnimateHooks.swift` has the steps) drag the playhead through a copy's film and
 back with every frame of the screen, and `BEZZLE_SCRUB_OUT=<file>` takes what each scrub or watch
 found: steps a second, the gaps between them, how busy the main thread was, the pictures and
 parts drawn, and where the time went (`Host/Probe.swift`, since the VM has no profiler to ask).
+`zoom=4`, `along=-200`, `whole` and `timeline` look at the timeline closer, move it along, show the
+whole film again and write which part shows, without a wheel or a touchpad.
 Measure the release build, in the desktop session, the copy started with a library of its own.
 Without the app, `bezzle-render` lays the first film out as the canvas does and says what a scrub
 costs the stage alone: `BEZZLE_STAGE_AT=0;1.5;4` (frames written at these moments, and beside each
