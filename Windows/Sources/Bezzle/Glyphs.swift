@@ -46,6 +46,8 @@ enum Glyphs {
         var width = 1.5
         /// Round ends, or cut straight across, as dashes are.
         var round = true
+        /// Drawn in dashes: their lengths and the gaps between, in widths of the stroke.
+        var dashes: [Double] = []
     }
 
     /// A picture `size` square in `brush`, as a WinUI element.
@@ -197,7 +199,8 @@ enum Glyphs {
     }
 
     private static func shape(_ part: Part) -> WinUI.Path? {
-        let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(part.data)' "
+        let dashes = part.dashes.isEmpty ? "" : "StrokeDashArray='\(part.dashes.map { "\($0)" }.joined(separator: " "))' "
+        let xaml = "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='\(part.data)' " + dashes
             + "StrokeThickness='\(part.width)' StrokeStartLineCap='\(part.round ? "Round" : "Flat")' StrokeEndLineCap='\(part.round ? "Round" : "Flat")' StrokeLineJoin='Round'/>"
         return (try? XamlReader.load(xaml)) as? WinUI.Path
     }

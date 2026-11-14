@@ -646,6 +646,17 @@ private final class MoveChip {
     private let going: Bool
     private var began = 0.0
     private var ticking: EventCleanup?
+    /// Grown a little under the pointer, as the Mac's chip (1.04, on its quick spring).
+    private let lift = CompositeTransform()
+    private var grown = DeckSpring(0)
+    private lazy var growing = Motion.Ticker { [weak self] dt in
+        guard let self else { return false }
+        self.grown.step(dt, stiffness: Motion.quick.stiffness, damping: Motion.quick.damping)
+        let s = 1 + 0.04 * self.grown.value
+        self.lift.scaleX = s
+        self.lift.scaleY = s
+        return !self.grown.settled
+    }
 
     init(name: String, title: String, going: Bool, action: @escaping @MainActor () -> Void) {
         self.name = name
@@ -653,6 +664,8 @@ private final class MoveChip {
         root.height = 52
         root.cornerRadius = Theme.corners(9)
         root.background = Theme.brush(Theme.ink, 0.035)
+        root.renderTransform = lift
+        root.renderTransformOrigin = Point(x: 0.5, y: 0.5)
         let stack = StackPanel()
         stack.spacing = 3
         stack.verticalAlignment = .center
@@ -672,20 +685,28 @@ private final class MoveChip {
             guard let self else { return }
             self.root.background = Theme.brush(Theme.ink, 0.07)
             words.foreground = Theme.ink(1)
+            words.fontWeight = FontWeight(weight: 500)
             self.began = WindowsCore.now
+            self.ticking?.dispose()
             self.ticking = CompositionTarget.rendering.addHandler { [weak self] _, _ in MainActor.assumeIsolated { self?.tick() } }
+            self.grown.target = 1
+            self.growing.start()
         }
         root.pointerExited.addHandler { [weak self] _, _ in
             guard let self else { return }
             self.root.background = Theme.brush(Theme.ink, 0.035)
             words.foreground = Theme.ink(2)
+            words.fontWeight = FontWeight(weight: 400)
             self.ticking?.dispose()
             self.ticking = nil
             self.draw(away: 0.46)
+            self.grown.target = 0
+            self.growing.start()
         }
         root.unloaded.addHandler { [weak self] _, _ in
             self?.ticking?.dispose()
             self?.ticking = nil
+            self?.growing.stop()
         }
         root.pointerPressed.addHandler { _, args in args?.handled = true }
         root.tapped.addHandler { _, _ in DispatchQueue.main.async { MainActor.assumeIsolated { action() } } }
@@ -703,7 +724,8 @@ private final class MoveChip {
         let home = (x: 36.0 / 2 - 9, y: 24.0 / 2 - 6.5, w: 18.0, h: 13.0)
         var place = PathData()
         place.rect(home.x + 0.5, home.y + 0.5, home.w - 1, home.h - 1, radius: 2.5)
-        drawing.children.append(Glyphs.view([Glyphs.Part(data: place.d, mode: .stroke, width: 1, round: false)], size: 0, brush: Theme.brush(Theme.ink, 0.2)))
+        // Where it belongs, in dashes, as the Mac draws it under every move.
+        drawing.children.append(Glyphs.view([Glyphs.Part(data: place.d, mode: .stroke, width: 1, round: false, dashes: [2, 2])], size: 0, brush: Theme.brush(Theme.ink, 0.2)))
         var r = home
         var opacity = 1.0
         let a = away, faded = 1 - min(max(away, 0), 1)
