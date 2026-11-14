@@ -209,7 +209,8 @@ seen from one eye in front of the artboard's middle, as far above it as Animate'
 (`Eye.stage`, twice the larger side and never under 600 points). So layers share one vanishing
 point, a layer brought nearer grows and comes out from the middle, and what is nearer covers what
 is further whatever the layers list says (layers as near as each other keep the list's order). A
-group is one card in the scene and orders what it holds inside itself. Off any artboard a layer is
+group is one card in the scene and orders what it holds inside itself, unless it is told to keep
+its layers' depth (below). Off any artboard a layer is
 seen from in front of its own middle, as before. The artboard's own sheet is the scene's backdrop:
 what is pushed behind the page still shows on it, as CSS paints a parent's background first.
 Animate's camera at rest sees what the design shows; tilted or swung, it sees how high each layer
@@ -247,6 +248,30 @@ step, and it ends when the design is seen as a prototype, inspected or animated.
 sees from the side only where the canvas says so (`Renderer.Options.looks`): exports, films,
 thumbnails and the AI server's pictures are always from the front.
 
+A group can be told to keep its layers' depth (`Node.keepsDepth`, the 3D card's switch for a
+group, the AI server's `keepsDepth`): CSS's `transform-style: preserve-3d`. What it holds then
+stands in the artboard's scene layer by layer, where the group's turn and height put it, and is
+ordered among everything beside the group, nearer over further across its border, instead of
+being drawn onto one card that is then turned. As in CSS, anything done to the group as a whole
+makes it one card all the same (`Node.opensInDepth`): a mask, a fade, a blur, a shadow, a blend,
+and here also a repeat grid, pinned corners and a background blur lying directly in it. Off any
+artboard there is no scene, and it is a card. How it works: the eye carries the space
+(`Eye.space`, built by `Eye.within(group)`, which every walk down into a group now asks in place
+of `inside(origin)`). Inside such a group a layer's `Perspective` stands it in the scene and
+gives where it shows as the point lying in the group that shows at the same place, so the
+group's own perspective, a card's, carries it on to the canvas as it carries everything else:
+all that composes perspectives down a chain of parents (`doc.shown`, `doc.placed`, handles,
+snapping) stays as it was, and a layer lying flat in the group still needs none.
+What draws asks `Perspective.onCanvas`, which is where the layer shows itself. The order is
+`DepthOrder.scene`: the layers lying together with every such group's layers standing in its
+place, which the renderer (`Renderer.drawScene`), the picker (`Picking.topmost`), `Geometry.bounds`
+and `contains`, and `Renderer.reach` all go through; a click on such a layer takes its group, and
+inside the group the layer. In a film, such a group with no keys of its own comes apart into
+pieces that stand where it puts them (`FilmPiece.stand`), so the camera at rest shows what the
+design does and sees between the layers when it moves; with keys of its own it is one card. The
+flag is one optional key on a group, written only when set: a Bezzle that does not know it reads
+the same group as one card.
+
 - **Where:** all shared with Windows and the browser. `Bezzle/Model/Perspective.swift` has `Eye`,
   the homography seen from it, and `BezzleDocument.eye(inside:)` and `eye(forParentOf:)`, where any
   layer is seen from. `DepthOrder.swift` is nearer over further, `DepthPushing.swift` the push
@@ -267,8 +292,8 @@ thumbnails and the AI server's pictures are always from the front.
   takes Option. A layer only held at a height and facing the eye has no knob, so a drag on its
   middle moves it. In Animate, Control while moving keys Lift. On Windows the key is Alt, pressed
   once the drag is under way (Alt at the press duplicates).
-- **Its tests** are `DepthSceneTests`, `DepthTests`, `DepthBodyTests` and `DepthLookTests`, with
-  `MotionLensTests` for the film.
+- **Its tests** are `DepthSceneTests`, `DepthTests`, `DepthBodyTests`, `DepthLookTests` and
+  `DepthKeepTests`, with `MotionLensTests` for the film.
 - **Driving a copy:** `BEZZLE_CLICKS` takes `^x,y>x,y` for a drag with Control held.
 
 ### Mac parity
