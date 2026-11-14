@@ -348,6 +348,20 @@ lines on the Mac's spring (`Motion.spring`), its shadow stretched along and draw
 rests; at once under a hand on the sheet and while the film plays. Lines do not glide to their
 places, nor the seconds when the scale changes: either would make every line again at each frame.
 
+How a layer looks is keyed in the shared model (`README.md` › Animate, Looks), so the stage, the
+movie and the AI server's pictures of a film show keyed fills, borders, corners and shadows by
+themselves, and the timeline lists a line for each look that has keys. A key on such a line is
+that look's alone, as on the Mac: picked, dragged, paced and deleted without the layer's other
+keys of that moment (`FilmKeyRef.look`, `FilmDesk.tracks(of:)`). Two clicks on the line and Add Key
+Here set or take that look's key (`FilmDesk.toggleLookKeys`), the bead that holds a pose keys the
+looks that have keys too, and a key for what the design no longer has (a fill turned off) is
+faint. Windows has no cards at the playhead, beads or corner dots yet, so a look cannot be keyed
+by hand there. For a test run, `look=fill:ff0000` (or `border:`, `width:`, `corners:`, `shadow:`)
+keys what is picked at the playhead through the shared `Node.poseLooks`, and `open=Card 2` opens
+a layer's lines. Looked at in the VM on 2026-11-14 with a fill keyed red at 1 s and blue at 5 s:
+the stage, at rest and playing, the AI server's `render` and the frames of a movie saved from it
+show the colours the shared model works out (#8c53a2 half way, in all three).
+
 To measure, as on the Mac: `BEZZLE_ANIMATE=3` and
 `BEZZLE_FILM='6:scrub=0,10,8;16:pick=Card 1;17:scrub=0,10,8;27:pick=camera;28:scrub=0,10,8;38:pick=;39:start;41:watch=8'`
 (`Sources/Bezzle/AnimateHooks.swift` has the steps) drag the playhead through a copy's film and

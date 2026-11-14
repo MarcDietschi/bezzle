@@ -41,6 +41,8 @@ extension WindowsCore {
         public let pace: (@Sendable (Double) -> Double)?
         public let picked: Bool
         public let hot: Bool
+        /// A look's key for what the design no longer has: it changes nothing, and is faint.
+        public var gone = false
         public var ms: Int { Int((t * 1000).rounded()) }
     }
 
@@ -198,7 +200,7 @@ extension WindowsCore {
                         let curve: @Sendable (Double) -> Double = { u in WindowsCore.progress(p, u) }
                         pace = curve
                     }
-                    marks.append(FilmMark(t: m.t, home: m.home, given: m.given, pace: pace, picked: picks.contains(ms), hot: hotMs == ms))
+                    marks.append(FilmMark(t: m.t, home: m.home, given: m.given, pace: pace, picked: picks.contains(ms), hot: hotMs == ms, gone: m.gone))
                 }
                 out.append(FilmLine(id: row.id, layer: row.layer, camera: row.camera, single: row.single, name: row.name, kind: row.kind?.rawValue,
                                     marks: marks, picked: picked(row), open: desk.open.contains(row.layer)))
@@ -223,7 +225,7 @@ extension WindowsCore {
             let scale = scale
             let near = row.marks.min { abs(scale.x($0.t) - p.x) < abs(scale.x($1.t) - p.x) }
             if let near, abs(scale.x(near.t) - p.x) <= Self.reach {
-                out.key = FilmKeyRef(row.layer, row.property, input: row.input, at: near.t)
+                out.key = FilmKeyRef(row.layer, row.property, input: row.input, look: row.look, at: near.t)
             } else if let first = row.marks.first, let last = row.marks.last, last.t > first.t, p.x > scale.x(first.t), p.x < scale.x(last.t) {
                 out.band = row.id
             }
@@ -284,11 +286,19 @@ extension WindowsCore {
                 pick(row)
                 desk.keys = []
                 desk.seek(snapped(scale.t(p.x)))
-                if let property = row.property { desk.toggleKey(property.rawValue) } else if let input = row.input { desk.toggleInputKey(input) } else { desk.holdHere() }
+                if let property = row.property {
+                    desk.toggleKey(property.rawValue)
+                } else if let input = row.input {
+                    desk.toggleInputKey(input)
+                } else if let look = row.look {
+                    desk.toggleLookKeys([look])
+                } else {
+                    desk.holdHere()
+                }
                 drag = Drag(kind: .nothing)
             } else if at.band != nil, let row {
                 pick(row)
-                let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, at: $0.t) }
+                let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, look: row.look, at: $0.t) }
                 desk.keys = Set(refs)
                 drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0, grip: scale.t(p.x))
             } else {
@@ -536,11 +546,19 @@ extension WindowsCore {
                 entries.append(MotionHand.MenuItem(title: WindowsCore.say("Remove Key"), shortcut: WindowsCore.say("Delete"), checked: false, enabled: true) { desk.removeKeys() })
             } else {
                 let t = snapped(scale.t(hot.x))
-                let property = row.property, input = row.input
+                let property = row.property, input = row.input, look = row.look
                 desk.keys = []
                 entries.append(MotionHand.MenuItem(title: WindowsCore.say("Add Key Here"), shortcut: nil, checked: false, enabled: true) {
                     desk.seek(t)
-                    if let property { desk.toggleKey(property.rawValue) } else if let input { desk.toggleInputKey(input) } else { desk.holdHere() }
+                    if let property {
+                        desk.toggleKey(property.rawValue)
+                    } else if let input {
+                        desk.toggleInputKey(input)
+                    } else if let look {
+                        desk.toggleLookKeys([look])
+                    } else {
+                        desk.holdHere()
+                    }
                 })
                 entries.append(.separator)
                 entries.append(MotionHand.MenuItem(title: WindowsCore.say(row.camera ? "Remove the Camera's Motion" : "Remove Motion"), shortcut: nil, checked: false, enabled: true) {

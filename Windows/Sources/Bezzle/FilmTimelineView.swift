@@ -852,7 +852,7 @@ final class FilmTimelineView {
             for mark in line.marks {
                 let d = own ? 7.0 : 9.0
                 let ink: UInt32 = mark.picked ? Theme.pencil : Theme.ink
-                let alpha = mark.picked ? 1 : mark.given ? 0.44 : 1
+                let alpha = (mark.picked ? 1 : mark.given ? 0.44 : 1) * (mark.gone ? 0.35 : 1)
                 let grown = mark.hot ? 1.3 : 1.0
                 let x = along(mark.t)
                 // Only the beads in sight are made.

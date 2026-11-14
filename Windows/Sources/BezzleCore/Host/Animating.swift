@@ -617,6 +617,65 @@ extension WindowsCore {
             }
         }
 
+        /// Sets a key of looks at the playhead, holding how each is there; or, where every picked
+        /// layer has one there already, takes it away (the Mac's AnimateLooks.toggleLookKeys).
+        func toggleLookKeys(_ looks: [LookTrack]) {
+            guard let board = filmBoard else { return }
+            let t = filmTime
+            // Each layer's own of them: one has a colour where another has a gradient.
+            let ids = posedLayers.filter { id in board.descendant(id).map { n in looks.contains { n.lookCount($0) != nil } } == true }
+            guard !ids.isEmpty else { return }
+            func keyed(_ n: Node, _ look: LookTrack) -> Bool { n.fits(look) && n[track: look.name]?.index(at: t) != nil }
+            let all = ids.allSatisfy { id in
+                guard let n = board.descendant(id) else { return false }
+                return looks.filter { n.lookCount($0) != nil }.allSatisfy { keyed(n, $0) }
+            }
+            edit { doc in
+                for id in ids {
+                    doc.update(id) { n in
+                        guard !n.locked else { return }
+                        for look in looks where n.lookCount(look) != nil {
+                            if all {
+                                n.removeKeys(at: t, tracks: [look.name])
+                            } else if !keyed(n, look), let change = n.lookValue(look, at: t) {
+                                n.setLookKey(look, change: change, at: t)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// A look of the picked layers changed at the playhead and keyed there by the shared
+        /// `Node.poseLooks`, as the Mac's cards do in Animate: for a test run (BEZZLE_FILM's
+        /// look=) while Windows has no such cards. `what` is fill or border (a colour, rrggbb),
+        /// width (a border's), corners or shadow (its blur), in points. Says how many layers
+        /// it keyed.
+        @discardableResult
+        public func poseLook(_ what: String, _ value: String) -> Int {
+            let t = filmTime, size = CGFloat(Double(value) ?? 0), color = RGBA(hex: value)
+            var keyed = 0
+            edit { doc in
+                for id in posedLayers {
+                    doc.update(id) { n in
+                        guard !n.locked else { return }
+                        let did = n.poseLooks(at: t) { shown in
+                            switch what {
+                            case "fill": if let color { shown.fill.color = color }
+                            case "border": if let color { shown.border.color = color }
+                            case "width": shown.border.width = size
+                            case "corners": shown.radii = Array(repeating: size, count: 4)
+                            case "shadow": shown.shadow.blur = size
+                            default: break
+                            }
+                        }
+                        if did { keyed += 1 }
+                    }
+                }
+            }
+            return keyed
+        }
+
         // MARK: Keys
 
         /// What poses and keys go to: the camera's artboard when the camera is picked, or the layers.
@@ -680,6 +739,10 @@ extension WindowsCore {
                             track.keys.sort { $0.t < $1.t }
                             n[track: name] = track
                         }
+                        // How it looks, where its keys are for what the design has.
+                        for look in n.looks where n.fits(look) && n[track: look.name]?.index(at: t) == nil {
+                            if let change = n.lookValue(look, at: t) { n.setLookKey(look, change: change, at: t) }
+                        }
                     }
                 }
             }
@@ -695,17 +758,19 @@ extension WindowsCore {
             for id in keyTargets {
                 guard let node = id == board.id ? board : board.descendant(id) else { continue }
                 let tracks = node.motionProperties.compactMap { node[track: $0] } + node.inputTracks.compactMap { node[track: $0] }
+                    + node.looks.filter { node.fits($0) }.compactMap { node[track: $0.name] }
                 if tracks.contains(where: { $0.index(at: t) != nil }) { return .here }
                 if !tracks.isEmpty { state = .between }
             }
             return state
         }
 
-        /// The tracks a picked key stands for: one property's, one input's, or all the layer's,
-        /// or all the camera's.
+        /// The tracks a picked key stands for: one property's, one input's, one look's, or all the
+        /// layer's, or all the camera's.
         func tracks(of ref: FilmKeyRef) -> [String] {
             if let p = ref.property { return [p.rawValue] }
             if let input = ref.input { return [ShaderFill.inputTrack(input)] }
+            if let look = ref.look { return [look.name] }
             if ref.layer == board { return MotionProperty.camera.map(\.rawValue) }
             guard let node = filmBoard?.descendant(ref.layer) else { return MotionProperty.layer.map(\.rawValue) }
             return node.layerTracks
@@ -866,7 +931,7 @@ extension WindowsCore {
                     doc.update(ref.layer) { $0.moveKeys(from: ref.time, to: ref.time + delta, tracks: tracks(of: ref)) }
                 }
             }
-            return refs.map { FilmKeyRef($0.layer, $0.property, input: $0.input, at: MotionTiming.time($0.time + delta)) }
+            return refs.map { FilmKeyRef($0.layer, $0.property, input: $0.input, look: $0.look, at: MotionTiming.time($0.time + delta)) }
         }
 
         // MARK: The camera, sent somewhere

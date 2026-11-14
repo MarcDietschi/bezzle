@@ -28,6 +28,12 @@ import BezzleCore
 ///                                  the wheel with Shift and two fingers moved sideways do
 ///       whole                      show the whole film again, as two clicks on the stroke under
 ///                                  the lines do
+///       look=fill:rrggbb | look=border:rrggbb | look=width:6 | look=corners:24 | look=shadow:30
+///                                  change how what is picked looks at the playhead and key it there
+///                                  (the shared Node.poseLooks; the Mac's cards do this, Windows
+///                                  has none yet): a colour, a border's width, every corner, a
+///                                  shadow's blur; writes how many layers it keyed
+///       open=name,name             open these layers' lines in the timeline
 ///       pinch=factor               two fingers pinched on the middle of the film (over 1, apart):
 ///                                  the camera's zoom when the camera is picked, one step of
 ///                                  undo; writes whose it was, the camera's or the view's
@@ -116,6 +122,15 @@ enum AnimateHooks {
             guard let points = Double(rest) else { return }
             session.filmHand.scroll(by: points)
         case "whole": session.filmHand.showWhole()
+        case "look":
+            let fields = rest.split(separator: ":", maxSplits: 1).map(String.init)
+            guard fields.count == 2 else { return }
+            say("look \(fields[0]): keyed on \(desk.poseLook(fields[0], fields[1])) at \(desk.filmTime)\n")
+        case "open":
+            let names = Set(rest.split(separator: ",").map(String.init))
+            var ids: Set<UUID> = []
+            for board in WindowsCore.boards() { ids.formUnion(WindowsCore.layers(board: board.index).filter { names.contains($0.name) }.map(\.id)) }
+            desk.open = ids
         case "pinch":
             // Two fingers on the film, as the wheel tells of them: in three goes, then no more.
             guard let factor = Double(rest), factor > 0, let at = session.motion.filmMiddle else { return }
