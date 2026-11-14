@@ -120,6 +120,9 @@ final class DesignSession {
             inspect.on = mode == 2
             flow.on = mode == 1
             if mode != 0 { develop.on = false }
+            // Points in hand are the design's or the film's: going into Animate or out of it,
+            // they are put down and taken in hand there anew, as on the Mac.
+            if mode == 3 || oldValue == 3 { pen.editingPath = nil }
             film.modeChanged(mode == 3)
             motion.modeChanged()
             changed()
@@ -210,8 +213,12 @@ final class DesignSession {
         }
         film.changed = { [weak self] in self?.filmChanged() }
         film.edited = { [weak self] in self?.filmEdited() }
-        // The design changed under the film, by an undo or by others: its desk follows.
-        listenToEdits { [weak self] _ in self?.film.designChanged() }
+        // The design changed under the film, by an undo or by others: its desk follows, and a
+        // shape's points in hand are put down once it is gone.
+        listenToEdits { [weak self] _ in
+            self?.film.designChanged()
+            self?.motion.designChanged()
+        }
     }
 
     /// The desk changed: what follows the film shows it again.
@@ -310,6 +317,7 @@ final class DesignSession {
         if let placing = pictures.editing, ids != [placing] { pictures.editing = nil }
         self.board = board
         film.selectionChanged(ids)
+        motion.selectionChanged(ids)
         changed()
     }
 

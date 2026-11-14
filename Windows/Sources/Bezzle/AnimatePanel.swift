@@ -140,19 +140,21 @@ extension Inspector {
             self?.film.going = going
             self?.show()
         })
+        // Three to a row, so that every move has its company: there are nine.
+        let moves = WindowsCore.FilmDesk.moves, across = 3
         let grid = Grid()
         grid.columnSpacing = 6
         grid.rowSpacing = 6
-        for _ in 0..<4 {
+        for _ in 0..<across {
             let c = ColumnDefinition()
             c.width = GridLength(value: 1, gridUnitType: .star)
             grid.columnDefinitions.append(c)
         }
-        for _ in 0..<2 { grid.rowDefinitions.append(RowDefinition()) }
-        for (k, move) in WindowsCore.FilmDesk.moves.enumerated() {
+        for _ in 0..<((moves.count + across - 1) / across) { grid.rowDefinitions.append(RowDefinition()) }
+        for (k, move) in moves.enumerated() {
             let chip = MoveChip(name: move.name, title: move.title, going: film.going) { [weak self] in self?.film.applyMove(move.name) }
-            try? Grid.setColumn(chip.root, Int32(k % 4))
-            try? Grid.setRow(chip.root, Int32(k / 4))
+            try? Grid.setColumn(chip.root, Int32(k % across))
+            try? Grid.setRow(chip.root, Int32(k / across))
             grid.children.append(chip.root)
         }
         grid.margin = Theme.inset(0, 2, 0, 2)
@@ -174,7 +176,7 @@ extension Inspector {
     // MARK: A pose
 
     private func poseCard() -> UIElement {
-        let rows: [UIElement] = [
+        var rows: [UIElement] = [
             property("move", WindowsCore.FilmDesk.title("move"), fields: [poseField("move", 0, label: "X", width: 64), poseField("move", 1, label: "Y", width: 64)]),
             property("scale", WindowsCore.FilmDesk.title("scale"), fields: [poseField("scale", 0, unit: "%", range: 0.1...10_000, times: 100, decimals: 0)]),
             property("turn", WindowsCore.FilmDesk.title("turn"), fields: [poseField("turn", 0, unit: "°", range: -3600...3600)]),
@@ -185,7 +187,61 @@ extension Inspector {
             property("tilt", WindowsCore.FilmDesk.title("tilt"), fields: [poseField("tilt", 0, unit: "°", range: -360...360)]),
             property("swing", WindowsCore.FilmDesk.title("swing"), fields: [poseField("swing", 0, unit: "°", range: -360...360)]),
         ]
+        // Shapes, whose outline is points: how much of it is drawn, and where its points are.
+        if film.posedShapes {
+            rows.append(hairline())
+            rows.append(property("draw", WindowsCore.FilmDesk.title("draw"), fields: [
+                poseField("draw", 0, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 70),
+                rightArrow(),
+                poseField("draw", 1, unit: "%", range: 0...100, times: 100, scrub: 0.5, decimals: 0, width: 70),
+            ]))
+            rows.append(property("shape", WindowsCore.FilmDesk.title("shape"), fields: [pointsChip()]))
+        }
         return panelCard(Words.t("Pose"), seconds(film.filmTime), glyph: Glyphs.pose(), rows: rows)
+    }
+
+    /// The small arrow between where a line's drawing starts and where it ends.
+    private func rightArrow() -> FrameworkElement {
+        var d = PathData()
+        d.move(1, 4.5); d.line(8, 4.5)
+        d.move(5, 1.5); d.line(8, 4.5); d.line(5, 7.5)
+        let arrow = Glyphs.view([Glyphs.Part(data: d.d, mode: .stroke, width: 1.4)], size: 9, brush: Theme.ink(3))
+        arrow.verticalAlignment = .center
+        return arrow
+    }
+
+    /// Takes the picked shape's points in hand on the canvas, or puts them down, as the Mac's
+    /// PointsChip: moved there, they give it another shape at the playhead, a key of its Shape.
+    private func pointsChip() -> FrameworkElement {
+        let motion = session.motion
+        let (done, one) = motion.pointsChip
+        let words = Theme.text(Words.t(done ? "Done" : "Edit Points"), size: 11.5, weight: 500)
+        let ink: Brush = done ? Theme.brush(Theme.pencil) : Theme.ink(2)
+        words.foreground = ink
+        words.margin = Theme.inset(10, 0, 10, 0)
+        words.verticalAlignment = .center
+        let capsule = Border()
+        capsule.cornerRadius = Theme.corners(11)
+        capsule.background = Theme.brush(Theme.ink, 0.045)
+        capsule.child = words
+        let press = Pressable(radius: 11) { [weak self] in
+            guard let self else { return }
+            let motion = self.session.motion
+            if motion.pointsChip.done { motion.putPointsDown() } else { motion.takePoints() }
+            self.session.changed()
+        }
+        press.hoverWash = 0.035
+        press.box.height = 22
+        press.box.child = capsule
+        press.box.verticalAlignment = .center
+        press.box.opacity = one ? 1 : 0.4
+        press.box.isHitTestVisible = one
+        if !done {
+            press.box.pointerEntered.addHandler { _, _ in words.foreground = Theme.ink(1) }
+            press.box.pointerExited.addHandler { _, _ in words.foreground = ink }
+        }
+        try? ToolTipService.setToolTip(press.box, Words.t("Move its points on the canvas to give it another shape at the playhead"))
+        return press.box
     }
 
     /// The inputs of the picked layers' shader at the playhead, each with its key: a colour, or
@@ -544,8 +600,9 @@ private final class MoveChip {
         drawing.horizontalAlignment = .center
         drawing.isHitTestVisible = false
         stack.children.append(drawing)
-        // Made a little smaller where the word is long, as the Mac lets it shrink to fit.
-        let words = Theme.text(title, size: title.count > 9 ? 8.5 : title.count > 7 ? 9.5 : 10.5, ink: 2)
+        // Made a little smaller where the word is long, as the Mac lets it shrink to fit; three to
+        // a row, every move's name in every language fits whole.
+        let words = Theme.text(title, size: title.count > 11 ? 9.5 : 10.5, ink: 2)
         words.horizontalAlignment = .center
         stack.children.append(words)
         root.child = stack
@@ -601,12 +658,28 @@ private final class MoveChip {
             r = (r.x + r.w * 0.06 * a, r.y + r.h * (1 - seen) / 2, r.w * (1 - 0.12 * a), r.h * seen)
             opacity = faded
         case "focus": opacity = 1 - 0.75 * (1 - faded)
+        case "draw":
+            // A line drawn on as a pen draws it, over where it belongs.
+            let drawn = min(max(1 - away, 0), 1)
+            let line = DrawnLine.trimmed(DrawnLine.moveLine(x: home.x, y: home.y, w: home.w, h: home.h), to: drawn)
+            if let first = line.first, line.count >= 2 {
+                var d = PathData()
+                d.move(Double(first.x), Double(first.y))
+                for p in line.dropFirst() { d.line(Double(p.x), Double(p.y)) }
+                drawing.children.append(Glyphs.view([Glyphs.Part(data: d.d, mode: .stroke, width: 2.2)], size: 0, brush: Theme.brush(Theme.ink, 0.82)))
+            }
+            clipDrawing()
+            return
         default: break
         }
         var card = PathData()
         card.rect(r.x, r.y, max(r.w, 0.5), max(r.h, 0.5), radius: 2.5)
         let shape = Glyphs.view([Glyphs.Part(data: card.d, mode: .fill)], size: 0, brush: Theme.brush(Theme.ink, 0.82 * max(min(opacity, 1), 0)))
         drawing.children.append(shape)
+        clipDrawing()
+    }
+
+    private func clipDrawing() {
         drawing.clip = {
             let g = RectangleGeometry()
             g.rect = Rect(x: 0, y: 0, width: 36, height: 24)

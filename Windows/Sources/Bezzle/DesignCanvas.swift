@@ -523,6 +523,9 @@ final class DesignCanvas {
         inspect.titleHit = { [weak self] p in self?.titleHit(p) }
         motion.titleHit = { [weak self] p in self?.titleHit(p) }
         motion.redraw = { [weak self] in self?.drawMotion() }
+        // A shape's points moved where no pose keeps them, or Delete on them: points are added and
+        // taken away in the design.
+        motion.beep = { _ = MessageBeep(0) }
         film.resync = { [weak self] in self?.placeFilm() }
         session.film.run = { [weak self] in self?.film.run() }
         session.film.inSight = { [weak self] in self?.artboardInSight() }
@@ -3863,6 +3866,8 @@ final class DesignCanvas {
         if case .motion? = drag?.grab {
             syncMotion()
             motion.drag(to: p, shift: shift, free: control, push: option)
+            // A shape's point in hand catches on what lies around, as in the design.
+            showGuides(motion.guideLines)
             drag?.moved = true
             updatePointer(at: p)
             return
@@ -4238,7 +4243,7 @@ final class DesignCanvas {
             updatePointer(at: point(args))
         case .motion:
             syncMotion()
-            motion.up(at: point(args))
+            motion.up(at: point(args), shift: shift)
             drawMotion()
             updatePointer(at: point(args))
         case .deck:
@@ -4522,6 +4527,9 @@ final class DesignCanvas {
 
     /// A double click goes into a group, one level each time; on a text, it starts typing.
     private func doubleTapped(_ args: DoubleTappedRoutedEventArgs?) {
+        // Animated, a double click is the film's (`MotionHand`, a shape's points taken in hand
+        // there): the design's own points, groups and words are not opened under it.
+        if animating { return }
         // A double click that began placing a picture, or ended it, is placing's alone.
         if pictureTookPress {
             pictureTookPress = false

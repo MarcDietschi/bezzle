@@ -181,8 +181,12 @@ extension WindowsCore {
             public let marquee: CGRect?
         }
 
-        public func overlay() -> Overlay {
-            let o = tool.overlay()
+        public func overlay() -> Overlay { Self.overlay(tool.overlay(), zoom: zoom, pan: pan) }
+
+        /// What the pen shows, on the stage, for a canvas seen at `zoom` with its origin at `pan`:
+        /// the design's pen, or the film's (`FilmPoints`).
+        static func overlay(_ o: PenTool.Overlay, zoom: CGFloat, pan: CGPoint) -> Overlay {
+            func toView(_ p: CGPoint) -> CGPoint { CGPoint(x: pan.x + p.x * zoom, y: pan.y + p.y * zoom) }
             let t = CGAffineTransform(a: zoom, b: 0, c: 0, d: zoom, tx: pan.x, ty: pan.y)
             var toCome: String?
             if let c = o.toCome {
@@ -221,6 +225,8 @@ extension WindowsCore {
         public func movePicked(x: Bool, by d: Double) { movePicked(x: x) { $0 + d } }
 
         /// The lines the point being placed or moved catches on, on the canvas.
-        public var guideLines: [GuideLine] { guides.map { GuideLine(from: $0.from, to: $0.to, field: $0.field) } }
+        public var guideLines: [GuideLine] { Self.lines(guides) }
+
+        static func lines(_ guides: [Guide]) -> [GuideLine] { guides.map { GuideLine(from: $0.from, to: $0.to, field: $0.field) } }
     }
 }

@@ -26,9 +26,92 @@ extension WindowsCore {
         public init(desk: FilmDesk) { self.desk = desk }
 
         public func modeChanged() {
+            // Whatever was in hand as the mode changed is put back: half a pose is no pose, and a
+            // gesture left open would keep every later change out of the history.
             cancel()
+            // Points in hand are the film's: the design's own are taken in hand there anew.
+            points.editingPath = nil
             hot = .none
             redraw()
+        }
+
+        // MARK: A shape's points
+
+        /// A shape's points moved at the playhead, with the pen's hands: each move poses its Shape
+        /// there (`FilmPoints`). A double click on a shape, or Edit Points in the panel, takes them in hand.
+        private lazy var points: FilmPoints = FilmPoints(desk: desk, view: { [unowned self] in (self.zoom, self.pan) }) { [weak self] in
+            guard let scene = self?.scene else { return nil }
+            return (scene.board, scene.pieces)
+        }
+
+        private lazy var pen: PenTool = {
+            let tool = PenTool(host: points)
+            tool.redraw = { [weak self] in self?.redraw() }
+            return tool
+        }()
+
+        /// What sounds when points are moved where no pose can keep them, or Delete would take one away.
+        public var beep: () -> Void {
+            get { points.beep }
+            set { points.beep = newValue }
+        }
+
+        /// The shape whose points are in hand: nil while none are.
+        public var editingPoints: UUID? { points.editingPath }
+
+        /// Takes the one picked shape's points in hand at the playhead, as Edit Points does; a film
+        /// that plays stops first.
+        public func takePoints() {
+            desk.pause()
+            points.editPoints()
+            hot = .none
+            redraw()
+        }
+
+        /// Puts the points in hand down, as Done, Return and Escape do.
+        public func putPointsDown() {
+            if pen.dragging { _ = pen.key(.escape, flags: []) }
+            points.editingPath = nil
+            redraw()
+        }
+
+        /// The Pose card's chip for what is picked: Done while its points are in hand, Edit Points
+        /// otherwise, which only one layer picked can use.
+        public var pointsChip: (done: Bool, enabled: Bool) { FilmPointRules.chip(editing: points.editingPath, picked: desk.posedLayers) }
+
+        /// The window's selection changed: points in hand are put down unless their shape is the one picked.
+        public func selectionChanged(_ ids: [UUID]) {
+            if let editing = points.editingPath, !FilmPointRules.keeps(editing, picked: ids) { points.editingPath = nil }
+        }
+
+        /// The design changed, by an undo or by others: points of a shape that is gone, or whose
+        /// outline is no longer points, are put down.
+        public func designChanged() {
+            if let editing = points.editingPath, WindowsCore.design?.node(editing)?.canReshape != true { points.editingPath = nil }
+        }
+
+        /// The lines the point being moved catches on, on the canvas.
+        public var guideLines: [GuideLine] { Pen.lines(points.guides) }
+
+        private static func penFlags(shift: Bool, option: Bool = false, command: Bool = false) -> PenFlags {
+            var f: PenFlags = []
+            if shift { f.insert(.shift) }
+            if option { f.insert(.option) }
+            if command { f.insert(.command) }
+            return f
+        }
+
+        private static func penKey(_ name: String) -> PenKey {
+            switch name {
+            case "escape": .escape
+            case "enter": .enter
+            case "delete", "backspace": .delete
+            case "left": .left
+            case "right": .right
+            case "up": .up
+            case "down": .down
+            default: .other
+            }
         }
 
         // MARK: The film as it lies on the canvas
@@ -179,6 +262,7 @@ extension WindowsCore {
         }
 
         public func hover(_ v: CGPoint?) {
+            if points.editingPath != nil { pen.hover(v, flags: []) }
             guard case .none = drag else { return }
             let next = v.map(find) ?? .none
             if next != hot {
@@ -191,6 +275,8 @@ extension WindowsCore {
         public enum Pointer: Equatable { case arrow, resize(Double), rotate(Double), turn, cross, pointingHand, grab, grabbing }
 
         public func pointer(at v: CGPoint) -> Pointer {
+            // A shape's points in hand: the arrow, on them and off, as the Mac's pen has it there.
+            if points.editingPath != nil { return .arrow }
             guard let scene else { return .arrow }
             let found = dragging ? held : find(v)
             switch found {
@@ -236,7 +322,10 @@ extension WindowsCore {
         private var pushing = DepthPushing()
         private var tracksBefore: [UUID: Set<MotionProperty>] = [:]
 
-        public var dragging: Bool { if case .none = drag { return false } else { return true } }
+        public var dragging: Bool {
+            if pen.dragging { return true }
+            if case .none = drag { return false } else { return true }
+        }
 
         private func begin(_ ids: [UUID], _ scene: Scene) {
             tracksBefore = [:]
@@ -266,6 +355,27 @@ extension WindowsCore {
                 desk.focus()
                 redraw()
                 return
+            }
+            // A shape's points in hand: pressed on, they move; off them, a loop round some, or out
+            // of editing to whatever was pressed. A double click off them puts them down.
+            if let editing = points.editingPath {
+                if pen.editDown(at: v, flags: Self.penFlags(shift: shift, command: deep), clicks: clicks) {
+                    redraw()
+                    return
+                }
+                let other = pick(chain(at: v, in: scene), in: scene, deep: deep)
+                switch FilmPointRules.press(on: other, editing: editing, clicks: clicks) {
+                case .putDown:
+                    points.editingPath = nil
+                    redraw()
+                    return
+                case .loop(let leaves):
+                    pen.startMarquee(at: v, adding: shift, offPath: leaves)
+                    redraw()
+                    return
+                case .passOn:
+                    points.editingPath = nil
+                }
             }
             held = find(v)
             switch held {
@@ -303,6 +413,16 @@ extension WindowsCore {
             case .layer, .none:
                 let chain = chain(at: v, in: scene)
                 var id = pick(chain, in: scene, deep: deep)
+                // A second click on a shape picked alone takes its points in hand; on anything else
+                // picked, it goes one layer further in.
+                if let picked = id, let node = scene.board.descendant(picked),
+                   FilmPointRules.takesInHand(clicks: clicks, pressed: picked, selection: desk.selection, deepest: chain.first?.id,
+                                              reshapes: node.canReshape, locked: node.locked) {
+                    points.editingPath = picked
+                    hot = .none
+                    redraw()
+                    return
+                }
                 if clicks == 2, let picked = id, let i = chain.firstIndex(where: { $0.id == picked }), i > 0 { id = chain[i - 1].id }
                 guard let id else {
                     let base = shift ? desk.selection : []
@@ -369,6 +489,12 @@ extension WindowsCore {
         /// held while a layer is moved lifts it nearer as the pointer goes up, and lowers it as it
         /// goes down, leaving it where it is across.
         public func drag(to v: CGPoint, shift: Bool, free: Bool, push: Bool = false) {
+            // The points' own hands: Ctrl lets go of what they catch on, Alt moves a handle alone.
+            if pen.dragging {
+                pen.drag(to: v, flags: Self.penFlags(shift: shift, option: push, command: free))
+                redraw()
+                return
+            }
             guard let scene else { return }
             switch drag {
             case .none:
@@ -516,7 +642,12 @@ extension WindowsCore {
             return (property, value)
         }
 
-        public func up(at v: CGPoint) {
+        public func up(at v: CGPoint, shift: Bool = false) {
+            if pen.dragging {
+                pen.up(at: v, flags: Self.penFlags(shift: shift))
+                redraw()
+                return
+            }
             let was = drag
             drag = .none
             defer {
@@ -580,6 +711,12 @@ extension WindowsCore {
         @discardableResult
         public func cancel() -> Bool {
             guard dragging else { return false }
+            // The points' drag put back as Escape puts it back, with the pen's own drag let go.
+            if pen.dragging {
+                _ = pen.key(.escape, flags: [])
+                redraw()
+                return true
+            }
             if WindowsCore.inGesture {
                 WindowsCore.cancelGesture()
                 desk.edited()
@@ -597,8 +734,20 @@ extension WindowsCore {
         /// never layers; Enter plays from the start; the arrows nudge what is picked, or with
         /// nothing picked step through time, with Alt from key to key. True when it was the film's.
         public func key(_ name: String, shift: Bool, alt: Bool, ctrl: Bool) -> Bool {
+            if pen.dragging {
+                _ = pen.key(Self.penKey(name), flags: Self.penFlags(shift: shift))
+                redraw()
+                return true
+            }
             if dragging {
                 if name == "escape" { cancel() }
+                return true
+            }
+            // A shape's points in hand: the arrows move the picked ones, Enter and Escape put them
+            // down, Delete takes none away. Enter on a shape not in hand plays the film, as it
+            // does on anything here.
+            if points.editingPath != nil, !ctrl, !alt, pen.key(Self.penKey(name), flags: Self.penFlags(shift: shift)) {
+                redraw()
                 return true
             }
             switch name {
@@ -744,6 +893,8 @@ extension WindowsCore {
             public var sheet: [CGPoint] = []
             /// A loop being pulled round layers.
             public var marquee: CGRect?
+            /// A shape's points in hand, as the pen shows them: in place of its frame and handles.
+            public var points: Pen.Overlay?
             /// Nothing at all lies over a film that plays but the small camera.
             public var playing = false
         }
@@ -775,10 +926,14 @@ extension WindowsCore {
             }
             if let id = handled(scene) { way(of: id, scene, into: &m) }
             if case .layer(let id) = hot, !picked.contains(id), let q = scene.corners(of: id) { m.hovered = q }
-            for id in picked {
+            // A shape whose points are in hand shows them in place of its frame.
+            let editing = points.editingPath
+            for id in picked where id != editing {
                 if let q = scene.corners(of: id) { m.picked.append(q) }
             }
-            if let id = handled(scene), let q = scene.corners(of: id) {
+            if editing != nil {
+                m.points = Pen.overlay(pen.overlay(), zoom: zoom, pan: pan)
+            } else if let id = handled(scene), let q = scene.corners(of: id) {
                 let moving: Bool = { if case .move(_, _, true) = drag { return true } else { return false } }()
                 if !moving {
                     let lengths = (0..<4).map { Self.distance(q[$0], q[($0 + 1) % 4]) }

@@ -182,7 +182,47 @@ final class FilmView {
         if let hovered = m.hovered { add(path(outline(hovered), stroke: Self.pencil, width: 1.5)) }
         for q in m.picked { add(path(outline(q), stroke: Self.pencil)) }
         handles(m.handles, scale: pixelScale)
+        if let o = m.points { drawPoints(o, scale: pixelScale) }
         if let r = m.marquee {
+            var box = PathData()
+            box.rect(Double(r.minX) + 0.5, Double(r.minY) + 0.5, max(Double(r.width) - 1, 0), max(Double(r.height) - 1, 0))
+            add(path(box, stroke: Self.pencil, alpha: 0.8, fill: Theme.brush(Self.pencil, 0.08)))
+        }
+    }
+
+    /// A shape's points in hand, where the film shows them, as the pen draws them in the design:
+    /// its outline, the handles on their lines (round), the points (square, filled when picked),
+    /// and the box dragged round points, in pencil.
+    private func drawPoints(_ o: WindowsCore.Pen.Overlay, scale: Double) {
+        func crisp(_ v: Double) -> Double { (v * scale).rounded() / scale }
+        if let outline = o.outline, !outline.isEmpty {
+            var d = PathData()
+            d.d = outline
+            add(path(d, stroke: Self.pencil))
+        }
+        if !o.handles.isEmpty {
+            var lines = PathData(), rings = PathData()
+            for h in o.handles {
+                lines.move(Double(h.point.x), Double(h.point.y))
+                lines.line(Double(h.handle.x), Double(h.handle.y))
+                dot(&rings, h.handle, 3.5)
+            }
+            add(path(lines, stroke: Self.pencil, alpha: 0.85))
+            add(path(rings, stroke: Self.pencil, fill: Theme.brush(0xFFFFFF)))
+        }
+        var picked = PathData(), others = PathData()
+        for a in o.anchors {
+            let x = crisp(Double(a.point.x)), y = crisp(Double(a.point.y))
+            if a.filled { picked.rect(x - 3.5, y - 3.5, 7, 7) } else { others.rect(x - 3.5, y - 3.5, 7, 7) }
+        }
+        add(path(others, stroke: Self.pencil, fill: Theme.brush(0xFFFFFF)))
+        add(path(picked, stroke: Self.pencil, fill: Theme.brush(Self.pencil)))
+        if let spot = o.spot {
+            var d = PathData()
+            d.rect(crisp(Double(spot.x)) - 3.5, crisp(Double(spot.y)) - 3.5, 7, 7)
+            add(path(d, stroke: Self.pencil, alpha: 0.55, fill: Theme.brush(0xFFFFFF, 0.55)))
+        }
+        if let r = o.marquee {
             var box = PathData()
             box.rect(Double(r.minX) + 0.5, Double(r.minY) + 0.5, max(Double(r.width) - 1, 0), max(Double(r.height) - 1, 0))
             add(path(box, stroke: Self.pencil, alpha: 0.8, fill: Theme.brush(Self.pencil, 0.08)))

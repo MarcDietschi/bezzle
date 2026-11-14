@@ -3,8 +3,10 @@ import PackageDescription
 
 // Tests of what Bezzle for Windows decides without asking Windows anything: which way a PC makes
 // a subject matte, what it remembers of the ways, what cutouts are called, and the cells the line
-// round a picture is laid on. Pure/ links to those files in ../Sources/BezzleCore/Host and to the
-// shared model's files they use, so the tests run wherever Swift does, on a Mac too:
+// round a picture is laid on; in Animate, when a shape's points are taken in hand and put down,
+// and the Draw move's line in its chip. Pure/ and FilmPure/ link to those files in
+// ../Sources/BezzleCore/Host and to the shared model's files they use, so the tests run wherever
+// Swift does, on a Mac too:
 //
 //     swift test --package-path Windows/Tests
 //
@@ -14,6 +16,8 @@ let package = Package(
     targets: [
         .target(name: "CutoutWays", path: "Pure"),
         .testTarget(name: "CutoutWaysTests", dependencies: ["CutoutWays"], path: "CutoutWaysTests"),
+        .target(name: "FilmRules", path: "FilmPure"),
+        .testTarget(name: "FilmRulesTests", dependencies: ["FilmRules"], path: "FilmRulesTests"),
     ],
     swiftLanguageModes: [.v6]
 )
