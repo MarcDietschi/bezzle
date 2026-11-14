@@ -287,6 +287,29 @@ nonisolated func bz_test_live(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
     return MainActor.assumeIsolated { answer(WebLive.test(json, in: design)) }
 }
 
+// MARK: The icon library
+
+/// The icon sets, which the page fetched and unpacked (`WebIcons`). Answers the sets the core has.
+@_expose(wasm, "bz_icons")
+nonisolated func bz_icons(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
+    // Not copied: they are read here and now, and the page keeps them until this answers.
+    let unpacked = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: p), count: Int(n), deallocator: .none)
+    return MainActor.assumeIsolated { answer(WebIcons.take(unpacked)) }
+}
+
+/// For comparing the icon library with the Mac's (`WebIcons.test`). A sheet of icons asked for
+/// becomes the design shown, to be drawn like any other.
+@_expose(wasm, "bz_test_icons")
+nonisolated func bz_test_icons(_ p: UnsafeRawPointer, _ n: Int32) -> Int32 {
+    let json = Data(bytes: p, count: Int(n))
+    return MainActor.assumeIsolated {
+        let (said, sheet) = WebIcons.test(json)
+        guard let sheet else { return answer(said) }
+        show(sheet, anew: true)
+        return answer(String(said.dropLast()) + "," + PageKeeps.gone() + "}")
+    }
+}
+
 // MARK: Films
 
 /// Opens the film of one artboard, for showing its frames (`bz_film_frame`). Answers how long it

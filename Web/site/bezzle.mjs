@@ -129,16 +129,95 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
       R = CK.Path.MakeFromOp(A, B, [CK.PathOp.Union, CK.PathOp.Intersect, CK.PathOp.Difference, CK.PathOp.XOR][op - 1])
       B.delete()
     } else if (op === 5) {
-      R = A.makeSimplified()
+      // CanvasKit 0.42 has this under its inner name alone: its types promise `makeSimplified`,
+      // its script leaves out the wrapper its other makers have.
+      R = A.makeSimplified ? A.makeSimplified() : A._makeSimplified()
     } else if (op === 6) {
+      // Skia grows a line only as truly as a path shown at its own size needs. An icon's lines
+      // are grown on a box of 24 and shown many times larger, and Core Graphics grows them finely
+      // whatever their size: sixteen times as fine comes within a hundredth of its outline there.
       R = A.makeStroked({ width: p[0], cap: [CK.StrokeCap.Butt, CK.StrokeCap.Round, CK.StrokeCap.Square][p[1]],
-        join: [CK.StrokeJoin.Miter, CK.StrokeJoin.Round, CK.StrokeJoin.Bevel][p[2]], miter_limit: p[3] })
+        join: [CK.StrokeJoin.Miter, CK.StrokeJoin.Round, CK.StrokeJoin.Bevel][p[2]], miter_limit: p[3], precision: 16 })
     } else if (op === 7) {
       R = A.makeDashed(p[1] ?? 1, p[2] ?? p[1] ?? 1, p[0])
     }
-    const cmds = R ? Array.from(R.toCmds()) : []
+    let cmds = R ? Array.from(R.toCmds()) : []
     A.delete(); R?.delete()
+    if (op <= 5) cmds = wound(cmds)
     return cmds
+  }
+
+  // What Skia combines or makes simple is for filling even-odd: its contours lie beside one
+  // another but run either way round, so a hole filled by winding may close. Core Graphics
+  // promises a path that fills the same by either rule, and the app's code counts on it (an
+  // icon's grown lines are filled by winding). So each contour is turned by how deep it lies in
+  // the others: the outermost one way, a hole in it the other, an island in the hole as the
+  // outermost. (CanvasKit's own makeAsWinding leaves such contours as they are.)
+  function wound(cmds) {
+    const contours = []
+    let now = null
+    for (let i = 0; i < cmds.length;) {
+      const verb = cmds[i++]
+      if (verb === 0) { now = { start: [cmds[i], cmds[i + 1]], segments: [], closed: false }; contours.push(now); i += 2; continue }
+      if (verb === 5) { if (now) now.closed = true; continue }
+      const n = [0, 2, 4, 5, 6][verb]
+      if (n === undefined || !now) return cmds
+      now.segments.push([verb, ...cmds.slice(i, i + n)])
+      i += n
+    }
+    if (contours.length < 2) return cmds
+    const at = (s, from, t) => {
+      const u = 1 - t, [v, a, b, c, d, e, f] = s
+      if (v === 1) return [from[0] * u + a * t, from[1] * u + b * t]
+      if (v === 2) return [from[0] * u * u + 2 * a * u * t + c * t * t, from[1] * u * u + 2 * b * u * t + d * t * t]
+      if (v === 3) { const w = 2 * e * u * t, k = u * u + w + t * t; return [(from[0] * u * u + a * w + c * t * t) / k, (from[1] * u * u + b * w + d * t * t) / k] }
+      return [from[0] * u * u * u + 3 * a * u * u * t + 3 * c * u * t * t + e * t * t * t, from[1] * u * u * u + 3 * b * u * u * t + 3 * d * u * t * t + f * t * t * t]
+    }
+    const end = (s) => (s[0] === 4 ? [s[5], s[6]] : s[0] === 1 ? [s[1], s[2]] : [s[3], s[4]])
+    for (const c of contours) {
+      // Its area with its sign, its curves taken in eight steps each, and the box it lies in.
+      let area = 0, from = c.start, last = c.start
+      c.box = [Infinity, Infinity, -Infinity, -Infinity]
+      const step = (p) => {
+        area += last[0] * p[1] - p[0] * last[1]
+        c.box = [Math.min(c.box[0], p[0]), Math.min(c.box[1], p[1]), Math.max(c.box[2], p[0]), Math.max(c.box[3], p[1])]
+        last = p
+      }
+      for (const s of c.segments) {
+        if (s[0] === 1) step(end(s)); else for (let k = 1; k <= 8; k++) step(at(s, from, k / 8))
+        from = end(s)
+      }
+      step(c.start)
+      c.area = area / 2
+      // A point of its own, away from its corners, where another contour may touch it.
+      c.on = c.segments.length ? at(c.segments[0], c.start, 0.5) : c.start
+      c.cmds = [0, ...c.start, ...c.segments.flat(), ...(c.closed ? [5] : [])]
+    }
+    for (const c of contours) {
+      c.depth = 0
+      for (const o of contours) {
+        if (o === c || !o.segments.length || c.on[0] < o.box[0] || c.on[0] > o.box[2] || c.on[1] < o.box[1] || c.on[1] > o.box[3]) continue
+        o.path ??= CK.Path.MakeFromCmds(o.cmds)
+        if (o.path?.contains(c.on[0], c.on[1])) c.depth++
+      }
+    }
+    const out = []
+    for (const c of contours) {
+      c.path?.delete()
+      if (c.area === 0 || (c.area > 0) === (c.depth % 2 === 0)) { out.push(...c.cmds); continue }
+      // The other way round: from its last point back to its first, each curve's handles swapped.
+      const ends = [c.start, ...c.segments.map(end)]
+      out.push(0, ...ends[ends.length - 1])
+      for (let k = c.segments.length - 1; k >= 0; k--) {
+        const s = c.segments[k], to = ends[k]
+        if (s[0] === 1) out.push(1, ...to)
+        else if (s[0] === 2) out.push(2, s[1], s[2], ...to)
+        else if (s[0] === 3) out.push(3, s[1], s[2], ...to, s[5])
+        else out.push(4, s[3], s[4], s[1], s[2], ...to)
+      }
+      if (c.closed) out.push(5)
+    }
+    return out
   }
 
   // Pictures a drawing asked for that the page does not have yet, as from a shared design's room.
@@ -1382,6 +1461,19 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     /** Names of the pictures drawings asked for that are not here yet. */
     missingPictures() { return [...missing] },
     testEdit() { return reply(x.bz_test_edit()) },
+    /**
+     * Hands the core the icon library: Icons.deflate as the app has it (raw DEFLATE), which the
+     * browser unpacks itself. For a page that wants icons, once; answers the sets the core has.
+     */
+    async icons(packed) {
+      const unpacked = new Uint8Array(await new Response(new Blob([packed]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer())
+      return reply(send(x.bz_icons, unpacked))
+    },
+    /** For comparing the icon library with the Mac's (the core's WebIcons.test). A sheet asked for is then the design shown. */
+    testIcons(asked) {
+      if (asked.sheet) take(new Map())
+      return took(reply(send(x.bz_test_icons, JSON.stringify(asked))))
+    },
     /** For testing the live room without a Mac in it (the core's WebLive.test). */
     testLive(asked) { return reply(send(x.bz_test_live, JSON.stringify(asked))) },
     document() { return reply(x.bz_document()) },
