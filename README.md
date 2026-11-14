@@ -215,11 +215,31 @@ what is pushed behind the page still shows on it, as CSS paints a parent's backg
 Animate's camera at rest sees what the design shows; tilted or swung, it sees how high each layer
 stands, and the sheet still lies under everything.
 
+Several layers picked that lie together (on one artboard, or in one group on it) turn as one body:
+about the middle of the box round them, each ending where a real body's face would, moved, higher
+or lower, and facing another way. The body is read and led by its largest face, its lead: the 3D
+card shows the lead's numbers, X and Y turn the body with it, Z lifts the whole body by as much as
+the lead goes, and Lay Flat lays a body turned from flat back to the point where it lay. Nothing
+of the body is stored: each layer keeps where it stands and how it is turned, as before. Off any
+artboard, or one layer in each of several parents, each turns about its own middle. In Animate the
+Pose card's Tilt and Swing key several lying together as one body at the playhead (tilt, swing,
+and move, lift and turn where they change); between keys each property goes its own way, so a
+group is what keeps layers one thing throughout. The AI server's `turn_layers` does both.
+
+What is nearer covers what is further by the height of each layer's middle, with one exception
+that a body needs: layers turned to face the same way, with their middles at different heights,
+that lie in one plane or over one another are ordered as parallel faces cover one another, by how
+far each plane lies in front, and those in one plane as listed (`DepthOrder.nearness`; the film's
+`filmOrder` uses the same). So a button stays on its card when both are swung, though its middle
+then stands lower than the card's.
+
 - **Where:** all shared with Windows and the browser. `Bezzle/Model/Perspective.swift` has `Eye`,
   the homography seen from it, and `BezzleDocument.eye(inside:)` and `eye(forParentOf:)`, where any
   layer is seen from. `DepthOrder.swift` is nearer over further, `DepthPushing.swift` the push
-  while dragging, `DepthTurning.swift` the knob and turning from a side. The renderer finds the eye
-  itself, from `Options.board` and `offset` (`Renderer.Options.eye`).
+  while dragging, `DepthTurning.swift` the knob and turning from a side, `DepthBody.swift` several
+  layers turned as one (`turnInDepth`, `layFlat`, `poseInDepth`), which the Mac's card and pad
+  reach through `Store/DepthOperations.swift`. The renderer finds the eye itself, from
+  `Options.board` and `offset` (`Renderer.Options.eye`).
 - **The rule for new code:** whatever asks where a layer in depth shows (`Perspective`,
   `Geometry.bounds`, `Geometry.contains`, `Renderer.reach`, `Prototype.chain`) is given the eye of
   the layer's parent. Without one it sees the layer from its own middle, which is only right off
@@ -230,7 +250,8 @@ stands, and the sheet still lies under everything.
   takes Option. A layer only held at a height and facing the eye has no knob, so a drag on its
   middle moves it. In Animate, Control while moving keys Lift. On Windows the key is Alt, pressed
   once the drag is under way (Alt at the press duplicates).
-- **Its tests** are `DepthSceneTests` and `DepthTests`, with `MotionLensTests` for the film.
+- **Its tests** are `DepthSceneTests`, `DepthTests` and `DepthBodyTests`, with `MotionLensTests`
+  for the film.
 - **Driving a copy:** `BEZZLE_CLICKS` takes `^x,y>x,y` for a drag with Control held.
 
 ### Mac parity
