@@ -164,8 +164,9 @@ outlines and looks. What is left:
   timeline card's height on its spring was built but not looked at in the VM.
 - **Unchecked:** a film with outline keys or look keys made on the Mac opened in the VM (ones
   made on Windows through the shared calls play); a shader input key's bounce in the AI
-  server's `get_animation` (no shader fill could be made in the VM); the x64 build of this
-  work before the release's own.
+  server's `get_animation` (no shader fill could be made in the VM); the x64 build, which 1.8's
+  release made and nobody ran (the VM is an Arm one, where the Arm64 release build was launched
+  once, as far as its home window).
 - **The stage** is put together on the processor and was measured in the VM only, never on a
   real PC.
 
@@ -308,7 +309,7 @@ window, only in tests and in pictures the renderer made. What that left:
   looked at from the side is drawn whole at every step of the drag (not measured on a large
   one); the 3D card's numbers follow a turn from a side only when the drag ends.
 - **Windows, not checked:** the switch and captions in German, French and Italian in the window;
-  a deck's artboard looked at from the side; the x64 build; a film of a group that keeps depth
+  a deck's artboard looked at from the side; the x64 build run; a film of a group that keeps depth
   playing in the window (only at rest there).
 - **Not looked at on the Mac:** whether the 3D card's row cuts "Layers keep their depth" (Windows
   uses a wrapping row).
@@ -332,9 +333,12 @@ Worked through on 2026-11-14 (`Web/README.md` › What the prototype left out, a
 now, with the numbers): plus darker, blurs along a ramp, shader fills in the design, the live
 room's hands and presence, four languages, the icon library in the core, and memory let go.
 
-- **Nothing of this is published:** bezzle.ch/app shows none of the mended drawing, the live
-  room, the four languages or the film until `Web/publish.sh` is run and bezzle-web pushed, at
-  Erik's word (`publish.sh` also copies `live.mjs` and `words.mjs`).
+- **Published with 1.8** (2026-11-14, bezzle.ch/app, from the app's commit cf196be). Checked
+  before the push with the published page in a headless Chromium against a relay on this Mac: a
+  design with a film, 3D depth and an outline key draws and plays, in English and German, with
+  nothing in the console; after the deploy the live files were compared byte for byte. Not
+  tried: a design shared by a real Mac through the live relay opened at bezzle.ch/app, in
+  Safari or Firefox, or on a phone.
 - **Shader fills** beyond plain draws (passes into textures, steps building on frames before,
   depth, stencil, instances, textures of numbers; `beyondPlain`), and every shader fill where
   there is no WebGL, show their picture, in the design and in a film; drawing them needs
@@ -378,14 +382,14 @@ room's hands and presence, four languages, the icon library in the core, and mem
 
 ## Housekeeping
 
-- **The VM's disk** had 5.5 GB free of 127 on 2026-11-14, with a working copy and its build
-  taking 5. The build folders of agents finished before 1.7 (`win-shaders`, `win-browser`,
-  `win-animate`, `win-vectorize`) were removed then, which left 21.9 GB; their small side folders
-  of designs and pictures, `cutout-samples`, `import-samples` and about 250 old
-  `C:\bezzle\BezzleDesktop-*.log` files are still there.
+- **The VM's disk** has 42.8 GB free of 127 since 2026-11-14, when every finished agent's
+  folder in `C:\src` was removed (`win-*`, `shader-check`). Left there beside `Bezzle` and
+  `bezzle-release`: `curves`, `cutout-samples`, `import-samples`, a few build logs, and about 250
+  old `C:\bezzle\BezzleDesktop-*.log` files.
 
-- **Agent branches:** eight branches of finished agents are left (`git branch --list 'worktree-agent-*'`,
-  those with no worktree in `git worktree list`). Their worktrees are gone and their commits are on
-  main, brought there one by one, which is why `git branch -d` refuses them (checked 2026-11-14:
-  `git cherry main <branch>` shows every commit as on main, but for bfe9cca and 6b53351, which main
-  has in a fuller form as 7737209 and a9aa55c). `git branch -D` removes them.
+- **1.8 as released, not watched** (2026-11-14): an installed 1.7 taking the update, on the Mac
+  (Sparkle's window with the notes, a delta) or on Windows. The released Mac copy itself was not
+  launched, since it shares Erik's container: a sandboxed Release build of the same commit under
+  a test id was (home, a design window, a film with the camera's focus drawn, movies saved in
+  H.264 and HEVC through the AI server). The Windows installers were not run; the Arm64 release
+  build they hold was launched once in the VM.
