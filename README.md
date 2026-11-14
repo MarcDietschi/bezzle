@@ -261,6 +261,13 @@ along one artboard's film. Its keys are changes from the design and never the de
   `pinch=`, `tap2=`, `wheel=` and `swipe=` send the timeline the events a trackpad or a wheel
   would, through the app's own queue, and `timeline` writes which part of the film shows into
   `BEZZLE_SCRUB_OUT`: the way to see the gestures arrive without a hand on a trackpad.
+  `press=` goes through that queue too and reaches the canvas, the panels and SwiftUI's buttons,
+  taps and drags alike, the timeline's among them, in a copy that stays in the background. Of a
+  click on a window that is not the one in front, AppKit first asks the view under it whether
+  it takes such a click, and SwiftUI says yes for a button and no where it waits for a tap or
+  a drag, so the hook has that view's kind say yes while the press lasts (`takesFirstClick`).
+  `+` before the points keeps the button down until `lift=`, `escape=1` stands in for Escape
+  held down, and `picked` writes what is picked into `BEZZLE_SCRUB_OUT`.
 - **Its words** are in the catalog in all four languages; `AnimateWordsTests` fails when one is
   missing, so a new property, pace or move brings its words along.
 

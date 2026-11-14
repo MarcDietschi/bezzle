@@ -16,9 +16,29 @@ import AppKit
 ///       clear                      take all motion from what is picked
 ///       fly                        fly the camera to what is picked
 ///       press=x,y | press=x,y>x,y  press the window at a point measured from its top left, as a
-///                                  picture of it shows, and let go, or drag to another first. The
-///                                  view under the point is told directly, so the pointer stays
-///                                  where it is and the window where it lies.
+///                                  picture of it shows, and let go, or drag to another first;
+///                                  "+x,y>x,y" keeps the button down there, for a picture of what
+///                                  is in hand, until lift=x,y lets go. It goes through the app's
+///                                  own queue as a click does and reaches what a click reaches in
+///                                  the window in front: the canvas, the panels, and SwiftUI's
+///                                  buttons, taps and drags, the timeline's among them (see
+///                                  `takesFirstClick`). The pointer stays where it is, the window
+///                                  where it lies, and the copy in the background. It is taken when
+///                                  the app next looks at its events, so what a step tells of it,
+///                                  it tells a moment later. Shift and the other keys are read from
+///                                  the keyboard by what is pressed, never from the press.
+///       type=code                  a key pressed and let go, by its key code (53 is Escape), through
+///                                  the same queue, so it goes where a key goes: to whatever has
+///                                  the keyboard. While a press is kept down on SwiftUI's ground
+///                                  it goes nowhere: the app is told of no key then, which is why
+///                                  the timeline asks the keyboard itself for Escape
+///       escape=1 | escape=0        as if Escape were held down, and let go again, for the
+///                                  timeline's marquee (`FilmHand.escapeOnKeyboard`): the keyboard
+///                                  itself is not a test run's to press
+///       picked                     writes which layers, or the camera, and which keys are picked,
+///                                  whether the film plays, and where the playhead is, and whether
+///                                  the copy has come to the front (it never should), to
+///                                  BEZZLE_SCRUB_OUT (or the log)
 ///       scrub=from,to,seconds      drag the playhead from one moment to the other and back, as a
 ///                                  hand on the timeline would, 120 times a second; how often the
 ///                                  app found the time to is written to BEZZLE_SCRUB_OUT (or the log)
@@ -60,32 +80,76 @@ enum AnimateHooks {
         }
     }
 
-    private static func press(_ spec: String, _ store: DocumentStore) {
+    // MARK: A press on the window
+
+    /// The kinds of view made to take a first click while a press lasts, with what they
+    /// answered before.
+    private static var firstClicks: [(of: AnyClass, was: IMP, now: IMP, types: UnsafePointer<CChar>?)] = []
+
+    /// Has the view under a press take it as it would in the window in front. A test copy's
+    /// window is never that one, and of a click on any other AppKit first asks the view under
+    /// it whether it takes such a click (`acceptsFirstMouse`), and drops it at a no. SwiftUI
+    /// says yes where a button is and no where a tap or a drag is waited for, so those were
+    /// never reached. Views of its kind say yes until `noFirstClicks`.
+    private static func takesFirstClick(_ view: NSView) {
+        let asked = #selector(NSView.acceptsFirstMouse(for:))
+        guard let kind: AnyClass = object_getClass(view), !firstClicks.contains(where: { $0.of === kind }),
+              let method = class_getInstanceMethod(kind, asked) else { return }
+        let yes: @convention(block) (AnyObject, NSEvent?) -> Bool = { _, _ in true }
+        let inherited = method_getImplementation(method), types = method_getTypeEncoding(method), now = imp_implementationWithBlock(yes)
+        // Its own answer is given back afterwards; one it only inherited is put in its place,
+        // which is the same answer.
+        let own = class_replaceMethod(kind, asked, now, types)
+        firstClicks.append((kind, own ?? inherited, now, types))
+    }
+
+    private static func noFirstClicks() {
+        let asked = #selector(NSView.acceptsFirstMouse(for:))
+        for kind in firstClicks {
+            class_replaceMethod(kind.of, asked, kind.was, kind.types)
+            imp_removeBlock(kind.now)
+        }
+        firstClicks = []
+    }
+
+    private static func press(_ spec: String, _ store: DocumentStore, lift: Bool = false) {
         guard let window = store.canvas?.window, let content = window.contentView else { return }
         let tall = Double(content.bounds.height)
+        let holds = spec.hasPrefix("+")
         var ends: [CGPoint] = []
-        for part in spec.split(separator: ">") {
+        for part in spec.drop(while: { $0 == "+" }).split(separator: ">") {
             let xy = numbers(String(part))
             if xy.count == 2 { ends.append(CGPoint(x: xy[0], y: tall - xy[1])) }
         }
-        // Asked of the window's frame view, as the window itself asks: in the window's own points.
-        guard let from = ends.first, let view = (content.superview ?? content).hitTest(from) else { return }
+        guard let from = ends.first else { return }
         let to = ends.count > 1 ? ends[1] : from
-        func event(_ type: NSEvent.EventType, _ p: CGPoint) -> NSEvent? {
-            NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
+        // Into the app's own queue, which hands it to the window as it does a click: whatever
+        // asks the app which event it is busy with, as the timeline asks for a double click,
+        // is told of this one.
+        func send(_ type: NSEvent.EventType, _ p: CGPoint) {
+            guard let e = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                             pressure: type == .leftMouseUp ? 0 : 1) else { return }
+            NSApp.postEvent(e, atStart: false)
         }
-        if let e = event(.leftMouseDown, from) { view.mouseDown(with: e) }
         Task { @MainActor in
-            if to != from {
-                for i in 1...10 {
-                    try? await Task.sleep(for: .milliseconds(24))
-                    let k = Double(i) / 10
-                    if let e = event(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k)) { view.mouseDragged(with: e) }
+            if !lift {
+                // Asked of the window's frame view, as the window itself asks: in the window's own points.
+                if let view = (content.superview ?? content).hitTest(from) { takesFirstClick(view) }
+                send(.leftMouseDown, from)
+                if to != from {
+                    for i in 1...10 {
+                        try? await Task.sleep(for: .milliseconds(24))
+                        let k = Double(i) / 10
+                        send(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k))
+                    }
                 }
+                if holds { return }
+                try? await Task.sleep(for: .milliseconds(40))
             }
+            send(.leftMouseUp, to)
             try? await Task.sleep(for: .milliseconds(40))
-            if let e = event(.leftMouseUp, to) { view.mouseUp(with: e) }
+            noFirstClicks()
         }
     }
 
@@ -256,6 +320,23 @@ enum AnimateHooks {
         case "clear": store.clearFilmMotion()
         case "fly": store.flyCamera(to: store.posedLayers)
         case "press": press(rest, store)
+        case "lift": press(rest, store, lift: true)
+        case "escape": FilmHand.pretendsEscape = rest == "1"
+        case "type":
+            guard let code = UInt16(rest) else { return }
+            send([NSEvent.EventType.keyDown, .keyUp].map {
+                NSEvent.keyEvent(with: $0, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                 windowNumber: store.canvas?.window?.windowNumber ?? 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                                 isARepeat: false, keyCode: code)
+            })
+        case "picked":
+            let names = store.selection.map { store.doc.node($0)?.name ?? "?" }.joined(separator: ", ")
+            let keys = store.pickedKeys.sorted { ($0.ms, $0.layer.uuidString) < ($1.ms, $1.layer.uuidString) }.map { ref in
+                let whose = ref.layer == store.film.board ? "camera" : store.doc.node(ref.layer)?.name ?? "?"
+                return whose + (ref.property.map { "." + $0.rawValue } ?? "") + (ref.input.map { "." + $0 } ?? "") + "@" + String(format: "%.3f", ref.time)
+            }.joined(separator: " ")
+            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+            say("picked: [\(names)]\(store.film.camera ? " camera" : ""); keys: \(keys); playing \(store.film.playing); once \(store.filmBoard?.film?.once == true); playhead \(String(format: "%.3f", store.filmTime)); active \(NSApp.isActive) front \(front) key \(store.canvas?.window?.isKeyWindow == true)")
         case "scrub":
             let n = numbers(rest)
             guard n.count == 3 else { return }
