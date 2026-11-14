@@ -189,6 +189,11 @@ it: Direct3D and its compiler, d3dcompiler_47, come with Windows. The two platfo
 frames to within a level or two (`Packages/Shaders/README.md` › Agreement;
 `VM/shader-agreement.sh` compares them), and `swift test -j 2` in `Packages\Shaders` runs the Mac's
 engine tests here. The VM has no graphics card, so it has only ever drawn them with WARP.
+Direct3D draws a fill's draws onto its canvas and no more yet: a fill with passes into textures,
+steps that build on the frames before, depth, stencil, instances or textures of numbers
+(`ShaderFill.beyondPlain`, which the Mac draws since 2026-11-14) is refused by name and shows its
+picture, in the design and in a film (`Packages/Shaders/README.md` › What WebGL does that this
+does not).
 
 Every web view keeps what pages store in Bezzle's own WebView2 profile, `%LOCALAPPDATA%\Bezzle\Web
 Pages`, apart from Edge's, as the Mac keeps a data store of its own: a sign-in made in Bezzle's
@@ -212,7 +217,9 @@ without asking a browser (the pages offered, what new artboards are called and w
 cookies go with a picture) is the Mac's own `Bezzle/Import/WebPages.swift`, linked. The AI server's
 `browse` drives it, and `import_website` takes `shown`, `urls`, `design` and `name` as on the Mac. A
 WebGL canvas comes in with what it draws kept as the layer's shader fill (`WebGLScene.swift`, linked),
-its picture as the poster, when the Mac's `ShaderPainting.builds` says Windows can draw it again.
+its picture as the poster, when the Mac's `ShaderPainting.settled` says Windows can draw it again:
+a page that draws through framebuffers or needs its depth test comes in as a picture here, where
+the Mac keeps it live.
 
 To try the browser, sign in on a page of your own, never with a real site's password: a local page
 with a form that sets a cookie, served in the VM (any small server on 127.0.0.1), run in the
