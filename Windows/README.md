@@ -306,6 +306,33 @@ once the file is whole; Windows' encoder takes no more than 120 frames a second.
 saves them as movies, headless: `BEZZLE_FILM_AT=0;0.5;1.5` (seconds) and
 `BEZZLE_FILM_MOVIE=2,60` (scale, frames a second), into the out folder.
 
+3D is the Mac's (`README.md` › 3D), all of it from the shared model. Several layers lying together
+turn as one body from the 3D card too: its pad, its drag, its X, Y and Z, Lay Flat and its switch
+go through the shared `turnInDepth` and `layFlat` (`turning` in `Host/LookEditing.swift`), and the
+card reads the body's lead. For a group the card has the switch Layers keep their depth
+(`Node.keepsDepth`). An artboard is looked at from the side with Alt, the Mac's Control: Alt
+dragged from beside the layers turns the look (Shift in fives), a click there with Alt, Escape
+with nothing picked or the word by the artboard's top right corner looks from the front again.
+`Host/Looking.swift` has it: the looks are the open design's own (`WindowsCore.sceneLooks`, one of
+the values a tab keeps), handed to `doc.looks` whenever the design is set, so undo, redo and a
+gesture made again leave them alone, and gone when the design is seen as a prototype, inspected
+or animated. `WindowsCore.LookHand` is the Mac's LookTool for the canvas, which draws its posts
+and its word. Windows has no tiles: an artboard looked at from the side is drawn whole again, as
+far as it reaches off the page (`WindowsCore.drawn`, `picture(of:part:scale:)`), and whatever
+leaves the canvas reads `doc.front`. The AI server's `turn_layers` and `keepsDepth` are the Mac's.
+`bezzle-render <fonts> depth <out>` tries all of it without a window (`Host/DepthCheck.swift`: the
+card's changes, turning from a side, a group that keeps depth picked, drawn and played, the look
+with its posts and word, and the AI server), and `BEZZLE_LOOK=-45,0` (degrees across, down) draws
+a design's artboards as the canvas shows them from there. `VM/depth-agreement.sh` compares
+Windows with the Mac's renderer: `VM/DepthTruthTests.swift`, a test the script copies into
+BezzleTests for the run, writes two designs and the Mac's pictures of them from the front, from
+two sides and as films, `bezzle-render` draws the same in the VM, and `VM/depth-compare.py` says
+how far each pair is apart. Measured so on 2026-11-14 at two pixels to the point: a group that
+keeps depth, a body and an artboard seen from the side differ from the Mac as the same scenes
+do from the front and with the group as one card, on edges alone (a mean of 0.01 to 0.11 of 255
+a channel, 0.03% to 0.37% of the channels further apart than 8), and an artboard that does not
+clip reaches as far off the page on both.
+
 Files from other apps are brought in by the Mac's own importers (`Bezzle/Import`, linked into
 `Sources/BezzleCore/Import` beside the Windows stand-ins for what they take from AppKit, Image I/O
 and Core Text); home's Bring In… button, the Bezzle menu, files dropped on home and a file given

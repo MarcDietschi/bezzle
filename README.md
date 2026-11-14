@@ -317,7 +317,7 @@ tool stays true, while what stands off the page shows where the moved eye sees i
 under each corner down to where it would lie (under what is picked alone, when some of it is). On
 the Mac, Control dragged beside the layers turns the look (Shift in fives); a click there with
 Control, Escape with nothing picked, or the word by the artboard's top right corner looks from the
-front again. It is a way of looking, never part of the design: `DocumentStore.looks` holds it and
+front again (on Windows the key is Alt, `Windows/README.md` › The app). It is a way of looking, never part of the design: `DocumentStore.looks` holds it and
 hands it to the design it shows (`BezzleDocument.looks`, which no file has and `==` leaves out), so
 everything on the canvas asks `doc.eye(…)` as ever and is given the moved eye. It is not an undo
 step, and it ends when the design is seen as a prototype, inspected or animated. The renderer

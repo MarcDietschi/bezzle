@@ -63,6 +63,15 @@ do {
         for line in WindowsCore.tryVectors(files, into: URL(fileURLWithPath: arguments[3])) { print(line) }
         exit(0)
     }
+    // "depth": what Bezzle for Windows does with depth is tried without its window, on designs of
+    // its own made in the out folder: several layers turned as one body, groups that keep their
+    // layers' depth, an artboard looked at from the side, and the AI server's part in each
+    // (Host/DepthCheck.swift). A line for each thing tried; ends with 1 when one did not hold.
+    if arguments[2] == "depth" {
+        let tried = await WindowsCore.depthCheck(into: URL(fileURLWithPath: arguments[3]))
+        for line in tried.lines { print(line) }
+        exit(tried.failed == 0 ? 0 : 1)
+    }
     if arguments[2] == "cutout" {
         SubjectModel.log = { print($0) }
         let photos = (ProcessInfo.processInfo.environment["BEZZLE_PHOTOS"] ?? "").split(separator: ";").map { URL(fileURLWithPath: String($0)) }
@@ -243,7 +252,26 @@ do {
         print("exported: \(outcome.written) written, \(outcome.missed) missed → \(outcome.shown.lastPathComponent)")
         exit(0)
     }
+    // With BEZZLE_LOOK (across,down in degrees), every artboard is looked at from there, as with
+    // Alt dragged beside its layers, and drawn as the canvas then shows it (Host/Looking.swift):
+    // as far as it reaches when it shows what runs past its edges, which part of the canvas is
+    // said, for the Mac's canvas to be compared with.
+    let look = (ProcessInfo.processInfo.environment["BEZZLE_LOOK"] ?? "").split(separator: ",").compactMap { Double($0) }
     for (k, board) in boards.enumerated() {
+        if look.count == 2, let id = board.id {
+            WindowsCore.look(at: id, across: look[0], down: look[1])
+            let started = Date()
+            guard let picture = WindowsCore.renderShown(board: board.index, scale: scale) else {
+                print("\(board.name): nothing drawn")
+                continue
+            }
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            let file = out.appendingPathComponent(String(format: "%02d.png", k))
+            try WindowsCore.writePNG(picture.pixels, width: picture.width, height: picture.height, to: file)
+            let c = picture.covers
+            print("\(board.name): \(picture.width)×\(picture.height) in \(ms) ms, covering \(c.minX),\(c.minY) \(c.width)×\(c.height) → \(file.lastPathComponent)")
+            continue
+        }
         // With BEZZLE_TWICE, drawn once before: what a second drawing makes (the app draws over and over).
         if ProcessInfo.processInfo.environment["BEZZLE_TWICE"] != nil { _ = WindowsCore.render(board: board.index, scale: scale) }
         let started = Date()
