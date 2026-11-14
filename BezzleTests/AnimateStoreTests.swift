@@ -107,6 +107,49 @@ struct AnimateStoreTests {
         #expect(store.film.board == a)
     }
 
+    /// Turned to, a film's artboard comes to lie whole above the timeline, however many of its
+    /// lines the card shows, and moves only the way it has to: what lies beside it stays in sight.
+    @Test func theFilmsArtboardComesToLieClearOfTheTimelineMovingOnlyAsItMust() {
+        let canvas = CGSize(width: 1000, height: 700)
+        // A film of so many layers that move, 600 points right of another artboard. Without a
+        // canvas, the view is at once where its glide ends.
+        func turned(layers: Int, from origin: CGPoint) -> (store: DocumentStore, film: Node, foot: CGFloat) {
+            var film = Node(kind: .artboard, name: "Film", frame: CGRect(x: 600, y: 0, width: 300, height: 400))
+            film.children = (0..<layers).map { i in
+                var layer = CanvasTests.rect("Layer \(i)", CGRect(x: 10, y: 10 + CGFloat(i) * 20, width: 40, height: 10))
+                layer.setKey(.move, [10, 0], at: 0)
+                layer.setKey(.move, [0, 0], at: 1)
+                return layer
+            }
+            var doc = BezzleDocument()
+            doc.nodes = [film, Node(kind: .artboard, name: "Beside", frame: CGRect(x: 0, y: 0, width: 500, height: 400))]
+            let store = DocumentStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).bezzle"), document: doc)
+            store.canvasSize = canvas
+            store.viewport = Viewport(origin: origin, zoom: 1)
+            store.selection = [film.id]
+            store.show(.animate)
+            return (store, film, FilmTimeline.foot(lines: FilmRow.rows(of: film, open: []).count))
+        }
+        // With few lines the card is low, and the artboard is clear of it where it lies.
+        let start = CGPoint(x: -50, y: -100)
+        var (store, film, foot) = turned(layers: 2, from: start)
+        #expect(foot == FilmTimeline.foot(lines: 4) && store.viewport == Viewport(origin: start, zoom: 1))
+        // With many, the card reaches higher and would cover the artboard's foot: the view moves
+        // up, drawing back as far as it must, and stays where it is from side to side.
+        (store, film, foot) = turned(layers: 7, from: start)
+        #expect(foot == FilmTimeline.foot(lines: 4) + 3 * FilmTimeline.rowHeight)
+        var seen = store.viewport.toView(film.frame)
+        #expect(seen.minY >= 12 && seen.maxY <= canvas.height - foot - 12, "\(seen)")
+        #expect(abs(seen.midY - (canvas.height - foot) / 2) < 0.5 && store.viewport.zoom < 1 && store.viewport.zoom > 0.85)
+        // What was in the middle from side to side still is, and the artboard beside it shows.
+        #expect(abs(store.viewport.toCanvas(CGPoint(x: canvas.width / 2, y: 0)).x - (start.x + canvas.width / 2)) < 0.01)
+        #expect(store.viewport.toView(store.doc.nodes[1].frame).minX > 0)
+        // Out of sight at the side, it comes to the middle both ways.
+        (store, film, foot) = turned(layers: 7, from: CGPoint(x: -600, y: -100))
+        seen = store.viewport.toView(film.frame)
+        #expect(abs(seen.midX - canvas.width / 2) < 0.5 && abs(seen.midY - (canvas.height - foot) / 2) < 0.5, "\(seen)")
+    }
+
     @Test func leavingAnimateLetsGoOfEverythingInHand() {
         animate()
         bench.step { store.applyMove(.fade) }

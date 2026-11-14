@@ -22,15 +22,18 @@ struct FilmTimeline: View {
 
     static let rowHeight: CGFloat = 24
     static let rulerHeight: CGFloat = 24
-    /// How much of the canvas's foot the card takes while it shows its fewest lines, with the
-    /// room under it: what the film's artboard is kept clear of.
-    static let foot: CGFloat = 44 + rulerHeight + 4 * rowHeight + 6 + 14
+    /// How many lines the card shows of a film that has this many: four at least, and seven at
+    /// most, past which they scroll.
+    static func shown(of lines: Int) -> Int { min(max(lines, 4), 7) }
+    /// How much of the canvas's foot the card takes while a film of this many lines is on it,
+    /// with the room under it: what the film's artboard is kept clear of.
+    static func foot(lines: Int) -> CGFloat { 44 + rulerHeight + CGFloat(shown(of: lines)) * rowHeight + 6 + 14 }
 
     var body: some View {
         let board = store.filmBoard
         let rows = board.map { FilmRow.rows(of: $0, open: store.film.open) } ?? []
         let length = board?.filmLength ?? MotionTiming.shortest
-        let shown = min(max(rows.count, 4), 7)
+        let shown = Self.shown(of: rows.count)
         VStack(spacing: 0) {
             FilmHeader(store: store, once: board?.film?.once == true)
             Hairline()

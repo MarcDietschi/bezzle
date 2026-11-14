@@ -121,15 +121,26 @@ extension DocumentStore {
     }
 
     /// Glides the view so the film's artboard lies whole above the timeline: it is what is worked
-    /// on, and belongs neither half out of sight nor under the card at the canvas's foot. One
-    /// that shows whole there already is left where it is.
+    /// on, and belongs neither half out of sight nor under the card at the canvas's foot, as tall
+    /// as this film's lines make it. One that shows whole there already is left where it is, and
+    /// one that shows whole from side to side, or from top to foot, is moved only the other way:
+    /// what lies beside it, such as the words it is worked from, stays in sight with it.
     func frameFilm() {
-        guard let board = filmBoard, canvasSize.width > 0, canvasSize.height > FilmTimeline.foot + 160 else { return }
-        let room = CGSize(width: canvasSize.width, height: canvasSize.height - FilmTimeline.foot)
+        guard let board = filmBoard, canvasSize.width > 0 else { return }
+        let foot = FilmTimeline.foot(lines: FilmRow.rows(of: board, open: film.open).count)
+        guard canvasSize.height > foot + 160 else { return }
+        let room = CGSize(width: canvasSize.width, height: canvasSize.height - foot)
         let seen = CGRect(origin: viewport.origin, size: CGSize(width: room.width / viewport.zoom, height: room.height / viewport.zoom))
         guard !seen.insetBy(dx: 12 / viewport.zoom, dy: 12 / viewport.zoom).contains(board.frame) else { return }
         var target = viewport
         target.fit(board.frame, in: room, padding: 40, maxZoom: max(1, min(viewport.zoom, 2)))
+        // The view as it would be at that zoom without moving: where the artboard lies whole
+        // in it one way, it stays that way.
+        let edge = 12 / target.zoom
+        let still = CGRect(x: seen.midX - room.width / 2 / target.zoom, y: seen.midY - room.height / 2 / target.zoom,
+                           width: room.width / target.zoom, height: room.height / target.zoom)
+        if board.frame.minX >= still.minX + edge, board.frame.maxX <= still.maxX - edge { target.origin.x = still.minX }
+        if board.frame.minY >= still.minY + edge, board.frame.maxY <= still.maxY - edge { target.origin.y = still.minY }
         glide.fly(self, to: target)
     }
 
