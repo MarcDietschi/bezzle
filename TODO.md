@@ -380,8 +380,50 @@ room's hands and presence, four languages, the icon library in the core, and mem
   before `wound` (the cure could move into `Platform/CGPath.swift`).
 - `Web/README.md` › Not done lists what the viewer still does not draw or do.
 
+## The website
+
+bezzle.ch as of 2026-11-14 (bezzle-web 4b268bf, deployed): the docs, What's New and the home page
+say what 1.8 has, and the story has twelve chapters, with Vectorize and Animate among them and
+the window's switch showing four modes. Its source is `~/Sites/bezzle-web`; this is what was left
+there.
+
+- **The story's ten older captures show three modes.** The pictures a visitor without motion
+  sees (`public/img/app/<locale>/`) were taken before Animate; only `vectorize` and `animate` are
+  new. Those two were captured apart with `capture/story/` in `AppStore/screenshots-src` (kept
+  from that session and not run from this folder since; its header says what it needs beside
+  it). Left: all twelve taken afresh through `capture/capture.py`, and words for the two
+  chapters in `captions.py`.
+- **The docs do not play the two new scenes:** `src/docs/Live.jsx` has no entry for Vectorize or
+  Animate, so their pages show no playing window.
+- **The comparison pages** (`figma-alternative.html`, `sketch-alternative.html`) show Vectorize
+  and Animate among the story's chapters, but their tables have no row for Animate, 3D scenes
+  or Vectorize.
+- **Not measured:** the two new scenes drawn flat on a phone (`lib/flat.js`; the memory Safari
+  holds, with Playwright's WebKit at an iPhone's size and 3× as the site's README says), and
+  Lighthouse on the live site (on the local preview server, which sends files uncompressed, the
+  home page's performance was 82 before the two chapters and 81 after, the other three 100).
+- **Found, not fixed:** `https://bezzle.ch/docs/index.html` puts React's error 418 in the
+  console (`/docs/` has none), and the line in the header of `scripts/shelter-logo.mjs` that
+  runs it fails with Node 26.
+- **For Erik, the two new captures:** the window's three buttons are grey in them, since a test
+  copy never comes to the front (four of the ten older captures are grey too, six coloured).
+  The copies ran with a relay address nothing answers at (`http://127.0.0.1:9`) instead of none,
+  so that Share… shows as in the other captures; the designs were made from the screenshots'
+  poster and have no `sharing` folder.
+- **Two older worktrees** in `~/Sites/bezzle-web/.claude/worktrees` (`agent-a510f38f3edf95d18`,
+  `agent-a9ce4579b9ab95071`, both at 72c6d36 and last written on 2026-11-08) hold changes that
+  were never committed: 8 and 39 of their files differ from main's. Another session's, so left
+  as they were; look before removing them.
+
 ## Housekeeping
 
+- **1.8.1 is committed and not released** (2026-11-14: 224f91a and 52906a7, not pushed). Bezzle
+  1.8 on the Mac closes when the camera is picked in Animate while a layer's Fill, Border or
+  Shadow card shows (`Bezzle/Views/FilmLooks.swift` drew the cards once more with nothing
+  picked). `AnimateLooksTests.theCardsLetGoWhenTheCameraIsPicked` breaks off on 1.8's code and
+  passes now; the whole suite passed on 52906a7 (2121 tests, 18 skipped). Left, at Erik's word:
+  the push and `Scripts/release.sh`, for the Mac alone. Windows has no look cards in Animate and
+  stays at 1.8.
 - **The VM's disk** has 42.8 GB free of 127 since 2026-11-14, when every finished agent's
   folder in `C:\src` was removed (`win-*`, `shader-check`). Left there beside `Bezzle` and
   `bezzle-release`: `curves`, `cutout-samples`, `import-samples`, a few build logs, and about 250
