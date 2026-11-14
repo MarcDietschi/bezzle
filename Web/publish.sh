@@ -19,7 +19,7 @@ rm -rf "$APP"
 mkdir -p "$APP/canvaskit" "$APP/fonts"
 sed 's/^const published = false$/const published = true/' site/shared.html > "$APP/index.html"
 grep -q '^const published = true$' "$APP/index.html" || { echo "The page did not take the published paths" >&2; exit 1; }
-cp site/bezzle.mjs site/share.mjs site/film.mjs site/shaders.mjs "$APP/"
+cp site/bezzle.mjs site/share.mjs site/film.mjs site/live.mjs site/shaders.mjs "$APP/"
 gzip -9 -c .build/out/Products/Release-webassembly-wasm32/BezzleCore.wasm > "$APP/core.wasm.gz"
 cp node_modules/canvaskit-wasm/bin/canvaskit.js "$APP/canvaskit/"
 gzip -9 -c node_modules/canvaskit-wasm/bin/canvaskit.wasm > "$APP/canvaskit/canvaskit.wasm.gz"

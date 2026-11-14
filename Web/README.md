@@ -107,6 +107,50 @@ Tested against the relay itself, running here (`cd ../Relay && npx wrangler dev 
 | `node tools/link.mjs --mac <file>` between the two halves of `CloudShareTests.forTheBrowser` (`TEST_RUNNER_BEZZLE_RELAY_TEST`, `TEST_RUNNER_BEZZLE_WEB_LINK=<file>`) | a design the Mac shared opens here as the Mac's to the byte; the browser's edit comes back to the Mac, merged the same |
 | `node tools/room.mjs <design.bezzle> --edit`, then `shared.html?relay=http://127.0.0.1:8790#2.<secret>` in Chrome | the page shows the design live, with its pictures, and follows the edits |
 
+### Who else is there
+
+Those who have a shared design open at the same moment meet in its live room on the relay
+(`Model/Live.swift`, `Store/LiveRoom.swift`): each says who they are, where their hand is, what
+they hold, and what they change as they change it. The page is in that room to watch.
+`share.mjs`' `follow` hears who comes and goes and opens what is said (sealed as the records are,
+about `live`). The core reads it with the Mac's own code: `Model/LiveMessages.swift` has the
+messages, how they travel, whose pencil is whose and the loop a pencil draws, and `WebLive.swift`
+keeps who is there, the artboard a hand is over and the outline of each layer held
+(`Perspective`). `site/live.mjs` draws it as `LiveMarks` and `LiveViews` do on the Mac, the same
+shapes, sizes and timing:
+
+- a token for each person in the bar at the top, in their pencil, ringed while they are at work
+  and dimmed while they are away; pointed at, their name hangs below it, with their time where it
+  is not the time here; pressed, it shows the artboard they are on;
+- a dot in their pencil beside that artboard's name in the list;
+- over the artboard their hand, shaped like the tool they hold, gliding to where it is; their name
+  beside it when they have just come, start moving after a rest, type or move a layer, or when
+  the visitor's own pointer is near; what they hold, outlined, with their initial on a flag; the
+  loop they draw by shaking their pointer;
+- what they change, as they change it, before it is in the room's records. The record that
+  follows changes nothing and is not drawn again (`bz_shared_receive` answers `same`);
+- someone silent for 25 seconds shows as away, and after five minutes as gone, as on the Mac.
+
+The page never says who it is (`LiveHello`), so nobody is shown it: it has no pencil and stands
+in nobody's list. A Mac tells those it has heard from in the last five minutes where its hand is.
+So while the page's tab is in sight and others are there, it says every two minutes that it still
+watches, with a message that wants nothing (`{"want":{"_0":[]}}`, sealed), which a Mac answers
+only by saying who it is.
+
+Not shown: a layer moving while it is dragged (it moves when the drag ends), the glow of what was
+just changed, the light where others look (the list's dots say which artboard), pictures on their
+way, and following someone's view. While an artboard shows its film, nothing is drawn over it.
+
+| | Result |
+|---|---|
+| `tools/LiveTruthTests.swift`, run as WebTruthTests is (below): two real rooms and a watcher on a relay of the test's own | a Mac alone with a watcher tells it who it is and where; neither Mac ever counts the watcher among the people; the watcher's word that it is still there is answered by each Mac saying who it is. Writes `<dir>/live/live.json`: the 21 messages the watcher was sent, and what each Mac showed of the other after every step |
+| `node tools/live.mjs --truth <dir>` | 25 of 25: the core reads the 21 messages (2 of them packed with LZFSE) as the Macs read them, the same people, pencils, tools, pointers and outlines of held layers, the wink where the Mac has it and fading at its pace; the design after each of three changes is the Mac's to the byte; rooms of 1 to 10 are handed the Mac's pencils; four loops lie within 7e-15 points of the Mac's |
+| The same with `--relay http://127.0.0.1:8791` (`cd ../Relay && npx wrangler dev --port 8791`): the page in a headless Chromium, stand-ins saying the Macs' words in its room | 68 of 68: tokens in the bar in the Macs' pencils at every step; held layers outlined and the hand drawn in those pencils, read from the page's pixels; the hand glides to the Mac's pointer; the list says who is on which artboard and a token goes there; a wink is drawn; three changes show as they are made, the design the Mac's to the byte, and the five records that follow draw nothing again; silence shows as away, then gone; the page says nothing in the room but that it is still there, and nothing at all while its tab is hidden |
+
+Two faults of a core whose `Int` has 32 bits came out this way, and are mended in the shared
+code: a pencil was chosen by four bytes read into an `Int` (a trap for every second name), and a
+loop's random numbers were divided by `1 << 53`, which is 0 there.
+
 ## Films
 
 An artboard with a film (Animate) can be played in the page. It opens as the design, as it always
