@@ -43,6 +43,23 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
   provider.registerFont(fonts.system.data, 'System')
   const system = fonts.system
 
+  // One font collection for every paragraph, until the fonts change. Made from the provider, each
+  // paragraph has a collection of its own, and with it a copy of its own of every weight and
+  // optical size of the system font it is set in (they are variations of one file): 0.12 MB a
+  // paragraph, a third of which never came back when the paragraph was let go, which is what a
+  // text set anew at every moment of a film cost. Sharing one, a paragraph in a weight and size
+  // set before costs nothing that can be measured, and its lines are the same.
+  let collection = null
+  function builder(style) {
+    if (!CK.FontCollection?.Make || !CK.ParagraphBuilder.MakeFromFontCollection) return CK.ParagraphBuilder.MakeFromFontProvider(style, provider)
+    if (!collection) {
+      collection = CK.FontCollection.Make()
+      collection.setDefaultFontManager(provider)
+      collection.enableFontFallback()
+    }
+    return CK.ParagraphBuilder.MakeFromFontCollection(style, collection)
+  }
+
   // MARK: WASI, as little as Swift's runtime asks for
 
   const wasi = {
@@ -213,7 +230,7 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     // and rounds lines' heights and widths, as Flutter wants.
     const ps = new CK.ParagraphStyle({ textAlign: CK.TextAlign[aligns[spec.align] ?? 'Left'], textStyle: style(runs[0] ?? spec.runs[0]), applyRoundingHack: false,
       textDirection: rtl ? CK.TextDirection.RTL : CK.TextDirection.LTR, replaceTabCharacters: true })
-    const b = CK.ParagraphBuilder.MakeFromFontProvider(ps, provider)
+    const b = builder(ps)
     for (const r of runs) { b.pushStyle(style(r)); b.addText(r.text); b.pop() }
     const p = b.build()
     b.delete()
@@ -583,6 +600,22 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     return JSON.stringify({ id, lines: out })
   }
 
+  // A face's typeface for reading its measures, made once from its data and kept. CanvasKit copies
+  // the data for every typeface made from it and does not give the copy back when the typeface is
+  // deleted: made anew for each size a text was set in, as it was, every new size cost the face's
+  // whole file (0.43 MB for Avenir Next Regular), which is what a text growing in a film took at
+  // each moment.
+  const typefaces = new Map()
+  function typefaceOf(face) {
+    const key = `${face.family}|${face.face}`
+    let known = typefaces.get(key)
+    if (!known || known.data !== face.data) {
+      known = { data: face.data, typeface: CK.Typeface.MakeTypefaceFromData(face.data) }
+      typefaces.set(key, known)
+    }
+    return known.typeface
+  }
+
   const leadings = new Map()
   function leadingOf(run) {
     if (!run) return 0
@@ -592,10 +625,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
     if (run.family !== 'System') {
       const face = fonts.faces.find((f) => f.family === run.family && f.face === run.face)
       if (face) {
-        const tf = CK.Typeface.MakeTypefaceFromData(face.data)
-        const font = new CK.Font(tf, run.size)
+        const font = new CK.Font(typefaceOf(face), run.size)
         leading = font.getMetrics().leading ?? 0
-        font.delete(); tf?.delete()
+        font.delete()
       }
     }
     leadings.set(key, leading)
@@ -1314,6 +1346,9 @@ export async function createBezzle({ CanvasKit: CK, wasm, fonts, options = {} })
         const known = fonts.faces.find((k) => k.family === f.family && k.face === f.face)
         if (known) known.data = f.data; else fonts.faces.push(f)
       }
+      // A collection remembers which face it found for a name: a new one finds the faces that came.
+      collection?.delete()
+      collection = null
       leadings.clear()
       x.bz_forget_text()
     },
