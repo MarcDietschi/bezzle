@@ -124,6 +124,26 @@ do {
         design = made
     }
     var boards = try WindowsCore.open(design)
+    // With BEZZLE_STAGE_AT (moments in seconds, separated by ;), the first film is laid out at each
+    // moment as Animate's stage shows it on the canvas, into the out folder: on a stage of
+    // BEZZLE_STAGE_SIZE points (w,h; 1600,900 otherwise), with the layers BEZZLE_STAGE_PICK names
+    // picked (separated by ;). With BEZZLE_STAGE_SCRUB (from,to,steps) the playhead is moved
+    // through the film and back first, and what each step cost the stage said. BEZZLE_STAGE_ZOOM
+    // looks that many times closer at the artboard's middle than the whole artboard fitted.
+    if let at = ProcessInfo.processInfo.environment["BEZZLE_STAGE_AT"] {
+        let env = ProcessInfo.processInfo.environment
+        let times = at.split(separator: ";").compactMap { Double($0) }
+        let wh = (env["BEZZLE_STAGE_SIZE"] ?? "").split(separator: ",").compactMap { Int($0) }
+        let s = (env["BEZZLE_STAGE_SCRUB"] ?? "").split(separator: ",").compactMap { Double($0) }
+        let pick = (env["BEZZLE_STAGE_PICK"] ?? "").split(separator: ";").map(String.init)
+        let out = URL(fileURLWithPath: arguments[3])
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let said = await WindowsCore.stageCheck(times: times, scrub: s.count == 3 ? (s[0], s[1], Int(s[2])) : nil, pick: pick,
+                                                width: wh.count == 2 ? wh[0] : 1600, height: wh.count == 2 ? wh[1] : 900,
+                                                closer: env["BEZZLE_STAGE_ZOOM"].flatMap(Double.init) ?? 1, into: out)
+        for line in said { print(line) }
+        exit(0)
+    }
     // With BEZZLE_FILM_AT (moments in seconds, separated by ;), the film of each artboard that
     // moves is drawn at each moment as Animate's stage and movie draw it (Host/FilmMovie.swift),
     // into the out folder, at the scale given; with BEZZLE_FILM_MOVIE (scale,fps), saved there as

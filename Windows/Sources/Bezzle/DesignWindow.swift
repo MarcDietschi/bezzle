@@ -115,7 +115,9 @@ final class DesignWindow {
         // The film's timeline, there too while the design is animated.
         try? Grid.setColumn(timeline.root, 2)
         body.children.append(timeline.root)
-        canvas.film.frameShown = { [weak self] in self?.timeline.movePlayhead() }
+        canvas.film.frameShown = { [weak self] in Probe.time("timeline.playhead") { self?.timeline.movePlayhead() } }
+        // A test run's steps in Animate (BEZZLE_ANIMATE, BEZZLE_FILM), for the first design opened.
+        AnimateHooks.attach(session, film: canvas.film)
         // News from other designs, floating at the canvas's top.
         try? Grid.setColumn(news.root, 2)
         body.children.append(news.root)

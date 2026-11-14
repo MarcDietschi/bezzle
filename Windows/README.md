@@ -317,6 +317,19 @@ thirty times a second at most, and each number, bead and summary puts itself rig
 (`Inspector.filmFollowers`): making the cards again, as every other change does, took longer than
 a frame.
 
+To measure, as on the Mac: `BEZZLE_ANIMATE=3` and
+`BEZZLE_FILM='6:scrub=0,10,8;16:pick=Card 1;17:scrub=0,10,8;27:pick=camera;28:scrub=0,10,8;38:pick=;39:start;41:watch=8'`
+(`Sources/Bezzle/AnimateHooks.swift` has the steps) drag the playhead through a copy's film and
+back with every frame of the screen, and `BEZZLE_SCRUB_OUT=<file>` takes what each scrub or watch
+found: steps a second, the gaps between them, how busy the main thread was, the pictures and
+parts drawn, and where the time went (`Host/Probe.swift`, since the VM has no profiler to ask).
+Measure the release build, in the desktop session, the copy started with a library of its own.
+Without the app, `bezzle-render` lays the first film out as the canvas does and says what a scrub
+costs the stage alone: `BEZZLE_STAGE_AT=0;1.5;4` (frames written at these moments, and beside each
+the frame as a scrub passing shows it, `-moving`, where they differ), `BEZZLE_STAGE_SCRUB=0,10,60`
+(from, to, steps), `BEZZLE_STAGE_SIZE=1600,900`, `BEZZLE_STAGE_PICK=<names;…>` and
+`BEZZLE_STAGE_ZOOM=5` (that many times closer than the artboard fitted, where parts are needed).
+
 Save as Movie and the AI
 server's `export` with format mp4 write H.264 in an .mp4 through Media Foundation's sink writer
 (`Host/FilmMovie.swift`, FilmExport's reel ported, and `CBezzleHost/movie.cpp`): High profile, a
