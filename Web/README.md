@@ -107,6 +107,66 @@ Tested against the relay itself, running here (`cd ../Relay && npx wrangler dev 
 | `node tools/link.mjs --mac <file>` between the two halves of `CloudShareTests.forTheBrowser` (`TEST_RUNNER_BEZZLE_RELAY_TEST`, `TEST_RUNNER_BEZZLE_WEB_LINK=<file>`) | a design the Mac shared opens here as the Mac's to the byte; the browser's edit comes back to the Mac, merged the same |
 | `node tools/room.mjs <design.bezzle> --edit`, then `shared.html?relay=http://127.0.0.1:8790#2.<secret>` in Chrome | the page shows the design live, with its pictures, and follows the edits |
 
+## Films
+
+An artboard with a film (Animate) can be played in the page. It opens as the design, as it always
+did, with a quiet bar under it: a round button plays and stops the film, a thin track takes it to
+any moment, the time stands beside it, and the space bar plays and stops too. The film goes round
+with a breath of 0.7 s at its end, or plays once where it says so (`film.once`), as on the Mac; the
+artboard's name in the list shows the design again. A design without a film gets no bar and is
+drawn as before: all 17 sample artboards come out the same to the byte.
+
+It is drawn the way the Mac's movie is (`FilmExport.Reel`), from the same arithmetic
+(`Model/Film.swift`; `Bezzle/Canvas/FilmPictures.swift` is linked into `Sources/BezzleCore/Film`).
+`Film/WebFilm.swift` keeps a picture of each piece and answers, for a moment, the pieces from the
+furthest to the nearest: each with the 3×3 map that takes its picture onto the frame, how much of
+it shows, its blur, and its outline where it reaches behind the eye. The page only places them
+(`compose` in `site/bezzle.mjs`), so the camera's perspective, fades and blurs are the graphics
+card's work. What keeps it quick and true:
+
+- **A piece whose insides change** (a path drawn on, a shape reshaped, a shader that moves, layers
+  moving inside a faded group) is drawn again for each moment, into a picture made on the graphics
+  card. Every other piece is drawn once.
+- **Sharp at rest.** While the film plays, a piece is as sharp as its whole picture, 4096 pixels a
+  side and 16 megapixels at most. Where the film rests, the part of a piece that shows larger than
+  its picture holds is drawn again as sharp as it is seen and laid over it, as on the Mac.
+- **Pictures made ahead**, one every 20 ms from when the artboard is shown, and each put on the
+  graphics card then, so playing does not wait for them (`bz_film_warm`).
+- **Nothing kept.** The core says which pictures it has let go (`drop` in every answer), and the
+  page forgets them: after a film none of its pictures is held.
+- **Shader fills** are drawn with WebGL, which their programs were written for (`site/shaders.mjs`,
+  asked through `Web/WebShaderPainting.swift`): in a film, at the film's moment, the part of the
+  layer its picture shows. In the design itself, and where there is no WebGL, the fill's picture
+  stands in as before.
+- **Without WebGL** the same frames are made by Skia on the processor and put on the canvas: right,
+  and slow.
+
+Measured against the Mac: `tools/FilmTruthTests.swift` makes three designs with a film and writes
+frames of each as a movie's are made (`FilmExport.frame`, 2 pixels a point), with where the film's
+arithmetic puts every piece; `tools/film-compare.mjs` compares. In Playwright's headless Chromium
+(ANGLE on Metal, Apple M5 Pro, a screen turning 60 times a second), 2026-11-14:
+
+| | Depth, 480×320 pt | Lines, 420×300 pt | Flight, 393×852 pt |
+|---|---|---|---|
+| What it holds | a camera moving in depth, fades, a blur, springs; plays once on its own backdrop | a shader moving by itself and by a key, lines drawn on, a star and a drop reshaped, the camera drawing near and turning | Wander's first artboard, its layers rising one after another under a camera flying in close |
+| Moments compared | 9 | 7 | 8 |
+| Every piece's place, order, opacity, blur | the Mac's, 0.0 pt apart | the Mac's, 0.0 pt apart | the Mac's, 0.0 pt apart |
+| Pixels off by more than 24 levels, graphics card | 0.44% (worst frame 0.81%) | 0.20% (0.24%) | 1.17% (2.67%) |
+| The same, processor | 0.36% (0.58%) | 0.34% (0.43%) | 0.63% (1.07%) |
+| Mean difference of 255, graphics card and processor | 0.57 and 0.54 | 0.47 and 0.68 | 1.62 and 1.01 |
+| Frames a second playing, graphics card | 59.9 at 960×640 | 59.8 at 840×600 | 60.1 at 786×1704 |
+| A frame there: core, making pictures, placing | 0.5, 0.2, 0.9 ms | 4.3 (3.2 of it the shader), 0.6, 0.4 ms | 0.2, 0, 0.3 ms |
+| Longest wait for a frame | 33 ms, the first | 50 ms, the first | 17 ms |
+| Frames a second, processor | 7.5 | 7 | 2.9 |
+
+The differences lie on edges and in the photographs' detail, as the stills' do. The Mac was busy
+with other builds while this ran.
+
+In the page a link opens it was tried through a relay on this Mac (`node tools/room.mjs <a design
+with a film> --relay <address> --edit`, then `shared.html?relay=<address>#2.<secret>` in the same
+headless Chromium): the film plays on while the design's edits come in, a film resting at a moment
+stays there, and the button says what it does in the page's four languages.
+
 ## How it is put together
 
 - `Sources/BezzleCore/Platform`: Core Graphics for WebAssembly, in the core's own module (see
@@ -129,9 +189,18 @@ Tested against the relay itself, running here (`cd ../Relay && npx wrangler dev 
   `CoreImage.CIFilterBuiltins` import; DesignTokens.swift's CGFloat overload of `number`, the
   same as its Double one here) or only part taken (the reach functions of BoardTiles.swift,
   `Preset` from Library.swift).
+- `Sources/BezzleCore/Film`: a film for the page (see Films). `WebFilm.swift` is the browser's
+  own; `FilmPictures.swift` links to the Mac's. Windows, which shares `Platform`, `Shared` and
+  `Web`, does not take this folder: it has its own stage.
 - `site/bezzle.mjs`: the page's side, for a browser or Node. A small WASI, the host calls (path
-  operations, pictures, text) and the playback of the recording with CanvasKit.
-- `site/index.html`: a viewer of the sample designs, or of any `.bezzle` folder opened.
+  operations, pictures, text, shaders), the playback of the recording with CanvasKit, and a
+  film's frames (`film`, `filmFrame`, `filmDraw`, `filmWarm`, `filmClose`).
+- `site/film.mjs`: the bar under an artboard with a film, and the canvas its frames are drawn on,
+  which lies exactly over the design's. `createScreen` alone is that canvas, for tools.
+- `site/shaders.mjs`: shader fills drawn with WebGL 1 or 2, as their programs ask, a part of the
+  drawing buffer at a time.
+- `site/index.html`: a viewer of the sample designs, or of any `.bezzle` folder opened;
+  `?package=<address of a .bezzle folder>` opens one by its address.
 
 ## What the model takes from the app today
 
@@ -143,9 +212,10 @@ platform-neutral half of `TextLayout.swift` (the `Node` extension at its end).
 ## Not done in the prototype
 
 Text on curves, list markers, paragraph spacing, letters painted with a gradient or picture,
-photo develop, blurs that grow along a ramp, "plus darker" mixing (drawn as multiply), live
-co-working's pointers and presence (the page hears only that there are new records), the icon
-library (needs zlib), localization (English only), any editing UI.
+photo develop, blurs that grow along a ramp, "plus darker" mixing (drawn as multiply), shader
+fills outside a film (the design shows their picture), live co-working's pointers and presence
+(the page hears only that there are new records), the icon library (needs zlib), localization
+(English only), any editing UI.
 
 ## Building and running
 
@@ -174,6 +244,15 @@ repository (`git archive HEAD`), run it with `TEST_RUNNER_WEB_TRUTH_OUT=<dir>` a
 `TEST_RUNNER_WEB_TRUTH_DESIGNS=<AppStore/screenshots-src/designs>`, then
 `node tools/compare.mjs --truth <dir> --designs ../AppStore/screenshots-src/designs --wasm .build/out/Products/Release-webassembly-wasm32/BezzleCore.wasm`.
 Pictures and differences go to `out/`.
+
+Films are compared the same way: copy `tools/FilmTruthTests.swift` into `BezzleTests/`, run it
+with the same two variables (its designs, frames and `films.json` go to `<dir>/films`), then
+`node tools/film-compare.mjs --truth <dir>`. That compares in Node, where there is no WebGL, so a
+film with a shader is only right with `--browser`: the page's own `film.mjs` in a headless
+Chromium (Playwright's from `~/Library/Caches/ms-playwright`, or `--chrome <path>`; never a
+window of one's own Chrome), once on the graphics card and once on the processor. `--fps 6` plays
+each film there for six seconds as the page plays it and says how many frames a second it kept
+and what a frame cost. Frames, differences and `report*.json` go to `out/films`, or `--out <dir>`.
 
 To look at it in a browser, serve the repository's root (`python3 -m http.server 8765 --bind 127.0.0.1`)
 and open http://127.0.0.1:8765/Web/site/index.html.

@@ -87,9 +87,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
 The fourth way of seeing a design, beside Design, Prototype and Inspect: layers and a camera posed
 along one artboard's film. Its keys are changes from the design and never the design.
 
-- **Where:** the data is `Bezzle/Model/Motion.swift` and `Film.swift` (shared, so Windows and the
-  browser keep a film they cannot show yet); everything the panel, the timeline and the menus do is
-  a function of the store, `Bezzle/Store/AnimateOperations.swift`; the pointer's part is
+- **Where:** the data is `Bezzle/Model/Motion.swift` and `Film.swift` (shared: Windows has Animate,
+  `Windows/README.md`, and the browser viewer plays a film, `Web/README.md` › Films); everything
+  the panel, the timeline and the menus do is a function of the store,
+  `Bezzle/Store/AnimateOperations.swift`; the pointer's part is
   `Bezzle/Canvas/MotionTool.swift` on the canvas and `Bezzle/Views/FilmHand.swift` on the timeline,
   both plain classes so that tests can press and drag; `FilmStage.swift` draws, `FilmExport.swift`
   saves a movie, `MCPAnimate.swift` is the AI server's part.
