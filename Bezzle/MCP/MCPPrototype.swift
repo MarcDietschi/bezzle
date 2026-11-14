@@ -464,8 +464,9 @@ extension MCPTools {
         A fly over is a few camera keys with tilt and zoom, ending at rest (move [0, 0], zoom 1, the rest 0).
         - Focus: blur on a layer, or a focus move, pulls attention; blur what lies behind while what matters is sharp.
         - Paths, rectangles, ellipses and lines: draw [from, to] draws the outline on as a pen does (a signature, an underline, \
-        a check mark, a chart's line); shape moves its points, one outline becoming another with the same points (a blob that \
-        breathes, a wave, an icon turning into the next), each key given as path in the layer's own points.
+        a check mark, a chart's line); shape changes its outline, one becoming another whatever points each has (a blob that \
+        breathes, a wave, a star turning into a circle, an icon into the next), each key given as path in the layer's own \
+        points, or as outlineOf, another shape on the artboard.
         - Paces: leave auto unless there is a reason; spring with bounce 0.2 to 0.4 for something playful; hold for a cut.
         - Shaders: a layer filled with a shader moves by itself as the film plays, a living background. update_layers sets its \
         speed and at (fill.shader), or paints a layer with GLSL of your own (fill.shader.fragment) for a gradient mesh, grain or an aurora.

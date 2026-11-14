@@ -123,12 +123,84 @@ struct MotionMCPTests {
         #expect(BezierPath(try #require(layer?["outline"] as? String)) == card.ownOutline)
         #expect(keys("draw", of: "Title", in: read).map { $0["value"] as? [Double] } == [[0, 0], [0, 1]])
 
-        // Another number of points is no shape key: the answer gives the outline to start from.
-        let wrong = await call("animate", ["keys": [["layer": "Second", "property": "shape", "time": 1, "path": "M 0 0 L 10 0 L 5 8 Z"]]])
-        #expect(wrong.failed && wrong.text.contains("4 points") && wrong.text.contains("M"))
-        #expect(bench.node("Second")?.motion == nil)
+        // A shape key is no list of numbers, and no path with nothing to draw: the answer gives
+        // the outline to start from.
         let raw = await call("animate", ["keys": [["layer": "Second", "property": "shape", "time": 1, "value": [1, 2]]]])
-        #expect(raw.failed && raw.text.contains("path"))
+        #expect(raw.failed && raw.text.contains("path") && raw.text.contains("outlineOf"))
+        let empty = await call("animate", ["keys": [["layer": "Second", "property": "shape", "time": 1, "path": "M 5 5"]]])
+        #expect(empty.failed && empty.text.contains("M 0 0"), "\(empty.text)")
+        #expect(bench.node("Second")?.motion == nil)
+    }
+
+    @Test func aShapeIsKeyedWithAnOutlineOfOtherPointsAndWithAnotherShapesOutline() async throws {
+        // The card, four points, is a triangle at one second, its bottom left corner gone, and a
+        // shape of two runs at two.
+        let triangle = "M 0 0 L 140 0 L 140 80 Z", two = "M 0 0 L 60 0 L 60 80 L 0 80 Z M 80 0 L 140 0 L 140 80"
+        let set = await call("animate", ["keys": [
+            ["layer": "Card", "property": "shape", "time": 0, "path": "M 0 0 L 140 0 L 140 80 L 0 80 Z"],
+            ["layer": "Card", "property": "shape", "time": 1, "path": triangle, "pace": "linear"],
+            ["layer": "Card", "property": "shape", "time": 2, "path": two],
+        ] as [[String: Any]]])
+        #expect(!set.failed, "\(set.text)")
+        #expect(warnings(json(set.text)).isEmpty, "\(set.text)")
+        var card = try #require(bench.node("Card"))
+        let design = try #require(card.ownOutline)
+        #expect(design.anchorCount == 4)
+        #expect(card.outline(at: 1) == BezierPath(triangle) && card.outline(at: 2) == BezierPath(two))
+        #expect(card.outline(at: 0) == card.ownOutline)
+        // On the way the three corners both have stay, and the fourth goes to where it lies along
+        // the triangle's long side, evenly, as the pace says: 140 of the 220 points round from
+        // the bottom right corner to the top left.
+        let half = try #require(card.outline(at: 0.5)).anchorPoints
+        let onSide = CGPoint(x: 140.0 * (1 - 140.0 / 220), y: 80.0 * (1 - 140.0 / 220))
+        #expect(half.count == 4 && half.contains { abs($0.x - onSide.x / 2) < 0.5 && abs($0.y - (80 + onSide.y) / 2) < 0.5 }, "\(half)")
+        for corner in [CGPoint(x: 0, y: 0), CGPoint(x: 140, y: 0), CGPoint(x: 140, y: 80)] {
+            #expect(half.contains { abs($0.x - corner.x) < 0.01 && abs($0.y - corner.y) < 0.01 }, "\(half)")
+        }
+        // One step of the history, and read back as it was given.
+        let read = json(await call("get_animation", ["artboard": "A"]).text)
+        let shape = keys("shape", of: "Card", in: read)
+        #expect(shape.map { $0["time"] as? Double } == [0, 1, 2])
+        #expect(shape.allSatisfy { $0["value"] == nil })
+        #expect(shape.compactMap { $0["path"] as? String }.map { BezierPath($0) } == [design, BezierPath(triangle), BezierPath(two)])
+        #expect(shape[1]["pace"] as? String == "linear")
+        let layer = (read["layers"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "Card" }
+        #expect(BezierPath(try #require(layer?["outline"] as? String)) == card.ownOutline)
+        bench.undo.undo()
+        #expect(bench.node("Card")?.motion == nil)
+
+        // Another shape's outline: the title, 200 by 30, about the card's own middle, at (70, 40).
+        let taken = await call("animate", ["keys": [
+            ["layer": "Card", "property": "shape", "time": 0, "path": triangle],
+            ["layer": "Card", "property": "shape", "time": 1, "outlineOf": "Title", "pace": "spring", "bounce": 0.2],
+        ] as [[String: Any]]])
+        #expect(!taken.failed, "\(taken.text)")
+        card = try #require(bench.node("Card"))
+        let keys = try #require(card[track: .shape]).keys
+        #expect(keys.map(\.t) == [0, 1] && keys[1].ease == .spring(0.2))
+        let wide = try #require(card.outline(at: 1))
+        let corners: Set<[CGFloat]> = [[-30, 25], [170, 25], [170, 55], [-30, 55]]
+        #expect(corners.isSubset(of: Set(wide.anchorPoints.map { [$0.x.rounded(), $0.y.rounded()] })), "\(wide.anchorPoints)")
+        // Its own four corners, and points more on its sides where the triangle's corners come to
+        // meet it: the rectangle it is, whatever points it has.
+        #expect(wide.anchorPoints.allSatisfy { p in (abs(p.y - 25) < 0.01 || abs(p.y - 55) < 0.01 || abs(p.x + 30) < 0.01 || abs(p.x - 170) < 0.01) && p.x > -30.01 && p.x < 170.01 && p.y > 24.99 && p.y < 55.01 }, "\(wide.anchorPoints)")
+        // Numbered to come from the triangle before it: no point goes round the shape to get there.
+        let (from, to) = BezierPath.matched(BezierPath(triangle), wide)
+        let far = zip(from.anchorPoints, to.anchorPoints).map { hypot($0.x - $1.x, $0.y - $1.y) }.max() ?? 0
+        #expect(far < 100, "\(far)")
+        // What cannot be taken says why: itself, and a path given too.
+        for (other, extra) in [("Card", [:]), ("Title", ["path": triangle])] as [(String, [String: Any])] {
+            var key: [String: Any] = ["layer": "Card", "property": "shape", "time": 2, "outlineOf": other]
+            for (name, value) in extra { key[name] = value }
+            let refused = await call("animate", ["keys": [key]])
+            #expect(refused.failed && refused.text.contains("outlineOf"), "\(other): \(refused.text)")
+        }
+        // Nor is another artboard a shape to take.
+        let board = await call("animate", ["keys": [["layer": "Card", "property": "shape", "time": 2, "outlineOf": "B"]]])
+        #expect(board.failed, "\(board.text)")
+        let onMove = await call("animate", ["keys": [["layer": "Card", "property": "move", "time": 2, "value": [0, 0], "outlineOf": "Title"]]])
+        #expect(onMove.failed && onMove.text.contains("shape"))
+        #expect(bench.node("Card")?[track: .shape]?.keys.count == 2)
     }
 
     @Test func anArtboardWithNoFilmSaysSo() async {

@@ -216,11 +216,12 @@ along one artboard's film. Its keys are changes from the design and never the de
 - **A key with an outline of its own** is what a Shape key is where it says other points than the
   design's, more or fewer, or runs open where the design's are closed. It comes of points added or
   taken away at the playhead, and of another shape's outline taken (the Pose card's From… chip,
-  `DocumentStore.takeShape`). Its numbers are in the `v` every key has: a nought for each number a
-  change of the design's points would have; then each run as six numbers (how many anchors, closed
-  or not, four kept for later) and six for each anchor, where it and its handles are in the layer's
-  own points; and last, how many sixes the runs take. So it has one number more than a whole number
-  of sixes, which a change never has, and is read from its end (`BezierPath.asKey`,
+  `DocumentStore.takeShape`). An assistant gives one as a `path` with other points, or as
+  `outlineOf`, another shape (`animate`). Its numbers are in the `v` every key has: a nought for
+  each number a change of the design's points would have; then each run as six numbers (how many
+  anchors, closed or not, four kept for later) and six for each anchor, where it and its handles are
+  in the layer's own points; and last, how many sixes the runs take. So it has one number more than
+  a whole number of sixes, which a change never has, and is read from its end (`BezierPath.asKey`,
   `BezierPath.init(key:)`). Bezzle 1.7 reads as many numbers as the design's points have, the
   noughts: it shows the design at such a key, goes to it and from it gently, and keeps the key as it
   is. At a key the outline is exactly the key's; between two that say the same runs every point goes
@@ -233,8 +234,9 @@ along one artboard's film. Its keys are changes from the design and never the de
   outline is placed for a layer by `Node.outline(of:for:at:)`, as large and turned as the other is
   on the artboard and about the layer's own middle, and numbered to come from the key before by
   `Node.shapeValue(taking:at:)`, which gives it points more on its own outline where the outline
-  before has points it has none for. Its tests are `MotionOutlineKeyTests`, and `AnimateStressTests`
-  keys other outlines and takes them from other shapes.
+  before has points it has none for; `Node.shapesToTake` lists whose a layer can take. Its tests
+  are `MotionOutlineKeyTests`, and `AnimateStressTests` keys other outlines and takes them from
+  other shapes.
 - **Shared with others**, a film goes setting by setting (`film/length`, `film/once`,
   `film/backdrop`) and a layer's motion key by key (`motion/<property>/<thousandths>`, with
   `/given` for a key the app placed itself), so two people keying one layer both keep theirs
