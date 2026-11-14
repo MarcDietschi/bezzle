@@ -143,6 +143,63 @@ struct CutoutTests {
         #expect(photo(balled)?.fill.image?.cutout?.picks == [CGPoint(x: 0.5, y: 0.5)])
     }
 
+    /// `ball()` as a camera with wider colours than sRGB's takes it: its numbers said to be
+    /// `space`'s, and in its middle a square of a red, 200, 60 and 40 in `space`, that has other
+    /// numbers in any other.
+    static func wideBall(_ space: CGColorSpace) -> CGImage {
+        let ball = Self.ball(), w = ball.width, h = ball.height
+        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        ctx.draw(ball.copy(colorSpace: space)!, in: CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.setFillColor(CGColor(colorSpace: space, components: [200.0 / 255, 60.0 / 255, 40.0 / 255, 1])!)
+        // 40 round 450, 364 from the top, where the ball is.
+        ctx.fill(CGRect(x: 430, y: h - 364 - 20, width: 40, height: 40))
+        return ctx.makeImage()!
+    }
+
+    /// Red, green, blue and alpha at x, y from the top left, as the picture's own numbers: in
+    /// its own colours, brought into no other.
+    private func own(_ image: CGImage, _ x: Int, _ y: Int) throws -> [Int] {
+        let space = try #require(image.colorSpace)
+        let ctx = try #require(CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                         space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let p = ctx.data!.assumingMemoryBound(to: UInt8.self) + (y * image.width + x) * 4
+        return (0..<4).map { Int(p[$0]) }
+    }
+
+    @Test func aPhotoInWiderColoursIsCutOutInItsOwn() throws {
+        // An iPhone's photos are in Display P3. Cut out in sRGB, their fullest colours would be
+        // cut down to sRGB's, and the cutout would no longer say which colours its numbers are.
+        // Bezzle for Windows is held to the same (Windows/README.md, Remove Background).
+        let p3 = try #require(CGColorSpace(name: CGColorSpace.displayP3))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for (name, type) in [("photo.png", UTType.png), ("shot.jpg", .jpeg)] {
+            let file = try #require(CGImageDestinationCreateWithURL(folder.appendingPathComponent(name) as CFURL, type.identifier as CFString, 1, nil))
+            CGImageDestinationAddImage(file, Self.wideBall(p3), [kCGImageDestinationLossyCompressionQuality: 1] as CFDictionary)
+            #expect(CGImageDestinationFinalize(file))
+            let cutout = try DocumentStore.cutout(of: name, in: folder, picks: nil, model: nil)
+            let cut = try read(folder.appendingPathComponent(cutout.asset))
+            // The cutout says the photo's colours, and is the photo's own profile.
+            #expect(cut.colorSpace?.name == CGColorSpace.displayP3, "\(name)")
+            #expect(cut.colorSpace?.copyICCData() == p3.copyICCData(), "\(name)")
+            // Its numbers are the photo's own, brought into no other colours and back (a JPEG
+            // keeps them to a level or two); in sRGB the same red has other numbers.
+            let red = try own(cut, 450, 364)
+            #expect(abs(red[0] - 200) <= 2 && abs(red[1] - 60) <= 2 && abs(red[2] - 40) <= 2 && red[3] == 255, "\(name): \(red)")
+            #expect(pixel(cut, 450, 364)[0] > 210, "\(name)")
+            #expect(try own(cut, 12, 12)[3] == 0, "\(name)")
+        }
+        // A photo in sRGB is cut out in sRGB, as ever.
+        let file = try #require(CGImageDestinationCreateWithURL(folder.appendingPathComponent("plain.png") as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(file, Self.ball(), nil)
+        #expect(CGImageDestinationFinalize(file))
+        let plain = try read(folder.appendingPathComponent(try DocumentStore.cutout(of: "plain.png", in: folder, picks: nil, model: nil).asset))
+        #expect(plain.colorSpace?.name == CGColorSpace.sRGB)
+    }
+
     @Test func theCutoutIsDrawnAndCastsItsShadowFromTheSubject() throws {
         // The picture is all blue; cut out, a green disc in the middle of where it lies.
         let blue = Self.plain(200, 150, CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
