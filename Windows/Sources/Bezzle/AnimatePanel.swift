@@ -186,8 +186,10 @@ extension Inspector {
             grid.columnDefinitions.append(c)
         }
         for _ in 0..<((moves.count + across - 1) / across) { grid.rowDefinitions.append(RowDefinition()) }
+        moveChips.removeAll()
         for (k, move) in moves.enumerated() {
             let chip = MoveChip(name: move.name, title: move.title, going: film.going) { [weak self] in self?.film.applyMove(move.name) }
+            moveChips.append(chip)
             try? Grid.setColumn(chip.root, Int32(k % across))
             try? Grid.setRow(chip.root, Int32(k / across))
             grid.children.append(chip.root)
