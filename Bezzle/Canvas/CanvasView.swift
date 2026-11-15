@@ -749,6 +749,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Room at the right of a carousel's first slide for its number, which the name stops short of.
     private static let slideNumberRoom: CGFloat = 28
+    /// The line over an artboard its name stands in, and a carousel's slide numbers: from how far
+    /// above its top, and how tall.
+    static let titleRise: CGFloat = 19, titleHeight: CGFloat = 16
+
+    /// Whether a carousel's slide numbers are drawn at this zoom: only once a slide leaves room
+    /// for the name's least width beside its number.
+    static func showsSlideNumbers(_ board: Node, zoom: CGFloat) -> Bool {
+        board.isCarousel && (board.slideSize.map { $0.width * zoom >= slideNumberRoom + 40 } ?? false)
+    }
 
     private func titleRect(of board: Node) -> CGRect {
         var r = store.viewport.toView(board.frame)
@@ -759,7 +768,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             titleWidths[board.name] = w
             return w
         }()
-        return CGRect(x: r.minX, y: r.minY - 19, width: min(measured + 2, max(r.width, 40)), height: 16)
+        return CGRect(x: r.minX, y: r.minY - Self.titleRise, width: min(measured + 2, max(r.width, 40)), height: Self.titleHeight)
     }
 
     /// Keeps the field an artboard is being renamed in over its name as the view moves, and takes
@@ -796,15 +805,14 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     /// Each slide's number over its top right corner, in the line the artboard's name is in.
     private func drawSlideNumbers(_ board: Node, color: NSColor) {
         let zoom = store.viewport.zoom
-        // Only once a slide leaves room for the name's least width beside its number.
-        guard let slide = board.slideSize, slide.width * zoom >= Self.slideNumberRoom + 40 else { return }
+        guard Self.showsSlideNumbers(board, zoom: zoom) else { return }
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: color]
         for (i, rect) in board.slideRects.enumerated() {
             let r = store.viewport.toView(rect.offsetBy(dx: board.frame.minX, dy: board.frame.minY))
             guard r.maxX >= bounds.minX, r.minX <= bounds.maxX else { continue }
             let number = "\(i + 1)" as NSString
             let w = number.size(withAttributes: attributes).width
-            number.draw(at: CGPoint(x: r.maxX - w, y: r.minY - 19), withAttributes: attributes)
+            number.draw(at: CGPoint(x: r.maxX - w, y: r.minY - Self.titleRise), withAttributes: attributes)
         }
     }
 

@@ -278,11 +278,14 @@ window, only in tests and in pictures the renderer made. What that left:
 - **For Erik, looking from the side:** it moves the eye and leaves the page where it is, so every
   tool stays true while looking (`DepthLook`); a true orbit that tilts the page is not built. Say
   if the page itself should turn.
-- **Looking from the side:** the word "Look from the Front" may sit over a carousel's slide
-  numbers, and the posts are drawn over everything. Under a layer standing in a group that keeps
-  depth the posts go down to the group's plane, not the page; looking from the side at such groups
-  has no test. View › Look from the Side and its place in the zoom menu were not seen in a window
-  (tests drive the store and find the item in the menu bar), nor in German, French and Italian.
+- **Looking from the side, not seen in a window** (only in tests and pictures the renderer made):
+  View › Look from the Side and its place in the zoom menu (tests drive the store and find the
+  item in the menu bar), in German, French and Italian too; the posts hidden behind nearer layers,
+  and how long working that out takes on a large artboard while the look is dragged round (32
+  places up each post, each asked of every layer standing higher than the post's foot where both
+  show; worked out again at each step of the drag); the word over a carousel in the line above
+  its slide numbers. A post is hidden where the frame of a layer pinned by its corners would be,
+  not where its corners are pinned.
 - **One body:** Animate's canvas grips still tip or swing one layer; only the Pose card and the AI
   server's `turn_layers` pose several as one body. A body posed by keys is rigid at each key and
   only nearly so between them (its angles ease one by one). A body's lead can change between
@@ -321,7 +324,10 @@ window, only in tests and in pictures the renderer made. What that left:
   looked at from the side is drawn whole at every step of the drag (not measured on a large
   one); the 3D card's numbers follow a turn from a side only when the drag ends. Not there since
   the Mac has them (2026-11-15): Look from the Side in the menus, and Layers Keep Their Depth in
-  a group's right-click menu.
+  a group's right-click menu; the posts are drawn whole over everything, where the Mac hides them
+  behind nearer layers (`BezzleDocument.shownParts`, shared, asked by the Mac's `LookTool`), and
+  the word may sit over a carousel's slide numbers (`WindowsCore.LookHand.wordRect`). The shared
+  posts now stand under each layer of a group that keeps depth, down to the page, there too.
 - **Windows, not checked:** the switch and captions in German, French and Italian in the window;
   a deck's artboard looked at from the side; the x64 build run; a film of a group that keeps depth
   playing in the window (only at rest there).

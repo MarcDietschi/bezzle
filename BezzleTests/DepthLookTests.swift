@@ -168,6 +168,72 @@ struct DepthLookTests {
         #expect(low.count == 4 && low.allSatisfy { $0.post.corner.z == -60 && $0.parts.isEmpty }, "\(low.map(\.parts))")
     }
 
+    @Test func onTheCanvasThePostsAreDrawnOnlyWhereTheyShow() throws {
+        let bench = Bench(extra: scene)
+        bench.store.look(at: bench.a.id, from: DepthLook(across: -45))
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        func drawn() throws -> NSBitmapImageRep {
+            let ctx = try #require(CGContext(data: nil, width: 1200, height: 800, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            // As the canvas draws, its y down.
+            ctx.translateBy(x: 0, y: 800)
+            ctx.scaleBy(x: 1, y: -1)
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+            bench.canvas.lookTool.draw(ctx, in: CGRect(x: 0, y: 0, width: 1200, height: 800))
+            NSGraphicsContext.current = nil
+            return NSBitmapImageRep(cgImage: try #require(ctx.makeImage()))
+        }
+        /// The most ink about a point of the view.
+        func ink(_ image: NSBitmapImageRep, _ p: CGPoint) -> CGFloat {
+            var most: CGFloat = 0
+            for dx in -1...1 { for dy in -1...1 { most = max(most, image.colorAt(x: Int(p.x) + dx, y: Int(p.y) + dy)?.alphaComponent ?? 0) } }
+            return most
+        }
+        // Halfway up the post under the lifted card's top left corner, on artboard A at 100, 100.
+        let foot = CGPoint(x: 280, y: 230), top = CGPoint(x: 100 + across(180, from: -600), y: 100 + 150 + (130 - 150) * 800 / 760.0)
+        let halfway = CGPoint(x: (foot.x + top.x) / 2, y: (foot.y + top.y) / 2)
+        #expect(ink(try drawn(), halfway) > 0.2)
+        #expect(bench.canvas.lookTool.posts(of: bench.a).count == 4)
+        // A roof over it hides it, on the canvas as in the design.
+        bench.step { bench.store.edit("Add") { doc in doc.update(bench.a.id) { $0.children.append(self.card("Roof", CGRect(x: 100, y: 100, width: 200, height: 120), z: 80)) } } }
+        let posts = bench.canvas.lookTool.posts(of: bench.a)
+        #expect(posts.count == 8 && posts.filter { $0.post.corner.z == 40 }.allSatisfy { $0.parts.isEmpty })
+        #expect(ink(try drawn(), halfway) == 0)
+    }
+
+    @Test func theWordToLookFromTheFrontStandsClearOfACarouselsSlideNumbers() throws {
+        let bench = Bench(extra: scene)
+        bench.step { bench.store.edit("Make Carousel") { doc in doc.update(bench.a.id) { $0.slideSize = CGSize(width: 200, height: 300) } } }
+        bench.store.look(at: bench.a.id, from: DepthLook(across: -45))
+        let tool = bench.canvas.lookTool
+        // Each slide's number, over its top right corner, in the line the artboard's name is in.
+        func numbers(in view: Viewport) -> [CGRect] {
+            let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+            return bench.a.slideRects.enumerated().map { i, slide in
+                let r = view.toView(slide.offsetBy(dx: bench.a.frame.minX, dy: bench.a.frame.minY))
+                let size = ("\(i + 1)" as NSString).size(withAttributes: [.font: font])
+                return CGRect(x: r.maxX - size.width, y: r.minY - CanvasView.titleRise, width: size.width, height: size.height)
+            }
+        }
+        let bounds = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        // However close, and with the artboard's top at the view's edge, where the word is held down.
+        for (origin, zoom) in [(CGPoint.zero, 1.0), (CGPoint(x: 40, y: 60), 1.6), (CGPoint(x: 0, y: 100), 1.0), (CGPoint(x: 0, y: 70), 1.0), (CGPoint(x: -300, y: -40), 0.5)] {
+            bench.store.viewport = Viewport(origin: origin, zoom: zoom)
+            #expect(CanvasView.showsSlideNumbers(bench.a, zoom: zoom))
+            let word = try #require(tool.wordRect(of: bench.a, in: bounds))
+            let board = bench.store.viewport.toView(bench.a.frame)
+            #expect(!numbers(in: bench.store.viewport).contains { $0.intersects(word) }, "\(origin) \(zoom): \(word)")
+            // Still by the artboard's top right corner, and in the view.
+            #expect(abs(word.maxX - min(board.maxX, bounds.maxX - 8)) < 1 && bounds.contains(word), "\(word)")
+            #expect(word.minY > board.minY - 60 && word.maxY < board.minY + 30, "\(word)")
+        }
+        // An artboard of one slide has it in the line its name is in, as before.
+        bench.store.viewport = Viewport(origin: .zero, zoom: 1)
+        bench.store.look(at: bench.b.id, from: DepthLook(across: -45))
+        let word = try #require(tool.wordRect(of: bench.b, in: bounds))
+        #expect(word.minY == 100 - 25 && word.maxX == 1000)
+    }
+
     // MARK: Never part of the design
 
     @Test func aWayOfLookingIsNeitherSavedNorComparedNorDrawnByAnythingButTheCanvas() throws {

@@ -465,7 +465,13 @@ An artboard can be looked at from the side while designing, to see how high each
 The page is not turned: the eye is moved aside (`DepthLook`, at most 60°), as someone moves their
 head in front of a window. So the page and all that lies flat in it stay where they are and every
 tool stays true, while what stands off the page shows where the moved eye sees it, with a post
-under each corner down to where it would lie (under what is picked alone, when some of it is). On
+under each corner straight down to the page, which every height is measured from (under what is
+picked alone, when some of it is; under each layer of a group that keeps depth, which has no
+card of its own). Where a nearer layer stands between the eye and a post, the post is hidden
+there, as the posts under the far side of a card stand behind it (`BezzleDocument.shownParts`,
+worked out once per change of the design, the look or what is picked; on Windows the posts are
+still drawn whole). The word stands in the line the artboard's name is in, and over a
+carousel's slide numbers in the line above (`LookTool.wordRect`). On
 the Mac, Control dragged beside the layers turns the look (Shift in fives); a click there with
 Control, Escape with nothing picked, or the word by the artboard's top right corner looks from the
 front again (on Windows the key is Alt, `Windows/README.md` › The app). View › Look from the Side,

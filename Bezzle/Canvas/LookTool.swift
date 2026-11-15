@@ -5,7 +5,8 @@ import AppKit
 /// the layers, takes the scene of the artboard under the pointer and turns the look with it: what
 /// is held up off the page goes with the pointer. While an artboard is looked at from the side,
 /// a post stands under each corner of what is off the page (of what is picked alone, when some
-/// of it is), and a word by its top right corner
+/// of it is), down to the page and hidden where a nearer layer stands in front of it
+/// (`BezzleDocument.shownParts`), and a word by its top right corner
 /// looks from the front again, as a click with Control on nothing does, and Escape with nothing
 /// picked. The look is the store's (`DocumentStore.looks`): never an undo step, never saved.
 final class LookTool {
@@ -75,16 +76,24 @@ final class LookTool {
     private var lastBounds: CGRect = .zero
 
     /// Where the word stands for an artboard: by its top right corner, in the line its name is
-    /// in, and inside the view while any of the artboard is.
-    private func wordRect(of board: Node, in bounds: CGRect) -> CGRect? {
+    /// in, and inside the view while any of the artboard is. A carousel's slide numbers stand in
+    /// that line, each over its slide's top right corner, so over one the word goes in the line
+    /// above, and where the view's edge holds it down into theirs, under them.
+    func wordRect(of board: Node, in bounds: CGRect) -> CGRect? {
         let r = store.viewport.toView(board.frame)
         guard r.intersects(bounds) else { return nil }
         let words = String(localized: Self.front)
         let w = ceil((words as NSString).size(withAttributes: [.font: Self.font]).width)
         let size = CGSize(width: w + 20, height: 20)
+        let line = (top: r.minY - CanvasView.titleRise, bottom: r.minY - CanvasView.titleRise + CanvasView.titleHeight)
+        let numbered = CanvasView.showsSlideNumbers(board, zoom: store.viewport.zoom)
         var origin = CGPoint(x: (r.maxX - size.width).rounded(), y: (r.minY - size.height - 5).rounded())
+        if numbered { origin.y = (line.top - size.height - 4).rounded() }
         origin.x = min(max(origin.x, bounds.minX + 8), bounds.maxX - size.width - 8)
         origin.y = min(max(origin.y, bounds.minY + 8), bounds.maxY - size.height - 8)
+        if numbered, origin.y < line.bottom, origin.y + size.height > line.top {
+            origin.y = (line.bottom + 4).rounded()
+        }
         return CGRect(origin: origin, size: size)
     }
 
@@ -119,24 +128,53 @@ final class LookTool {
 
     // MARK: - Drawing
 
+    /// The posts of each artboard looked at from the side, and the parts of each that show, on
+    /// the canvas; worked out once for each change of the design, the look or what is picked,
+    /// not at each step of moving about.
+    private var postsWorkedOut: (key: PostsKey, posts: [UUID: [(post: DepthPost, parts: [ClosedRange<Double>])]])?
+
+    private struct PostsKey: Equatable {
+        var version: Int
+        var preview: UUID?
+        var looks: [UUID: DepthLook]
+        var selection: [UUID]
+    }
+
+    /// The posts of an artboard, each with the parts of it no nearer layer covers.
+    func posts(of board: Node) -> [(post: DepthPost, parts: [ClosedRange<Double>])] {
+        let key = PostsKey(version: store.version, preview: store.preview?.token, looks: store.looks, selection: store.selection)
+        if postsWorkedOut?.key != key { postsWorkedOut = (key, [:]) }
+        if let kept = postsWorkedOut?.posts[board.id] { return kept }
+        let doc = store.shownDoc
+        let posts = doc.posts(of: board, picked: Set(store.selection))
+        let made = Array(zip(posts, doc.shownParts(of: posts, on: board))).map { (post: $0.0, parts: $0.1) }
+        postsWorkedOut?.posts[board.id] = made
+        return made
+    }
+
     func draw(_ ctx: CGContext, in bounds: CGRect) {
         lastBounds = bounds
         guard !store.looks.isEmpty else { return }
         let doc = store.shownDoc
         ctx.saveGState()
         defer { ctx.restoreGState() }
-        // A post under each corner of what stands off the page.
+        // A post under each corner of what stands off the page, down to the page, hidden where
+        // a nearer layer stands in front of it.
         ctx.setStrokeColor(CanvasInk.pencil.withAlphaComponent(0.5).cgColor)
         ctx.setFillColor(CanvasInk.pencil.withAlphaComponent(0.5).cgColor)
         ctx.setLineWidth(1)
         for board in doc.artboards where !board.hidden && doc.looks?[board.id] != nil {
             guard store.viewport.toView(board.frame).insetBy(dx: -400, dy: -400).intersects(bounds) else { continue }
-            for post in doc.posts(of: board, picked: Set(store.selection)) {
+            for (post, parts) in posts(of: board) {
                 let foot = store.viewport.toView(post.foot), top = store.viewport.toView(post.top)
-                ctx.move(to: foot)
-                ctx.addLine(to: top)
-                ctx.strokePath()
-                ctx.fillEllipse(in: CGRect(x: foot.x - 1.5, y: foot.y - 1.5, width: 3, height: 3))
+                func at(_ k: Double) -> CGPoint { CGPoint(x: foot.x + (top.x - foot.x) * k, y: foot.y + (top.y - foot.y) * k) }
+                for part in parts {
+                    ctx.move(to: at(part.lowerBound))
+                    ctx.addLine(to: at(part.upperBound))
+                    ctx.strokePath()
+                }
+                // Where it stands on the page, when that is not hidden.
+                if parts.first?.lowerBound == 0 { ctx.fillEllipse(in: CGRect(x: foot.x - 1.5, y: foot.y - 1.5, width: 3, height: 3)) }
             }
         }
         let words = String(localized: Self.front)
