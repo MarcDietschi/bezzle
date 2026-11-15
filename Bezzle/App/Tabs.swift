@@ -76,21 +76,24 @@ final class Tabs {
         #if DEBUG
         DebugHooks.opening("asked")
         #endif
-        let growing = designs.isEmpty && growsForDesigns
+        let first = designs.isEmpty, growing = first && growsForDesigns
         let tab = DesignTab(url: url)
         designs.append(tab)
         show(tab.id)
         if atOnce {
-            if designs.count == 1 { fitWindow(forDesigns: true) }
+            if first { fitWindow(forDesigns: true) }
             tab.load(report: report)
         } else {
+            // The first design makes room for itself, as before, even in a window out of sight;
+            // only a window that grows on screen has the mark pressed at once.
             tab.open(report: report, growing: growing) { [weak self] in
-                if growing { self?.fitWindow(forDesigns: true) }
+                if first { self?.fitWindow(forDesigns: true) }
             }
         }
     }
 
-    /// Whether opening a design grows the window, as the first one does from home's size.
+    /// Whether the window, on screen, grows to make room for designs, as for the first one from
+    /// home's size: that takes a moment of its own, which the mark fills.
     private var growsForDesigns: Bool {
         guard let window, window.isVisible, !window.styleMask.contains(.fullScreen),
               let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return false }
