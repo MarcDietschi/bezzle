@@ -147,6 +147,13 @@ outlines and looks. What is left:
 - **No Escape under a drag on the timeline, and keys cannot be copied** (the Mac has both since
   2026-11-15). What pastes keys is the Mac's store (`Bezzle/Store/AnimateClipboard.swift`:
   `place`, `taken`, `pasteTargets`), to move into `Bezzle/Model` for Windows to share.
+- **A layer dragged inside a group turned in depth lags the pointer** (keeping depth or one
+  card), and one the design lifts goes a little too far under a tilted camera:
+  `MotionHand.travel` lays the pointer's way across the sheet at the layer's Lift. It should
+  cast the pointer onto the plane the layer moves along, as the Mac's `MotionTool.travel` does
+  since 2026-11-15: `scene.board.filmMovePlane(of:at:pieces:)` once as a move or a bead's drag
+  begins, then `plane.travel(from:to:)` at each step (`Bezzle/Model/FilmMovePlane.swift`,
+  shared and tested in `FilmMovePlaneTests`).
 - **A movie's gentle tones** are still rounded twice (pieces and the frame in eight bits, then
   NV12), and there is no ten bit choice; the AI server's `codec` is the Mac's alone. What it
   takes is in e652531's report: `bz_film_frame` composing in sixteen bits, the stand-in pictures
@@ -310,10 +317,6 @@ window, only in tests and in pictures the renderer made. What that left:
 - **Web import:** a page's 3D transforms arrive flattened to 2D (`flat(matrix)` in
   `Import/WebPageReader.js`), so nothing imported is in depth and `transform-style: preserve-3d`
   has nothing to keep.
-- **Animate, dragging inside a turned group** (keeping depth or one card, the Mac's
-  `MotionTool.travel` and Windows' `MotionHand.travel` alike): the Move is as long as the pointer
-  went across the page, laid along the group's plane, so the layer lags the pointer by the
-  group's foreshortening.
 - **Films of groups that keep depth** (order at rest and keys measured in the group, fixed
   2026-11-14 in the shared model): Windows was not built or run with the fix, nor with
   2026-11-15's shared changes: `DepthOrder.nearness` (a face in a body's plane, its middle as high

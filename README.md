@@ -543,7 +543,11 @@ own (`LayerField`): a Bezzle that does not know it reads the same group as one c
   Shift in tens; pressed or let go during the drag, nothing jumps. The knob takes Control as it
   takes Option. A layer only held at a height and facing the eye has no knob, so a drag on its
   middle moves it. In Animate, Control while moving keys Lift. On Windows the key is Alt, pressed
-  once the drag is under way (Alt at the press duplicates).
+  once the drag is under way (Alt at the press duplicates). In Animate a layer dragged stays under
+  the pointer however high it stands and in a group turned in depth, keeping depth or one card:
+  as the drag begins, the plane its Move slides it along is found as the film shows it
+  (`Node.filmMovePlane`, shared: four Moves posed and shown, which settle the plane), and the
+  pointer is cast onto it at each step (`MotionTool.travel`; Windows does not yet).
 - **Its tests** are `DepthSceneTests`, `DepthTests`, `DepthBodyTests`, `DepthLookTests` and
   `DepthKeepTests`, with `MotionLensTests` for the film and `DepthFilmTests` for films of groups
   that keep depth, held against the design's own order and picture.

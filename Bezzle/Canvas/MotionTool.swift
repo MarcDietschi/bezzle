@@ -293,6 +293,9 @@ final class MotionTool {
     private var pushing = DepthPushing()
     /// The tracks there were when the drag began, to tell afterwards whether it made a first key.
     private var tracksBefore: [UUID: Set<MotionProperty>] = [:]
+    /// The plane each layer in hand is moved along, as the film shows it (`Node.filmMovePlane`):
+    /// worked out as a move or a bead's drag begins, so the pointer is cast onto it at each step.
+    private var planes: [UUID: FilmMap] = [:]
 
     var dragging: Bool {
         if points.dragging { return true }
@@ -378,6 +381,9 @@ final class MotionTool {
             store.seek(track.keys[i].t)
             let key = track.keys[i]
             begin([id], scene)
+            // Its plane at the key's moment, where the playhead now is.
+            planes = [:]
+            if let now = self.scene, let plane = now.board.filmMovePlane(of: id, at: now.time, pieces: now.pieces) { planes[id] = plane }
             drag = .bead(id: id, key: i, start: v, from: CGPoint(x: key.v[0], y: key.v[1]), lift: node.pose(at: key.t).lift)
         case .round(let i):
             guard let dots = cornerDots(scene) else { return }
@@ -432,9 +438,12 @@ final class MotionTool {
         redraw()
     }
 
-    /// How far a drag between two view points moves something lying `height` above the artboard,
-    /// in the artboard's own points: the same way on screen as the pointer went, whatever the camera.
-    private func travel(from a: CGPoint, to b: CGPoint, height: Double, in scene: Scene) -> CGPoint {
+    /// How far a drag between two view points moves a layer in hand, as a change of its Move: the
+    /// pointer cast onto the plane the layer moves along (`planes`), so the layer stays under it
+    /// however that plane is turned in depth and whatever the camera. Where that has no answer
+    /// (seen edge on, or past its horizon), as across a sheet lying `height` above the artboard.
+    private func travel(of id: UUID, from a: CGPoint, to b: CGPoint, height: Double, in scene: Scene) -> CGPoint {
+        if let d = planes[id]?.travel(from: scene.toFrame(a), to: scene.toFrame(b)) { return d }
         let map = scene.ground(height: height)
         if let p = map.back(scene.toFrame(a)), let q = map.back(scene.toFrame(b)) { return q - p }
         let k = scene.zoom * CGFloat(max(scene.camera.zoom, 0.01))
@@ -483,6 +492,11 @@ final class MotionTool {
                 guard Self.distance(v, start) >= 3 else { return }
                 started = true
                 begin(Array(from.keys), scene)
+                // Each moves along its own plane, as it stands now: worked out once, here.
+                planes = [:]
+                for id in from.keys {
+                    if let plane = scene.board.filmMovePlane(of: id, at: scene.time, pieces: scene.pieces) { planes[id] = plane }
+                }
                 drag = .move(start: start, from: from, started: true)
                 // Held from the press, it is lifted from where the press was.
                 pushing.pointer(at: start, holding: flags.contains(.control))
@@ -506,7 +520,7 @@ final class MotionTool {
             let to = CGPoint(x: start.x + across.x, y: start.y + across.y)
             store.pose(.move, of: Array(from.keys)) { node in
                 guard let was = from[node.id] else { return node.value(of: .move, at: scene.time) }
-                var d = travel(from: start, to: to, height: was.lift, in: scene)
+                var d = travel(of: node.id, from: start, to: to, height: was.lift, in: scene)
                 // Shift keeps it to the way it has mostly gone.
                 if shift { if abs(d.x) >= abs(d.y) { d.y = 0 } else { d.x = 0 } }
                 var x = Double(was.move.x + d.x), y = Double(was.move.y + d.y)
@@ -553,7 +567,7 @@ final class MotionTool {
             let (property, value) = Self.tipped(side: side, from: start, to: v, tilt: tilt, swing: swing, steps: shift, free: free)
             store.pose(property, of: [id]) { _ in [value] }
         case .bead(let id, let key, let start, let from, let lift):
-            var d = travel(from: start, to: v, height: lift, in: scene)
+            var d = travel(of: id, from: start, to: v, height: lift, in: scene)
             if shift { if abs(d.x) >= abs(d.y) { d.y = 0 } else { d.x = 0 } }
             var x = Double(from.x + d.x), y = Double(from.y + d.y)
             if !free {
@@ -646,6 +660,7 @@ final class MotionTool {
         }
         let was = drag
         drag = .none
+        planes = [:]
         defer {
             hot = find(v)
             redraw()
@@ -714,6 +729,7 @@ final class MotionTool {
         guard dragging || !fingers.isEmpty else { return false }
         if store.inGesture { store.cancelGesture() }
         drag = .none
+        planes = [:]
         // What is left of two fingers put back does nothing more.
         spent.formUnion(fingers)
         fingers = []
