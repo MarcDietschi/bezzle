@@ -5,7 +5,8 @@ import AppKit
 /// by a corner to grow, from just outside a corner to turn, from just outside the middle of a side
 /// to tip it in depth. Every pose is a key at the playhead, made without asking, and the first one
 /// a layer is given comes with the design for company, so one drag is a whole motion: posed at
-/// the start, the layer flies home; posed later, it leaves home for there.
+/// the start, the layer flies home; posed later, it leaves home for there. Several picked that
+/// lie together are one body, with one set of handles round them that pose it as one.
 ///
 /// The camera is picked by the small camera over the artboard's corner, or its row in the
 /// timeline. Picked, the artboard itself is the thing in hand, as the camera sees it: dragged to
@@ -168,6 +169,51 @@ final class MotionTool {
         return ids.count == 1 && !store.film.camera ? ids[0] : nil
     }
 
+    /// Several layers picked that lie together, as one body at the playhead (`FilmBody`), and
+    /// the box round it in the plane of its lead's face, where its one set of handles shows, in
+    /// the film frame's points: top left round to bottom left.
+    struct Body {
+        var body: FilmBody
+        var outline: [CGPoint]
+        var ids: [UUID] { body.ids }
+    }
+
+    /// The body is worked out once for each design, selection and moment, and kept while the
+    /// view moves: it is asked of at every frame and every move of the pointer.
+    private var bodyWorkedOut: (version: Int, fronts: [UUID: Int], board: UUID, ids: [UUID], time: Double, body: Body?)?
+
+    /// What is picked as one body, when it is several layers lying together (on the artboard,
+    /// or in one group on it): the Pose card's Tilt and Swing pose those as one, and so do the
+    /// handles round them. Nil for one layer, or for layers lying apart.
+    func body(_ scene: Scene) -> Body? {
+        let ids = store.posedLayers
+        guard ids.count > 1, !store.film.camera else { return nil }
+        if let had = bodyWorkedOut, had.version == store.version, had.fronts == store.fronts, had.board == scene.board.id, had.ids == ids, had.time == scene.time {
+            return had.body
+        }
+        var found: Body?
+        if let body = store.seenDoc.filmBody(of: ids, at: scene.time), let map = leadMap(body, scene) {
+            let outline = body.outline.map { map($0) }
+            if outline.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) { found = Body(body: body, outline: outline) }
+        }
+        bodyWorkedOut = (store.version, store.fronts, scene.board.id, ids, scene.time, found)
+        return found
+    }
+
+    /// Where a body's lead's own upright points show in the film's frame. Through its corners
+    /// as the film shows them, which count in how it stands off a group drawn as one card; a
+    /// group, whose corners are those of what it holds, or a shape whose outline moves, through
+    /// the film's map of the layer itself.
+    private func leadMap(_ body: FilmBody, _ scene: Scene) -> FilmMap? {
+        let lead = body.layers[body.lead]
+        let w = Double(lead.frame.width), h = Double(lead.frame.height)
+        if !lead.isGroup, !lead.reshapes, w > 0, h > 0, let q = scene.board.filmCorners(of: lead.id, at: scene.time, pieces: scene.pieces),
+           let square = FilmMap.square(to: q) {
+            return square.after(FilmMap(a: 1 / w, e: 1 / h))
+        }
+        return scene.board.filmPointMap(of: lead.id, at: scene.time, pieces: scene.pieces)
+    }
+
     private func chipRect(_ scene: Scene) -> CGRect {
         CGRect(x: scene.rect.maxX - 22, y: scene.rect.minY - 21, width: 22, height: 18)
     }
@@ -227,6 +273,14 @@ final class MotionTool {
             // from a little off it, and would else be all reach, with nowhere to move it by.
             if let g, !chain(at: v, in: scene).contains(where: { $0.id == id }) { return .grip(g) }
         }
+        // Several as one body: its handles first, and beside it the reach for turning and tipping
+        // it, where none of its layers is.
+        if let held = body(scene), let g = grip(at: v, on: held.outline.map(scene.toView), sides: true) {
+            switch g {
+            case .corner, .side: return .grip(g)
+            case .turn, .depth: if !chain(at: v, in: scene).contains(where: { held.ids.contains($0.id) }) { return .grip(g) }
+            }
+        }
         if let id = pick(chain(at: v, in: scene), in: scene, deep: false) { return .layer(id) }
         return .none
     }
@@ -247,7 +301,8 @@ final class MotionTool {
         let found = dragging ? held : find(v)
         switch found {
         case .grip(let g):
-            let q = store.film.camera ? scene.sheet : handled(scene).flatMap { scene.corners(of: $0) } ?? []
+            let q = store.film.camera ? scene.sheet
+                : handled(scene).flatMap { scene.corners(of: $0) } ?? body(scene)?.outline.map(scene.toView) ?? []
             guard q.count == 4 else { return .arrow }
             let c = Self.middle(q)
             func angle(_ p: CGPoint) -> Double { Double(atan2(p.y - c.y, p.x - c.x)) * 180 / .pi }
@@ -277,6 +332,12 @@ final class MotionTool {
         /// round since the press, added up move by move.
         case turn(id: UUID, center: CGPoint, last: CGPoint, round: Double, from: Double)
         case depth(id: UUID, side: Int, start: CGPoint, tilt: Double, swing: Double)
+        /// Several layers as one body (`FilmBody`), by the handles round it: grown about its
+        /// middle, turned in the plane of its lead's face, or tipped and swung in depth. What is
+        /// kept is its lead's: its scale, turn, tilt and swing at the press.
+        case bodyScale(ids: [UUID], center: CGPoint, start: CGPoint, from: CGPoint, side: Int?)
+        case bodyTurn(ids: [UUID], center: CGPoint, last: CGPoint, round: Double, from: Double)
+        case bodyDepth(ids: [UUID], side: Int, start: CGPoint, tilt: Double, swing: Double)
         case bead(id: UUID, key: Int, start: CGPoint, from: CGPoint, lift: Double)
         /// A rectangle's corners rounded by the dot inside one: `radii` as they were at the press.
         case round(id: UUID, corner: Int, radii: [CGFloat])
@@ -373,6 +434,17 @@ final class MotionTool {
                 case .side(let i): drag = .scale(id: id, center: center, start: v, from: pose.scale, side: i)
                 case .turn: drag = .turn(id: id, center: center, last: v, round: 0, from: pose.turn)
                 case .depth(let i): drag = .depth(id: id, side: i, start: v, tilt: pose.tilt, swing: pose.swing)
+                }
+            } else if let held = body(scene) {
+                // Several as one body: what its lead is at the press, which the body follows.
+                let ids = held.ids, pose = held.body.poses[held.body.lead]
+                let center = Self.middle(held.outline.map(scene.toView))
+                begin(ids, scene)
+                switch g {
+                case .corner: drag = .bodyScale(ids: ids, center: center, start: v, from: pose.scale, side: nil)
+                case .side(let i): drag = .bodyScale(ids: ids, center: center, start: v, from: pose.scale, side: i)
+                case .turn: drag = .bodyTurn(ids: ids, center: center, last: v, round: 0, from: pose.turn)
+                case .depth(let i): drag = .bodyDepth(ids: ids, side: i, start: v, tilt: pose.tilt, swing: pose.swing)
                 }
             }
         case .bead(let i):
@@ -566,6 +638,43 @@ final class MotionTool {
         case .depth(let id, let side, let start, let tilt, let swing):
             let (property, value) = Self.tipped(side: side, from: start, to: v, tilt: tilt, swing: swing, steps: shift, free: free)
             store.pose(property, of: [id]) { _ in [value] }
+        case .bodyScale(let ids, let center, let start, let from, let side):
+            // As one layer grows, its lead by as much; the body about its middle with it.
+            var k: Double
+            if let side {
+                let q = body(scene)?.outline.map(scene.toView) ?? []
+                let mid = q.count == 4 ? CGPoint(x: (q[side].x + q[(side + 1) % 4].x) / 2, y: (q[side].y + q[(side + 1) % 4].y) / 2) : start
+                let d = CGPoint(x: mid.x - center.x, y: mid.y - center.y)
+                let length = max(hypot(d.x, d.y), 0.001)
+                let unit = CGPoint(x: d.x / length, y: d.y / length)
+                let a = (start.x - center.x) * unit.x + (start.y - center.y) * unit.y
+                let b = (v.x - center.x) * unit.x + (v.y - center.y) * unit.y
+                k = Double(max(b, 1) / max(a, 1))
+            } else {
+                k = Double(Self.distance(v, center) / max(Self.distance(start, center), 1))
+            }
+            var x = Double(from.x), y = Double(from.y)
+            if side == nil || side == 1 || side == 3 { x *= k }
+            if side == nil || side == 0 || side == 2 { y *= k }
+            if !free {
+                x = Self.caught(x, at: 1, within: 0.03)
+                y = Self.caught(y, at: 1, within: 0.03)
+            }
+            x = max((x * 100).rounded() / 100, 0.001)
+            y = max((y * 100).rounded() / 100, 0.001)
+            let kx = x / max(Double(from.x), 0.001), ky = y / max(Double(from.y), 0.001)
+            let t = scene.time, before = store.gestureBefore
+            store.edit(MotionProperty.scale.action) { doc in doc.poseBody(ids, grownBy: kx, ky, at: t, from: before) }
+        case .bodyTurn(let ids, let center, let last, var round, let from):
+            round += Self.turned(v, from: last, about: center)
+            drag = .bodyTurn(ids: ids, center: center, last: v, round: round, from: from)
+            let degrees = Self.settled(from + round, steps: shift, free: free) - from
+            let t = scene.time, before = store.gestureBefore
+            store.edit(MotionProperty.turn.action) { doc in doc.poseBody(ids, turnedBy: degrees, at: t, from: before) }
+        case .bodyDepth(let ids, let side, let start, let tilt, let swing):
+            // The Pose card's Tilt and Swing for several: its lead to the value, the body with it.
+            let (property, value) = Self.tipped(side: side, from: start, to: v, tilt: tilt, swing: swing, steps: shift, free: free)
+            store.pose(property, number: 0, to: value, of: ids)
         case .bead(let id, let key, let start, let from, let lift):
             var d = travel(of: id, from: start, to: v, height: lift, in: scene)
             if shift { if abs(d.x) >= abs(d.y) { d.y = 0 } else { d.x = 0 } }
@@ -683,6 +792,9 @@ final class MotionTool {
         case .scale: finish(MotionProperty.scale.action)
         case .turn: finish(MotionProperty.turn.action)
         case .depth(_, let side, _, _, _): finish((side % 2 == 0 ? MotionProperty.tilt : .swing).action)
+        case .bodyScale: finish(MotionProperty.scale.action)
+        case .bodyTurn: finish(MotionProperty.turn.action)
+        case .bodyDepth(_, let side, _, _, _): finish((side % 2 == 0 ? MotionProperty.tilt : .swing).action)
         case .bead: finish(MotionProperty.move.action)
         case .round: finish("Change Corners")
         case .zoom: finish(MotionProperty.cameraZoom.action)
@@ -1062,18 +1174,27 @@ final class MotionTool {
             ctx.addPath(outline(q))
             ctx.strokePath()
         }
+        let moving: Bool = { if case .move(_, _, true) = drag { return true } else { return false } }()
+        func handles(_ q: [CGPoint]) {
+            let lengths = (0..<4).map { Self.distance(q[$0], q[($0 + 1) % 4]) }
+            for i in 0..<4 where Self.carriesHandle(i, lengths) {
+                drawHandle(CGPoint(x: (q[i].x + q[(i + 1) % 4].x) / 2, y: (q[i].y + q[(i + 1) % 4].y) / 2), in: ctx, scale: scale)
+            }
+            if Self.hasSize(lengths) { for p in q { drawHandle(p, in: ctx, scale: scale) } }
+        }
         if editing != nil {
             points.draw(ctx, scale: scale)
         } else if let id = handled(scene), let q = shown[id] ?? scene.corners(of: id) {
-            let moving: Bool = { if case .move(_, _, true) = drag { return true } else { return false } }()
             if !moving {
-                let lengths = (0..<4).map { Self.distance(q[$0], q[($0 + 1) % 4]) }
-                for i in 0..<4 where Self.carriesHandle(i, lengths) {
-                    drawHandle(CGPoint(x: (q[i].x + q[(i + 1) % 4].x) / 2, y: (q[i].y + q[(i + 1) % 4].y) / 2), in: ctx, scale: scale)
-                }
-                if Self.hasSize(lengths) { for p in q { drawHandle(p, in: ctx, scale: scale) } }
+                handles(q)
                 drawCornerDots(scene, in: ctx, scale: scale)
             }
+        } else if !moving, let held = body(scene) {
+            // Several as one body: one set of handles round it, in the plane of its lead's face.
+            let q = held.outline.map(scene.toView)
+            ctx.addPath(outline(q))
+            ctx.strokePath()
+            handles(q)
         }
         if case .marquee(let start, let now, _) = drag {
             let rect = Geometry.rect(from: start, to: now)

@@ -290,8 +290,10 @@ final class FilmBench {
 
 /// Animate on the canvas, as a person uses it there. Here: picking layers and posing them by a
 /// drag. Their grips and beads are in `AnimateCanvasGripTests.swift`, the camera in
-/// `AnimateCanvasCameraTests.swift`, the keyboard in `AnimateCanvasKeyTests.swift`, and other
-/// artboards, the right click and the edges in `AnimateCanvasEdgeTests.swift`.
+/// `AnimateCanvasCameraTests.swift`, the keyboard in `AnimateCanvasKeyTests.swift`, other
+/// artboards, the right click and the edges in `AnimateCanvasEdgeTests.swift`, several as one
+/// body in `AnimateCanvasBodyTests.swift`, and dragging in groups turned in depth in
+/// `AnimateCanvasDepthTests.swift`.
 @MainActor
 struct AnimateCanvasTests {
     func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }

@@ -147,6 +147,11 @@ outlines and looks. What is left:
 - **No Escape under a drag on the timeline, and keys cannot be copied** (the Mac has both since
   2026-11-15). What pastes keys is the Mac's store (`Bezzle/Store/AnimateClipboard.swift`:
   `place`, `taken`, `pasteTargets`), to move into `Bezzle/Model` for Windows to share.
+- **Several picked have no handles as one body on the canvas:** `MotionHand` grows, turns and
+  tips one layer only (the Pose card and the AI server pose bodies). The shared `FilmBody` and
+  `BezzleDocument.poseBody` (`Bezzle/Model/FilmBody.swift`, tested in `FilmBodyTests`) and
+  `poseInDepth` are there to use, as the Mac's `MotionTool.body` and its `bodyScale`, `bodyTurn`
+  and `bodyDepth` drags use them.
 - **A layer dragged inside a group turned in depth lags the pointer** (keeping depth or one
   card), and one the design lifts goes a little too far under a tilted camera:
   `MotionHand.travel` lays the pointer's way across the sheet at the layer's Lift. It should
@@ -293,11 +298,17 @@ window, only in tests and in pictures the renderer made. What that left:
   show; worked out again at each step of the drag); the word over a carousel in the line above
   its slide numbers. A post is hidden where the frame of a layer pinned by its corners would be,
   not where its corners are pinned.
-- **One body:** Animate's canvas grips still tip or swing one layer; only the Pose card and the AI
-  server's `turn_layers` pose several as one body. A body posed by keys is rigid at each key and
-  only nearly so between them (its angles ease one by one). A body's lead can change between
-  turns when a group's fitted frame outgrows it, and angles are kept to hundredths of a degree,
-  so a body facing several ways drifts by thousandths of a point over many turns.
+- **One body:** a body posed by keys is rigid at each key and only nearly so between them (its
+  angles ease one by one). A body's lead can change between turns when a group's fitted frame
+  outgrows it, and angles are kept to hundredths of a degree, so a body facing several ways
+  drifts by thousandths of a point over many turns.
+- **One body on Animate's canvas** (2026-11-15, `FilmBody`): several picked that lie apart (on
+  the artboard and in a group) have no handles and are only moved together. Grown one way, each
+  layer grows along its own sides, so one that does not run with the lead's keeps its angles
+  rather than being stretched askew. The handles lie in the plane of the lead's face, so layers
+  standing far off it can show outside them; a group or a shape whose points are keyed, leading
+  a body inside a group drawn as one card while standing off that group itself, shows them as if
+  it lay in it. Driven by tests only, never seen in a running window.
 - **Groups that keep depth, different or not built:** in SVG, one split by layers beside it goes
   out as several parts under its name (`Group`, `Group_2`), its turned layers as pictures, so an
   editor sees no one group there; one whose layers stand in an order its own does not give them

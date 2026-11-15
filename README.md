@@ -450,8 +450,14 @@ the lead goes, and Lay Flat lays a body turned from flat back to the point where
 of the body is stored: each layer keeps where it stands and how it is turned, as before. Off any
 artboard, or one layer in each of several parents, each turns about its own middle. In Animate the
 Pose card's Tilt and Swing key several lying together as one body at the playhead (tilt, swing,
-and move, lift and turn where they change); between keys each property goes its own way, so a
-group is what keeps layers one thing throughout. The AI server's `turn_layers` does both.
+and move, lift and turn where they change), and so does the canvas: picked together, they show
+one set of handles round the body, the box round them in the plane of the lead's face as they
+stand at the playhead (`FilmBody`, shared). From beside a side it tips and swings the body as the
+card does (`poseInDepth`), from just outside a corner it turns it in that plane about the box's
+middle, and by a corner or a side it grows it about that middle, evenly or one way along the
+lead's sides (`BezzleDocument.poseBody`); each drag is one step, measured from the design as it
+began. Between keys each property goes its own way, so a group is what keeps layers one thing
+throughout. The AI server's `turn_layers` does both.
 
 What is nearer covers what is further by the height of each layer's middle, with one exception
 that a body needs: layers turned to face the same way, with their middles at different heights,
@@ -530,8 +536,11 @@ own (`LayerField`): a Bezzle that does not know it reads the same group as one c
   while dragging, `DepthTurning.swift` the knob and turning from a side, `DepthBody.swift` several
   layers turned as one (`turnInDepth`, `layFlat`, `poseInDepth`), which the Mac's card and pad
   reach through `Store/DepthOperations.swift`, `DepthLooking.swift` the look from the side and
-  its posts, which the Mac's canvas turns with `Canvas/LookTool.swift`. The renderer finds the eye
-  itself, from `Options.board` and `offset` (`Renderer.Options.eye`).
+  its posts, which the Mac's canvas turns with `Canvas/LookTool.swift`. In a film,
+  `FilmBody.swift` is several layers posed as one body on Animate's canvas and
+  `FilmMovePlane.swift` the plane a dragged layer moves along, both reached through
+  `Canvas/MotionTool.swift`. The renderer finds the eye itself, from `Options.board` and `offset`
+  (`Renderer.Options.eye`).
 - **The rule for new code:** whatever asks where a layer in depth shows (`Perspective`,
   `Geometry.bounds`, `Geometry.contains`, `Renderer.reach`, `Prototype.chain`) is given the eye of
   the layer's parent. Without one it sees the layer from its own middle, which is only right off
@@ -550,7 +559,9 @@ own (`LayerField`): a Bezzle that does not know it reads the same group as one c
   pointer is cast onto it at each step (`MotionTool.travel`; Windows does not yet).
 - **Its tests** are `DepthSceneTests`, `DepthTests`, `DepthBodyTests`, `DepthLookTests` and
   `DepthKeepTests`, with `MotionLensTests` for the film and `DepthFilmTests` for films of groups
-  that keep depth, held against the design's own order and picture.
+  that keep depth, held against the design's own order and picture; `FilmBodyTests` and
+  `FilmMovePlaneTests` for bodies and drags in a film, and on Animate's canvas
+  `AnimateCanvasBodyTests.swift` and `AnimateCanvasDepthTests.swift` (in `AnimateCanvasTests`).
 - **Driving a copy:** `BEZZLE_CLICKS` takes `^x,y>x,y` for a drag with Control held.
 
 ### Mac parity
