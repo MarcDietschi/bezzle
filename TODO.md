@@ -309,6 +309,11 @@ window, only in tests and in pictures the renderer made. What that left:
   standing far off it can show outside them; a group or a shape whose points are keyed, leading
   a body inside a group drawn as one card while standing off that group itself, shows them as if
   it lay in it. Driven by tests only, never seen in a running window.
+- **Animate, dragging in a group turned in depth** (2026-11-15, `Node.filmMovePlane`): the layer
+  stays under the pointer in tests, within a point; never felt in a running window. A layer that
+  is itself tipped is cast onto the plane of its middle, so a point of it taken hold of away from
+  the middle drifts a little off the pointer; lifted with Control during the drag, it goes on
+  across along the plane it began on.
 - **Groups that keep depth, different or not built:** in SVG, one split by layers beside it goes
   out as several parts under its name (`Group`, `Group_2`), its turned layers as pictures, so an
   editor sees no one group there; one whose layers stand in an order its own does not give them
