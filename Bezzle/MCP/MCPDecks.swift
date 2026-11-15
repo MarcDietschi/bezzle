@@ -88,7 +88,8 @@ extension MCPTools {
         let id = try Self.layer(ref, in: store.doc)
         guard let deck = store.doc.node(deckID), deck.isDeck else { return id }
         let posts = deck.posts
-        guard (1...posts.count).contains(start) else { throw MCPError("from is a post from 1 to \(posts.count).") }
+        // A deck whose file lists no posts has none to start from.
+        guard start >= 1, posts.indices.contains(start - 1) else { throw MCPError("from is a post from 1 to \(posts.count).") }
         guard let (_, post) = store.doc.post(of: id) else { throw MCPError("\(ref) is not on \(deck.name).") }
         return id.mixed(Deck.key(from: post, to: posts[start - 1]))
     }

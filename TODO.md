@@ -444,6 +444,15 @@ the rules). What that left:
 
 ## Housekeeping
 
+- **The AI server, numbers past any size** (found 2026-11-15 in the audit after 1.8's crash; the
+  whole-number reader and places among layers no longer break off): what reads a number its own
+  way still turns one past any whole number into one and breaks off. `import_website` with a
+  width of `1e30` or `"inf"` (`MCPTools.swift`, `Int(width.rounded())`), a carousel's slides of
+  `1e20` and a font feature of `1e20` (`MCPLayers.swift`), a place `"fill -9223372036854775808"`
+  in `MCPStyles.swift`. And the server's own reading of a request sent in chunks takes a negative
+  chunk size, which any program on this Mac could send (`MCPServer.swift`, the chunked body).
+  `steps` of `1e18` (`MCPTools.swift`) does not break off but runs for ever.
+
 - **The full test run in parallel** fails on a quiet Mac since 1.8 (found 2026-11-15, on 1.8.1's
   commit too): `FilmSharpTests.withTheViewCloseOnlyWhatIsInTheViewIsDrawnSharper` waits more than
   a minute for pictures from the film stage's one queue, which every test's stage shares. It no

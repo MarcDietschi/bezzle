@@ -26,8 +26,9 @@ extension MCPTools {
             }
         } else if let start = try args.int("start") {
             let letters = Array(words)
-            let length = try args.int("length") ?? (letters.count - start)
-            guard start >= 0, length > 0, start + length <= letters.count else {
+            // Told apart without adding them, which a start or length past any count would overflow.
+            let length = try args.int("length") ?? (start >= 0 && start <= letters.count ? letters.count - start : 0)
+            guard start >= 0, start <= letters.count, length > 0, length <= letters.count - start else {
                 throw MCPError("\(node.name) has \(letters.count) letters: start is 0 to \(max(letters.count - 1, 0)), and start + length at most \(letters.count).")
             }
             let a = String(letters[..<start]).utf16.count, b = String(letters[start..<(start + length)]).utf16.count

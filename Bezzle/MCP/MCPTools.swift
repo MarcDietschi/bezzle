@@ -554,7 +554,13 @@ final class MCPTools {
 
         func string(_ key: String) throws -> String? { try Read.string(self[key], key) }
         func number(_ key: String) throws -> Double? { try Read.number(self[key], key) }
-        func int(_ key: String) throws -> Int? { try Read.number(self[key], key).map { Int($0.rounded()) } }
+        func int(_ key: String) throws -> Int? {
+            guard let n = try Read.number(self[key], key) else { return nil }
+            // No place or count is meant past what a whole number holds (1e19), and turning one
+            // into it would break off.
+            guard let i = Int(exactly: n.rounded()) else { throw MCPError("\(key) is out of range.") }
+            return i
+        }
         func bool(_ key: String) throws -> Bool? { try Read.bool(self[key], key) }
 
         /// A list of strings, or one on its own.
@@ -584,7 +590,8 @@ final class MCPTools {
 
         static func number(_ v: Any?, _ key: String) throws -> Double? {
             guard let v, !(v is NSNull) else { return nil }
-            if let s = v as? String, let d = Double(s.trimmingCharacters(in: .whitespaces)) { return d }
+            // Written out, as a number may be: not "nan" or "inf", which no number here can be.
+            if let s = v as? String, let d = Double(s.trimmingCharacters(in: .whitespaces)), d.isFinite { return d }
             guard let n = v as? NSNumber, !n.isBoolean, n.doubleValue.isFinite else { throw MCPError("\(key) should be a number.") }
             return n.doubleValue
         }

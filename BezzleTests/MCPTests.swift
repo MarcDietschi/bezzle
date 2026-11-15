@@ -77,6 +77,36 @@ struct MCPTests {
         #expect(Set(bench.store.selection) == Set(["Box", "Label", "Pair"].compactMap { bench.node($0)?.id }))
     }
 
+    /// What an assistant may well send: -1 for the top as some languages count, a number written
+    /// "nan", a place or a start past any count. Each is a sensible place or a word back, and
+    /// never breaks off the app.
+    @Test func placesAndNumbersPastAnyCountAreAnsweredAndNeverBreakOff() async {
+        rect("R", CGRect(x: 10, y: 10, width: 100, height: 100))
+        let low: [String: Any] = ["kind": "rectangle", "name": "Low", "width": 10, "height": 10]
+        var answer = await call("add_layers", ["parent": "A", "layers": [low], "index": -1])
+        #expect(!answer.failed, "\(answer.text)")
+        #expect(bench.a.children.first?.name == "Low")
+        answer = await call("move_layers", ["layers": ["R"], "index": -1])
+        #expect(!answer.failed, "\(answer.text)")
+        #expect(bench.a.children.map(\.name) == ["R", "Low"])
+        for index in [1e19, -1e30] as [Any] + ["nan", "inf", "-inf"] {
+            answer = await call("add_layers", ["parent": "A", "layers": [low], "index": index])
+            #expect(answer.failed && answer.text.contains("index"), "\(index): \(answer.text)")
+            answer = await call("move_layers", ["layers": ["R"], "index": index])
+            #expect(answer.failed && answer.text.contains("index"), "\(index): \(answer.text)")
+        }
+        #expect(bench.a.children.count == 2)
+        _ = await call("add_layers", ["parent": "A", "layers": [["kind": "text", "name": "Words", "text": "Hello"]]])
+        // The largest number below what a whole number holds, and the smallest one it holds.
+        let far = 9.2233720368547748e18, least = -9.2233720368547758e18
+        for letters in [["start": 5000, "length": far], ["start": least], ["start": 2, "length": least]] as [[String: Any]] {
+            answer = await call("style_text", letters.merging(["layer": "Words", "underline": true]) { a, _ in a })
+            #expect(answer.failed, "\(letters): \(answer.text)")
+        }
+        answer = await call("style_text", ["layer": "Words", "start": 1, "length": 3, "underline": true])
+        #expect(!answer.failed, "\(answer.text)")
+    }
+
     @Test func aLayerNotPlacedGoesInTheMiddleOfItsParent() async {
         _ = await call("add_layers", ["parent": "A", "layers": [["kind": "rectangle", "name": "Mid", "width": 100, "height": 50]]])
         #expect(bench.node("Mid")?.frame == CGRect(x: 150, y: 125, width: 100, height: 50))
