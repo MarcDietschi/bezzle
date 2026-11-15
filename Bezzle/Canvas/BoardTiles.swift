@@ -77,6 +77,9 @@ final class BoardTiles {
     /// Each frame's counts, oldest first, kept only while something reads them.
     var frames: [Counts]?
     private var counts = Counts()
+    /// Whether the frame drawn last showed every artboard in sight from tiles of its own, with
+    /// nothing stood in for or left bare: the design as it is, in full.
+    var drewInFull: Bool { counts.papered == 0 && counts.stoodIn == 0 }
 
     private var boards: [UUID: Board] = [:]
     /// What the tiles take, leaving out the pictures of whole artboards, which are kept anyway.

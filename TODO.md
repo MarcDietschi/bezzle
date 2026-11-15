@@ -530,6 +530,21 @@ written on two Macs at once (`README.md` › The Mac app › Designs in synced f
 - **A Mac only looking on** keeps where the design was looked at only until it is closed, and its
   Finder picture and versions are made by the Mac that changed it.
 
+## Opening a design
+
+The tab covered by the window's paper with Bezzle's mark pressed into it while the design opens
+(2026-11-15, `README.md` › The Mac app › Opening a design). What that left:
+
+- **Never seen by a person:** photographed held still at moments of the gesture and filmed at
+  about ten frames a second in test copies in the background, light and dark, on this Mac's
+  1728 × 997 window at 2×. Not seen at 75 Hz on Erik's 5120 × 1440 screen at 1×, nor with a design
+  as heavy as Lawsearch AI (the largest tried: 4,860 layers and 60 photos).
+- **Measured in Debug alone:** an optimized build makes the design sooner, so more designs opened
+  in a second tab come through within the grace, without the mark.
+- **A Photoshop document** keeps its own progress while it comes in (`BringingInView`), not the
+  mark. Files from Adobe XD, Figma and Sketch are still brought in on the main thread, under the
+  cover (the mark goes on meanwhile; the menus and the bar wait).
+
 ## Housekeeping
 
 - **The AI server, numbers past any size** (found 2026-11-15 in the audit after 1.8's crash; the

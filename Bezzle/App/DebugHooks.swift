@@ -8,6 +8,11 @@ import SwiftUI
 ///   BEZZLE_DEMO=1                  make a sample design in the library and open it
 ///   BEZZLE_WELCOME=1               make the welcome tour in the library and open it, as a first launch does
 ///   BEZZLE_OPEN=path               open this design
+///   BEZZLE_OPEN_AT=s:path[;s:path] open these designs from home at these times, as a click does
+///   BEZZLE_OPEN_LOG=file           write when each step of opening came, and the main thread's gaps
+///   BEZZLE_OPEN_SLOW=seconds       make the design that much later, its cover waiting (see `OpeningCover`)
+///   BEZZLE_COVER_AT=seconds        hold the opening cover still that long after its mark is pressed
+///   BEZZLE_REDUCE_MOTION=1         the cover as Reduce Motion has it
 ///   BEZZLE_SELECT=name,name…       select the layers with these names
 ///   BEZZLE_TOOL=rectangle          pick a tool
 ///   BEZZLE_PROTOTYPE=seconds       see the design as a prototype
@@ -78,6 +83,13 @@ enum DebugHooks {
             WindowRouter.shared.open(url)
         } else if let path = env["BEZZLE_OPEN"] {
             WindowRouter.shared.open(URL(fileURLWithPath: path))
+        }
+        // BEZZLE_OPEN_AT=seconds:path[;seconds:path…] opens a design from home that much later, as
+        // a click there does, so the window grows from home's size; each after it in a tab of its own.
+        for spec in (env["BEZZLE_OPEN_AT"] ?? "").split(separator: ";") {
+            guard let colon = spec.firstIndex(of: ":"), let s = Double(spec[..<colon]) else { continue }
+            let path = String(spec[spec.index(after: colon)...])
+            after(s) { WindowRouter.shared.open(URL(fileURLWithPath: path)) }
         }
         // BEZZLE_WEB_IMPORT=address opens the sheet that brings a web page in; "!address" brings it straight in.
         if let spec = env["BEZZLE_WEB_IMPORT"] {
@@ -374,6 +386,43 @@ enum DebugHooks {
         } else if let e = event(.leftMouseUp, from) {
             canvas.mouseUp(with: e)
         }
+    }
+
+    // MARK: Opening, timed
+
+    private static var openingStart: CFTimeInterval?
+    private static var openingLines: [String] = []
+    private static var openingWatch: Timer?
+    private static var openingBeat: CFTimeInterval = 0
+    private static var openingStalls: [(at: Double, ms: Double)] = []
+
+    /// BEZZLE_OPEN_LOG=file: when each step of opening a design came, in ms after it was asked
+    /// for, and every time the main thread was away for more than 40 ms meanwhile.
+    static func opening(_ step: String) {
+        guard let path = env["BEZZLE_OPEN_LOG"] else { return }
+        let now = CACurrentMediaTime()
+        if openingStart == nil {
+            openingStart = now
+            openingBeat = now
+            // A timer of the main run loop's: a gap between its beats is the main thread away.
+            let timer = Timer(timeInterval: 0.004, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    let t = CACurrentMediaTime()
+                    if t - openingBeat > 0.04, let start = openingStart {
+                        openingStalls.append(((openingBeat - start) * 1000, (t - openingBeat) * 1000))
+                    }
+                    openingBeat = t
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            openingWatch = timer
+            after(8) {
+                openingWatch?.invalidate()
+                let stalls = openingStalls.map { String(format: "main thread away at %.0f ms for %.0f ms", $0.at, $0.ms) }
+                try? (openingLines + stalls).joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+            }
+        }
+        openingLines.append(String(format: "%@ %.0f ms", step, (now - (openingStart ?? now)) * 1000))
     }
 
     private static func sizeWindow() {

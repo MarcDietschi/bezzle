@@ -363,6 +363,9 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         store.canvasSize = newSize
         if !laidOut {
             laidOut = true
+            #if DEBUG
+            DebugHooks.opening("canvas laid out")
+            #endif
             // A design opens where it was left, unless nothing of it could be seen from there.
             let lost = store.doc.contentBounds.map { !store.visibleCanvasRect.intersects($0) } ?? false
             if store.doc.viewport == nil || lost { store.lookFirst() }
@@ -397,6 +400,7 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func draw(_ dirtyRect: NSRect) {
         #if DEBUG
         drawsMade += 1
+        if drawsMade == 1 { DebugHooks.opening("canvas first drawn") }
         #endif
         withObservationTracking {
             render()
@@ -696,6 +700,11 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             again = again || more
         }
         if again { redrawSoon() }
+        // The design shown in full for the first time: its tab may uncover it (`OpeningCover`).
+        if let drawn = store.whenDrawn, tiles.drewInFull {
+            store.whenDrawn = nil
+            drawn()
+        }
     }
 
     let tiles = BoardTiles()

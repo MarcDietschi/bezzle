@@ -59,11 +59,19 @@ struct MainWindow: View {
     }
 }
 
-/// A design's tab, in front: the design, or why it could not be opened.
+/// A design's tab, in front: the design, or why it could not be opened; while it opens, the
+/// window's paper over it with Bezzle's mark pressed into it.
 private struct DesignTabView: View {
     let tab: DesignTab
 
     var body: some View {
+        page
+            .overlay {
+                if let opening = tab.opening { OpeningCoverHost(opening: opening) }
+            }
+    }
+
+    @ViewBuilder private var page: some View {
         if let store = tab.store {
             Workspace(store: store, menus: tab.menus)
         } else if let failure = tab.failure {
@@ -98,11 +106,15 @@ struct TabBar: View {
         HStack(spacing: 14) {
             TabStrip(tabs: tabs)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if let store = tabs.selected?.store {
+            if let tab = tabs.selected, let store = tab.store {
                 // Never squeezed: with longer words (German, French, Italian) the zoom pill lost its
-                // number first. The tabs make room instead.
-                DesignBarControls(store: store)
-                    .fixedSize()
+                // number first. The tabs make room instead. They come with the design, once the
+                // paper over it has lifted.
+                if tab.opening == nil {
+                    DesignBarControls(store: store)
+                        .fixedSize()
+                        .transition(.opacity.animation(Theme.fadeIn))
+                }
             } else if tabs.selected == nil {
                 HStack(spacing: 10) {
                     if !Library.shared.entries.isEmpty {

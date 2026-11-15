@@ -375,7 +375,7 @@ final class WebBrowser {
         }
         let (design, report) = try WebImport.write(reads, held: held, source: source, into: Library.shared.folder)
         Library.shared.refresh()
-        Tabs.shared.open(design, report: report.lines.isEmpty ? nil : report)
+        Tabs.shared.open(design, report: report.lines.isEmpty ? nil : report, atOnce: true)
         guard let made = Tabs.shared.designs.first(where: { $0.shows(design) })?.store else { throw Failure.gone }
         destination = made
         imported()

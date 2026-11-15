@@ -62,17 +62,40 @@ final class Tabs {
     /// Opens a design in a new tab after the others and brings it to the front. One open already
     /// comes to the front instead. A file from Adobe XD, Figma, Sketch or Photoshop is brought in again each
     /// time, as a new design.
-    func open(_ url: URL, report: ImportReport? = nil) {
+    ///
+    /// The tab shows at once, covered by the window's paper with Bezzle's mark pressed into it
+    /// while the design is read and drawn (`DesignTab.Opening`); the first design opened grows the
+    /// window meanwhile. `atOnce` opens it before returning, uncovered, for a caller that works on
+    /// the design straight away.
+    func open(_ url: URL, report: ImportReport? = nil, atOnce: Bool = false) {
         let url = url.standardizedFileURL
         if !Importer.imports(url), let tab = designs.first(where: { $0.shows(url) }) {
             select(tab)
             return
         }
-        if designs.isEmpty { fitWindow(forDesigns: true) }
+        #if DEBUG
+        DebugHooks.opening("asked")
+        #endif
+        let growing = designs.isEmpty && growsForDesigns
         let tab = DesignTab(url: url)
-        tab.load(report: report)
         designs.append(tab)
         show(tab.id)
+        if atOnce {
+            if designs.count == 1 { fitWindow(forDesigns: true) }
+            tab.load(report: report)
+        } else {
+            tab.open(report: report, growing: growing) { [weak self] in
+                if growing { self?.fitWindow(forDesigns: true) }
+            }
+        }
+    }
+
+    /// Whether opening a design grows the window, as the first one does from home's size.
+    private var growsForDesigns: Bool {
+        guard let window, window.isVisible, !window.styleMask.contains(.fullScreen),
+              let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return false }
+        let room = Self.designSize(in: visible.size)
+        return window.frame.width < room.width - 1 || window.frame.height < room.height - 1
     }
 
     /// How big the window is made for designing: all of the screen the menu bar and the Dock
@@ -146,6 +169,7 @@ final class Tabs {
     func close(_ tab: DesignTab) {
         guard let index = designs.firstIndex(where: { $0 === tab }) else { return }
         if selectedID == tab.id { show(nil) }
+        tab.stopOpening()
         tab.close()
         designs.remove(at: index)
         recency.removeAll { $0 == tab.id }
@@ -260,6 +284,22 @@ final class DesignTab: Identifiable {
     /// Its canvas, held while another tab is in front, so coming back shows the design at once,
     /// with its tiles already drawn.
     @ObservationIgnored private var keptCanvas: CanvasView?
+    /// The paper over the tab while its design opens, Bezzle's mark pressed into it; nil once
+    /// the design shows.
+    private(set) var opening: Opening?
+    /// Closed before its design had opened: what was on its way is let go.
+    @ObservationIgnored private var stopped = false
+
+    /// A design on its way into its tab: when its cover shows the mark and lifts (`OpeningCover`),
+    /// and the view that shows it.
+    @MainActor final class Opening {
+        let cover: OpeningCover
+        weak var view: OpeningCoverView?
+        /// Whether the design is ready and the cover lifting.
+        fileprivate(set) var lifting = false
+
+        init(_ cover: OpeningCover) { self.cover = cover }
+    }
 
     init(url: URL) {
         self.url = url
@@ -267,15 +307,100 @@ final class DesignTab: Identifiable {
 
     var name: String { store?.name ?? url.deletingPathExtension().lastPathComponent }
 
+    /// Whether it shows the design at `url`; while the design is on its way, by its path, so that
+    /// asking twice for a design in a moment opens it once, however the two asked for it.
     func shows(_ url: URL) -> Bool {
-        store.map { $0.isAt(url) } ?? (self.url == url)
+        store.map { $0.isAt(url) } ?? (self.url.standardizedFileURL.path == url.standardizedFileURL.path)
+    }
+
+    /// Opens the design under the cover. The window's paper shows at once over the tab, the
+    /// design's file is read away from the main thread while the window grows (`grow`), and the
+    /// design is made and laid out on the main thread while the mark goes on in the window server.
+    /// Once its canvas has drawn it in full, or it has been open a while, the cover lifts.
+    fileprivate func open(report given: ImportReport?, growing: Bool, grow: @escaping () -> Void) {
+        // A Photoshop document shows how far it has come in on its own.
+        if PhotoshopImporter.fileExtensions.contains(url.pathExtension.lowercased()) {
+            grow()
+            bringIn()
+            return
+        }
+        let opening = Opening(OpeningCover(began: CACurrentMediaTime(), growing: growing))
+        self.opening = opening
+        let url = url, own = !Importer.imports(url)
+        // A design once shared through iCloud is first kept as it was last shared, then read.
+        if own { SharingFiles.leaveICloud(url) }
+        let reading = own ? Task.detached(priority: .userInitiated) { try DesignFile.read(url) } : nil
+        Task {
+            // A frame for the cover to reach the screen before anything holds the main thread.
+            try? await Task.sleep(for: .milliseconds(20))
+            grow()
+            #if DEBUG
+            DebugHooks.opening("window grown")
+            // BEZZLE_OPEN_SLOW=seconds makes the design that much later, the cover waiting for it.
+            if let hold = ProcessInfo.processInfo.environment["BEZZLE_OPEN_SLOW"].flatMap(Double.init) {
+                try? await Task.sleep(for: .seconds(hold))
+            }
+            #endif
+            var read: BezzleDocument?
+            do {
+                read = try await reading?.value
+            } catch {
+                failure = "\(url.lastPathComponent): \(error.localizedDescription)"
+            }
+            #if DEBUG
+            DebugHooks.opening("read")
+            #endif
+            guard !stopped else { return }
+            if failure == nil { load(report: given, read: read) }
+            #if DEBUG
+            DebugHooks.opening("store made")
+            #endif
+            guard let store else { return uncover() }
+            store.whenDrawn = { [weak self] in
+                #if DEBUG
+                DebugHooks.opening("drawn in full")
+                #endif
+                self?.uncover()
+            }
+            try? await Task.sleep(for: .seconds(OpeningCover.patience))
+            uncover()
+        }
+    }
+
+    /// The design is ready: the cover lifts, with the mark if it came, and is gone after.
+    private func uncover() {
+        guard let opening, !opening.lifting else { return }
+        opening.lifting = true
+        let now = CACurrentMediaTime()
+        let lift = opening.cover.lift(readyAt: now)
+        opening.view?.lift(at: lift.at, marked: lift.marked)
+        #if DEBUG
+        DebugHooks.opening((lift.marked ? "ready; lifts with the mark" : "ready; lifts without the mark")
+                           + String(format: " %.0f to %.0f ms after asked", (lift.at - opening.cover.began) * 1000,
+                                    (opening.cover.gone(readyAt: now) - opening.cover.began) * 1000))
+        #endif
+        let gone = opening.cover.gone(readyAt: now) - now
+        #if DEBUG
+        // Held still to be photographed (BEZZLE_COVER_AT), the cover stays.
+        if ProcessInfo.processInfo.environment["BEZZLE_COVER_AT"] != nil { return }
+        #endif
+        DispatchQueue.main.asyncAfter(deadline: .now() + gone) { [weak self] in
+            guard let self, self.opening === opening else { return }
+            self.opening = nil
+        }
+    }
+
+    /// Its tab is closed: whatever was still on its way is let go.
+    fileprivate func stopOpening() {
+        stopped = true
+        opening = nil
     }
 
     /// Opens the file. One from Adobe XD, Figma, Sketch or Photoshop is brought in as a new design
     /// in the library, which the tab then shows; the file itself is left as it is.
     /// A design just brought in from elsewhere, such as a web page, comes with what was said
-    /// about bringing it in.
-    fileprivate func load(report given: ImportReport? = nil) {
+    /// about bringing it in. Its file may have been `read` already.
+    fileprivate func load(report given: ImportReport? = nil, read: BezzleDocument? = nil) {
         if PhotoshopImporter.fileExtensions.contains(url.pathExtension.lowercased()) {
             bringIn()
             return
@@ -287,7 +412,7 @@ final class DesignTab: Identifiable {
                 (design, report) = try Importer.importFile(url, into: Library.shared.folder)
                 url = design
             }
-            let s = try DocumentStore(opening: design)
+            let s = try DocumentStore(opening: design, read: read)
             s.undoManager = undo
             s.importReport = report
             store = s

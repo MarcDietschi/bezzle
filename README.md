@@ -114,6 +114,32 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
   - A change of where the design is looked at alone is written after 30 s of rest, or with the next
     change, or on closing, not 2 s after each pause: the whole `document.json` (8 MB for Lawsearch
     AI) was written each time, 2 GB in an afternoon of looking about.
+- **Opening a design** (from home, the Open panel, the Finder, a link, the AI server: all through
+  `Tabs.open`): its tab shows at once, covered by the window's paper with Bezzle's mark pressed
+  into it, and the first design opened grows the window from home's size meanwhile
+  (`DesignTab.open`). The file is read away from the main thread while the window grows; the
+  design is made and its panels laid out on the main thread, under the cover; the cover lifts once
+  the canvas has drawn every artboard in sight from tiles of its own (`DocumentStore.whenDrawn`,
+  `BoardTiles.drewInFull`), or 1.6 s after the design was made. The mark's three sheets are struck
+  into the paper one after another, the deepest inked, the name set letter by letter; past 1.1 s
+  the sheets breathe; when the design is there the mark is pressed flat and the paper clears. When
+  the mark comes and how long it stays (`OpeningCover`: not within 0.25 s unless the window grows,
+  and once there, at least 0.72 s) and its drawing and numbers (`OpeningMark`) are in
+  `Bezzle/Model/OpeningCover.swift`, shared with Windows. The Mac's cover
+  (`Views/OpeningCoverView.swift`) is Core Animation alone, every animation handed over as it
+  shows, so it keeps moving while the main thread is busy (filmed so on 2026-11-15: the letters
+  set while the main thread was away for half a second). Reduce Motion fades it in and out.
+  `Tabs.open(atOnce:)` opens without a cover, for a caller that works on the design straight
+  away (the browser bringing pages in). To see it: `BEZZLE_OPEN_AT=2:<design>` opens from home,
+  `BEZZLE_OPEN_LOG` writes when each step came, `BEZZLE_OPEN_SLOW` holds the design back,
+  `BEZZLE_COVER_AT=<s>` holds the mark still at a moment to photograph, `BEZZLE_REDUCE_MOTION=1`.
+  Measured on 2026-11-15 (Debug, a 1728 × 997 window, `OpeningTests`' designs): a design of 3
+  layers and one of 4,860 layers with 60 photos were drawn in full 576 and 612 ms after the click
+  before, the main thread away all that time, showing home stretched by the window's growth and
+  then held; after, drawn under the cover by 667 and 599 to 617 ms, the cover lifting from 720 ms
+  and gone at 1,060 ms. Opened in a tab of a window already grown, the large one was ready in
+  252 ms, just past the grace, so its mark was pressed and lifted from 970 ms; a design ready
+  within the grace comes through the paper without it.
 - **Designs in synced folders** (iCloud Drive, Google Drive, Dropbox; `SyncedFolders.service`,
   `FolderSync`, `FolderShare`): each Mac keeps its changes in its own files in the package, and
   everyone's are merged. But to iCloud Drive a package is one item, whatever is written in it

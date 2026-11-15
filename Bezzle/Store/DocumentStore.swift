@@ -286,6 +286,9 @@ final class DocumentStore {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     /// The canvas on screen, for starting to type into a text layer from elsewhere.
     @ObservationIgnored weak var canvas: CanvasView?
+    /// Told once, when the canvas first shows the design in full, every artboard in sight drawn
+    /// from tiles of its own: the design's tab uncovers it then (see `OpeningCover`).
+    @ObservationIgnored var whenDrawn: (() -> Void)?
     /// Whether the export panel is showing.
     var exporting = false
     /// What bringing the design in from another app could only approximate, shown until read.
@@ -331,10 +334,11 @@ final class DocumentStore {
         if DesignPreview.exists(for: url) { previewed = version }
     }
 
-    convenience init(opening url: URL) throws {
+    /// The design at `url`, opened; its file may have been `read` already, away from the main thread.
+    convenience init(opening url: URL, read: BezzleDocument? = nil) throws {
         // A design once shared through iCloud is first kept as it was last shared.
         SharingFiles.leaveICloud(url)
-        var document = try DesignFile.read(url)
+        var document = try read ?? DesignFile.read(url)
         // A shared design opens as it is shared, which its own file may lag behind.
         let sharing = Collaboration.open(url)
         if let sharing {
