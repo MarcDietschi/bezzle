@@ -200,6 +200,55 @@ struct DepthKeepTests {
         #expect(Picking(doc: locked).hit(CGPoint(x: 190, y: 140)) == beside.id)
     }
 
+    // MARK: Looked at from the side
+
+    @Test func lookedAtFromTheSideEachLayerOfAGroupThatKeepsDepthStandsOnPostsDownToThePage() throws {
+        var doc = turned()
+        let stage = doc.nodes[0], g = node(doc, "Group"), inner = node(doc, "Inner")
+        let standing = node(doc, "Standing"), lying = node(doc, "Lying"), deep = node(doc, "Deep")
+        // From 45° to the right, which the group's plane, swung 40° that way, nearly faces.
+        doc.looks = [stage.id: DepthLook(across: 45)]
+        // Each corner of each layer where it stands in the scene, worked out by hand.
+        let lyingCorners = corners(lying).map { out(flat($0), of: g) }
+        let standingCorners = corners(standing).map { out(stood(flat($0), in: standing), of: g) }
+        let deepCorners = corners(deep).map { out(out(stood(flat($0), in: deep), of: inner), of: g) }
+        // The eye 800 to the right of the artboard's middle, as high.
+        func top(_ p: ScenePoint) -> CGPoint {
+            let k = 800 / (800 - p.z)
+            return CGPoint(x: 1000 + (p.x - 1000) * k, y: 150 + (p.y - 150) * k)
+        }
+        func matches(_ posts: [DepthPost], _ corners: [ScenePoint]) -> Bool {
+            posts.count == corners.count && corners.allSatisfy { c in
+                posts.contains { near($0.foot, CGPoint(x: c.x, y: c.y), 1e-5) && near($0.top, top(c), 1e-5) }
+            }
+        }
+        // A post under each corner of each layer the group holds, straight down to the page, which
+        // every height is measured from; none under the group, which has no card of its own.
+        let posts = doc.posts(of: stage)
+        #expect(matches(posts, lyingCorners + standingCorners + deepCorners), "\(posts.map(\.foot))")
+        #expect(!posts.contains { near($0.foot, g.frame.origin, 1e-3) })
+        // The layers lying in the group's plane stand off the page as the group does, above it
+        // or, where the group is swung away, below it.
+        #expect(lyingCorners.allSatisfy { abs($0.z) > 1 } && lyingCorners.contains { $0.z < 0 })
+        // A layer picked, or the group inside, has its own; the group picked, all of them.
+        #expect(matches(doc.posts(of: stage, picked: [standing.id]), standingCorners))
+        #expect(matches(doc.posts(of: stage, picked: [inner.id]), deepCorners))
+        #expect(doc.posts(of: stage, picked: [g.id]) == posts)
+        // As one card, the group stands on the four posts under its own corners.
+        var card = turned(keeps: false)
+        card.looks = [card.nodes[0].id: DepthLook(across: 45)]
+        let cardCorners = corners(g).map { out(flat($0 - g.frame.origin), of: g) }
+        #expect(matches(card.posts(of: card.nodes[0]), cardCorners))
+        // On the canvas, the layer standing off the group is where its posts end.
+        let drawn = try #require(Renderer.tile(of: stage, rect: CGRect(origin: .zero, size: size), scale: 1, options: {
+            var o = Renderer.Options()
+            o.looks = doc.looks
+            return o
+        }()))
+        let middle = top(out(stood(flat(standing.frame.center), in: standing), of: g))
+        #expect(pixel(drawn, Int(middle.x), Int(middle.y)).blueComponent > 0.95, "\(middle)")
+    }
+
     // MARK: The film
 
     @Test func theFilmAtRestShowsEachLayerWhereTheDesignDoes() throws {

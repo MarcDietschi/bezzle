@@ -127,6 +127,47 @@ struct DepthLookTests {
         #expect(doc.posts(of: stage).isEmpty)
     }
 
+    @Test func aPostIsHiddenWhereANearerLayerStandsInFrontOfIt() throws {
+        var doc = design(scene)
+        let stage = doc.nodes[0]
+        doc.looks = [stage.id: DepthLook(across: -45)]
+        func parts(_ doc: BezzleDocument) -> [(post: DepthPost, parts: [ClosedRange<Double>])] {
+            let posts = doc.posts(of: doc.nodes[0])
+            return Array(zip(posts, doc.shownParts(of: posts, on: doc.nodes[0]))).map { (post: $0.0, parts: $0.1) }
+        }
+        // Seen from the left, the posts under the lifted card's left side show whole; those under
+        // its right side stand behind the card, and only their feet show below its edge.
+        let alone = parts(doc)
+        #expect(alone.count == 4)
+        for (post, shown) in alone {
+            if post.foot.x == 180 {
+                #expect(shown == [0...1], "\(post.foot): \(shown)")
+            } else {
+                #expect(shown.count == 1 && shown[0].lowerBound == 0 && shown[0].upperBound < 0.1, "\(post.foot): \(shown)")
+            }
+        }
+        // From the front there are none to hide; with no post, nothing.
+        #expect(doc.front.shownParts(of: alone.map(\.post), on: stage).allSatisfy { $0 == [0...1] })
+        // A roof held higher over the lifted card hides all of its posts, and stands on its own:
+        // those on the side toward the eye whole, those on the far side behind it, feet and all.
+        doc.nodes[0].children.append(card("Roof", CGRect(x: 100, y: 100, width: 200, height: 120), z: 80))
+        let roofed = parts(doc)
+        #expect(roofed.count == 8)
+        for (post, shown) in roofed {
+            if post.corner.z == 80, post.foot.x == 100 {
+                #expect(shown == [0...1], "\(post.foot): \(shown)")
+            } else {
+                #expect(shown.isEmpty, "\(post.foot): \(shown)")
+            }
+        }
+        // Pushed behind the page, a card's posts rise to the page, and what lies in the page covers them.
+        var behind = design([card("Deep", CGRect(x: 180, y: 130, width: 40, height: 40), z: -60, color: red),
+                             card("Cover", CGRect(x: 100, y: 100, width: 200, height: 120))])
+        behind.looks = [behind.nodes[0].id: DepthLook(across: -45)]
+        let low = parts(behind)
+        #expect(low.count == 4 && low.allSatisfy { $0.post.corner.z == -60 && $0.parts.isEmpty }, "\(low.map(\.parts))")
+    }
+
     // MARK: Never part of the design
 
     @Test func aWayOfLookingIsNeitherSavedNorComparedNorDrawnByAnythingButTheCanvas() throws {
