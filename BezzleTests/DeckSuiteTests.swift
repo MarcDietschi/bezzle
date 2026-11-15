@@ -984,6 +984,16 @@ struct DeckSuiteTests {
         #expect(!bench.a.isDeck && bench.a.children.map(\.name) == ["Back", "Title", "Badge"])
     }
 
+    /// A deck whose file lists no posts, as a broken or half merged file may: given words from a
+    /// post, the assistant is told there is none to start from (it broke off making a range of none).
+    @Test func aDeckListingNoPostsIsSaidToHaveNone() async {
+        let bench = plain()
+        bench.step { bench.store.edit("Deck") { doc in doc.update(bench.a.id) { $0.deck = Deck(posts: []) } } }
+        #expect(bench.a.isDeck && bench.a.posts.isEmpty)
+        let answer = await call(bench, "deck", ["layer": "A", "text_layer": "Title", "values": ["Hats", "Bags"]])
+        #expect(answer.failed && answer.text.contains("from is a post from 1 to 0"), "\(answer.text)")
+    }
+
     @Test func theAssistantAddsMovesRemovesAndShowsPosts() async {
         let bench = stack()
         var answer = await call(bench, "deck", ["layer": "A", "add": 1, "after": 1])
