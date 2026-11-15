@@ -301,23 +301,15 @@ window, only in tests and in pictures the renderer made. What that left:
 - **Web import:** a page's 3D transforms arrive flattened to 2D (`flat(matrix)` in
   `Import/WebPageReader.js`), so nothing imported is in depth and `transform-style: preserve-3d`
   has nothing to keep.
-- **The design's own order can hide a layer** (found 2026-11-14, not fixed since it changes how
-  designs draw): faces turned alike in one plane, with middles exactly as high as each other, are
-  not joined as one body by `DepthOrder.nearness`, so when something standing over one of them
-  raises it, the other stays behind. A title in the middle of a turned plate is drawn under the
-  plate when a badge is held over the plate's higher end (group at 100, 50, 200, 100, swing −40,
-  z 30; Plate full size; Title 80, 44, 40, 12; Badge 170, 4, 26, 26 at z 12: the design draws
-  Title, Plate, Badge). A fix must not shift, by rounding, the keys of faces as near as each
-  other. The film keeps the run together and shows the title, so film and design differ there
-  (`DepthFilmTests` pins the film's side only).
 - **Animate, dragging inside a turned group** (keeping depth or one card, the Mac's
   `MotionTool.travel` and Windows' `MotionHand.travel` alike): the Move is as long as the pointer
   went across the page, laid along the group's plane, so the layer lags the pointer by the
   group's foreshortening.
 - **Films of groups that keep depth** (order at rest and keys measured in the group, fixed
-  2026-11-14 in the shared model): Windows was not built or run with the fix; run
-  `Windows/VM/depth-agreement.sh` again with a fresh out folder, since the Mac's "Resting" and
-  "Turning" frames changed. Untested: a layer pinned by its corners lying in a turned group that
+  2026-11-14 in the shared model): Windows was not built or run with the fix, nor with
+  2026-11-15's in `DepthOrder.nearness` (a face in a body's plane, its middle as high as another's
+  there, belongs to the body); run `Windows/VM/depth-agreement.sh` again with a fresh out folder,
+  since the Mac's "Resting" and "Turning" frames changed. Untested: a layer pinned by its corners lying in a turned group that
   keeps depth.
 - **Windows** has all three since 2026-11-14 (the card and the AI server turn bodies, the group's
   switch, the look from the side with Alt; `Windows/README.md` › The app), measured against the

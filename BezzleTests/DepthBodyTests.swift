@@ -340,6 +340,44 @@ struct DepthBodyTests {
         }
     }
 
+    @Test func aFaceInTheMiddleOfAnotherStaysOnItWhenSomethingStandsOverItsHigherEnd() throws {
+        // A plate in a group that keeps depth, swung and lifted, a title in the plate's middle,
+        // its middle exactly as high as the plate's, and a badge held over the plate's higher end.
+        let ink = RGBA(r: 0.17, g: 0.15, b: 0.13), red = RGBA(r: 1, g: 0, b: 0)
+        var group = Node(kind: .group, name: "Group", frame: CGRect(x: 100, y: 50, width: 200, height: 100))
+        group.children = [card("Plate", CGRect(x: 0, y: 0, width: 200, height: 100)),
+                          card("Title", CGRect(x: 80, y: 44, width: 40, height: 12), color: ink),
+                          card("Badge", CGRect(x: 170, y: 4, width: 26, height: 26), z: 12, color: red)]
+        group.transform3D = Transform3D(y: -40, z: 30)
+        group.keepsDepth = true
+        let doc = design([group])
+        let board = doc.nodes[0]
+        // The title lies on the plate, the badge over both, as listed and as the film has it.
+        #expect(DepthOrder.scene(board.children, eye: Eye.stage(size)).map(\.node.name) == ["Plate", "Title", "Badge"])
+        let pieces = board.filmPieces()
+        let placements = pieces.map { board.placement(of: $0, at: 0, camera: board.camera(at: 0)) }
+        #expect(board.filmOrder(pieces, placements).flatMap { pieces[$0].layers.compactMap { board.descendant($0)?.name } } == ["Plate", "Title", "Badge"])
+        // So it is drawn: the title's ink in the group's middle, which stands 30 up.
+        let image = try #require(Renderer.image(of: board, scale: 1))
+        let middle = NSBitmapImageRep(cgImage: image).colorAt(x: 200, y: Int((150 - 50 * 800 / 770.0).rounded()))!.usingColorSpace(.sRGB)!
+        #expect(middle.redComponent < 0.3 && middle.greenComponent < 0.3 && middle.blueComponent < 0.3, "\(middle)")
+        // The same three turned as one body on the artboard: the title stays on the plate.
+        var loose = design([card("Plate", CGRect(x: 100, y: 50, width: 200, height: 100)),
+                            card("Title", CGRect(x: 180, y: 94, width: 40, height: 12), color: ink),
+                            card("Badge", CGRect(x: 270, y: 54, width: 26, height: 26), z: 12, color: red)])
+        turn(&loose, ["Plate", "Title", "Badge"], y: -40)
+        let z = { (name: String) in self.node(loose, name).transform3D?.z ?? 0 }
+        #expect(z("Plate") == z("Title") && z("Badge") != z("Plate"))
+        #expect(drawn(loose) == ["Plate", "Title", "Badge"])
+        // Faces turned alike in one plane at one height, with nothing standing over them, keep
+        // the heights of their middles to the last place, and so the order listed among all else.
+        let alike = [card("First", CGRect(x: 100, y: 100, width: 120, height: 80), z: 5, turn: (0, 30)),
+                     card("Level", CGRect(x: 150, y: 120, width: 40, height: 40), z: 5),
+                     card("Second", CGRect(x: 130, y: 120, width: 60, height: 40), z: 5, turn: (0, 30))]
+        #expect(DepthOrder.nearness(alike.map { DepthOrder.Face($0) }) == [5, 5, 5])
+        #expect(DepthOrder.stacked(alike).map(\.name) == ["First", "Level", "Second"])
+    }
+
     @Test func aFilmDrawsABodysFacesInTheOrderTheDesignDoes() throws {
         var doc = design(cardAndButton)
         let ids = doc.nodes[0].children.map(\.id)

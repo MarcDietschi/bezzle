@@ -12,9 +12,11 @@ import CoreGraphics
 /// side's low and the near side's high, though a label still lies on its card and a button over
 /// it. So layers turned to face the same way that lie in one plane or over one another, with
 /// their middles at different heights, are ordered as a body's faces are: by how far each plane
-/// is in front of the others, and those in one plane as listed. Among everything else such a
-/// body is as near as its faces would be laid flat, none of them lower than its middle stands,
-/// so turning a body sinks nothing of it under what lies beside it.
+/// is in front of the others, and those in one plane as listed: a face in the plane of such a
+/// body belongs to it even with its middle exactly as high as another's there, as a title in
+/// the middle of its plate does. Among everything else such a body is as near as its faces would
+/// be laid flat, none of them lower than its middle stands, so turning a body sinks nothing of
+/// it under what lies beside it.
 nonisolated enum DepthOrder {
     /// How far above what holds it a layer is held, at its middle: nearer the eye for more than
     /// nothing, further below. Artboards are the page.
@@ -92,8 +94,11 @@ nonisolated enum DepthOrder {
             // How far along the way they face each plane lies.
             let along = members.map { i in side * (n.x * faces[i].middle.x + n.y * faces[i].middle.y + n.z * faces[i].middle.z) }
             // The bodies among them: joined where two with their middles at different heights
-            // lie in one plane, or over one another.
-            var body = Array(members.indices)
+            // lie in one plane, or over one another. Two lying in one plane with their middles
+            // exactly as high as each other, a title in the middle of its plate, are one body as
+            // well, so that what raises the one raises the other; but alone they make no body,
+            // and keep the heights of their middles to the last place.
+            var body = Array(members.indices), raised = Set<Int>()
             func root(_ k: Int) -> Int {
                 var k = k
                 while body[k] != k { k = body[k] }
@@ -102,21 +107,22 @@ nonisolated enum DepthOrder {
             for a in members.indices {
                 for b in members.indices where b > a {
                     let fa = faces[members[a]], fb = faces[members[b]]
-                    guard abs(fa.middle.z - fb.middle.z) > 1e-9 else { continue }
-                    guard abs(along[a] - along[b]) < 0.01 || fa.box.intersects(fb.box) else { continue }
+                    let level = abs(fa.middle.z - fb.middle.z) <= 1e-9, plane = abs(along[a] - along[b]) < 0.01
+                    guard plane || (!level && fa.box.intersects(fb.box)) else { continue }
                     let ra = root(a), rb = root(b)
                     if ra != rb { body[max(ra, rb)] = min(ra, rb) }
+                    if !level { raised.insert(a) }
                 }
             }
-            var lift: [Int: Double] = [:], size: [Int: Int] = [:]
+            var lift: [Int: Double] = [:], heights: [Int: Bool] = [:]
             for k in members.indices {
                 let r = root(k)
                 lift[r] = max(lift[r] ?? -.infinity, faces[members[k]].middle.z - along[k])
-                size[r, default: 0] += 1
+                if raised.contains(k) { heights[r] = true }
             }
             for k in members.indices {
                 let r = root(k)
-                guard size[r] ?? 0 > 1, let lift = lift[r] else { continue }
+                guard heights[r] == true, let lift = lift[r] else { continue }
                 // Those of a body in one plane are as near as each other to the last place, the
                 // first of them saying how near, so that they stay in the order listed.
                 let first = members.indices.first { root($0) == r && abs(along[$0] - along[k]) < 0.01 } ?? k

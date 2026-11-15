@@ -458,7 +458,8 @@ that a body needs: layers turned to face the same way, with their middles at dif
 that lie in one plane or over one another are ordered as parallel faces cover one another, by how
 far each plane lies in front, and those in one plane as listed (`DepthOrder.nearness`; the film's
 `filmOrder` uses the same). So a button stays on its card when both are swung, though its middle
-then stands lower than the card's.
+then stands lower than the card's, and a title in the card's middle, its middle exactly as high
+as the card's, stays on the card when something held over the card's higher end raises it.
 
 An artboard can be looked at from the side while designing, to see how high each layer stands.
 The page is not turned: the eye is moved aside (`DepthLook`, at most 60°), as someone moves their
