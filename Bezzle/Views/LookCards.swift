@@ -3,13 +3,22 @@ import AppKit
 
 /// The cards for how the selected layers look: their corners, how much of them shows, and their
 /// fill, border, shadow, blur and depth. Each one's sideways drag sets what it has most of.
+///
+/// Each card reads the selection as it is when SwiftUI asks for it, and SwiftUI may ask once more
+/// after the layers it was made for have gone: a pile's cards when the selection has just been
+/// emptied, the camera picked in Animate or the layers deleted, before the panel takes the pile
+/// away. So a card that reads the first of them is made from the layers it finds then, and with
+/// none it is no card at all (1.8 broke off reading the first of no layers, 2026-11-14).
 extension SelectionInspector {
     // MARK: Corners
 
     /// How round the corners are, and whether they are plain arcs or squircles that run smoothly
     /// into the sides, and how smoothly. The drag rounds them, clicking at each preset up to a pill.
-    func cornersCard(live: Bool) -> some View {
-        let first = nodes[0]
+    @ViewBuilder func cornersCard(live: Bool) -> some View {
+        if let first = nodes.first { cornersCard(first: first, live: live) }
+    }
+
+    private func cornersCard(first: Node, live: Bool) -> some View {
         let smooth = nodes.allSatisfy { ($0.cornerSmoothing ?? 0) > 0 }
         let pill = Double(Presets.cornerRadius(nil, for: first))
         let mixed = nodes.contains { $0.corners != nil } || common { $0.cornerRadius } == nil
@@ -70,8 +79,11 @@ extension SelectionInspector {
     // MARK: Opacity
 
     /// How much of the layers shows: the drag fades them, clicking at each quarter.
-    func opacityCard(live: Bool) -> some View {
-        let first = nodes[0]
+    @ViewBuilder func opacityCard(live: Bool) -> some View {
+        if let first = nodes.first { opacityCard(first: first, live: live) }
+    }
+
+    private func opacityCard(first: Node, live: Bool) -> some View {
         let quarters: [Double] = [25, 50, 75, 100]
         return AspectCard(aspect: .opacity, title: "Opacity", summary: common { $0.opacity }.map { "\(Int(($0 * 100).rounded()))%" } ?? Self.several,
                           dial: Dial(value: first.opacity * 100, range: 0...100, stops: quarters, step: 5, action: "Change Opacity") { v in
@@ -111,7 +123,7 @@ extension SelectionInspector {
         // A shadow under the layers; once they have one, a shadow inside them as well, so that
         // the bar offers what comes next rather than growing.
         let under = common { !$0.outerShadows.isEmpty }, within = common { !$0.innerShadows.isEmpty }
-        let next = nodes[0].shadow.on ? nodes[0].slots(.shadow) : 0
+        let next = nodes.first.map { $0.shadow.on ? $0.slots(.shadow) : 0 } ?? 0
         if under == false {
             items.append(.init(id: "add-shadow", aspect: .shadow(next), title: "Shadow", help: "Add a shadow", action: "Add Shadow") { n in
                 n.add(Presets.shadow(Presets.shadows[1], like: n.shadow))
@@ -156,11 +168,14 @@ extension SelectionInspector {
     /// drag sets how much of it shows; past nothing, the fill comes away. The first, at the bottom,
     /// holds the picture there is and how the layer mixes with what lies under it; text takes one
     /// fill for its letters, a colour, a gradient or a picture, and no more.
-    func fillCard(slot: Int, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
+    @ViewBuilder func fillCard(slot: Int, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
+        let those = holding(.fill, slot)
+        if let first = those.first { fillCard(slot: slot, those: those, first: first, removable: removable, live: live, restack: restack) }
+    }
+
+    private func fillCard(slot: Int, those: [Node], first: Node, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)?) -> some View {
         let blends = !nodes.contains { $0.kind == .text }
         let path = Node.fillPath(slot)
-        let those = holding(.fill, slot)
-        let first = those[0]
         let kind = common(among: those) { FillKind($0[keyPath: path]) }
         let fill: Fill? = kind == nil ? nil : common(among: those) { $0[keyPath: path] } ?? first[keyPath: path]
         let dial = kind == .solid ? Dial(value: first[keyPath: path].color.a * 100, range: 0...100, stops: [100], step: 5, action: "Change Fill") { v in
@@ -278,9 +293,10 @@ extension SelectionInspector {
         let suggested = suggest ? suggestions(besides: color) : []
         let preview: (RGBA?) -> Void = { c in store.showPreview("fill-colour", c.map { c in { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }) }
         let apply: (RGBA) -> Void = { c in store.updateSelection(action) { $0[keyPath: path].color = c; $0[keyPath: path].on = true } }
-        if blends {
-            FillField(fill: those[0][keyPath: path], color: color, action: action, suggestions: suggested, preview: preview, target: .fill(slot), apply: apply)
-        } else if slot == 0 {
+        // None of the layers left, as a card asked for once more after they have gone: nothing to show.
+        if let first = those.first, blends {
+            FillField(fill: first[keyPath: path], color: color, action: action, suggestions: suggested, preview: preview, target: .fill(slot), apply: apply)
+        } else if let first = those.first, slot == 0 {
             // Text: the colour of the letters picked out while typing, or what paints every letter.
             let letters = store.lettersShown(in: nodes)
             let shown = letters.first.flatMap { c in letters.allSatisfy { $0.color == c.color } ? c.color : nil }
@@ -288,10 +304,10 @@ extension SelectionInspector {
             if store.pickedLetters != nil {
                 ColorField(id: "fill", color: shown, suggestions: suggest ? suggestions(besides: shown) : [], action: action, preview: { _ in }, apply: restyle)
             } else {
-                FillField(fill: those[0].fill, color: shown, action: action, suggestions: suggest ? suggestions(besides: shown) : [], preview: preview,
+                FillField(fill: first.fill, color: shown, action: action, suggestions: suggest ? suggestions(besides: shown) : [], preview: preview,
                           target: .fill(0), apply: restyle)
             }
-        } else {
+        } else if !those.isEmpty {
             ColorField(id: "fill", color: color, suggestions: suggested, action: action, preview: preview, apply: apply)
         }
     }
@@ -301,10 +317,14 @@ extension SelectionInspector {
     /// One of the borders, or of a line's strokes, those drawn over the first in a pile above it.
     /// The drag sets its weight, clicking at each preset; past nothing a border comes away,
     /// though a line keeps its first stroke.
-    func borderCard(slot: Int, lineOnly: Bool, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
-        let path = Node.borderPath(slot)
+    @ViewBuilder func borderCard(slot: Int, lineOnly: Bool, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
         let those = holding(.border, slot)
-        let first = those[0][keyPath: path]
+        if let layer = those.first { borderCard(slot: slot, those: those, layer: layer, lineOnly: lineOnly, removable: removable, live: live, restack: restack) }
+    }
+
+    private func borderCard(slot: Int, those: [Node], layer: Node, lineOnly: Bool, removable: Bool, live: Bool, restack: ((CGFloat?) -> Void)?) -> some View {
+        let path = Node.borderPath(slot)
+        let first = layer[keyPath: path]
         let color = common(among: those) { $0[keyPath: path].color }
         let width = common(among: those) { $0[keyPath: path].width }
         var summary = width.map { "\(Self.said($0)) pt" } ?? Self.several
@@ -381,10 +401,14 @@ extension SelectionInspector {
     /// those cast with the first in a pile above it; a line has no inside for one to fall in. The
     /// drag lifts them, from none through each preset to floating, blending two presets between
     /// them. A shape's can spread, cast from its outline grown or shrunk.
-    func shadowCard(slot: Int, canInset: Bool, canSpread: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
-        let path = Node.shadowPath(slot)
+    @ViewBuilder func shadowCard(slot: Int, canInset: Bool, canSpread: Bool, live: Bool, restack: ((CGFloat?) -> Void)? = nil) -> some View {
         let those = holding(.shadow, slot)
-        let first = those[0][keyPath: path]
+        if let layer = those.first { shadowCard(slot: slot, those: those, layer: layer, canInset: canInset, canSpread: canSpread, live: live, restack: restack) }
+    }
+
+    private func shadowCard(slot: Int, those: [Node], layer: Node, canInset: Bool, canSpread: Bool, live: Bool, restack: ((CGFloat?) -> Void)?) -> some View {
+        let path = Node.shadowPath(slot)
+        let first = layer[keyPath: path]
         let inset = canInset && common(among: those) { $0[keyPath: path].inset == true } == true
         let presets = inset ? Presets.innerShadows : Presets.shadows
         var summary: String
@@ -523,8 +547,11 @@ extension SelectionInspector {
     /// A blur of the layer itself, or of what lies behind it, as frosted glass does; only shapes
     /// with an outline to show it through can blur what is behind them. The drag sets how much,
     /// clicking at each preset; past nothing, the blur comes away.
-    func blurCard(canBlurBehind: Bool, live: Bool) -> some View {
-        let first = nodes[0]
+    @ViewBuilder func blurCard(canBlurBehind: Bool, live: Bool) -> some View {
+        if let first = nodes.first { blurCard(first: first, canBlurBehind: canBlurBehind, live: live) }
+    }
+
+    private func blurCard(first: Node, canBlurBehind: Bool, live: Bool) -> some View {
         let behind = canBlurBehind && common { $0.blur?.background == true } == true
         let growing = common { $0.blur?.ramp != nil } == true
         let radius = common { $0.blur?.radius }
