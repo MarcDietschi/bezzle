@@ -398,7 +398,9 @@ final class ComponentTool {
             ctx.strokePath()
         }
         // The name of the one the pointer is on, under it; the one shown is named over the copy.
-        if case .card(let named) = hovered, let master = store.doc.master(row.master) {
+        // The pointer may rest where a card was before the row grew shorter under it (a variant
+        // undone, another copy picked): that card is no longer there to name.
+        if case .card(let named) = hovered, row.variants.indices.contains(named), let master = store.doc.master(row.master) {
             let s = NSAttributedString(string: Components.name(of: row.variants[named], in: master),
                                        attributes: [.font: Self.tagFont, .foregroundColor: Self.ink])
             let size = s.size(), c = row.cards[named]

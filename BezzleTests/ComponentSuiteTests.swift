@@ -1022,6 +1022,37 @@ struct ComponentSuiteTests {
 
     private func layer(_ name: String, inDoc copy: Node) -> Node? { copy.children.first { $0.name == name } }
 
+    /// The pointer resting on the last card of the row of variants as the row grows shorter
+    /// under it, a variant undone: the row is drawn with the cards it has, naming none (it broke
+    /// off naming the card the pointer had rested on).
+    @Test func theRowDrawnAfterTheCardUnderThePointerWentBreaksNothing() {
+        let (bench, master, copies) = made(1)
+        let tool = bench.canvas.componentTool
+        func draw() {
+            let ctx = CGContext(data: nil, width: 1200, height: 800, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.translateBy(x: 0, y: 800)
+            ctx.scaleBy(x: 1, y: -1)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+            tool.draw(ctx, scale: 1, in: CGRect(x: 0, y: 0, width: 1200, height: 800))
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        bench.store.selection = [copies[0]]
+        bench.step { bench.store.addVariant() }
+        bench.step { bench.store.addVariant() }
+        let cards = tool.places.cards
+        #expect(cards.count == 3)
+        guard let last = cards.last else { return }
+        tool.hover(CGPoint(x: last.midX, y: last.midY))
+        draw()
+        bench.undo.undo()
+        #expect(bench.store.doc.master(master)?.master?.variants.count == 1)
+        bench.store.selection = [copies[0]]
+        #expect(tool.places.cards.count == 2)
+        draw()
+    }
+
     // MARK: - Files
 
     @Test func aDesignWithComponentsIsSavedAndReadBack() throws {
