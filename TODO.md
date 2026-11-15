@@ -496,8 +496,7 @@ Made quick on 2026-11-15 (`README.md` › The Mac app › Moving about quickly h
 the rules). What that left:
 
 - **Never felt:** measured with made scroll and pinch events in a copy in the background, on a
-  copy of Lawsearch AI, never with a hand on a trackpad. Not in a release yet: Erik's installed
-  1.8.1 has none of it.
+  copy of Lawsearch AI, never with a hand on a trackpad. Released in 1.9 (2026-11-15).
 - **For Erik, the zoom button** keeps the width it has at 100 % from the whole design to 999 %
   (a few points wider at 50 % than before, the number at its right), so that the bar never moves
   while zooming. Say if it should hug its number again; that costs a late frame now and then
@@ -538,11 +537,10 @@ the rules). What that left:
   `bezzle-release`: `curves`, `cutout-samples`, `import-samples`, a few build logs, and about 250
   old `C:\bezzle\BezzleDesktop-*.log` files.
 
-- **1.8 and 1.8.1 as released, not watched** (2026-11-14; 1.8.1 is the Mac's alone, for 1.8
-  closing when the camera was picked in Animate beside a layer's look cards, and Windows stays
-  at 1.8): an installed 1.7 or 1.8 taking the update, on the Mac (Sparkle's window with the
-  notes, a delta) or on Windows. The released Mac copies themselves were not launched, since
-  they share Erik's container: a sandboxed Release build of 1.8's commit under a test id was
-  (home, a design window, a film with the camera's focus drawn, movies saved in H.264 and HEVC
-  through the AI server), and 1.8.1 had the tests alone, in Debug. The Windows installers were
-  not run; the Arm64 release build they hold was launched once in the VM.
+- **1.9 as released, not watched** (2026-11-15, Mac and Windows, from a7a82af): an installed 1.8
+  or 1.8.1 taking the update, on the Mac (Sparkle's window with the notes, a delta) or on Windows.
+  The released Mac copy was not launched, since it shares Erik's container; 1.9 had the whole
+  test suite one test at a time (2,228 tests), the Mac parity check (the canvas tools' log the
+  same as before the six agents' work) and the speed measures in an optimized Debug build. The
+  Windows installers were not run; the Arm64 release build they hold was launched once in the VM
+  (its home window, responding). None of the agents' work was seen in a running window.
