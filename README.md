@@ -354,7 +354,16 @@ along one artboard's film. Its keys are changes from the design and never the de
   component, which has no layer before it in the design to go by, has its layers' keys grown as
   a resize grows them from the component's size to the size it is made at
   (`Components.followingOutlines`, from `Components.newCopy`, which every way of placing a copy
-  goes through). Flipped, a
+  goes through). In a shared design, keys a Mac had for an outline someone else changed meanwhile
+  (one resizes a shape while the other keys it as it was) go with it as that Mac shows what the
+  others did, and as the design opens with their changes (`BezzleDocument.followOutlines(merging:)`,
+  from `DocumentStore.showChangesFromOthers` and `DocumentStore.init(opening:)`): each key the merge
+  left as it was there follows the outline, keys the others set or changed stay as they made them.
+  Nothing in the design says what size a key was made for; only a Mac that had the key when the
+  change came knows, and what it puts right goes to the others as any change does. Undo follows
+  both sides of a step to the outline others gave a layer since, where the step left the outline
+  alone (`BezzleDocument.step(from:to:onto:)`), so a key set here and grown since is still taken
+  back. Its tests are in `MotionSharingTests`. Flipped, a
   layer's keys are turned over with it (`Node.shapeKeysFlipped`, from `BezzleDocument.flip`: a
   flip of an ellipse leaves its outline as it was, so only the flip itself can tell). Keys that
   fit no outline change nothing. Its tests are `MotionOutlineTests`, and `AnimateStressTests`

@@ -14,8 +14,12 @@ file was made (2026-11-14): look before starting on one.
 
 - **Shape keys that go with the design** (2026-11-14: a layer resized, rounded or flipped in the
   design takes its Shape keys along, `BezzleDocument.followOutlines`; 2026-11-15: rounded and
-  squared again, exactly; a new copy of a component made at another size grows its keys). Left: a
-  key another person adds for the old size while a resize is merged stays unscaled. A copy shown
+  squared again, exactly; a new copy of a component made at another size grows its keys; a key
+  set for the old size while someone else resizes the shape grows with it once the two meet). Left:
+  that key is put right by a Mac that had it when the resize came; if every such Mac closes the
+  design before the resize reaches it and never opens it again, the others keep it unscaled. Two
+  live copies were never tried in a room for it, only the model's merge, the store with a second
+  Mac in memory, and a synced folder opened again. A copy shown
   as another variant whose layer has another size keeps the keys its layer had, unscaled: the
   layer is another one there, with no layer before it for `followOutlines` to go by
   (`Components.switched`). A key made on a rounded rectangle itself, or one grown with it while
@@ -147,6 +151,11 @@ outlines and looks. What is left:
   changes through `WindowsCore.change`/`preview` in `Host/LookEditing.swift`; read through
   `Node.looked(at:)`, route through `Node.poseLooks`, add to `Inspector.showAnimate()`;
   `FilmDesk.poseLook` shows the call.
+- **Shape keys and others' changes:** `Host/Collaborating.swift` › `showChangesFromOthers` does not
+  call `followOutlines(merging:)` yet, nor `Editing`'s undo `BezzleDocument.step(from:to:onto:)`
+  (2026-11-15, Mac: `DocumentStore.showChangesFromOthers`, `init(opening:)` and `record`), so on
+  Windows a key set for the old size while someone else resized the shape stays unscaled until a
+  Mac that had it puts it right.
 - **The timeline has no marquee over keys,** and bare sheet dragged still moves the playhead
   there. The shared `FilmMarquee` (`Bezzle/Model/FilmKeys.swift`) is tested and there to use.
 - **No Escape under a drag on the timeline, and keys cannot be copied** (the Mac has both since

@@ -329,8 +329,11 @@ final class DocumentStore {
         // A shared design opens as it is shared, which its own file may lag behind.
         let sharing = Collaboration.open(url)
         if let sharing {
-            let viewport = document.viewport
+            let viewport = document.viewport, saved = document
             document = sharing.document()
+            // What others changed while it was closed may give a layer another outline: the
+            // Shape keys this Mac saved for the outline before go with it.
+            document.followOutlines(merging: saved)
             document.viewport = viewport
         }
         self.init(url: url, document: document)
@@ -445,8 +448,14 @@ final class DocumentStore {
             store.versions.cameBack()
             let now = Snapshot(doc: store.withShapeBack(store.doc), selection: store.selection, fronts: store.fronts)
             // Others sharing the design may have changed it since: only what this step did is
-            // taken back, and their changes stay.
-            store.doc = now.doc == after ? before.doc : FlatDesign.apply(from: after, to: before.doc, onto: now.doc)
+            // taken back, and their changes stay. Shape keys that have grown with an outline they
+            // changed are taken back as grown.
+            if now.doc == after {
+                store.doc = before.doc
+            } else {
+                let step = BezzleDocument.step(from: before.doc, to: after, onto: now.doc)
+                store.doc = FlatDesign.apply(from: step.after, to: step.before, onto: now.doc)
+            }
             // A deck the step changed shows the post it showed then: undoing a post added or taken
             // away shows the one that was in front, not whichever happens to be first.
             for id in Self.decks(changedFrom: before.doc, to: after) { store.fronts[id] = before.fronts[id] }
@@ -912,6 +921,9 @@ final class DocumentStore {
         next.keepMasks(since: old)
         next.reconcileComponents()
         next.fitGroups(since: old)
+        // Shape keys this Mac had, for an outline someone else changed meanwhile, go with it, as
+        // this Mac alone knows they were made for the outline before.
+        next.followOutlines(merging: old)
         // Artboards nobody changed stay as they were, sharing their storage, so what is worked
         // out from them is not worked out again.
         var kept: [UUID: Node] = [:]

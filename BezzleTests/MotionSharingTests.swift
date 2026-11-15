@@ -782,6 +782,101 @@ struct MotionSharingTests {
         reopened.sharing?.close()
     }
 
+    @Test func inTheAppAShapeKeySetHereForTheOldSizeGrowsWithAResizeFromElsewhereAndUndoesAlone() throws {
+        let (bench, session, initial) = sharedBench()
+        var other = initial
+        let store = bench.store
+        defer { try? FileManager.default.removeItem(at: store.url) }
+        let r = bench.node("R")!.id
+        let corner = try #require(bench.node("R")?.ownOutline?.anchorPoints.firstIndex { abs($0.x - 50) < 0.01 && abs($0.y - 50) < 0.01 })
+        // How far R's bottom right corner goes down at a moment.
+        func down(_ n: Node?, at t: Double) -> Double? {
+            guard let n, let design = n.ownOutline?.anchorPoints, let now = n.outline(at: t)?.anchorPoints else { return nil }
+            return Double(now[corner].y - design[corner].y)
+        }
+        func keyed(_ by: Double, at t: Double) -> (inout Node) -> Void {
+            { n in
+                var v = n.shapeRest
+                for i in [1, 3, 5] { v[corner * 6 + i] = by }
+                n.setKey(.shape, v, at: t)
+            }
+        }
+        // Here: its corner goes 10 down at one second.
+        bench.step { store.edit("Pose") { $0.update(r, keyed(10, at: 1)) } }
+        store.save()
+        other.receive(session.state)
+        // There: R made twice as high, its keys with it.
+        other.time = Collaboration.now + 10
+        other.edit { doc in
+            let was = doc
+            set(&doc, "R") { $0.frame.size.height = 100 }
+            doc.followOutlines(since: was)
+        }
+        // Here, meanwhile: its corner keyed 20 down at two seconds, for R as it is here.
+        bench.step { store.edit("Pose") { $0.update(r, keyed(20, at: 2)) } }
+        session.receive([other.state], from: .cloud)
+        // Both keys are for R as tall as it is now.
+        #expect(bench.node("R")?.frame.height == 100)
+        #expect(down(bench.node("R"), at: 1) == 20 && down(bench.node("R"), at: 2) == 40)
+        // Saved, the other Mac has it so too.
+        store.save()
+        other.receive(session.state)
+        #expect(other.doc.nodes == store.doc.nodes)
+        #expect(down(node(other.doc, "R"), at: 2) == 40)
+        // Undone here, the key set here goes, as it has grown; the resize made there, and the
+        // key it grew, stay.
+        bench.undo.undo()
+        #expect(bench.node("R")?[track: .shape]?.keys.map(\.t) == [1])
+        #expect(bench.node("R")?.frame.height == 100 && down(bench.node("R"), at: 1) == 20)
+        bench.undo.redo()
+        #expect(bench.node("R")?[track: .shape]?.keys.map(\.t) == [1, 2] && down(bench.node("R"), at: 2) == 40)
+    }
+
+    @Test func aShapeKeySavedHereForTheOldSizeGrowsWithAResizeMadeWhileTheDesignWasClosed() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleDrive-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        SyncedFolders.forTests[folder.path] = "Google Drive"
+        defer {
+            SyncedFolders.forTests[folder.path] = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let url = folder.appendingPathComponent("Film.bezzle")
+        let doc = keyedTriangle()
+        let tri = try #require(node(doc, "Tri")).id
+        try DesignFile.write(doc, to: url)
+        // Someone else has it open, as it is.
+        let ben = try #require(Collaboration.open(url, replica: "ben", claiming: false))
+        _ = ben.document()
+        // Here: opened, the tip keyed 20 down at two seconds, saved and closed.
+        let store = try DocumentStore(opening: url)
+        store.edit("Pose") { doc in
+            doc.update(tri) { n in
+                var o = n.ownOutline!
+                o.subpaths[0].anchors[2].point.y += 20
+                n.poseShape(o, at: 2)
+            }
+        }
+        store.save()
+        store.sharing?.persist()
+        DocumentStore.finishSaving()
+        store.sharing?.close()
+        // There, meanwhile, without having seen it: twice as high, its keys with it.
+        var there = ben.state.flatDesign().document()
+        #expect(times(there, "Tri", .shape) == [0, 1])
+        let was = there
+        there.update(tri) { $0.frame.size.height = 160 }
+        there.followOutlines(since: was)
+        ben.takeIn(there)
+        ben.persist()
+        DocumentStore.finishSaving()
+        ben.close()
+        // Opened here again: both keys are for the triangle as tall as it is now.
+        let reopened = try DocumentStore(opening: url)
+        defer { reopened.sharing?.close() }
+        #expect(node(reopened.doc, "Tri")?.frame.height == 160)
+        #expect(near(tip(reopened.doc, at: 1), 0, 60) && near(tip(reopened.doc, at: 2), 0, 40), "\(String(describing: tip(reopened.doc, at: 2)))")
+    }
+
     // MARK: What cannot be read
 
     @Test func aFilmFromALaterBezzleIsKeptForItByAMacThatCannotReadIt() throws {
