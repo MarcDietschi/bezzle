@@ -149,7 +149,13 @@ It looks like the Mac app: `DESIGN.md` has the Mac's numbers, and `Sources/Bezzl
 window from them (Theme, Glyphs, Bar, ToolRail, LayersPanel, Inspector, Rulers, DesignCanvas,
 HomeView). Designs live in Documents › Bezzle and are saved 600 ms after each change, as on the Mac;
 designs shared through a synced folder (`sharing/people` in the package) are saved as the Mac saves
-them (Host/Collaborating.swift).
+them (Host/Collaborating.swift). In a folder OneDrive, Google Drive, iCloud Drive or the like keep
+in step, only the computer that changes a design writes in it (`SharedSession.changedHere`,
+`WindowsCore.save(closing:)`, `persist(force:)`, `writesWhenClosed`), a design away for a moment
+is retried for 20 s before it is written again where it was (`WindowsCore.Away`), and copies the
+service made beside it ("Poster 2", "Poster (1)") are taken back in and sent to the Recycle Bin
+(`FolderCopy.foldCopies`, the shared `FolderShare.fold`): the Mac's rules, `README.md` › The Mac
+app › Designs in synced folders.
 
 To try it in the VM without anyone at it: `VM/desktop` runs a command in its signed-in session,
 and `VM/input.ps1` there moves the mouse and presses keys (real input, as WinUI needs). With

@@ -34,6 +34,11 @@ public enum WindowsCore {
     nonisolated(unsafe) static var design: BezzleDocument? {
         didSet {
             designVersion &+= 1
+            // Changed here, unless it is what others did being shown (`showChangesFromOthers`).
+            if !takingOthers, let sharing {
+                sharing.changedHere = true
+                sharing.editedHere = true
+            }
             // A design brought back by Undo, shown ahead of a change or come from elsewhere is
             // looked at as this one is (`sceneLooks`, Host/Looking.swift), as the Mac's store hands on.
             let looking = sceneLooks.isEmpty ? nil : sceneLooks
@@ -95,6 +100,10 @@ public enum WindowsCore {
         sceneLooks = [:]
         // A shared design opens as it is shared, which its own file may lag behind.
         design = openShared(folder, file: doc)
+        // Opened as it is, it has nothing done here to be written.
+        sharing?.changedHere = false
+        sharing?.editedHere = false
+        missingSince = nil
         designURL = folder
         Editing.undos = []
         Editing.redos = []
@@ -294,16 +303,37 @@ extension WindowsCore {
     /// Saves the design where it is kept, as the Mac's DocumentStore.save does: a shared design's
     /// changes first, in this computer's own files in it (`SharedSession.persist`), then its
     /// document.json (sorted keys), written whole; a package gone meanwhile is looked for (a shared
-    /// design renamed by someone else) and otherwise made again, so nothing is lost.
-    public static func save() throws {
+    /// design renamed by someone else) and otherwise made again, so nothing is lost. True when the
+    /// design was written.
+    ///
+    /// In a folder a sync service keeps in step, only what was changed here: with nothing changed on
+    /// this computer since it last wrote, nothing is written, so that one only looking on writes
+    /// nothing while another works; `closing`, it keeps once what came over the relay from people
+    /// the folder does not bring. And a design away from where it was is not made again at once:
+    /// the service takes it away for a moment as it puts in place what another computer wrote, and
+    /// one made again meanwhile is a second design of the same name to it. `Away` says to try again
+    /// in a moment; after `missingGrace` it is written where it was all the same.
+    @discardableResult
+    public static func save(closing: Bool = false) throws -> Bool {
+        if inSyncedFolder, sharing?.changedHere != true {
+            if closing { sharing?.persist(force: true) }
+            return false
+        }
         // Renamed or moved while open: saved where it is now, not begun again where it was.
         if !follow() { followFile(alsoIn: designsFolder()) }
-        guard let url = designURL, let doc = previewBase ?? design else { return }
+        guard let url = designURL, let doc = previewBase ?? design else { return false }
+        if inSyncedFolder, !FileManager.default.fileExists(atPath: url.appendingPathComponent("document.json").path) {
+            let since = missingSince ?? Date()
+            missingSince = since
+            if Date().timeIntervalSince(since) < missingGrace { throw Away() }
+            NSLog("Bezzle wrote %@ again where it was, after it stayed away", url.path)
+        }
+        missingSince = nil
         if let sharing {
             var shared = doc
             shared.viewport = nil
             sharing.takeIn(shared)
-            sharing.persist()
+            sharing.persist(force: true)
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -316,7 +346,20 @@ extension WindowsCore {
             try FileManager.default.createDirectory(at: url.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
             try data.write(to: url.appendingPathComponent("document.json"), options: .atomic)
         }
+        // Written: nothing done here waits to be.
+        sharing?.changedHere = false
+        return true
     }
+
+    /// The design is away from where it was, in a synced folder: saved again in a moment.
+    public struct Away: Error, CustomStringConvertible {
+        public var description: String { "The design is away for a moment" }
+    }
+
+    /// How long a design in a synced folder may be away before it is written again where it was.
+    nonisolated(unsafe) public static var missingGrace: TimeInterval = 20
+    /// Since when the open design has not been where it was, while that lasts.
+    nonisolated(unsafe) static var missingSince: Date?
 }
 
 extension WindowsCore {

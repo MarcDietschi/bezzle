@@ -183,11 +183,11 @@ final class DesignTab {
         view?.cameToFront()
     }
 
-    /// Saves the design, what is being typed kept, in front or not.
-    func save() {
+    /// Saves the design, what is being typed kept, in front or not; `closing`, the last save.
+    func save(closing: Bool = false) {
         guard let view, let slot else { return }
         WindowsCore.using(slot) { view.canvas.finishTyping() }
-        view.session.save()
+        view.session.save(closing: closing)
     }
 
     /// Why its last save did not reach the disk, if it did not.
@@ -209,14 +209,17 @@ final class DesignTab {
     fileprivate func close() {
         message = nil
         guard let view, let slot else { return }
-        WindowsCore.using(slot) {
+        // In a synced folder, the version and the picture are the computer's that changed it.
+        let writes = WindowsCore.using(slot) { () -> Bool in
             view.leaveFront()
             WindowsCore.versions.leave()
-            view.session.save()
-            WindowsCore.versions.saved(closing: true)
+            view.session.save(closing: true)
+            let writes = WindowsCore.writesWhenClosed
+            if writes { WindowsCore.versions.saved(closing: true) }
+            return writes
         }
         // A Mac's Finder shows the design as it was closed (the Mac's DesignTab.close).
-        view.session.makePreview()
+        if writes { view.session.makePreview() }
         view.session.closed()
         WindowsCore.closeSlot(slot)
         self.view = nil
@@ -417,9 +420,10 @@ final class Tabs {
     /// did not reach the disk, and why.
     func saveAll() -> [(name: String, reason: String)] {
         designs.compactMap { tab in
-            tab.save()
-            // A Mac's Finder shows the design as it is now, not as it was a few changes ago.
-            tab.view?.session.makePreview()
+            tab.save(closing: true)
+            // A Mac's Finder shows the design as it is now, not as it was a few changes ago; in a
+            // synced folder, made by the computer that changed it.
+            if let slot = tab.slot, WindowsCore.using(slot, { WindowsCore.writesWhenClosed }) { tab.view?.session.makePreview() }
             return tab.unsaved.map { (tab.name, $0) }
         }
     }

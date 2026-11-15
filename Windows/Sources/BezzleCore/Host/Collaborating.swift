@@ -94,6 +94,9 @@ extension WindowsCore {
         if let folder = session.folder, folder.watched {
             // Renamed or moved, as by someone else in the folder: the design goes on where it is now.
             if !FileManager.default.fileExists(atPath: session.url.appendingPathComponent("document.json").path) { follow() }
+            // A copy the folder's service made beside it, written on another computer as this one
+            // wrote: taken in first, so that what it brings is read now.
+            folder.foldCopies(open: openDesigns())
             let found = FolderShare.look(folder.url, replica: session.replica, seen: folder.seen, opening: false)
             let took = folder.take(found)
             if !took.changes.isEmpty {
@@ -130,9 +133,28 @@ extension WindowsCore {
         next.nodes = next.nodes.map { n in kept[n.id].flatMap { $0 == n ? $0 : nil } ?? n }
         guard next != old else { return false }
         if let start = Editing.gestureStart { Editing.gestureStart = FlatDesign.apply(from: old, to: next, onto: start) }
+        takingOthers = true
         design = next
+        takingOthers = false
         return true
     }
+
+    /// While what others did is shown: not a change made on this computer (`SharedSession.changedHere`).
+    nonisolated(unsafe) static var takingOthers = false
+
+    /// Whether the open design is in a folder OneDrive, Google Drive, iCloud Drive or the like keep
+    /// in step with other computers: this computer writes in it only what it did itself.
+    public static var inSyncedFolder: Bool { sharing?.folder?.service != nil }
+
+    /// Whether this computer writes the design's versions and picture when it is closed: always, but
+    /// in a synced folder only when the design was changed here (the Mac's writesWhenClosed).
+    public static var writesWhenClosed: Bool { !inSyncedFolder || sharing?.editedHere == true }
+
+    /// The designs open in tabs, by `openKey`, so that a copy open here is never put away.
+    nonisolated(unsafe) public static var openDesigns: () -> Set<String> = { [] }
+
+    /// How a design's path is told apart in `openDesigns`.
+    public static func openKey(_ url: URL) -> String { url.standardizedFileURL.path.lowercased() }
 
     /// A picture someone else added came through the folder: Skia learns it, to draw it.
     static func pictureArrived(_ name: String, in design: URL) {
@@ -229,6 +251,11 @@ final class SharedSession {
     private var toKeep: [SharedDesign] = []
     /// The latest change made here.
     private(set) var changedUpTo: Int64 = 0
+    /// Whether the design was changed on this computer since it was last written, rather than only
+    /// by what others did; and whether it was at all since it was opened (the Mac's
+    /// DocumentStore.changedHere and editedHere). Set by `WindowsCore.design` as it changes.
+    nonisolated(unsafe) var changedHere = false
+    nonisolated(unsafe) var editedHere = false
 
     init(url: URL, state: SharedDesign, folder: FolderCopy?, link: ShareLink?, replica: String) {
         self.url = url
@@ -418,8 +445,15 @@ final class SharedSession {
         return map.document()
     }
 
-    /// Writes what changed to the design's parts, ahead of its own file.
-    func persist() {
+    /// Writes what changed to the design's parts, ahead of its own file. In a folder a sync
+    /// service keeps in step, only when the design was changed on this computer, or `force`d as
+    /// it is written or closed (`WindowsCore.save(closing:)`): what others did comes in their own
+    /// files, and a computer only looking on that wrote what reached it wrote the design at every
+    /// change made on another, at once with it, which the service keeps as two ("Poster 2"). What
+    /// came over the relay waits in `toKeep` meanwhile, and is kept then (the Mac's
+    /// Collaboration.persist).
+    func persist(force: Bool = false) {
+        if !force, let folder, folder.service != nil, !changedHere { return }
         folder?.persist(state, keeping: toKeep)
         toKeep = []
     }
@@ -482,7 +516,9 @@ final class FolderCopy {
     static func open(_ url: URL, replica: String, seed: SharedDesign? = nil, file: BezzleDocument?) -> (copy: FolderCopy, state: SharedDesign)? {
         let mine = FolderShare.folder(of: replica, in: url)
         do {
-            try FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+            // In the design while it is there, never its package made anew: one made again while
+            // a sync service had it away for a moment is a second design of the same name to it.
+            try WindowsCore.makeFolder(mine, in: url)
         } catch {
             NSLog("Bezzle could not make room for its files in %@: %@", url.path, "\(error)")
             return nil
@@ -616,6 +652,32 @@ final class FolderCopy {
 
     /// Whether anyone else writes in the folder, so that it is worth looking through.
     var watched: Bool { service != nil || !people.isEmpty }
+
+    /// When copies the folder's service made beside the design were last looked for.
+    private var copiesLookedFor: Date?
+
+    /// Takes copies the folder's service made beside the design back into it and sends them to the
+    /// Recycle Bin, every 20 seconds at most, but none open here (`open`, by path); true when any
+    /// was (the Mac's FolderSync.foldCopies, `FolderShare.fold`).
+    @discardableResult
+    func foldCopies(open: Set<String>) -> Bool {
+        guard service != nil else { return false }
+        if let last = copiesLookedFor, Date().timeIntervalSince(last) < 20 { return false }
+        copiesLookedFor = Date()
+        var folded = false
+        for copy in FolderShare.copiesFromTheService(of: url) where !open.contains(WindowsCore.openKey(copy)) {
+            do {
+                try FolderShare.fold(copy, into: url) { copy in
+                    guard WindowsCore.recycle(copy) else { throw WindowsCore.CoreError("\(copy.path) could not go to the Recycle Bin") }
+                }
+                folded = true
+                NSLog("Bezzle took %@ into %@, a copy the folder's sync service made of it, and sent it to the Recycle Bin", copy.lastPathComponent, url.lastPathComponent)
+            } catch {
+                NSLog("Bezzle could not take %@ into %@: %@", copy.path, url.path, "\(error)")
+            }
+        }
+        return folded
+    }
 
     /// The keys of the folder's live room, made from its secret.
     var roomKeys: ShareKeys? { Data(hex: room.seed).flatMap { ShareKeys(secret: $0) } }

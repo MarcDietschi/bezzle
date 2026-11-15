@@ -318,14 +318,16 @@ final class DesignSession {
 
     /// Shows what others sharing the design changed since the last look, if anything: what they
     /// took away is no longer selected, and the design is saved with their changes in it, as the
-    /// Mac's showChangesFromOthers saves.
+    /// Mac's showChangesFromOthers saves; but in a synced folder by whoever changed it, as the
+    /// design is one item to the folder's service, and one written by two computers at once is
+    /// kept as two ("Poster 2").
     func lookAtShare() {
         guard slot.isOpen else { return }
         WindowsCore.using(slot) {
             guard WindowsCore.lookAtShare() else { return }
             let kept = selection.filter { WindowsCore.has(layer: $0) }
             if kept != selection { select(kept, on: board) }
-            edited(board: nil)
+            edited(board: nil, saving: !WindowsCore.inSyncedFolder)
         }
     }
 
@@ -354,14 +356,14 @@ final class DesignSession {
 
     /// The design changed on `board` (or anywhere, nil): what shows it draws it again, and it is
     /// saved a moment later, as the Mac saves (DocumentStore.scheduleSave: 600 ms after a change).
-    func edited(board: Int?) {
+    func edited(board: Int?, saving: Bool = true) {
         if isFront {
             for f in editListeners { f(board) }
             changed()
         } else {
             stale = true
         }
-        scheduleSave()
+        if saving { scheduleSave() }
     }
 
     /// A change is shown on `board` that is not made (a font pointed at in a menu): what shows
@@ -393,18 +395,26 @@ final class DesignSession {
     /// Whether a change waits to be saved.
     var savePending: Bool { saveTimer != nil }
 
-    /// Saves the design, in front or not: the core works on it for that long.
-    func save() {
+    /// Saves the design, in front or not: the core works on it for that long. `closing`, it is the
+    /// last save (`WindowsCore.save(closing:)`).
+    func save(closing: Bool = false) {
         saveTimer?.invalidate()
         saveTimer = nil
         guard slot.isOpen else { return }
         WindowsCore.using(slot) {
             do {
-                try WindowsCore.save()
+                // In a synced folder, nothing is written for what others did alone.
+                guard try WindowsCore.save(closing: closing) else { return }
                 if unsaved != nil { unsaved = nil; onUnsaved?(nil) }
                 // A version is taken by itself as the design is worked on.
                 WindowsCore.versions.saved()
                 schedulePreview()
+            } catch is WindowsCore.Away {
+                // Its sync service has it away for a moment: looked for again shortly.
+                guard !closing else { return }
+                saveTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.save() }
+                }
             } catch {
                 let why = "\(error)"
                 if unsaved != why { unsaved = why; onUnsaved?(why) }

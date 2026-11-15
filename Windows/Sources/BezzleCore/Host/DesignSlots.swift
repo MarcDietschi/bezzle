@@ -63,6 +63,8 @@ extension WindowsCore {
         // Sharing's own: how often the design changed (its room takes in by it), whether a picture
         // came, and who hears of the share's news: each tab's window.
         v.visit(&designVersion)
+        // Since when it has been away from where it was, in a synced folder (`save`).
+        v.visit(&missingSince)
         v.visit(&pictureCame)
         v.visit(&shareNews)
         v.visit(&Editing.gestureStart)

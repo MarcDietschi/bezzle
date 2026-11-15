@@ -327,6 +327,8 @@ final class BezzleApp: SwiftApplication {
         tabs.present = { [weak self] page, title in self?.present(page, title: title) }
         tabs.fitWindow = { [weak self] forDesigns in self?.fitWindow(forDesigns: forDesigns) }
         tabs.quit = { [weak self] in self?.quit() }
+        // A copy a sync service made of a design is taken back in only when it is not open here.
+        WindowsCore.openDesigns = { MainActor.assumeIsolated { Set(Tabs.shared.designs.map { WindowsCore.openKey($0.url) }) } }
         tabs.configure = { view in
             view.session.onOpen = { Tabs.shared.openPanel() }
             view.session.onBringIn = { Tabs.shared.bringInPanel() }

@@ -522,8 +522,11 @@ written on two Macs at once (`README.md` › The Mac app › Designs in synced f
 - **Both Macs changing it at once** still makes the service keep two now and then; the copy is
   taken back in within 20 s while the design is open, or when the designs list is read. One the
   service made that holds nothing new (only a picture or the view) is left as it is.
-- **Windows** was not changed or looked at for this: the two rules (only the Mac that changes a
-  design writes in it, copies the service made are taken back in) are the Mac's alone so far.
+- **Windows** has the same rules since 2026-11-15 (`Windows/README.md` › The app). Checked in the
+  VM: a copy editing a design in a folder marked synced writes every edit (five of five) and its
+  own parts. Not checked there: two copies on one design (the one looking on writing nothing), a
+  copy the service made taken back in and sent to the Recycle Bin, a design away for a moment;
+  nor with a real OneDrive, Google Drive or iCloud for Windows.
 - **A Mac only looking on** keeps where the design was looked at only until it is closed, and its
   Finder picture and versions are made by the Mac that changed it.
 
