@@ -19,12 +19,12 @@ file was made (2026-11-14): look before starting on one.
   that key is put right by a Mac that had it when the resize came; if every such Mac closes the
   design before the resize reaches it and never opens it again, the others keep it unscaled. Two
   live copies were never tried in a room for it, only the model's merge, the store with a second
-  Mac in memory, and a synced folder opened again. A copy shown
-  as another variant whose layer has another size keeps the keys its layer had, unscaled: the
-  layer is another one there, with no layer before it for `followOutlines` to go by
-  (`Components.switched`). A key made on a rounded rectangle itself, or one grown with it while
-  it was rounded, is none the square could have made: squared again, each corner goes as the
-  place on the curve nearest it went, and a little of the reshaping is lost as before.
+  Mac in memory, and a synced folder opened again. A copy shown as another variant whose layer
+  has another size keeps the keys its layer had, unscaled: the layer is another one there, with
+  no layer before it for `followOutlines` to go by (`Components.switched`). A key made on a
+  rounded rectangle itself, or one grown with it while it was rounded, is none the square could
+  have made: squared again, each corner goes as the place on the curve nearest it went, and a
+  little of the reshaping is lost as before.
 - **Outlines with other points** (2026-11-14: points added and taken away at the playhead, and
   From… in the Pose card's Shape row gives a shape another's outline; 2026-11-15: the key keeps
   the other's own points). Where a key either side has the same runs and would go into it point
