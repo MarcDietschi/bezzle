@@ -339,7 +339,14 @@ along one artboard's film. Its keys are changes from the design and never the de
   `BezzleDocument.setPoints`). A layer resized: its keys grown as far as each side grew (Move's
   stay points on the artboard). A rectangle given other corners, or a path given other points
   by anything but `setPoints`: each new point goes as the place it lies at on the old outline went, so the film still shows
-  what was keyed (`BezierPath.Following`, `Node.shapeKeys(following:)`). Both come from
+  what was keyed (`BezierPath.Following`, `Node.shapeKeys(following:)`). A rectangle's corners
+  changed in the same frame go by way of its square: a key that is what the square's keys
+  followed to its corners would be, as every key made while it was square is, is taken back to
+  those exactly (`BezierPath.Following.source(of:)`, least squares, kept only where it gives the
+  key back to a millionth) and followed on from there (`MotionTrack.following(_:to:through:inOrder:)`).
+  So corners rounded, rounded otherwise, smoothed and squared again give back every number that was
+  keyed, where they gave back about 47 points of 50; a key made on the rounded rectangle itself goes
+  as before, each corner as the place on the curve nearest it went. Both come from
   `BezzleDocument.followOutlines(since:start:)`, which `DocumentStore.edit` calls after the other
   passes: it looks at every layer whose outline the change made another and whose keys it left
   alone, so a new way of changing an outline needs nothing more, and each cell of a repeat grid,

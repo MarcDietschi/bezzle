@@ -761,6 +761,65 @@ nonisolated extension BezierPath {
 
         private static func far(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
 
+        /// The change of the old outline's anchors that is carried to `change`, where one is: what
+        /// `carried` (placed as it was) would have to be given to give back `change`, to within what
+        /// numbers lose. Nil where no change of the old outline comes to it, as for a change made
+        /// to the new one itself, and where several would, as when the new outline has fewer
+        /// points than the old and could not tell them apart.
+        func source(of change: [Double]) -> [Double]? {
+            let rows = shares.count, cols = old * 3
+            guard rows > 0, cols > 0, change.count == rows * 2, change.allSatisfy(\.isFinite) else { return nil }
+            // Least squares, across and down at once: (AᵀA) g = Aᵀ c, A being the shares.
+            var normal = [[Double]](repeating: [Double](repeating: 0, count: cols), count: cols)
+            var right = [[Double]](repeating: [0, 0], count: cols)
+            for (r, list) in shares.enumerated() {
+                for (i, a) in list {
+                    right[i][0] += a * change[r * 2]
+                    right[i][1] += a * change[r * 2 + 1]
+                    for (j, b) in list { normal[i][j] += a * b }
+                }
+            }
+            let largest = (0..<cols).map { normal[$0][$0] }.max() ?? 0
+            guard largest > 0 else { return nil }
+            // Eliminated with the largest pivot each time; one that is next to nothing leaves
+            // more than one answer.
+            for c in 0..<cols {
+                var pivot = c
+                for r in (c + 1)..<cols where abs(normal[r][c]) > abs(normal[pivot][c]) { pivot = r }
+                guard abs(normal[pivot][c]) > largest * 1e-10 else { return nil }
+                if pivot != c {
+                    normal.swapAt(pivot, c)
+                    right.swapAt(pivot, c)
+                }
+                for r in (c + 1)..<cols where normal[r][c] != 0 {
+                    let k = normal[r][c] / normal[c][c]
+                    for j in c..<cols { normal[r][j] -= k * normal[c][j] }
+                    right[r][0] -= k * right[c][0]
+                    right[r][1] -= k * right[c][1]
+                }
+            }
+            var found = [[Double]](repeating: [0, 0], count: cols)
+            for c in stride(from: cols - 1, through: 0, by: -1) {
+                var x = right[c][0], y = right[c][1]
+                for j in (c + 1)..<cols {
+                    x -= normal[c][j] * found[j][0]
+                    y -= normal[c][j] * found[j][1]
+                }
+                found[c] = [x / normal[c][c], y / normal[c][c]]
+            }
+            // Only an answer that gives the change back.
+            let tolerance = 1e-6 * (1 + (change.map(abs).max() ?? 0))
+            for (r, list) in shares.enumerated() {
+                var x = 0.0, y = 0.0
+                for (i, a) in list {
+                    x += a * found[i][0]
+                    y += a * found[i][1]
+                }
+                guard abs(x - change[r * 2]) <= tolerance, abs(y - change[r * 2 + 1]) <= tolerance else { return nil }
+            }
+            return found.flatMap { $0 }
+        }
+
         /// A change of the old outline's anchors as the change of the new one's that it comes to.
         /// `place` is how the old outline's own points lie in the new one's: a change is turned
         /// and grown as they are.
@@ -801,6 +860,28 @@ nonisolated extension MotionTrack {
         }
         return out
     }
+
+    /// The keys of a rectangle's Shape made for its outline `before`, for the outline `after` it
+    /// has with other corners, in the same frame, by way of `square`, its outline with none
+    /// rounded. Each place along a rounded rectangle's sides goes as that place along the square's
+    /// went, so a key made while it was square, and followed to its rounded corners, says what the
+    /// square's keys were exactly: such a key is first taken back to those
+    /// (`BezierPath.Following.source(of:)`) and then followed to `after` from there. So its corners
+    /// rounded, rounded otherwise and squared again give back what was keyed, point for point
+    /// rather than about 47 of 50. Any other key, as one made on the rounded rectangle itself,
+    /// goes as `following(_:to:)` takes it.
+    func following(_ before: BezierPath, to after: BezierPath, through square: BezierPath, inOrder: Bool) -> MotionTrack {
+        var out = following(before, to: after, inOrder: inOrder)
+        let count = before.anchorCount * BezierPath.numbersPerAnchor
+        guard count > 0, after.anchorCount > 0, square.anchorCount > 0, keys.contains(where: { $0.v.count == count }) else { return out }
+        let up = BezierPath.Following(from: square, to: before, inOrder: false)
+        let down = BezierPath.Following(from: square, to: after, inOrder: false)
+        for k in keys.indices where keys[k].v.count == count {
+            guard let squared = up.source(of: keys[k].v) else { continue }
+            out.keys[k].v = MotionProperty.shape.clamped(down.carried(squared, placed: .identity))
+        }
+        return out
+    }
 }
 
 nonisolated extension Node {
@@ -809,6 +890,16 @@ nonisolated extension Node {
     private func outlineSame(as other: Node) -> Bool {
         kind == other.kind && frame.size == other.frame.size && path == other.path && pathBox == other.pathBox
             && cornerRadius == other.cornerRadius && corners == other.corners && cornerSmoothing == other.cornerSmoothing && rising == other.rising
+    }
+
+    /// A rectangle's outline with none of its corners rounded, in its own upright points.
+    private var squareOutline: BezierPath? {
+        guard kind == .rectangle else { return nil }
+        var plain = self
+        plain.cornerRadius = 0
+        plain.corners = nil
+        plain.cornerSmoothing = nil
+        return plain.ownOutline
     }
 
     /// Its Shape keys for the outline it has now, when `before`, the same layer as it was, had
@@ -823,7 +914,10 @@ nonisolated extension Node {
         let old = before.frame.size
         let grown = CGAffineTransform(scaleX: old.width > 1e-6 ? frame.width / old.width : 1, y: old.height > 1e-6 ? frame.height / old.height : 1)
         let next: MotionTrack
-        if kind != .path, before.kind != .path {
+        if kind == .rectangle, before.kind == .rectangle, frame.size == before.frame.size, let square = squareOutline {
+            // Other corners in the same frame: by way of the square both round.
+            next = track.following(was, to: now, through: square, inOrder: true)
+        } else if kind != .path, before.kind != .path {
             next = track.following(was, to: now, placed: grown, inOrder: kind == before.kind)
         } else if kind == .path, before.kind == .path, path == before.path, pathBox == before.pathBox {
             next = track.following(was, to: now, placed: grown, inOrder: true)

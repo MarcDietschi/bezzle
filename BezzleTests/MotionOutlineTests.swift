@@ -154,12 +154,13 @@ struct MotionOutlineTests {
         bench.undo.undo()
         #expect(bench.store.doc == before)
         bench.undo.redo()
-        // Rounder, the same points go on as they did.
+        // Rounder, the points go on as their places on the square did: the corner still goes down.
         bench.step { bench.store.update([box.id], "Corner Radius") { $0.cornerRadius = 24 } }
         now = try #require(bench.node("Box"))
         #expect(fits(now))
         shown = try #require(now.outline(at: 1))
-        #expect(shown.bounds.maxY > 140)
+        #expect(shown.bounds.maxY > 135)
+        for p in shown.anchorPoints { #expect(try #require(keyed.nearest(to: p)).distance < 0.01, "\(p)") }
         // Each corner its own way, then smooth ones, then square again: the keys still fit, and
         // the corner still goes down.
         bench.step { bench.store.update([box.id], "Corner Radius") { $0.corners = [0, 30, 12, 0] } }
@@ -172,9 +173,76 @@ struct MotionOutlineTests {
         now = try #require(bench.node("Box"))
         #expect(now.ownOutline?.anchorCount == 4)
         #expect(fits(now))
+        // Square again, exactly as it was keyed.
         let last = try #require(now.outline(at: 1)).anchorPoints
         let low = try #require(last.max { $0.y < $1.y })
-        #expect(abs(low.x - 100) < 0.01 && low.y > 135 && low.y < 151, "\(last)")
+        #expect(abs(low.x - 100) < 1e-6 && abs(low.y - 150) < 1e-6, "\(last)")
+    }
+
+    @Test func aRectangleRoundedAndSquaredAgainHasExactlyWhatWasKeyed() throws {
+        var box = CanvasTests.rect("Box", CGRect(x: 40, y: 40, width: 100, height: 80))
+        var outline = try #require(box.ownOutline)
+        let corners = outline.subpaths[0].anchors
+        // The bottom right corner goes 50 down, and the top left one is pulled into a curve: its
+        // point 10 right, its handles out along the sides.
+        let low = try #require(corners.firstIndex { near($0.point, CGPoint(x: 100, y: 80)) })
+        let top = try #require(corners.firstIndex { near($0.point, .zero) })
+        outline.subpaths[0].anchors[low] = corners[low].offset(by: CGPoint(x: 0, y: 50))
+        outline.subpaths[0].anchors[top] = BezierPath.Anchor(CGPoint(x: 10, y: 0), in: CGPoint(x: 10, y: 30), out: CGPoint(x: 40, y: -10))
+        box.poseShape(outline, at: 1)
+        let keyed = try #require(box[track: .shape]?.keys.last?.v)
+        let keyedSquare = try #require(box.outline(at: 1))
+        let bench = bench([box])
+        // Rounded, rounded otherwise, each corner its own way, smooth, and square again.
+        let steps: [(inout Node) -> Void] = [
+            { $0.cornerRadius = 10 }, { $0.cornerRadius = 24 }, { $0.corners = [0, 30, 12, 0] },
+            { $0.corners = nil; $0.cornerRadius = 20; $0.cornerSmoothing = 0.6 }, { $0.cornerRadius = 0; $0.cornerSmoothing = nil },
+        ]
+        for (i, change) in steps.enumerated() {
+            bench.step { bench.store.update([box.id], "Corner Radius") { change(&$0) } }
+            let now = try #require(bench.node("Box"))
+            #expect(fits(now), "step \(i)")
+            // Every point of the outline as keyed lies on the square as keyed, however its corners
+            // are rounded, as each goes as its place along the square's sides went. (Smoothed
+            // corners have points inside the corner too.)
+            guard now.cornerSmoothing == nil else { continue }
+            for p in try #require(now.outline(at: 1)).anchorPoints {
+                let spot = try #require(keyedSquare.nearest(to: p))
+                #expect(spot.distance < 0.01, "step \(i): \(p) is \(spot.distance) off the square as keyed")
+            }
+        }
+        // Square again: the keys are what was keyed, every number of them.
+        let back = try #require(bench.node("Box")?[track: .shape]?.keys.last?.v)
+        #expect(back.count == keyed.count && zip(back, keyed).allSatisfy { abs($0 - $1) < 1e-6 }, "\(back) \(keyed)")
+        // Undone step by step, each outline has its keys as they were.
+        for _ in steps { bench.undo.undo() }
+        #expect(bench.node("Box")?[track: .shape]?.keys.last?.v == keyed)
+    }
+
+    @Test func aPointMovedOnTheRoundedRectangleItselfGoesWithTheCornerItLiesOn() throws {
+        var card = CanvasTests.rect("Card", CGRect(x: 40, y: 40, width: 100, height: 80))
+        card.cornerRadius = 10
+        // The point where the bottom right corner's curve begins on the right side goes 10 down
+        // and its handles with it: a key the square could not have made.
+        let rest = card.shapeRest
+        let outline = try #require(card.ownOutline)
+        let start = try #require(outline.anchorPoints.firstIndex { near($0, CGPoint(x: 100, y: 70)) })
+        var change = rest
+        for i in [1, 3, 5] { change[start * 6 + i] = 10 }
+        card.setKey(.shape, change, at: 1)
+        let bench = bench([card])
+        bench.step { bench.store.update([card.id], "Corner Radius") { $0.cornerRadius = 0 } }
+        let now = try #require(bench.node("Card"))
+        #expect(fits(now))
+        let key = try #require(now[track: .shape]?.keys.last?.v)
+        let design = try #require(now.ownOutline).anchorPoints
+        // The bottom right corner goes down by as much as the place nearest it on the curve did,
+        // and the other three, far from what moved, not at all.
+        let corner = try #require(design.firstIndex { near($0, CGPoint(x: 100, y: 80)) })
+        #expect(key[corner * 6 + 1] > 1 && key[corner * 6 + 1] < 10, "\(key)")
+        for i in design.indices where i != corner {
+            #expect(key[(i * 6)..<(i * 6 + 6)].allSatisfy { $0 == 0 }, "\(design[i]): \(key[(i * 6)..<(i * 6 + 6)])")
+        }
     }
 
     @Test func aPathGivenOtherPointsAtOnceKeepsItsKeysWhereTheOutlineLies() throws {
