@@ -48,6 +48,7 @@ struct AnimateWordsTests {
         "Add Point", "Delete Point", "Delete Points", "Move Points",
         // How layers look, keyed on the design's own cards: what those say only here.
         "Drag to move this colour",
+        "Changed in the design", "No key can hold this change, so it changed the design itself, for the whole film.",
     ]
 
     /// The values a string takes, in order: `%@`, `%lld` and the like.

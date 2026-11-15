@@ -427,6 +427,90 @@ struct AnimateLooksTests {
         #expect(f.store.lookedSelection.isEmpty)
     }
 
+    // MARK: A word where the design changes
+
+    /// The card with its border dashed, the dashes being the design's alone.
+    private func dashed() -> FilmBench {
+        var layers = Self.layers
+        layers[0].border.dash = 4
+        layers[0].border.gap = 4
+        return bench(layers)
+    }
+
+    /// What each card the Animate panel shows says in place of what it comes to.
+    private func told(_ f: FilmBench) -> [Aspect: String] {
+        f.store.film.shown = f.store.film.time
+        let inspector = SelectionInspector(store: f.store, filming: true)
+        let aspects: [Aspect] = [.corners, .fill(0), .fill(1), .border(0), .shadow(0)]
+        var out: [Aspect: String] = [:]
+        for aspect in aspects { if let note = inspector.toldDesign(aspect) { out[aspect] = String(localized: note.words) } }
+        return out
+    }
+
+    /// A plain border of the dashed one's width, its preset clicked: no key holds dashes, so the
+    /// design takes it for the whole film, and the border's card says so.
+    @Test func aChangeNoKeyHoldsSaysOnItsCardThatTheDesignChanged() async throws {
+        let f = dashed()
+        let design = f.design
+        #expect(told(f).isEmpty)
+        f.step { f.store.updateSelection("Change Border") { Presets.applyBorder(2, to: &$0[keyPath: Node.borderPath(0)]) } }
+        #expect(f.node("Card").border.dash == 0 && f.node("Card").motion == nil && f.design != design)
+        #expect(f.store.designLooked?.aspects == [.border(0)])
+        #expect(told(f) == [.border(0): "Changed in the design"])
+        // Not in the design's own cards, where every change is the design's.
+        #expect(SelectionInspector(store: f.store).toldDesign(.border(0)) == nil)
+        // The panel draws it.
+        let host = NSHostingView(rootView: SelectionInspector(store: f.store, filming: true).frame(width: Inspector.width)
+            .environment(MenuHost()).environment(GradientSession()).environment(f.store))
+        host.layoutSubtreeIfNeeded()
+        #expect(host.fittingSize.height > 0)
+        // Undone, there is nothing to say.
+        f.undo.undo()
+        #expect(f.design == design && told(f).isEmpty)
+        // Said again, then another layer picked, then back: it was said of the card alone.
+        f.step { f.store.updateSelection("Change Border") { Presets.applyBorder(2, to: &$0[keyPath: Node.borderPath(0)]) } }
+        #expect(told(f).keys.sorted { "\($0)" < "\($1)" } == [.border(0)])
+        f.step { f.store.selection = [f.id("Badge")] }
+        #expect(told(f).isEmpty)
+        f.step { f.store.selection = [f.id("Card")] }
+        #expect(!told(f).isEmpty)
+        // And only for a moment.
+        try await Task.sleep(for: .seconds(DesignLooked.shown + 0.3))
+        #expect(f.store.designLooked == nil && told(f).isEmpty)
+    }
+
+    /// A change that is keyed is the film's, and says nothing; nor does a change to no look, nor
+    /// a card's change out of Animate. One keyed after one that was not ends what that said.
+    @Test func aChangeThatIsKeyedSaysNothing() {
+        let f = dashed()
+        f.step { f.store.updateSelection("Change Fill") { $0.fill.color = Self.blue; $0.fill.on = true } }
+        #expect(f.node("Card")[track: "fill.0"] != nil && f.store.designLooked == nil && told(f).isEmpty)
+        // A weight with the dashes: the weight is keyed, the dashes dropped, and nothing said.
+        f.step { f.store.updateSelection("Change Border") { Presets.applyBorder(4, to: &$0[keyPath: Node.borderPath(0)]) } }
+        #expect(f.node("Card").border.dash == 4 && f.node("Card")[track: "border.0.width"] != nil && told(f).isEmpty)
+        // Opacity is the design's in Animate, and no look: nothing to say about it here.
+        f.step { f.store.updateSelection("Change Opacity") { $0.opacity = 0.5 } }
+        #expect(f.node("Card").opacity == 0.5 && f.store.designLooked == nil)
+        // Said, then a change that is keyed: no longer.
+        f.step { f.store.seek(2) }
+        f.step { f.store.updateSelection("Change Border") { $0[keyPath: Node.borderPath(0)].gap = 9 } }
+        #expect(told(f) == [.border(0): "Changed in the design"])
+        f.step { f.store.updateSelection("Change Shadow") { $0.shadow.y = 20 } }
+        #expect(f.store.designLooked == nil && told(f).isEmpty)
+        // Out of Animate a card changes the design, as it always has, with nothing to say.
+        f.step { f.store.show(.design) }
+        f.step { f.store.updateSelection("Change Border") { $0[keyPath: Node.borderPath(0)].gap = 2 } }
+        #expect(f.store.designLooked == nil)
+    }
+
+    /// A fill turned off takes its card away with it: the first card there is says it instead.
+    @Test func aChangeWhoseCardWentIsSaidOnTheFirstCard() {
+        let f = bench()
+        f.step { f.store.updateSelection("Remove Fill") { $0.fill.on = false } }
+        #expect(!f.node("Card").fill.on && f.store.designLooked?.aspects == [.fill(0)])
+        #expect(told(f) == [.corners: "Changed in the design"])
+    }
+
     // MARK: The assistant
 
     @Test func theAssistantKeysLooksAndReadsThem() async throws {

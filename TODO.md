@@ -53,8 +53,7 @@ file was made (2026-11-14): look before starting on one.
   places, border colour and width, a rectangle's corners, shadows; `Bezzle/Model/LookMotion.swift`).
   Not keyed: picture and shader fills, on and off, adding and taking away, dashes, a border's
   side, a shadow inside or outside, blend, smooth corners, a gradient's line, ends and count of
-  colours. A look change made in Animate that no picked layer can key (a picture swapped, a fill
-  turned off) changes the design as before, with no word that it did.
+  colours.
 - **Keyed looks, as chosen:** a keyed colour is a colour of its own, so it cannot be a named
   colour or a variable and does not turn with a dark artboard (only the keys the app gave follow
   the design). A rectangle whose Shape has keys keeps the design's corners: its Corners keys wait
@@ -62,9 +61,16 @@ file was made (2026-11-14): look before starting on one.
   it over time takes a Shape key with rounder corners. Hover previews of presets and styles do
   not show on the film, and no ready-made move changes a look. A rectangle's corner dots show
   only for one picked rectangle drawn as a piece of its own and at least 48 points each way.
+  A look change made in Animate that no key holds (dashes taken off by a weight's preset, a fill
+  turned off) changes the design for the whole film, as before, and the card of that look says
+  "Changed in the design" for five seconds in place of its summary (the first card there is,
+  where the change took its own away). A change that keys something drops the rest without a
+  word: a dashed border given another weight keeps its dashes.
 - **Keyed looks, unchecked:** photographed in German at one window size before the marquee, the
   outline keys and the gentle tones were on main; gradient colours, the beads, the corner dots
-  and the marquee over a look's line are driven by tests only. Scrub speed was measured on 1.7's
+  and the marquee over a look's line are driven by tests only, and so is the card's "Changed in
+  the design", never seen in a window (in German, French or Italian it may be cut short at the
+  card's width). Scrub speed was measured on 1.7's
   base only (120 steps a second, longest gap 11.1 ms, 49 layers of which 7 change look), not
   since the movie's sixteen-bit pictures; a movie with keyed looks was made in a test only.
   Restacking or removing fills while another person keys them was tested through the model's

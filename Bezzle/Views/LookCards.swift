@@ -40,7 +40,7 @@ extension SelectionInspector {
             }
         } : nil
         return AspectCard(aspect: .corners, title: "Corners", summary: summary, dial: dial, live: live,
-                          accessory: keyBead([.corners], "Corners"), styles: !filming) {
+                          accessory: keyBead([.corners], "Corners"), styles: !filming, note: toldDesign(.corners)) {
             CornerGlyph(radius: pill > 0 && radius >= pill - 0.5 ? nil : CGFloat(radius), smooth: smooth)
         } picks: {
             HStack(spacing: 8) {
@@ -191,7 +191,7 @@ extension SelectionInspector {
                           remove: !filming && (removable || slot > 0) ? { removeLook(.fill, slot, "Remove Fill") } : nil,
                           removal: blends ? "Remove fill" : "Remove colour", live: live,
                           accessory: keyBead([.fill(slot), .fillStops(slot)], "Fill"), more: filming ? nil : more, restack: restack,
-                          styles: !filming) {
+                          styles: !filming, note: toldDesign(.fill(slot))) {
             FillSwatch(fill: first[keyPath: path], radius: 4)
                 .frame(width: 15, height: 15)
         } picks: {
@@ -352,7 +352,7 @@ extension SelectionInspector {
                           remove: !filming && (removable || slot > 0) ? { removeLook(.border, slot, "Remove Border") } : nil,
                           removal: lineOnly ? "Remove line" : "Remove border", live: live,
                           accessory: keyBead([.border(slot), .borderStops(slot), .borderWidth(slot)], lineOnly ? "Line" : "Border"),
-                          more: filming ? nil : more, restack: restack, styles: !filming) {
+                          more: filming ? nil : more, restack: restack, styles: !filming, note: toldDesign(.border(slot))) {
             BorderGlyph(width: first.dash > 0 ? nil : first.width)
         } picks: {
             // A dashed line is the design's: only its weights are keyed.
@@ -431,7 +431,7 @@ extension SelectionInspector {
         return AspectCard(aspect: .shadow(slot), title: inset ? "Inner shadow" : "Shadow", summary: summary, dial: dial,
                           remove: filming ? nil : { removeLook(.shadow, slot, "Remove Shadow") }, removal: "Remove shadow", live: live,
                           accessory: keyBead([.shadow(slot)], inset ? "Inner shadow" : "Shadow"), more: filming ? nil : more, restack: restack,
-                          styles: !filming) {
+                          styles: !filming, note: toldDesign(.shadow(slot))) {
             ShadowGlyph(y: first.y, blur: first.blur, inset: inset)
         } picks: {
             // Which side of the layer it falls on is the design's, and not keyed.

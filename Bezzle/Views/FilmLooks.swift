@@ -13,8 +13,7 @@ extension SelectionInspector {
         let kinds = Set(nodes.map(\.kind))
         let live = filmLive(nodes)
         let fills = keyedSlots(.fill), borders = keyedSlots(.border), shadows = keyedSlots(.shadow)
-        // Rectangles' alone, and not of one whose points are keyed, which keeps the design's.
-        if nodes.allSatisfy({ $0.lookCount(.corners) != nil }) { cornersCard(live: live.contains(.corners)) }
+        if keysCorners { cornersCard(live: live.contains(.corners)) }
         if !fills.isEmpty {
             VStack(alignment: .leading, spacing: Self.pileGap) {
                 ForEach(fills, id: \.self) { slot in
@@ -46,6 +45,27 @@ extension SelectionInspector {
     /// selection as it is then (`pile` in Design keeps the same watch). With nothing picked
     /// there is nothing to show.
     private var stillPicked: Bool { !nodes.isEmpty }
+
+    /// Whether the corners card is here: for rectangles alone, and not one whose points are
+    /// keyed, which keeps the design's.
+    private var keysCorners: Bool { !nodes.isEmpty && nodes.allSatisfy { $0.lookCount(.corners) != nil } }
+
+    /// The cards here, top first.
+    private var filmAspects: [Aspect] {
+        (keysCorners ? [.corners] : []) + keyedSlots(.fill).map(Aspect.fill) + keyedSlots(.border).map(Aspect.border)
+            + keyedSlots(.shadow).map(Aspect.shadow)
+    }
+
+    /// What a card here says for a moment, where a change made on it went to the design itself
+    /// as no key could hold it (`DocumentStore.designLooked`): the card of a look it changed, or
+    /// where none of those is here, the first card that is. Nil on the others, and in the design.
+    func toldDesign(_ aspect: Aspect) -> CardNote? {
+        guard filming, let told = store.designLooked, told.version == store.version, told.layers == store.selection else { return nil }
+        let here = filmAspects
+        guard here.contains(aspect), told.aspects.contains(aspect) || (told.aspects.isDisjoint(with: here) && here.first == aspect) else { return nil }
+        return CardNote(words: "Changed in the design",
+                        help: "No key can hold this change, so it changed the design itself, for the whole film.")
+    }
 
     /// Whether the picked layers have any look to key, and so any card here.
     static func keysLooks(_ nodes: [Node]) -> Bool {

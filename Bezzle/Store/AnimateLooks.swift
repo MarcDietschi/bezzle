@@ -16,31 +16,64 @@ extension DocumentStore {
     /// Animate: makes a change to the selection as the design's cards make it, to each layer as it
     /// looks at the playhead, and keys there what it changed of the layer's looks; nothing else of
     /// such a change reaches the design, nor does it reach a layer picked along that has no such
-    /// look to key. A change to no look of any layer is the design's, as it always was. False,
-    /// with nothing done, where there is no film to key.
+    /// look to key. A change to no look of any layer is the design's, as it always was, and where
+    /// that changed how a layer looks (a dashed border made plain), the cards of those looks say
+    /// so for a moment (`designLooked`). False, with nothing done, where there is no film to key.
     func poseLooks(_ action: LocalizedStringResource, _ change: (inout Node) -> Void) -> Bool {
         guard animating, filmBoard != nil else { return false }
         let posed = Set(posedLayers), t = filmTime
         guard selection.contains(where: posed.contains) else { return false }
+        var keyed = false
+        var looks = Set<Aspect>()
         edit(action) { doc in
-            var any = false
             var rest: [UUID] = []
             for id in selection {
                 var taken = false
                 if posed.contains(id) {
                     doc.update(id) { node in taken = node.poseLooks(at: t, change) }
                 }
-                if taken { any = true } else { rest.append(id) }
+                if taken { keyed = true } else { rest.append(id) }
             }
-            guard !any else { return }
+            guard !keyed else { return }
             for id in rest {
                 doc.update(id) { node in
+                    let was = node
                     change(&node)
                     node.refit()
+                    looks.formUnion(Self.looks(changedFrom: was, to: node))
                 }
             }
         }
+        if keyed {
+            designLooked = nil
+        } else if !looks.isEmpty {
+            tellDesignLooked(looks)
+        }
         return true
+    }
+
+    /// Has the cards of looks a change made in Animate changed in the design itself say so, for
+    /// a moment: while the same layers are picked, and the design is as that change left it.
+    private func tellDesignLooked(_ looks: Set<Aspect>) {
+        let told = DesignLooked(aspects: looks, layers: selection, version: version)
+        designLooked = told
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(DesignLooked.shown))
+            if self?.designLooked == told { self?.designLooked = nil }
+        }
+    }
+
+    /// The cards whose looks differ between a layer and the same layer changed: each fill,
+    /// border and shadow by its slot, the corners, and the first fill for how the layer blends
+    /// (shown with it) and for a text's letters with colours of their own.
+    static func looks(changedFrom was: Node, to now: Node) -> Set<Aspect> {
+        var looks = Set<Aspect>()
+        for slot in 0..<max(was.slots(.fill), now.slots(.fill)) where was[fill: slot] != now[fill: slot] { looks.insert(.fill(slot)) }
+        for slot in 0..<max(was.slots(.border), now.slots(.border)) where was[border: slot] != now[border: slot] { looks.insert(.border(slot)) }
+        for slot in 0..<max(was.slots(.shadow), now.slots(.shadow)) where was[shadow: slot] != now[shadow: slot] { looks.insert(.shadow(slot)) }
+        if was.radii != now.radii || was.cornerSmoothing != now.cornerSmoothing { looks.insert(.corners) }
+        if was.blend != now.blend || was.spans?.map(\.look.color) != now.spans?.map(\.look.color) { looks.insert(.fill(0)) }
+        return looks
     }
 
     /// Changes looks of the picked layers at the playhead, each layer as it looks there: for
@@ -101,4 +134,21 @@ extension DocumentStore {
             }
         }
     }
+}
+
+/// Animate: what a change made on the cards for how the picked layers look changed in the design
+/// itself, as no key could hold it (a dashed border made plain), and so for the whole film and not
+/// at the playhead. The cards of those looks say so for a moment, in place of what they come to
+/// (`SelectionInspector.toldDesign`).
+struct DesignLooked: Equatable {
+    /// The cards of the looks it changed.
+    let aspects: Set<Aspect>
+    /// The layers picked when it was made: said only while they are the ones picked.
+    let layers: [UUID]
+    /// The design's count of changes once it was made (`DocumentStore.version`): said only while
+    /// the design is as it left it, so neither after an undo nor after a change that was keyed.
+    let version: Int
+
+    /// For how many seconds it is said.
+    static let shown: Double = 5
 }

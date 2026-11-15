@@ -374,6 +374,9 @@ along one artboard's film. Its keys are changes from the design and never the de
   layers as they look at the playhead (`SelectionInspector(filming:)`, `store.lookedSelection`),
   and `DocumentStore.updateSelection` hands a change made in Animate to `poseLooks`, which keys
   what it changed of the looks and drops the rest; a change to no look is the design's as before.
+  Where such a change changed how a layer looks (dashes taken off, a fill turned off), the card of
+  that look says "Changed in the design" for a moment in place of its summary
+  (`DocumentStore.designLooked`, `SelectionInspector.toldDesign`, `AspectCard`'s `note`).
   What cannot be keyed (a picture, a shader, on and off, dashes, a border's side, which side a
   shadow falls on, a gradient's line) is not on the cards there. A rectangle's corner dots are on
   the stage (`MotionTool.cornerDots`). Its tests are `MotionLooksTests` for the arithmetic and

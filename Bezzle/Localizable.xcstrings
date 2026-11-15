@@ -12993,6 +12993,28 @@
         }
       }
     },
+    "Changed in the design" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Im Design geändert"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifié dans le design"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambiato nel design"
+          }
+        }
+      }
+    },
     "Changelog" : {
       "localizations" : {
         "de" : {
@@ -33277,6 +33299,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nessuna funzione"
+          }
+        }
+      }
+    },
+    "No key can hold this change, so it changed the design itself, for the whole film." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Keyframe kann diese Änderung halten, darum hat sie das Design selbst geändert, für den ganzen Film."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune image clé ne peut retenir ce changement, il a donc modifié le design lui-même, pour tout le film."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nessun fotogramma chiave può contenere questa modifica, quindi ha cambiato il design stesso, per tutto il film."
           }
         }
       }

@@ -101,6 +101,8 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
     /// Whether it says the design's style its look is and offers the styles of its kind: not in
     /// Animate, where a look is keyed and never named.
     var styles = true
+    /// A word it says for a moment in place of what it comes to.
+    var note: CardNote?
     let glyph: Glyph
     let picks: Picks
     let exact: Exact
@@ -128,7 +130,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 
     init(aspect: Aspect, title: LocalizedStringResource, summary: String, dial: Dial? = nil, remove: (() -> Void)? = nil,
          removal: LocalizedStringResource = "Remove", live: Bool = false, accessory: AnyView? = nil,
-         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil, styles: Bool = true,
+         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil, styles: Bool = true, note: CardNote? = nil,
          @ViewBuilder glyph: () -> Glyph, @ViewBuilder picks: () -> Picks, @ViewBuilder exact: () -> Exact) {
         self.aspect = aspect
         self.title = title
@@ -141,6 +143,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
         self.more = more
         self.restack = restack
         self.styles = styles
+        self.note = note
         self.glyph = glyph()
         self.picks = picks()
         self.exact = exact()
@@ -212,6 +215,12 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
                 Group {
                     if tearing {
                         Text("Release to remove")
+                    } else if let note {
+                        // In the summary's place, so nothing on the panel moves for it.
+                        Text(note.words)
+                            .foregroundStyle(Theme.pencil)
+                            .help(Text(note.help))
+                            .transition(.opacity)
                     } else if let named {
                         NamedSummary(name: named.name)
                             .id(named.id)
@@ -228,6 +237,7 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
                 .truncationMode(.tail)
                 .animation(Theme.quick, value: summary)
                 .animation(Theme.pop, value: named?.id)
+                .animation(Theme.quick, value: note != nil)
             }
             // One element for VoiceOver, which opens the card and steps its dial; the controls
             // beside it stay their own.
@@ -371,11 +381,18 @@ struct AspectCard<Glyph: View, Picks: View, Exact: View>: View {
 extension AspectCard where Exact == EmptyView {
     init(aspect: Aspect, title: LocalizedStringResource, summary: String, dial: Dial? = nil, remove: (() -> Void)? = nil,
          removal: LocalizedStringResource = "Remove", live: Bool = false, accessory: AnyView? = nil,
-         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil, styles: Bool = true,
+         more: AddBar.Item? = nil, restack: ((CGFloat?) -> Void)? = nil, styles: Bool = true, note: CardNote? = nil,
          @ViewBuilder glyph: () -> Glyph, @ViewBuilder picks: () -> Picks) {
         self.init(aspect: aspect, title: title, summary: summary, dial: dial, remove: remove, removal: removal, live: live,
-                  accessory: accessory, more: more, restack: restack, styles: styles, glyph: glyph, picks: picks, exact: { EmptyView() })
+                  accessory: accessory, more: more, restack: restack, styles: styles, note: note, glyph: glyph, picks: picks, exact: { EmptyView() })
     }
+}
+
+/// A word a card says for a moment in place of what it comes to, and the sentence it says when
+/// that is pointed at: as when a change made on it in Animate went to the design itself.
+struct CardNote {
+    let words: LocalizedStringResource
+    let help: LocalizedStringResource
 }
 
 extension AspectCard where Picks == EmptyView, Exact == EmptyView {

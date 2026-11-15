@@ -138,6 +138,9 @@ final class DocumentStore {
     }
     /// Animate's desk: the film being worked on, where its playhead is and what of it is picked.
     let film = FilmDesk()
+    /// Animate: looks that a change made on their cards changed in the design itself, since no
+    /// picked layer could key it; those cards say so for a moment. See `DesignLooked`.
+    var designLooked: DesignLooked?
     /// The prototype being played, over the design. See `Player`.
     var player: Player?
     /// The flow whose note is being written on its thread, and where on the canvas the thread's
