@@ -518,7 +518,7 @@ written on two Macs at once (`README.md` › The Mac app › Designs in synced f
 - **Never seen with two real Macs:** two Macs in one process on a folder marked synced
   (`CloudFolderTests`), and one copy editing a design in iCloud Drive on this Mac for four minutes
   with no duplicate (before the change too). Not tried: two Macs on one iCloud account, Google
-  Drive (not installed here), Dropbox.
+  Drive (not installed here), Dropbox. Released in 1.9.1 (Mac).
 - **Both Macs changing it at once** still makes the service keep two now and then; the copy is
   taken back in within 20 s while the design is open, or when the designs list is read. One the
   service made that holds nothing new (only a picture or the view) is left as it is.
@@ -554,8 +554,9 @@ written on two Macs at once (`README.md` › The Mac app › Designs in synced f
   `bezzle-release`: `curves`, `cutout-samples`, `import-samples`, a few build logs, and about 250
   old `C:\bezzle\BezzleDesktop-*.log` files.
 
-- **1.9 as released, not watched** (2026-11-15, Mac and Windows, from a7a82af): an installed 1.8
-  or 1.8.1 taking the update, on the Mac (Sparkle's window with the notes, a delta) or on Windows.
+- **1.9 and 1.9.1 as released, not watched** (2026-11-15; 1.9 for the Mac and Windows from a7a82af,
+  1.9.1 the Mac's alone from e401c34, for designs in synced folders turning up twice, Windows staying
+  at 1.9): an installed 1.8, 1.8.1 or 1.9 taking the update, on the Mac (Sparkle's window with the notes, a delta) or on Windows.
   The released Mac copy was not launched, since it shares Erik's container; 1.9 had the whole
   test suite one test at a time (2,228 tests), the Mac parity check (the canvas tools' log the
   same as before the six agents' work) and the speed measures in an optimized Debug build. The
