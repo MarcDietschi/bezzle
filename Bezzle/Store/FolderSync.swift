@@ -384,86 +384,21 @@ final class FolderSync {
 
     // MARK: Copies the folder's service made
 
-    /// The copies a sync service made beside the design at `design` as it kept the design written
-    /// on two computers at once, as it does with a design that is one item to it: "Poster 2" as
-    /// iCloud Drive names them, or "Poster (1)". Such a copy is in the same room, and holds
-    /// someone's changes the design does not have yet. A copy made in the Finder and never opened
-    /// is older than the design and brings nothing; one opened has a room of its own (`claim`).
-    /// Either is left as it is.
+    /// The copies the folder's service made beside the design at `design` as it kept the design
+    /// written on two computers at once, as it does with a design that is one item to it ("Poster
+    /// 2", "Poster (1)"); see `FolderShare.copiesFromTheService`. Only in a folder a service keeps
+    /// in step.
     nonisolated static func copiesFromTheService(of design: URL) -> [URL] {
-        guard SyncedFolders.service(of: design) != nil, DesignFile.isPackage(design), let seed = room(of: design)?.seed else { return [] }
-        let base = design.deletingPathExtension().lastPathComponent
-        let here = design.standardizedFileURL.path
-        let beside = (try? FileManager.default.contentsOfDirectory(at: design.deletingLastPathComponent(), includingPropertiesForKeys: nil,
-                                                                  options: [.skipsHiddenFiles])) ?? []
-        return beside.filter { url in
-            guard url.standardizedFileURL.path != here, BezzleDocument.fileExtensions.contains(url.pathExtension.lowercased()) else { return false }
-            let name = url.deletingPathExtension().lastPathComponent
-            guard name.hasPrefix(base + " ") else { return false }
-            var number = name.dropFirst(base.count + 1)
-            if number.hasPrefix("("), number.hasSuffix(")") { number = number.dropFirst().dropLast() }
-            guard !number.isEmpty, number.allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
-            return DesignFile.isPackage(url) && room(of: url)?.seed == seed && !newParts(in: url, missingFrom: design).isEmpty
-        }
+        guard SyncedFolders.service(of: design) != nil else { return [] }
+        return FolderShare.copiesFromTheService(of: design)
     }
 
-    /// Everyone's files of changes in `copy` that `design` does not have, by where each is.
-    private nonisolated static func newParts(in copy: URL, missingFrom design: URL) -> [URL] {
-        let fm = FileManager.default
-        var found: [URL] = []
-        for person in (try? fm.contentsOfDirectory(at: peopleFolder(of: copy), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [] {
-            let theirs = folder(of: person.lastPathComponent, in: design)
-            for file in (try? fm.contentsOfDirectory(at: person, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
-            where FolderShare.Part(fileName: file.lastPathComponent) != nil && !fm.fileExists(atPath: theirs.appendingPathComponent(file.lastPathComponent).path) {
-                found.append(file)
-            }
-        }
-        return found
-    }
-
-    /// Takes what a copy the folder's service made holds into the design: everyone's files of
-    /// changes it lacks, and the newer of anyone's own other files (who they are, their versions'
-    /// list), its pictures and its versions; then the copy is put away (`discard`, the Trash). Read
-    /// again, the design has everything both had: everyone's changes are files of their own.
+    /// Takes what a copy the folder's service made holds into the design and puts the copy away
+    /// (`discard`, the Trash), each held by the system's file coordination as it is written
+    /// (`FolderShare.fold`).
     nonisolated static func fold(_ copy: URL, into design: URL,
                                  discard: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
-        let fm = FileManager.default
-        func files(_ folder: URL) -> [URL] {
-            (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
-        }
-        func modified(_ url: URL) -> Date {
-            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-        }
-        try DesignFile.coordinated(writing: design) { _ in
-            for person in files(peopleFolder(of: copy)) where DesignFile.isPackage(person) {
-                let into = folder(of: person.lastPathComponent, in: design)
-                for file in files(person) {
-                    let target = into.appendingPathComponent(file.lastPathComponent)
-                    if !fm.fileExists(atPath: target.path) {
-                        try DesignFile.makeFolder(into, in: design)
-                        try fm.copyItem(at: file, to: target)
-                    } else if FolderShare.Part(fileName: file.lastPathComponent) == nil, modified(file) > modified(target) {
-                        // Parts never change once written; who someone is and their versions do.
-                        _ = try fm.replaceItemAt(target, withItemAt: try copied(file))
-                    }
-                }
-            }
-            for kind in [DesignFile.imagesFolder, FolderShare.versionsFolder] {
-                let into = design.appendingPathComponent(kind, isDirectory: true)
-                for file in files(copy.appendingPathComponent(kind, isDirectory: true)) where !fm.fileExists(atPath: into.appendingPathComponent(file.lastPathComponent).path) {
-                    try DesignFile.makeFolder(into, in: design)
-                    try fm.copyItem(at: file, to: into.appendingPathComponent(file.lastPathComponent))
-                }
-            }
-        }
-        try DesignFile.coordinated(writing: copy) { copy in try discard(copy) }
-    }
-
-    /// A copy of a file beside the system's own temporary place, to replace another with.
-    private nonisolated static func copied(_ file: URL) throws -> URL {
-        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-" + file.lastPathComponent)
-        try FileManager.default.copyItem(at: file, to: temporary)
-        return temporary
+        try FolderShare.fold(copy, into: design, holding: { url, write in try DesignFile.coordinated(writing: url) { _ in try write() } }, discard: discard)
     }
 
     /// Folds every copy the folder's service made beside the design into it, but those open here
