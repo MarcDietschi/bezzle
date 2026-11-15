@@ -293,10 +293,11 @@ window, only in tests and in pictures the renderer made. What that left:
   so a body facing several ways drifts by thousandths of a point over many turns.
 - **Groups that keep depth, different or not built:** SVG export writes a turned or lifted one as
   one picture, true inside itself but not ordered among the layers beside it (PNG, JPEG, PDF,
-  tiles, thumbnails and films are true). The prototype player's hit test (`Prototype.chain`)
-  orders per group, not across such a group's border. One with keys of its own is one card in
-  its film. Seen exactly edge on, hits and bounds take layers standing off it as lying in it. A
-  background blur lying directly in a group makes it one card, which CSS does not do.
+  tiles, thumbnails and films are true). One with keys of its own is one card in its film, while
+  a click in Animate (`filmChain`, through `Prototype.chain`) orders its layers among what lies
+  beside it as the design does. Seen exactly edge on, hits and bounds take layers standing off
+  it as lying in it. A background blur lying directly in a group makes it one card, which CSS
+  does not do.
 - **Groups that keep depth, unchecked:** the switch, the outline and the handles in a window, and
   Layers Keep Their Depth in a group's right-click menu (tested on the menu's entries only); the
   tiles' redraw around such groups on a live canvas (it rests on `Renderer.reach` and its test);
@@ -311,10 +312,11 @@ window, only in tests and in pictures the renderer made. What that left:
   group's foreshortening.
 - **Films of groups that keep depth** (order at rest and keys measured in the group, fixed
   2026-11-14 in the shared model): Windows was not built or run with the fix, nor with
-  2026-11-15's in `DepthOrder.nearness` (a face in a body's plane, its middle as high as another's
-  there, belongs to the body); run `Windows/VM/depth-agreement.sh` again with a fresh out folder,
-  since the Mac's "Resting" and "Turning" frames changed. Untested: a layer pinned by its corners lying in a turned group that
-  keeps depth.
+  2026-11-15's shared changes: `DepthOrder.nearness` (a face in a body's plane, its middle as high
+  as another's there, belongs to the body), `Prototype.chain` ordering across a group's border,
+  the posts (`posts(of:)`, `shownParts`); run `Windows/VM/depth-agreement.sh` again with a fresh
+  out folder, since the Mac's "Resting" and "Turning" frames changed. Untested: a layer pinned by
+  its corners lying in a turned group that keeps depth.
 - **Windows** has all three since 2026-11-14 (the card and the AI server turn bodies, the group's
   switch, the look from the side with Alt; `Windows/README.md` › The app), measured against the
   Mac's renderer (`Windows/VM/depth-agreement.sh`) and seen in the app's window. Left there:

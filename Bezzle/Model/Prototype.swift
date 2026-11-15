@@ -326,18 +326,33 @@ nonisolated enum Prototype {
 
     /// The layers under a point of an artboard (in its own coordinates), the topmost first, each
     /// with what holds it after it: the layer itself, then its group, and so on up. Nearer before
-    /// further (`DepthOrder`), seen from `eye`, by default the artboard's own (`Eye.stage`); what holds
-    /// layers lying loose on the canvas has no size, and no eye.
+    /// further, in the order the renderer draws them (`DepthOrder.scene`): the layers of a group
+    /// that keeps their depth stand among what lies beside the group, so a tap reaches what is
+    /// drawn nearest across the group's border. Seen from `eye`, by default the artboard's own
+    /// (`Eye.stage`); what holds layers lying loose on the canvas has no size, and no eye.
     @MainActor static func chain(at p: CGPoint, in board: Node, tolerance: CGFloat = 0, eye: Eye? = nil) -> [Node] {
         func look(_ nodes: [Node], _ p: CGPoint, _ eye: Eye?, _ above: [Node]) -> [Node]? {
-            for n in DepthOrder.stacked(nodes).reversed() where !n.hidden {
-                guard Geometry.contains(n, p, tolerance: tolerance, eye: eye) else { continue }
+            let seen = eye?.lens?.shown(p) ?? p
+            for piece in DepthOrder.scene(nodes, eye: eye).reversed() {
+                let n = piece.node
+                guard !nodes[piece.top].hidden, !n.hidden, let q = piece.placed(seen),
+                      Geometry.contains(n, q, tolerance: tolerance, eye: piece.eye) else { continue }
+                // The groups keeping depth it was taken out of, innermost first, and what holds them.
+                var holders: [Node] = []
+                if let first = piece.groups.first, nodes[piece.top].id == first {
+                    holders = [nodes[piece.top]]
+                    for id in piece.groups.dropFirst() {
+                        guard let next = holders[0].children.first(where: { $0.id == id }) else { break }
+                        holders.insert(next, at: 0)
+                    }
+                }
+                let held = holders + above
                 if n.isGroup {
                     // Where the point lies on the group drawn flat, if it is turned in depth.
-                    let flat = Perspective(n, eye: eye).map { $0.flat(p) } ?? p
-                    if let flat, let deeper = look(n.children, flat - n.frame.origin, eye?.within(n), [n] + above) { return deeper }
+                    let flat = Perspective(n, eye: piece.eye).map { $0.flat(q) } ?? q
+                    if let flat, let deeper = look(n.children, flat - n.frame.origin, piece.eye?.within(n), [n] + held) { return deeper }
                 }
-                return [n] + above
+                return [n] + held
             }
             return nil
         }

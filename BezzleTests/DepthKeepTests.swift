@@ -249,6 +249,31 @@ struct DepthKeepTests {
         #expect(pixel(drawn, Int(middle.x), Int(middle.y)).blueComponent > 0.95, "\(middle)")
     }
 
+    // MARK: The prototype
+
+    @Test func aTapInThePlayerReachesWhatIsDrawnNearestAcrossTheGroupsBorder() throws {
+        let doc = crossing(keeps: true), card = crossing(keeps: false)
+        func names(_ doc: BezzleDocument, _ p: CGPoint) -> [String] { Prototype.chain(at: p, in: doc.nodes[0]).map(\.name) }
+        // Where the high layer in the group shows over the card beside it, the tap is the high
+        // layer's, then its group's; where the card beside is nearer, the card's.
+        #expect(names(doc, CGPoint(x: 190, y: 140)) == ["High", "Group"])
+        #expect(names(doc, CGPoint(x: 230, y: 180)) == ["Beside"])
+        #expect(names(doc, CGPoint(x: 105, y: 55)).isEmpty)
+        // As one card, the group lies in the page, under the card beside it.
+        #expect(names(card, CGPoint(x: 190, y: 140)) == ["Beside"])
+        // In a group turned and held up, each layer where it stands, the group inside too.
+        let turned = turned()
+        let g = node(turned, "Group"), inner = node(turned, "Inner")
+        let standing = node(turned, "Standing"), lying = node(turned, "Lying"), deep = node(turned, "Deep")
+        #expect(names(turned, seen(out(stood(flat(standing.frame.center), in: standing), of: g))) == ["Standing", "Group"])
+        #expect(names(turned, seen(out(flat(lying.frame.center), of: g))) == ["Lying", "Group"])
+        #expect(names(turned, seen(out(out(stood(flat(deep.frame.center), in: deep), of: inner), of: g))) == ["Deep", "Inner", "Group"])
+        // The player follows the flow of what it reaches.
+        var linked = doc
+        linked.update(node(doc, "High").id) { $0.flow = FlowLink(to: UUID()) }
+        #expect(Prototype.chain(at: CGPoint(x: 190, y: 140), in: linked.nodes[0]).first { $0.flow != nil }?.name == "High")
+    }
+
     // MARK: The film
 
     @Test func theFilmAtRestShowsEachLayerWhereTheDesignDoes() throws {

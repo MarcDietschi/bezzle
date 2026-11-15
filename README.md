@@ -504,8 +504,9 @@ snapping) stays as it was, and a layer lying flat in the group still needs none.
 What draws asks `Perspective.onCanvas`, which is where the layer shows itself. The order is
 `DepthOrder.scene`: the layers lying together with every such group's layers standing in its
 place, which the renderer (`Renderer.drawScene`), the picker (`Picking.topmost`), `Geometry.bounds`
-and `contains`, and `Renderer.reach` all go through; a click on such a layer takes its group, and
-inside the group the layer. In a film, such a group with no keys of its own comes apart into
+and `contains`, `Renderer.reach`, and the hit test of the prototype player, Inspect and the flow
+tool (`Prototype.chain`, which gives the layer, then the groups it was taken out of) all go
+through; a click on such a layer takes its group, and inside the group the layer. In a film, such a group with no keys of its own comes apart into
 pieces that stand where it puts them (`FilmPiece.stand`), so the camera at rest shows what the
 design does and sees between the layers when it moves; with keys of its own it is one card. The
 layers lying in the group next to one another are one piece, and where the group is turned the
