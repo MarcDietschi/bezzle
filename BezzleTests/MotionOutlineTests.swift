@@ -407,6 +407,46 @@ struct MotionOutlineTests {
         #expect(try #require(store.node(second)?.outline(at: 1)).bounds.maxY < 100.01)
     }
 
+    @Test func aNewCopyMadeAtAnotherSizeHasItsShapeKeysGrownWithIt() throws {
+        // A button whose back's bottom right corner goes 20 down at one second, and whose dot
+        // keeps its size in the middle; made a component.
+        var back = CanvasTests.rect("Back", CGRect(x: 0, y: 0, width: 120, height: 40))
+        let corner = try #require(back.ownOutline?.anchorPoints.firstIndex { near($0, CGPoint(x: 120, y: 40)) })
+        var change = back.shapeRest
+        for i in [1, 3, 5] { change[corner * 6 + i] = 20 }
+        back.setKey(.shape, change, at: 1)
+        var dot = Node(kind: .ellipse, name: "Dot", frame: CGRect(x: 55, y: 15, width: 10, height: 10))
+        var round = try #require(dot.ownOutline)
+        round.subpaths[0].anchors = round.subpaths[0].anchors.map { $0.offset(by: CGPoint(x: 0, y: -5)) }
+        dot.poseShape(round, at: 1)
+        var button = Node(kind: .group, name: "Button", frame: CGRect(x: 40, y: 40, width: 120, height: 40))
+        button.children = [back, dot]
+        var doc = BezzleDocument()
+        doc.nodes = [button]
+        let made = doc.makeComponent(from: [button.id])
+        #expect(made != nil)
+        let master = try #require(doc.masters.first)
+        // A new copy twice as wide and three times as high: the back's corner goes 60 down.
+        let copy = Components.newCopy(of: master, at: CGPoint(x: 300, y: 40), size: CGSize(width: 240, height: 120))
+        let grown = try #require(copy.children.first { $0.name == "Back" })
+        #expect(grown.frame.size == CGSize(width: 240, height: 120))
+        #expect(fits(grown))
+        let design = try #require(grown.ownOutline).anchorPoints, moved = try #require(grown.outline(at: 1)).anchorPoints
+        let far = try #require(design.firstIndex { near($0, CGPoint(x: 240, y: 120)) })
+        #expect(near(moved[far], CGPoint(x: 240, y: 180)), "\(moved[far])")
+        #expect(zip(design, moved).enumerated().allSatisfy { $0.offset == far || near($0.element.0, $0.element.1) })
+        // The dot, as large as it was, keeps its keys as they were.
+        #expect(copy.children.first { $0.name == "Dot" }?[track: .shape] == dot[track: .shape])
+        // A copy as large as the component has the component's keys.
+        let same = Components.newCopy(of: master, at: .zero)
+        #expect(same.children.first { $0.name == "Back" }?[track: .shape] == back[track: .shape])
+        // Placed in a design by the store, it is so too, and stays so as the copy is synced.
+        let bench = bench([])
+        bench.step { bench.store.edit("Add Copy") { $0.masters = doc.masters; $0.nodes[0].children.append(copy) } }
+        let placed = try #require(bench.store.doc.allNodes.first { $0.id == grown.id })
+        #expect(placed[track: .shape] == grown[track: .shape])
+    }
+
     @Test func aComponentsCopiesKeepTheirOwnKeysWithTheirOutlines() throws {
         var button = Node(kind: .group, name: "Button", frame: CGRect(x: 40, y: 40, width: 120, height: 40))
         button.children = [CanvasTests.rect("Back", CGRect(x: 0, y: 0, width: 120, height: 40))]

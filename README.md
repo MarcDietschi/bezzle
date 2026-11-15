@@ -350,7 +350,11 @@ along one artboard's film. Its keys are changes from the design and never the de
   `BezzleDocument.followOutlines(since:start:)`, which `DocumentStore.edit` calls after the other
   passes: it looks at every layer whose outline the change made another and whose keys it left
   alone, so a new way of changing an outline needs nothing more, and each cell of a repeat grid,
-  post of a deck and copy of a component keeps its own keys with its own outline. Flipped, a
+  post of a deck and copy of a component keeps its own keys with its own outline. A new copy of a
+  component, which has no layer before it in the design to go by, has its layers' keys grown as
+  a resize grows them from the component's size to the size it is made at
+  (`Components.followingOutlines`, from `Components.newCopy`, which every way of placing a copy
+  goes through). Flipped, a
   layer's keys are turned over with it (`Node.shapeKeysFlipped`, from `BezzleDocument.flip`: a
   flip of an ellipse leaves its outline as it was, so only the flip itself can tell). Keys that
   fit no outline change nothing. Its tests are `MotionOutlineTests`, and `AnimateStressTests`

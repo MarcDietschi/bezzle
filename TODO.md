@@ -14,11 +14,13 @@ file was made (2026-11-14): look before starting on one.
 
 - **Shape keys that go with the design** (2026-11-14: a layer resized, rounded or flipped in the
   design takes its Shape keys along, `BezzleDocument.followOutlines`; 2026-11-15: rounded and
-  squared again, exactly). Left: a key another person adds for the old size while a resize is
-  merged stays unscaled; a new component copy made at another size takes the component's keys
-  unscaled. A key made on a rounded rectangle itself, or one grown with it while it was rounded,
-  is none the square could have made: squared again, each corner goes as the place on the curve
-  nearest it went, and a little of the reshaping is lost as before.
+  squared again, exactly; a new copy of a component made at another size grows its keys). Left: a
+  key another person adds for the old size while a resize is merged stays unscaled. A copy shown
+  as another variant whose layer has another size keeps the keys its layer had, unscaled: the
+  layer is another one there, with no layer before it for `followOutlines` to go by
+  (`Components.switched`). A key made on a rounded rectangle itself, or one grown with it while
+  it was rounded, is none the square could have made: squared again, each corner goes as the
+  place on the curve nearest it went, and a little of the reshaping is lost as before.
 - **Outlines with other points** (2026-11-14: points added and taken away at the playhead, and
   From… in the Pose card's Shape row gives a shape another's outline; 2026-11-15: the key keeps
   the other's own points). Where a key either side has the same runs and would go into it point

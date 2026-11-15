@@ -275,7 +275,31 @@ extension Components {
         // Laid where the component has them, then out into the copy's box.
         c.children = layers.map { var n = RepeatGrid.copy($0, k); n.post = nil; n.own = nil; return n }
         c.children = c.children.map { var n = $0; n.frame = n.frame.offsetBy(dx: -from.minX, dy: -from.minY); return n }
-        return build(c, master: master, masterWas: nil, masters: masters)
+        return followingOutlines(build(c, master: master, masterWas: nil, masters: masters), from: c)
+    }
+
+    /// A new copy, laid out in its box, with the Shape keys of each of its layers going with the
+    /// outline it has there, as they go with a layer resized in the design
+    /// (`Node.shapeKeys(following:)`): `made` is the copy as it was before it was laid out, its
+    /// layers as large as the component's. A copy made at another size than the component's has
+    /// no outline before it in the design for `BezzleDocument.followOutlines` to go by.
+    static func followingOutlines(_ copy: Node, from made: Node) -> Node {
+        guard copy.holdsShapeKeys else { return copy }
+        var was: [UUID: Node] = [:]
+        func note(_ n: Node) {
+            was[n.id] = n
+            n.children.forEach(note)
+        }
+        made.children.forEach(note)
+        func follow(_ n: Node) -> Node {
+            var m = n
+            if let then = was[n.id], let keys = n.shapeKeys(following: then) { m[track: .shape] = keys }
+            m.children = n.children.map(follow)
+            return m
+        }
+        var out = copy
+        out.children = copy.children.map(follow)
+        return out
     }
 
     /// The layers a component would be given that are alike in every way but where they are, how
