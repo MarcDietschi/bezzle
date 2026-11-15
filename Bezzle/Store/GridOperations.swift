@@ -128,7 +128,8 @@ extension DocumentStore {
         let ext = file.pathExtension.isEmpty ? "png" : file.pathExtension.lowercased()
         let asset = "\(UUID().uuidString).\(ext)"
         do {
-            try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+            // Inside the design only while it is there: never its package made anew (`DesignFile.makeFolder`).
+            try DesignFile.makeFolder(images, in: url)
             try FileManager.default.copyItem(at: file, to: images.appendingPathComponent(asset))
         } catch {
             NSLog("Bezzle could not copy %@ into the design: %@", file.path, error.localizedDescription)

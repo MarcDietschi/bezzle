@@ -68,17 +68,39 @@ nonisolated enum DesignFile {
     /// Not `creating`, a design that is not there throws `Gone` instead, as for an open design
     /// whose file went while it was being saved.
     static func write(_ doc: BezzleDocument, to url: URL, creating: Bool = true) throws {
-        if !creating, !exists(url) { throw Gone() }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(doc)
-        if isPackage(url) {
-            try data.write(to: url.appendingPathComponent(documentName), options: .atomic)
-        } else if FileManager.default.fileExists(atPath: url.path) {
-            try data.write(to: url, options: .atomic)
-        } else {
-            try FileManager.default.createDirectory(at: url.appendingPathComponent(imagesFolder, isDirectory: true), withIntermediateDirectories: true)
-            try data.write(to: url.appendingPathComponent(documentName), options: .atomic)
+        try coordinated(writing: url) { url in
+            // Asked once the folder's sync service has let go of it: while it puts in place what
+            // another computer wrote, the design may be away for a moment.
+            if !creating, !exists(url) { throw Gone() }
+            if isPackage(url) {
+                try data.write(to: url.appendingPathComponent(documentName), options: .atomic)
+            } else if FileManager.default.fileExists(atPath: url.path) {
+                try data.write(to: url, options: .atomic)
+            } else {
+                try FileManager.default.createDirectory(at: url.appendingPathComponent(imagesFolder, isDirectory: true), withIntermediateDirectories: true)
+                try data.write(to: url.appendingPathComponent(documentName), options: .atomic)
+            }
         }
+    }
+
+    /// Does `body` with the design at `url` held for writing, as the system's file coordination
+    /// holds it: a folder's sync service (iCloud Drive, Google Drive and the like) waits for it,
+    /// and it for the service, and the service knows what was written as a change to the design
+    /// it has. Written past it, a design whose file was swapped for a new one, or written while
+    /// the service put another computer's in place, was taken for a second design of the same
+    /// name, and kept as one: "Poster 2". Never call it from inside another such call on the
+    /// same design.
+    static func coordinated<T>(writing url: URL, _ body: (URL) throws -> T) throws -> T {
+        var failure: NSError?
+        var result: Result<T, Error>?
+        NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: [], error: &failure) { url in
+            result = Result { try body(url) }
+        }
+        if let failure { throw failure }
+        guard let result else { throw CocoaError(.fileWriteUnknown) }
+        return try result.get()
     }
 }

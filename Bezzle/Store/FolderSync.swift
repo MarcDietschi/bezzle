@@ -142,7 +142,9 @@ final class FolderSync {
     static func open(_ url: URL, replica: String, seed: SharedDesign? = nil) -> (sync: FolderSync, state: SharedDesign)? {
         let mine = folder(of: replica, in: url)
         do {
-            try FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+            // In the design while it is there, never its package made anew: one made again while a
+            // sync service had it away for a moment is a second design of the same name to it.
+            try DesignFile.makeFolder(mine, in: url)
         } catch {
             NSLog("Bezzle could not make room for its files in %@: %@", url.path, error.localizedDescription)
             return nil
@@ -166,7 +168,7 @@ final class FolderSync {
             // None yet, or this is a copy of the design made in the Finder, which is a design of its
             // own, with a room of its own.
             let fresh = FolderShare.Room.fresh(at: Collaboration.now)
-            try? FolderShare.encode(fresh)?.write(to: roomFile(url), options: .atomic)
+            if let data = FolderShare.encode(fresh) { _ = try? DesignFile.coordinated(writing: url) { _ in try data.write(to: roomFile(url), options: .atomic) } }
             _ = claim(fresh, at: url)
             room = fresh
         }
@@ -205,7 +207,8 @@ final class FolderSync {
         let me = Self.me(replica: replica, since: introduced?.since ?? since ?? Collaboration.now)
         guard introduced != me, let data = FolderShare.encode(me) else { return }
         introduced = me
-        DocumentStore.saving.async { try? data.write(to: file, options: .atomic) }
+        let design = url
+        DocumentStore.saving.async { _ = try? DesignFile.coordinated(writing: design) { _ in try data.write(to: file, options: .atomic) } }
     }
 
     /// Who works from this Mac, by its name.
@@ -258,7 +261,11 @@ final class FolderSync {
         }
         looking = true
         let url = url, replica = replica, seen = seen
+        // A copy the folder's service made beside it, written on another computer as this one
+        // wrote: taken in first, so that what it brings is read now.
+        let synced = service != nil, open = Self.openHere()
         DispatchQueue.global(qos: .utility).async {
+            if synced { Self.foldCopies(beside: url, open: open) }
             let found = Self.look(url, replica: replica, seen: seen, opening: false)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -270,6 +277,11 @@ final class FolderSync {
                 }
             }
         }
+    }
+
+    /// The designs open here, by path.
+    static func openHere() -> Set<String> {
+        Set(Tabs.shared.designs.compactMap { $0.store?.url.standardizedFileURL.path })
     }
 
     #if DEBUG
@@ -295,7 +307,9 @@ final class FolderSync {
         }
         if !found.changes.isEmpty, let collaboration {
             collaboration.receive(found.changes, from: .folder)
-            collaboration.persist()
+            // In a synced folder, what came from the relay meanwhile is kept with this Mac's next
+            // own change, or as the design is closed: a Mac only looking on writes nothing in it.
+            if service == nil { collaboration.persist() }
         }
         let store = collaboration?.store
         for name in found.pictures {
@@ -317,8 +331,10 @@ final class FolderSync {
         let design = url, folder = Self.folder(of: replica, in: url)
         DocumentStore.saving.async {
             do {
-                try DesignFile.makeFolder(folder, in: design)
-                try FolderShare.write(writing, into: folder)
+                try DesignFile.coordinated(writing: design) { _ in
+                    try DesignFile.makeFolder(folder, in: design)
+                    try FolderShare.write(writing, into: folder)
+                }
             } catch {
                 NSLog("Bezzle could not write its changes to %@: %@", folder.path, error.localizedDescription)
                 // Written again with the next save.
@@ -364,6 +380,108 @@ final class FolderSync {
 
     private static func sorted(_ people: [String: FolderShare.Person]) -> [FolderShare.Person] {
         people.values.sorted { $0.since != $1.since ? $0.since < $1.since : $0.replica < $1.replica }
+    }
+
+    // MARK: Copies the folder's service made
+
+    /// The copies a sync service made beside the design at `design` as it kept the design written
+    /// on two computers at once, as it does with a design that is one item to it: "Poster 2" as
+    /// iCloud Drive names them, or "Poster (1)". Such a copy is in the same room, and holds
+    /// someone's changes the design does not have yet. A copy made in the Finder and never opened
+    /// is older than the design and brings nothing; one opened has a room of its own (`claim`).
+    /// Either is left as it is.
+    nonisolated static func copiesFromTheService(of design: URL) -> [URL] {
+        guard SyncedFolders.service(of: design) != nil, DesignFile.isPackage(design), let seed = room(of: design)?.seed else { return [] }
+        let base = design.deletingPathExtension().lastPathComponent
+        let here = design.standardizedFileURL.path
+        let beside = (try? FileManager.default.contentsOfDirectory(at: design.deletingLastPathComponent(), includingPropertiesForKeys: nil,
+                                                                  options: [.skipsHiddenFiles])) ?? []
+        return beside.filter { url in
+            guard url.standardizedFileURL.path != here, BezzleDocument.fileExtensions.contains(url.pathExtension.lowercased()) else { return false }
+            let name = url.deletingPathExtension().lastPathComponent
+            guard name.hasPrefix(base + " ") else { return false }
+            var number = name.dropFirst(base.count + 1)
+            if number.hasPrefix("("), number.hasSuffix(")") { number = number.dropFirst().dropLast() }
+            guard !number.isEmpty, number.allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
+            return DesignFile.isPackage(url) && room(of: url)?.seed == seed && !newParts(in: url, missingFrom: design).isEmpty
+        }
+    }
+
+    /// Everyone's files of changes in `copy` that `design` does not have, by where each is.
+    private nonisolated static func newParts(in copy: URL, missingFrom design: URL) -> [URL] {
+        let fm = FileManager.default
+        var found: [URL] = []
+        for person in (try? fm.contentsOfDirectory(at: peopleFolder(of: copy), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [] {
+            let theirs = folder(of: person.lastPathComponent, in: design)
+            for file in (try? fm.contentsOfDirectory(at: person, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+            where FolderShare.Part(fileName: file.lastPathComponent) != nil && !fm.fileExists(atPath: theirs.appendingPathComponent(file.lastPathComponent).path) {
+                found.append(file)
+            }
+        }
+        return found
+    }
+
+    /// Takes what a copy the folder's service made holds into the design: everyone's files of
+    /// changes it lacks, and the newer of anyone's own other files (who they are, their versions'
+    /// list), its pictures and its versions; then the copy is put away (`discard`, the Trash). Read
+    /// again, the design has everything both had: everyone's changes are files of their own.
+    nonisolated static func fold(_ copy: URL, into design: URL,
+                                 discard: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
+        let fm = FileManager.default
+        func files(_ folder: URL) -> [URL] {
+            (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
+        }
+        func modified(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        }
+        try DesignFile.coordinated(writing: design) { _ in
+            for person in files(peopleFolder(of: copy)) where DesignFile.isPackage(person) {
+                let into = folder(of: person.lastPathComponent, in: design)
+                for file in files(person) {
+                    let target = into.appendingPathComponent(file.lastPathComponent)
+                    if !fm.fileExists(atPath: target.path) {
+                        try DesignFile.makeFolder(into, in: design)
+                        try fm.copyItem(at: file, to: target)
+                    } else if FolderShare.Part(fileName: file.lastPathComponent) == nil, modified(file) > modified(target) {
+                        // Parts never change once written; who someone is and their versions do.
+                        _ = try fm.replaceItemAt(target, withItemAt: try copied(file))
+                    }
+                }
+            }
+            for kind in [DesignFile.imagesFolder, FolderShare.versionsFolder] {
+                let into = design.appendingPathComponent(kind, isDirectory: true)
+                for file in files(copy.appendingPathComponent(kind, isDirectory: true)) where !fm.fileExists(atPath: into.appendingPathComponent(file.lastPathComponent).path) {
+                    try DesignFile.makeFolder(into, in: design)
+                    try fm.copyItem(at: file, to: into.appendingPathComponent(file.lastPathComponent))
+                }
+            }
+        }
+        try DesignFile.coordinated(writing: copy) { copy in try discard(copy) }
+    }
+
+    /// A copy of a file beside the system's own temporary place, to replace another with.
+    private nonisolated static func copied(_ file: URL) throws -> URL {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-" + file.lastPathComponent)
+        try FileManager.default.copyItem(at: file, to: temporary)
+        return temporary
+    }
+
+    /// Folds every copy the folder's service made beside the design into it, but those open here
+    /// (`open`, by path). True when any was.
+    @discardableResult
+    nonisolated static func foldCopies(beside design: URL, open: Set<String>,
+                                       discard: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) -> Bool {
+        var folded = false
+        for copy in copiesFromTheService(of: design) where !open.contains(copy.standardizedFileURL.path) {
+            do {
+                try fold(copy, into: design, discard: discard)
+                folded = true
+                NSLog("Bezzle took %@ into %@, a copy the folder's sync service made of it, and put it in the Trash", copy.lastPathComponent, design.lastPathComponent)
+            } catch {
+                NSLog("Bezzle could not take %@ into %@: %@", copy.path, design.path, error.localizedDescription)
+            }
+        }
+        return folded
     }
 
     // MARK: Reading the folder

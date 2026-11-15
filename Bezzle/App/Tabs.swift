@@ -177,9 +177,10 @@ final class Tabs {
     func saveAll() {
         for tab in designs {
             tab.store?.canvas?.endEditing()
-            tab.store?.save()
-            // The Finder shows the design as it is now, not as it was a few changes ago.
-            tab.store?.makePreview(now: true)
+            tab.store?.save(closing: true)
+            // The Finder shows the design as it is now, not as it was a few changes ago; in a
+            // synced folder, made by whoever changed it.
+            if tab.store?.writesWhenClosed == true { tab.store?.makePreview(now: true) }
         }
         // Pictures of designs closed a moment ago are still being made.
         DesignPreview.making.sync {}
@@ -335,10 +336,13 @@ final class DesignTab: Identifiable {
         guard let store else { return }
         store.canvas?.endEditing()
         store.versions.leave()
-        store.save()
-        // Each time a design is worked on leaves a version, if it changed.
-        store.versions.saved(store.sharedDoc, closing: true)
-        store.makePreview()
+        store.save(closing: true)
+        // Each time a design is worked on leaves a version, if it changed; in a synced folder,
+        // if it changed here, as the Mac that changed it keeps the version and the picture.
+        if store.writesWhenClosed {
+            store.versions.saved(store.sharedDoc, closing: true)
+            store.makePreview()
+        }
         DocumentStore.finishSaving()
         store.sharing?.close()
         MCPTools.closed(store)

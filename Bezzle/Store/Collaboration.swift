@@ -362,8 +362,14 @@ final class Collaboration {
     }
 
     /// Writes what changed to the design's parts, on the queue the design itself is saved on and
-    /// ahead of it.
-    func persist() {
+    /// ahead of it. In a folder a sync service keeps in step, only when the design was changed on
+    /// this Mac, or `force`d as it is written or closed (`DocumentStore.save(closing:)`): what
+    /// others did comes in their own files, and the design is one item to the service, so a Mac
+    /// only looking on that wrote what reached it wrote the design at every change made on
+    /// another, at once with it, which the service keeps as two designs ("Poster 2"). What came
+    /// over the relay waits in `toKeep` meanwhile, and is kept then.
+    func persist(force: Bool = false) {
+        if !force, let folder, folder.service != nil, let store, !store.changedHere { return }
         folder?.persist(state, keeping: toKeep)
         toKeep = []
     }

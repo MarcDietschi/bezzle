@@ -10,7 +10,9 @@ import Foundation
 ///   `c-<upTo>.lzfse` (changes, its own and any it took in from the relay), `w-<upTo>.lzfse` (the
 ///   whole design as it had it) and `versions.json`. A design kept in a folder that Google Drive,
 ///   Dropbox or the like keep in step is so never written over when several people have it open,
-///   as each writes only in its own folder. `sharing/room.json` holds the secret of its live room.
+///   as each writes only in its own folder. To iCloud Drive the package is one item all the same,
+///   so on the Mac only the computer that changes the design writes in it (`DocumentStore.save`).
+///   `sharing/room.json` holds the secret of its live room.
 /// - **On the relay**, for a design shared by link, as sealed records: `c.<replica>.<upTo>`,
 ///   `w.<replica>.<upTo>`, `m.<replica>`, and the rest in Relay/SHARING.md.
 ///

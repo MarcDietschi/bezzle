@@ -510,6 +510,23 @@ the rules). What that left:
 - **Windows** was not looked at for the same causes (WinUI reading the view at every step, tiles
   in another format than the screen's, the zoom's number).
 
+## Designs in synced folders
+
+Made safe on 2026-11-15 against the duplicates ("Poster 2") iCloud Drive keeps when a design is
+written on two Macs at once (`README.md` › The Mac app › Designs in synced folders). What is left:
+
+- **Never seen with two real Macs:** two Macs in one process on a folder marked synced
+  (`CloudFolderTests`), and one copy editing a design in iCloud Drive on this Mac for four minutes
+  with no duplicate (before the change too). Not tried: two Macs on one iCloud account, Google
+  Drive (not installed here), Dropbox.
+- **Both Macs changing it at once** still makes the service keep two now and then; the copy is
+  taken back in within 20 s while the design is open, or when the designs list is read. One the
+  service made that holds nothing new (only a picture or the view) is left as it is.
+- **Windows** was not changed or looked at for this: the two rules (only the Mac that changes a
+  design writes in it, copies the service made are taken back in) are the Mac's alone so far.
+- **A Mac only looking on** keeps where the design was looked at only until it is closed, and its
+  Finder picture and versions are made by the Mac that changed it.
+
 ## Housekeeping
 
 - **The AI server, numbers past any size** (found 2026-11-15 in the audit after 1.8's crash; the

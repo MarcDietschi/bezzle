@@ -114,6 +114,29 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
   - A change of where the design is looked at alone is written after 30 s of rest, or with the next
     change, or on closing, not 2 s after each pause: the whole `document.json` (8 MB for Lawsearch
     AI) was written each time, 2 GB in an afternoon of looking about.
+- **Designs in synced folders** (iCloud Drive, Google Drive, Dropbox; `SyncedFolders.service`,
+  `FolderSync`, `FolderShare`): each Mac keeps its changes in its own files in the package, and
+  everyone's are merged. But to iCloud Drive a package is one item, whatever is written in it
+  (`fileproviderctl evaluate` shows the package as the item and nothing inside it), and one
+  written on two computers at once is kept as two, the second as "Poster 2": as iCloud does with
+  any item that arrives under a name another already has (TN2336). Since 2026-11-15:
+  - Only the Mac that changes the design writes in it. One only looking on writes nothing for what
+    reached it, for the view or the Finder's picture, and nothing on closing unless it changed
+    something or keeps what came over the relay (`DocumentStore.save(closing:)`,
+    `Collaboration.persist(force:)`, `writesWhenClosed`). Before, it wrote the whole design for
+    every change made on the other Mac.
+  - A copy the service made all the same ("Poster 2", or "Poster (1)") is taken back into the design
+    and put in the Trash (`FolderSync.foldCopies`), from the open design's look every 20 s and from
+    the designs list: only one in the same room that holds someone's changes the design lacks, so a
+    copy made in the Finder (older, or with a room of its own once opened) is never taken.
+  - Everything written in a design goes through `DesignFile.coordinated(writing:)`
+    (`NSFileCoordinator`), so the service and Bezzle wait for each other. A design away for a
+    moment is never begun again where it was: in a synced folder it is looked for every 2 s and
+    written where it was only after 20 s away (`DocumentStore.lost`), and folders in a package are
+    made only while it is there (`DesignFile.makeFolder`).
+  - Tested in `CloudFolderTests` (two Macs in one process on a folder marked synced). A test copy
+    reading `~/Documents` (which iCloud keeps here) has macOS ask for permission on screen, so run
+    such checks only with Erik there.
 
 ### Animate
 

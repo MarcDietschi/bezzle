@@ -48,6 +48,10 @@ final class DocumentStore {
             let looking = looks.isEmpty ? nil : looks
             if doc.looks != looking { doc.looks = looking }
             version += 1
+            if !takingOthers {
+                changedHere = true
+                editedHere = true
+            }
             if !doc.hasSameLayers(as: oldValue) { layersVersion += 1 }
             versions.presentChanged()
             if animating { filmDesignChanged() }
@@ -65,6 +69,11 @@ final class DocumentStore {
     private(set) var lookingAside = false
     /// Counts the changes that added, took away or moved layers among the others.
     @ObservationIgnored private var layersVersion = 0
+    /// Whether the design was changed on this Mac since it was last written, rather than only by
+    /// what others did (`showChangesFromOthers`); and whether it was at all since it was opened.
+    @ObservationIgnored private(set) var changedHere = false
+    @ObservationIgnored private(set) var editedHere = false
+    @ObservationIgnored private var takingOthers = false
     /// Counts the document's changes, so what is worked out from it is worked out once per change.
     private(set) var version = 0
     @ObservationIgnored private var colorsWorkedOut: (version: Int, colors: [RGBA])?
@@ -660,7 +669,11 @@ final class DocumentStore {
         }
     }
 
-    func save() {
+    /// Writes the design. In a synced folder, only what was changed here: with nothing changed on
+    /// this Mac since it last wrote, nothing is, so that a Mac only looking on writes nothing while
+    /// another works; `closing`, it keeps once what came over the relay from people the folder does
+    /// not bring, so that none of it is lost.
+    func save(closing: Bool = false) {
         saveTask?.cancel()
         saveTask = nil
         viewTask?.cancel()
@@ -668,7 +681,13 @@ final class DocumentStore {
         #if DEBUG
         savesAsked += 1
         #endif
+        if inSyncedFolder, !changedHere {
+            if closing { sharing?.persist(force: true) }
+            return
+        }
+        changedHere = false
         follow()
+        if DesignFile.exists(url) { missingSince = nil }
         var copy = withShapeBack(doc)
         // Saved for where it was looked at alone, the design has nothing new for sharing to take
         // in, and taking in a large one again holds the canvas up just as moving about resumes.
@@ -678,11 +697,12 @@ final class DocumentStore {
                 sharing.takeIn(copy)
                 takenIn = now
             }
-            sharing.persist()
+            sharing.persist(force: true)
         }
         copy.viewport = viewport
-        // Nowhere to be found, it is written again where it was, so that nothing done is lost.
-        let url = url, creating = !DesignFile.exists(url)
+        // Nowhere to be found, it is written again where it was, so that nothing done is lost; in
+        // a synced folder only once it has stayed away a while (`lost`).
+        let url = url, creating = !inSyncedFolder && !DesignFile.exists(url)
         Self.saving.async { [copy] in
             do {
                 try DesignFile.write(copy, to: url, creating: creating)
@@ -831,14 +851,39 @@ final class DocumentStore {
         return same.count == 1 ? same[0] : nil
     }
 
+    /// How long a design in a synced folder may be away before it is written again where it was.
+    @ObservationIgnored var missingGrace: TimeInterval = 20
+    /// Since when the design has not been where it was, while that lasts.
+    @ObservationIgnored private var missingSince: Date?
+
     /// The design's file went while it was being saved. Found again, the design is saved where
     /// it now is; nowhere to be found, it is written again where it was, so that nothing done to
-    /// it is lost.
+    /// it is lost. In a synced folder not at once: the folder's service takes a design away for a
+    /// moment as it puts in place what another computer wrote, and one written again meanwhile is
+    /// a second design of the same name to it ("Poster 2"). So it is looked for again every two
+    /// seconds, and written where it was only once it has stayed away for `missingGrace`.
     private func lost(_ copy: BezzleDocument, from old: URL) {
+        // What was written did not get there: it is still to be written.
+        changedHere = true
         if url != old || follow() {
+            missingSince = nil
             save()
             return
         }
+        if inSyncedFolder {
+            let since = missingSince ?? Date()
+            missingSince = since
+            if Date().timeIntervalSince(since) < missingGrace {
+                DispatchQueue.main.asyncAfter(deadline: .now() + min(2, missingGrace / 4)) { [weak self] in
+                    guard let self, self.changedHere else { return }
+                    self.save()
+                }
+                return
+            }
+            NSLog("Bezzle wrote %@ again where it was, after it stayed away", old.path)
+        }
+        missingSince = nil
+        changedHere = false
         Self.saving.async {
             do {
                 try DesignFile.write(copy, to: old)
@@ -934,7 +979,9 @@ final class DocumentStore {
             start.doc = FlatDesign.apply(from: old, to: next, onto: start.doc)
             gestureStart = start
         }
+        takingOthers = true
         doc = next
+        takingOthers = false
         let gone = selection.filter { next.path(of: $0) == nil }
         if !gone.isEmpty { selection.removeAll { gone.contains($0) } }
         if let id = hovered, next.path(of: id) == nil { hovered = nil }
@@ -942,8 +989,21 @@ final class DocumentStore {
         if let id = editingPath, !canEditPoints(of: next.node(id)) { editingPath = nil }
         if !selectedPoints.isEmpty, let id = editingPath, old.node(id)?.path != next.node(id)?.path { selectedPoints = [] }
         canvas?.syncEditor()
-        scheduleSave()
+        // In a folder a sync service keeps in step, what others did is in their own files there,
+        // and the design is written by whoever changes it. Written here too, the one design was
+        // written by two computers at once at every change, which the service keeps as two:
+        // "Poster" and "Poster 2".
+        if !inSyncedFolder { scheduleSave() }
     }
+
+    /// Whether the design is in a folder iCloud Drive, Google Drive or the like keep in step with
+    /// other computers. A design is one item to such a service, whatever is written in it: this
+    /// Mac writes in it only what it did itself (`save(closing:)`).
+    var inSyncedFolder: Bool { sharing?.folder?.service != nil }
+
+    /// Whether this Mac writes the design's picture and versions when it is closed: always, but in
+    /// a synced folder only when the design was changed here.
+    var writesWhenClosed: Bool { !inSyncedFolder || editedHere }
 
     /// A design that was one file becomes a package, which pictures and sharing need.
     func becamePackage() {

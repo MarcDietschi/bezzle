@@ -172,7 +172,7 @@ extension DocumentStore {
             }
         }
         let images = url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
-        try? fm.createDirectory(at: images, withIntermediateDirectories: true)
+        try? DesignFile.makeFolder(images, in: url)
         for name in wanted where !fm.fileExists(atPath: images.appendingPathComponent(name).path) {
             do {
                 try fm.copyItem(at: source.appendingPathComponent(name), to: images.appendingPathComponent(name))

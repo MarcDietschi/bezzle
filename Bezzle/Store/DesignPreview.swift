@@ -128,10 +128,12 @@ nonisolated enum DesignPreview {
             }
             let date = (try? design.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             do {
-                if !fm.fileExists(atPath: folder.path) {
-                    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+                try DesignFile.coordinated(writing: design) { _ in
+                    if !fm.fileExists(atPath: folder.path) {
+                        try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+                    }
+                    try data.write(to: file, options: .atomic)
                 }
-                try data.write(to: file, options: .atomic)
                 if let when = keepingDate ? date : Date() {
                     var values = URLResourceValues()
                     values.contentModificationDate = when

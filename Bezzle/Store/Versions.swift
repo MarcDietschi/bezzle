@@ -26,8 +26,10 @@ nonisolated enum VersionFiles {
     static func writeIndex(_ list: [DesignVersion], to design: URL, replica: String) throws {
         let data = try VersionKeeping.data(of: list)
         let file = FolderShare.versionIndex(of: design, replica: replica)
-        try DesignFile.makeFolder(file.deletingLastPathComponent(), in: design)
-        try data.write(to: file, options: .atomic)
+        try DesignFile.coordinated(writing: design) { _ in
+            try DesignFile.makeFolder(file.deletingLastPathComponent(), in: design)
+            try data.write(to: file, options: .atomic)
+        }
     }
 
     /// The design packed as a version keeps it (`VersionKeeping.pack`).
@@ -40,8 +42,10 @@ nonisolated enum VersionFiles {
     }
 
     static func write(_ data: Data, as id: UUID, to design: URL) throws {
-        try DesignFile.makeFolder(folder(of: design), in: design)
-        try data.write(to: file(id, of: design), options: .atomic)
+        try DesignFile.coordinated(writing: design) { _ in
+            try DesignFile.makeFolder(folder(of: design), in: design)
+            try data.write(to: file(id, of: design), options: .atomic)
+        }
     }
 
     static func remove(_ ids: [UUID], from design: URL) {

@@ -233,6 +233,31 @@ final class Library {
             let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
             return Entry(url: url, modified: date, sharing: Self.mark(of: url), key: keys[url.path] ?? url.path)
         }.sorted { $0.modified > $1.modified }
+        foldCopies(of: entries.map(\.url))
+    }
+
+    @ObservationIgnored private var folding = false
+
+    /// In a folder iCloud Drive, Google Drive or the like keep in step, a copy of a design the
+    /// service made as the design was written on two computers at once ("Poster 2") is taken into
+    /// the design and put in the Trash (`FolderSync.foldCopies`), away from the main thread; the
+    /// list is read again if any was.
+    private func foldCopies(of urls: [URL]) {
+        guard !folding, !BezzleApp.isTesting else { return }
+        let synced = urls.filter { SyncedFolders.service(of: $0) != nil && FolderSync.isShared($0) }
+        guard !synced.isEmpty else { return }
+        folding = true
+        let open = FolderSync.openHere()
+        DispatchQueue.global(qos: .utility).async {
+            var any = false
+            for url in synced {
+                if FolderSync.foldCopies(beside: url, open: open) { any = true }
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.folding = false
+                if any { self?.refresh() }
+            }
+        }
     }
 
     /// A design was saved or opened: it moves to the front.
