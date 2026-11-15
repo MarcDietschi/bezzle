@@ -155,6 +155,29 @@ struct LateCardsTests {
         #expect(doc.node(a)?.children.first?.name == "Deep")
     }
 
+    // MARK: The tabs
+
+    /// A tab dragged from a place the row no longer has (tabs closed from the keyboard, the menu
+    /// or the AI server while the drag goes on): where it may go and what it has passed are
+    /// worked out among the tabs there are. Asked of the tabs themselves, as the drag asked them
+    /// before, this broke off at the first tab that was gone.
+    @Test func aTabDraggedFromAPlaceTheRowNoLongerHasBreaksNothing() {
+        let three = TabRun(widths: [100, 80, 120], spacing: 4)
+        #expect(three.start(at: 2) == 188 && three.width(at: 1) == 80)
+        let passed = three.passed(from: 0, by: 100)
+        #expect(passed.right == 1 && passed.left == 0)
+        #expect(three.held(-500, at: 2) == -188 && three.held(500, at: 0) == 208)
+        // Two closed, the drag having begun at the third.
+        let one = TabRun(widths: [100], spacing: 4)
+        let late = one.passed(from: 2, by: -150)
+        #expect(late.right == 0 && late.left <= 2)
+        #expect(one.passed(from: 2, by: 150).right == 0)
+        #expect(one.held(30, at: 2) <= 0)
+        // Every one closed.
+        #expect(TabRun(widths: [], spacing: 4).held(30, at: 0) == 0)
+        #expect(TabRun(widths: [], spacing: 4).passed(from: 0, by: -20).left == 0)
+    }
+
     /// Animate's cards, those of the layers as they look at the playhead, once the camera is picked.
     @Test func animatesCardsAreNoCardsOnceTheCameraIsPicked() {
         let f = FilmBench([bench.node("R")!, bench.node("S")!])

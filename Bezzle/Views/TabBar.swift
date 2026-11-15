@@ -183,46 +183,29 @@ private struct TabStrip: View {
 
     // MARK: Moving a tab
 
-    private func width(at index: Int) -> CGFloat { widths[tabs.designs[index].id] ?? 0 }
-
-    /// Where a tab starts along the row, as laid out.
-    private func start(at index: Int) -> CGFloat {
-        (0..<index).reduce(0) { $0 + width(at: $1) + Self.spacing }
-    }
-
-    /// The tabs whose middle the dragged one's leading edge has passed, which step aside for it:
-    /// its right edge going right, its left edge going left. Tabs differ in width, and its own
-    /// middle may never reach a narrow tab's at the end of the row.
-    private func passed(by drag: Drag) -> (right: Int, left: Int) {
-        let left = start(at: drag.from) + drag.offset
-        let right = left + width(at: drag.from)
-        let count = tabs.designs.count
-        let passedRight = drag.offset > 0 ? (drag.from + 1..<max(drag.from + 1, count)).filter { right > start(at: $0) + width(at: $0) / 2 }.count : 0
-        let passedLeft = drag.offset < 0 ? (0..<drag.from).filter { left < start(at: $0) + width(at: $0) / 2 }.count : 0
-        return (passedRight, passedLeft)
-    }
+    /// The tabs as they are laid out now.
+    private var run: TabRun { TabRun(widths: tabs.designs.map { widths[$0.id] ?? 0 }, spacing: Self.spacing) }
 
     private func offset(of tab: DesignTab, at index: Int) -> CGFloat {
         guard let drag, drag.from < tabs.designs.count else { return 0 }
         if drag.id == tab.id { return drag.offset }
-        let (right, left) = passed(by: drag)
-        let step = width(at: drag.from) + Self.spacing
+        let run = run
+        let (right, left) = run.passed(from: drag.from, by: drag.offset)
+        let step = run.width(at: drag.from) + Self.spacing
         if index > drag.from, index <= drag.from + right { return -step }
         if index < drag.from, index >= drag.from - left { return step }
         return 0
     }
 
     private func dragged(_ tab: DesignTab, at index: Int, by x: CGFloat) {
-        // As far as the first tab's left edge and the last one's right, no further.
-        let last = tabs.designs.count - 1
-        let x = min(max(x, -start(at: index)), start(at: last) + width(at: last) - start(at: index) - width(at: index))
+        let x = run.held(x, at: index)
         if drag?.id == tab.id { drag?.offset = x } else { drag = Drag(id: tab.id, from: index, offset: x) }
     }
 
     /// The dragged tab settles into the place it was let go at.
     private func dropped() {
         guard let drag, let tab = tabs.designs.first(where: { $0.id == drag.id }) else { return }
-        let (right, left) = passed(by: drag)
+        let (right, left) = run.passed(from: drag.from, by: drag.offset)
         withAnimation(Theme.spring) {
             tabs.move(tab, to: drag.from + right - left)
             self.drag = nil
@@ -302,6 +285,40 @@ private struct TabRow: Layout {
             }
         }
         return .infinity
+    }
+}
+
+/// The tabs along the row as one is dragged among them: how wide each is, in order, as laid out.
+/// A drag asks about the place its tab had when it began, and tabs may have come or gone since
+/// (one closed from the keyboard, the menu or the AI server while the drag goes on), so any place
+/// may be asked about: one where there is no tab has no width, and starts past the last.
+struct TabRun {
+    let widths: [CGFloat]
+    var spacing: CGFloat = 4
+
+    func width(at index: Int) -> CGFloat { widths.indices.contains(index) ? widths[index] : 0 }
+
+    /// Where a tab starts along the row.
+    func start(at index: Int) -> CGFloat {
+        widths.prefix(max(index, 0)).reduce(0) { $0 + $1 + spacing }
+    }
+
+    /// The tabs whose middle the dragged one's leading edge has passed, which step aside for it:
+    /// its right edge going right, its left edge going left. Tabs differ in width, and its own
+    /// middle may never reach a narrow tab's at the end of the row.
+    func passed(from: Int, by offset: CGFloat) -> (right: Int, left: Int) {
+        let left = start(at: from) + offset
+        let right = left + width(at: from)
+        let passedRight = offset > 0 ? (from + 1..<max(from + 1, widths.count)).filter { right > start(at: $0) + width(at: $0) / 2 }.count : 0
+        let passedLeft = offset < 0 ? (0..<max(from, 0)).filter { left < start(at: $0) + width(at: $0) / 2 }.count : 0
+        return (passedRight, passedLeft)
+    }
+
+    /// How far the tab at `index` goes, dragged `x` along: as far as the first tab's left edge
+    /// and the last one's right, no further.
+    func held(_ x: CGFloat, at index: Int) -> CGFloat {
+        let last = widths.count - 1
+        return min(max(x, -start(at: index)), start(at: last) + width(at: last) - start(at: index) - width(at: index))
     }
 }
 
