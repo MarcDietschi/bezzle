@@ -249,6 +249,59 @@ struct DepthKeepTests {
         #expect(pixel(drawn, Int(middle.x), Int(middle.y)).blueComponent > 0.95, "\(middle)")
     }
 
+    // MARK: Exported
+
+    /// The artboard as SVG, and where in it each of these names first stands.
+    private func svg(_ doc: BezzleDocument) throws -> (text: String, at: (String) -> Int?) {
+        let item = ExportItem(artboard: doc.nodes[0])
+        let text = SVGWriter.document(for: item, bounds: item.bounds(assets: nil), assets: nil)
+        let parser = XMLParser(data: Data(text.utf8))
+        #expect(parser.parse(), "\(parser.parserError.map { "\($0)" } ?? "")")
+        return (text, { name in text.range(of: "id=\"\(name)\"").map { text.distance(from: text.startIndex, to: $0.lowerBound) } })
+    }
+
+    /// The picture an SVG carries for a layer, by its id.
+    private func picture(_ svg: String, _ name: String) throws -> CGImage {
+        let start = try #require(svg.range(of: "<image id=\"\(name)\""))
+        let href = try #require(svg[start.upperBound...].range(of: "data:image/png;base64,"))
+        let end = try #require(svg[href.upperBound...].firstIndex(of: "\""))
+        let data = try #require(Data(base64Encoded: String(svg[href.upperBound..<end])))
+        return try #require(NSBitmapImageRep(data: data)?.cgImage)
+    }
+
+    @Test func anSVGOrdersTheLayersOfAGroupThatKeepsDepthAmongWhatLiesBesideIt() throws {
+        // Lying in the page: the low layer under the card beside the group, the high one over it,
+        // the group split where the card comes between, each part under the group's name.
+        let (text, at) = try svg(crossing(keeps: true))
+        let low = try #require(at("Low")), beside = try #require(at("Beside")), high = try #require(at("High"))
+        let first = try #require(at("Group")), second = try #require(at("Group_2"))
+        #expect(low < beside && beside < high, "\(text)")
+        #expect(first < low && beside < second && second < high)
+        // As one card, the group goes out whole under the card beside it, as it always did.
+        let (_, cardAt) = try svg(crossing(keeps: false))
+        let order = ["Group", "Low", "High", "Beside"].map { cardAt($0) }
+        #expect(order.allSatisfy { $0 != nil } && order.map { $0! } == order.map { $0! }.sorted() && cardAt("Group_2") == nil)
+        // Turned, its layers go out as pictures of them as they show, split the same way.
+        let swung = design([card("Beside", CGRect(x: 150, y: 100, width: 100, height: 100), z: 40, color: red),
+                            group("Group", CGRect(x: 100, y: 50, width: 200, height: 200), [
+                                card("Low", CGRect(x: 60, y: 60, width: 80, height: 80)),
+                                card("High", CGRect(x: 70, y: 70, width: 40, height: 40), z: 80, color: blue),
+                            ], turn: (0, 20))])
+        #expect(DepthOrder.scene(swung.nodes[0].children, eye: Eye.stage(size)).map(\.node.name) == ["Low", "Beside", "High"])
+        let (turnedText, turnedAt) = try svg(swung)
+        let turnedOrder = ["Low", "Beside", "High"].map { turnedAt($0) }
+        #expect(turnedOrder.allSatisfy { $0 != nil } && turnedOrder.map { $0! } == turnedOrder.map { $0! }.sorted(), "\(turnedText)")
+        #expect(turnedText.components(separatedBy: "<image").count == 4 && !turnedText.contains("<image id=\"Group\""))
+        let highPicture = try picture(turnedText, "High"), lowPicture = try picture(turnedText, "Low")
+        let blueMiddle = pixel(highPicture, highPicture.width / 2, highPicture.height / 2)
+        let whiteMiddle = pixel(lowPicture, lowPicture.width / 2, lowPicture.height / 2)
+        #expect(blueMiddle.blueComponent > 0.95 && blueMiddle.redComponent < 0.05, "\(blueMiddle)")
+        #expect(whiteMiddle.blueComponent > 0.95 && whiteMiddle.redComponent > 0.95, "\(whiteMiddle)")
+        // A group nothing beside comes between goes out whole, one picture, as it always did.
+        let (aloneText, _) = try svg(turned())
+        #expect(aloneText.components(separatedBy: "<image").count == 2 && aloneText.contains("<image id=\"Group\""))
+    }
+
     // MARK: The prototype
 
     @Test func aTapInThePlayerReachesWhatIsDrawnNearestAcrossTheGroupsBorder() throws {

@@ -291,13 +291,17 @@ window, only in tests and in pictures the renderer made. What that left:
   only nearly so between them (its angles ease one by one). A body's lead can change between
   turns when a group's fitted frame outgrows it, and angles are kept to hundredths of a degree,
   so a body facing several ways drifts by thousandths of a point over many turns.
-- **Groups that keep depth, different or not built:** SVG export writes a turned or lifted one as
-  one picture, true inside itself but not ordered among the layers beside it (PNG, JPEG, PDF,
-  tiles, thumbnails and films are true). One with keys of its own is one card in its film, while
-  a click in Animate (`filmChain`, through `Prototype.chain`) orders its layers among what lies
-  beside it as the design does. Seen exactly edge on, hits and bounds take layers standing off
-  it as lying in it. A background blur lying directly in a group makes it one card, which CSS
-  does not do.
+- **Groups that keep depth, different or not built:** in SVG, one split by layers beside it goes
+  out as several parts under its name (`Group`, `Group_2`), its turned layers as pictures, so an
+  editor sees no one group there; one whose layers stand in an order its own does not give them
+  (a layer beside it joining two of them into one body) goes out whole in its own order where
+  nothing comes between, which can differ from the canvas. Windows' and the browser's SVG
+  (`SVGWriter` and `Depth.swift` are shared) were not built with it, and no SVG with such
+  pictures was opened in another program. One with keys of its own is one card in its film,
+  while a click in Animate (`filmChain`, through `Prototype.chain`) orders its layers among what
+  lies beside it as the design does. Seen exactly edge on, hits and bounds take layers standing
+  off it as lying in it. A background blur lying directly in a group makes it one card, which
+  CSS does not do.
 - **Groups that keep depth, unchecked:** the switch, the outline and the handles in a window, and
   Layers Keep Their Depth in a group's right-click menu (tested on the menu's entries only); the
   tiles' redraw around such groups on a live canvas (it rests on `Renderer.reach` and its test);

@@ -115,4 +115,28 @@ nonisolated extension Renderer {
               let image = offscreen(region, scale: scale, { drawNode(alone, in: $0, options: options) }) else { return nil }
         return (image, region)
     }
+
+    /// Layers of groups that keep their depth, standing in a scene next to one another in the
+    /// order it is drawn in (`DepthOrder.scene`), drawn as `drawScene` draws them, as one picture:
+    /// for a file that cannot turn things in depth itself. In the coordinates of the layers the
+    /// scene was asked about. One alone is mixed with what lies under it by the file.
+    static func scenePicture(of pieces: [DepthOrder.Standing], scale: CGFloat, options: Options) -> (image: CGImage, region: CGRect)? {
+        var region = CGRect.null
+        for piece in pieces { region = region.union(reach(of: piece.node, eye: piece.eye).offsetBy(dx: piece.origin.x, dy: piece.origin.y)) }
+        region = region.integral
+        guard !region.isNull, region.width > 0, region.height > 0, let image = offscreen(region, scale: scale, { ctx in
+            for piece in pieces {
+                var node = piece.node
+                if pieces.count == 1 { node.blend = nil }
+                var inner = options
+                inner.offset = CGPoint(x: options.offset.x + piece.origin.x, y: options.offset.y + piece.origin.y)
+                inner.space = piece.eye?.space
+                ctx.saveGState()
+                ctx.translateBy(x: piece.origin.x, y: piece.origin.y)
+                drawNode(node, in: ctx, options: inner)
+                ctx.restoreGState()
+            }
+        }) else { return nil }
+        return (image, region)
+    }
 }

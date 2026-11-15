@@ -506,7 +506,11 @@ What draws asks `Perspective.onCanvas`, which is where the layer shows itself. T
 place, which the renderer (`Renderer.drawScene`), the picker (`Picking.topmost`), `Geometry.bounds`
 and `contains`, `Renderer.reach`, and the hit test of the prototype player, Inspect and the flow
 tool (`Prototype.chain`, which gives the layer, then the groups it was taken out of) all go
-through; a click on such a layer takes its group, and inside the group the layer. In a film, such a group with no keys of its own comes apart into
+through; a click on such a layer takes its group, and inside the group the layer. SVG, which
+cannot turn anything in depth, writes the same order (`SVGWriter.scene`): such a group goes out
+whole where nothing beside it comes between its layers, as one picture when it is turned or held
+up, and is split where something does, each part under the group's name, what it turns or holds
+up as pictures (`Renderer.scenePicture`) and what lies in the page as it is. In a film, such a group with no keys of its own comes apart into
 pieces that stand where it puts them (`FilmPiece.stand`), so the camera at rest shows what the
 design does and sees between the layers when it moves; with keys of its own it is one card. The
 layers lying in the group next to one another are one piece, and where the group is turned the

@@ -4,7 +4,8 @@ import AppKit
 /// stays sharp and can be changed elsewhere: rectangles, ellipses and paths, text that is still
 /// text, gradients, borders inside and outside, shadows and blurs as filters, pictures carried
 /// in the file. A blur of what lies behind a layer, which SVG cannot do, comes as a picture of
-/// what shows through, and a layer turned in depth as a picture of it. Layers keep their names as ids.
+/// what shows through, and a layer turned in depth as a picture of it, in the order the canvas
+/// draws (`DepthOrder.scene`). Layers keep their names as ids.
 /// Shared with Windows: how text is set and pictures are encoded is each one's own (the Mac's in
 /// SVGText.swift, the others' in Web/Sources/BezzleCore/Web/WebSVGText.swift).
 nonisolated struct SVGWriter {
@@ -56,7 +57,7 @@ nonisolated struct SVGWriter {
         var options = Renderer.Options(deviceScale: pictureScale, assets: assets)
         options.board = board
         options.visible = part
-        let inside = DepthOrder.stacked(board.children).filter { Renderer.inSight($0, options) }.map { layer($0, options) }.joined(separator: "\n")
+        let inside = scene(board.children, options, inSight: true)
         if board.clips {
             let clip = newID("clip")
             defs.append("<clipPath id=\"\(clip)\"><rect width=\"\(n(size.width))\" height=\"\(n(size.height))\"/></clipPath>")
@@ -103,6 +104,75 @@ nonisolated struct SVGWriter {
         return "<image id=\"\(id(for: node.name))\" x=\"\(n(region.minX))\" y=\"\(n(region.minY))\" width=\"\(n(CGFloat(image.width) / pictureScale))\" height=\"\(n(CGFloat(image.height) / pictureScale))\" preserveAspectRatio=\"none\"\(blend) xlink:href=\"\(href)\"/>"
     }
 
+    // MARK: Nearer over further
+
+    /// Layers lying together, nearer over further, as the renderer draws them (`Renderer.drawScene`):
+    /// the layers of a group that keeps their depth stand among those beside the group. Such a
+    /// group goes out whole where nothing beside it comes between its layers, as it always did, as
+    /// one picture when it is turned or held up. Where something does, it is split there
+    /// (`split`). `inSight` leaves out what does not reach the part of the artboard that goes out.
+    private mutating func scene<C: Collection>(_ nodes: C, _ options: Renderer.Options, inSight: Bool = false) -> String where C.Element == Node {
+        let listed = Array(nodes)
+        let pieces = DepthOrder.scene(listed, eye: options.eye)
+        var counts: [Int: Int] = [:]
+        for piece in pieces { counts[piece.top, default: 0] += 1 }
+        var out: [String] = []
+        var i = 0
+        while i < pieces.count {
+            let top = pieces[i].top
+            var j = i
+            while j < pieces.count, pieces[j].top == top { j += 1 }
+            let run = Array(pieces[i..<j])
+            i = j
+            let node = listed[top]
+            if inSight, !Renderer.inSight(node, options) { continue }
+            if run[0].groups.isEmpty || run.count == counts[top] {
+                out.append(layer(node, options))
+            } else {
+                out.append(split(run, of: node, options))
+            }
+        }
+        return out.joined(separator: inSight ? "\n" : "")
+    }
+
+    /// The part of a group that keeps depth lying between two things beside it, under the group's
+    /// name (`Group`, `Group_2`): its layers lying in the page where the group puts them, as they
+    /// are; those the group turns or holds up, which SVG cannot, as pictures of them standing in
+    /// the scene, one for each run of them next to one another, and one of its own for a layer
+    /// mixed with what lies under it by a blend, which the file mixes.
+    private mutating func split(_ run: [DepthOrder.Standing], of group: Node, _ options: Renderer.Options) -> String {
+        var parts: [[DepthOrder.Standing]] = []
+        for piece in run {
+            let alone = piece.eye?.space == nil || piece.node.blend != nil
+            if !alone, let tail = parts.last?.last, tail.eye?.space != nil, tail.node.blend == nil {
+                parts[parts.count - 1].append(piece)
+            } else {
+                parts.append([piece])
+            }
+        }
+        var inner = ""
+        for part in parts {
+            if part[0].eye?.space != nil {
+                inner += scenePicture(part, options)
+                continue
+            }
+            let piece = part[0]
+            var o = options
+            o.offset = CGPoint(x: options.offset.x + piece.origin.x, y: options.offset.y + piece.origin.y)
+            inner += "<g transform=\"translate(\(n(piece.origin.x)) \(n(piece.origin.y)))\">\(layer(piece.node, o))</g>"
+        }
+        return "<g id=\"\(id(for: group.name))\">\(inner)</g>"
+    }
+
+    /// Layers standing in depth in a group that keeps it, as one picture of them as they show.
+    private mutating func scenePicture(_ pieces: [DepthOrder.Standing], _ options: Renderer.Options) -> String {
+        guard let (image, region) = Renderer.scenePicture(of: pieces, scale: pictureScale, options: options), let href = Self.dataURI(image) else { return "" }
+        let one = pieces.count == 1 ? pieces[0].node : nil
+        let name = one.map { " id=\"\(id(for: $0.name))\"" } ?? ""
+        let blend = one?.blend.map { " style=\"mix-blend-mode:\(Self.css($0))\"" } ?? ""
+        return "<image\(name) x=\"\(n(region.minX))\" y=\"\(n(region.minY))\" width=\"\(n(CGFloat(image.width) / pictureScale))\" height=\"\(n(CGFloat(image.height) / pictureScale))\" preserveAspectRatio=\"none\"\(blend) xlink:href=\"\(href)\"/>"
+    }
+
     /// A shape holding layers (see `Mask`), as the canvas draws it: its fill and shadow, then
     /// what it holds cut off at its outline, then its border and any shadow pressed into it.
     private mutating func held(by holder: Node, _ held: ArraySlice<Node>, _ options: Renderer.Options) -> String {
@@ -113,7 +183,7 @@ nonisolated struct SVGWriter {
         let clip = newID("clip")
         let rule = holder.evenOdd == true ? " clip-rule=\"evenodd\"" : ""
         defs.append("<clipPath id=\"\(clip)\"><path d=\"\(PathData.string(Renderer.heldOutline(of: holder)))\"\(rule)/></clipPath>")
-        out += "<g clip-path=\"url(#\(clip))\">\(DepthOrder.stacked(held).map { layer($0, options) }.joined())</g>"
+        out += "<g clip-path=\"url(#\(clip))\">\(scene(held, options))</g>"
         guard !holder.borders.isEmpty || !holder.innerShadows.isEmpty else { return out }
         var over = holder
         over.fills = []
@@ -130,7 +200,7 @@ nonisolated struct SVGWriter {
             var inner = options
             inner.offset = CGPoint(x: options.offset.x + node.frame.minX, y: options.offset.y + node.frame.minY)
             if let holder = node.holder, node.children.count > 1 { return held(by: holder, node.children.dropFirst(), inner) }
-            var out = DepthOrder.stacked(node.children).map { layer($0, inner) }.joined()
+            var out = scene(node.children, inner)
             if let mask = node.mask?.first {
                 let clip = newID("clip")
                 defs.append("<clipPath id=\"\(clip)\"><path d=\"\(PathData.string(Renderer.placedOutline(of: mask)))\"/></clipPath>")
