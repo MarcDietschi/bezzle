@@ -887,7 +887,7 @@ nonisolated extension MotionTrack {
 nonisolated extension Node {
     /// What its outline is made of, besides where it lies: while none of this changes, its Shape
     /// keys fit it as they did.
-    private func outlineSame(as other: Node) -> Bool {
+    fileprivate func outlineSame(as other: Node) -> Bool {
         kind == other.kind && frame.size == other.frame.size && path == other.path && pathBox == other.pathBox
             && cornerRadius == other.cornerRadius && corners == other.corners && cornerSmoothing == other.cornerSmoothing && rising == other.rising
     }
@@ -909,6 +909,13 @@ nonisolated extension Node {
     /// go as the place it lies at went; a path given other points without their being edited one
     /// by one, as shapes combined are, likewise, where both lie in what holds them.
     func shapeKeys(following before: Node) -> MotionTrack? {
+        guard let next = shapeKeys(of: before) else { return nil }
+        return next == self[track: .shape] ? nil : next
+    }
+
+    /// `before`'s Shape keys followed to the outline this layer has, as `shapeKeys(following:)`
+    /// follows them, whatever keys this one has itself. Nil where the outline is the same.
+    fileprivate func shapeKeys(of before: Node) -> MotionTrack? {
         guard let track = before[track: .shape], canReshape, before.canReshape, !outlineSame(as: before),
               let was = before.ownOutline, let now = ownOutline, was != now else { return nil }
         let old = before.frame.size
@@ -924,7 +931,7 @@ nonisolated extension Node {
         } else {
             next = track.following(was, to: now, placed: before.placement.concatenating(placement.inverted()))
         }
-        return next == self[track: .shape] ? nil : next
+        return next
     }
 
     /// Whether it, or anything it holds, has Shape keys.
@@ -992,6 +999,116 @@ nonisolated extension BezzleDocument {
         }
         for (at, track) in found { set(&list, at[...], track) }
         components = list
+    }
+
+    /// Keeps the Shape keys this copy of a shared design had with the outline they were made for,
+    /// once what others changed is put together with it (`SharedDesign.merge`): `before` is the
+    /// design as this Mac had it, whose every key fits the outline its layer had here. Where the
+    /// design as it is now gives a layer another outline, each of its keys the others left as
+    /// they were here goes with it, as it would have gone had the change been made here
+    /// (`Node.shapeKeys(following:)`); keys the others set or changed are as they made them, for
+    /// theirs, made where the change was, fit it already. Only a Mac that had a key when the change
+    /// came can tell it was made for the outline before, so this is where it is put right, and
+    /// the key put right goes to the others like any other change. So a key one person adds for
+    /// the old size while another resizes the layer grows with it once the two have met, on both
+    /// Macs, with nothing more kept in the design. A key the others left as it was that the
+    /// change had followed already, as a key of no change, is the same followed again.
+    mutating func followOutlines(merging before: BezzleDocument) {
+        func followed(_ n: Node, _ then: Node) -> MotionTrack? {
+            guard let track = n[track: .shape], n.canReshape, let theirs = then[track: .shape] else { return nil }
+            let kept = track.keys.filter { theirs.keys.contains($0) }
+            guard !kept.isEmpty else { return nil }
+            var mine = then
+            mine[track: .shape] = MotionTrack(kept)
+            guard let moved = n.shapeKeys(following: mine), moved.keys.count == kept.count else { return nil }
+            var keys = track.keys
+            for (key, now) in zip(kept, moved.keys) {
+                if let at = keys.firstIndex(of: key) { keys[at] = now }
+            }
+            let next = MotionTrack(keys)
+            return next == track ? nil : next
+        }
+        var found: [(at: [Int], track: MotionTrack)] = []
+        func look(_ now: [Node], _ was: [Node]?, _ at: [Int], _ old: (UUID) -> Node?) {
+            for (i, n) in now.enumerated() {
+                let same = was.flatMap { i < $0.count && $0[i].id == n.id ? $0[i] : nil }
+                if let same, same == n { continue }
+                if n.motion?[MotionProperty.shape.rawValue] != nil, let then = same ?? old(n.id), let track = followed(n, then) {
+                    found.append((at + [i], track))
+                }
+                if !n.children.isEmpty { look(n.children, same?.children, at + [i], old) }
+            }
+        }
+        look(nodes, before.nodes, []) { before.node($0) }
+        for (at, track) in found { update(self[NodePath(indices: at)].id) { $0[track: .shape] = track } }
+        // The components' own layers, which lie apart from the canvas.
+        guard var list = components, list != before.components else { return }
+        found = []
+        var kept: [UUID: Node] = [:]
+        func note(_ nodes: [Node]) { for n in nodes { kept[n.id] = n; note(n.children) } }
+        note(before.components ?? [])
+        look(list, before.components, []) { kept[$0] }
+        guard !found.isEmpty else { return }
+        func set(_ nodes: inout [Node], _ at: ArraySlice<Int>, _ track: MotionTrack) {
+            guard let i = at.first else { return }
+            if at.count == 1 { nodes[i][track: .shape] = track } else { set(&nodes[i].children, at.dropFirst(), track) }
+        }
+        for (at, track) in found { set(&list, at[...], track) }
+        components = list
+    }
+
+    /// A step of the history, from `before` to `after`, with the Shape keys of each layer whose
+    /// outline it left alone as they would be on the design as it is now, `now`: where others gave
+    /// such a layer another outline since, the keys of both go with it, as
+    /// `followOutlines(merging:)` took the keys found here along. So taking the step back takes
+    /// away a key it set, though that key has grown with what the others did since, and leaves
+    /// the keys it did not set as they are now. A layer whose outline the step changed itself is
+    /// left as it is.
+    static func step(from before: BezzleDocument, to after: BezzleDocument, onto now: BezzleDocument) -> (before: BezzleDocument, after: BezzleDocument) {
+        var b = before, a = after
+        func layers(_ nodes: [Node], into out: inout [UUID: Node]) {
+            for n in nodes {
+                out[n.id] = n
+                layers(n.children, into: &out)
+            }
+        }
+        var mastersA: [UUID: Node] = [:], mastersB: [UUID: Node] = [:]
+        layers(a.masters, into: &mastersA)
+        layers(b.masters, into: &mastersB)
+        var onCanvas: [UUID: (MotionTrack?, MotionTrack?)] = [:], inMasters: [UUID: (MotionTrack?, MotionTrack?)] = [:]
+        func walk(_ nodes: [Node], masters: Bool) {
+            for n in nodes {
+                if n.motion?[MotionProperty.shape.rawValue] != nil,
+                   let wasA = masters ? mastersA[n.id] : a.node(n.id), let wasB = masters ? mastersB[n.id] : b.node(n.id),
+                   wasA.outlineSame(as: wasB), !n.outlineSame(as: wasA) {
+                    let keys = (n.shapeKeys(of: wasA), n.shapeKeys(of: wasB))
+                    if keys.0 != nil || keys.1 != nil {
+                        if masters { inMasters[n.id] = keys } else { onCanvas[n.id] = keys }
+                    }
+                }
+                walk(n.children, masters: masters)
+            }
+        }
+        walk(now.nodes, masters: false)
+        walk(now.masters, masters: true)
+        guard !onCanvas.isEmpty || !inMasters.isEmpty else { return (before, after) }
+        for (id, keys) in onCanvas {
+            if let k = keys.0 { a.update(id) { $0[track: .shape] = k } }
+            if let k = keys.1 { b.update(id) { $0[track: .shape] = k } }
+        }
+        func put(_ nodes: [Node], _ pick: ((MotionTrack?, MotionTrack?)) -> MotionTrack?) -> [Node] {
+            nodes.map { n in
+                var m = n
+                if let keys = inMasters[n.id], let k = pick(keys) { m[track: .shape] = k }
+                m.children = put(n.children, pick)
+                return m
+            }
+        }
+        if !inMasters.isEmpty {
+            a.masters = put(a.masters) { $0.0 }
+            b.masters = put(b.masters) { $0.1 }
+        }
+        return (b, a)
     }
 }
 

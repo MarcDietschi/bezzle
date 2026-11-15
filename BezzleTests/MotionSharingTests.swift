@@ -38,6 +38,19 @@ private struct Mac {
         doc = base.document()
         commit()
     }
+
+    /// The same, shown as the app shows it (`DocumentStore.showChangesFromOthers`): Shape keys
+    /// this Mac had for an outline the others changed go with it.
+    mutating func show(_ other: SharedDesign) {
+        commit()
+        let old = doc
+        state.merge(other)
+        base = state.flatDesign()
+        var next = base.document()
+        next.followOutlines(merging: old)
+        doc = next
+        commit()
+    }
 }
 
 /// Everyone takes in everyone's copy until nothing changes any more.
@@ -592,6 +605,109 @@ struct MotionSharingTests {
         var near = less
         set(&near, "One") { $0.setKey(.move, [200, 0], at: 2.003) }
         #expect(times(FlatDesign.apply(from: less, to: before, onto: near), "One", .move) == [0, 2.003])
+    }
+
+    // MARK: Shape keys and an outline changed meanwhile
+
+    /// The board with a triangle whose tip goes 30 down at one second.
+    private func keyedTriangle() -> BezzleDocument {
+        var doc = design()
+        var tri = Node.path(BezierPath("M 0 0 L 100 0 L 50 80 Z"), name: "Tri")
+        tri.frame.origin = CGPoint(x: 500, y: 200)
+        var outline = tri.ownOutline!
+        outline.subpaths[0].anchors[2].point.y += 30
+        tri.poseShape(outline, at: 1)
+        doc.nodes[0].children.append(tri)
+        return doc
+    }
+
+    /// How far the triangle's tip has gone from the design's at a moment.
+    private func tip(_ doc: BezzleDocument, at t: Double) -> CGPoint? {
+        guard let n = node(doc, "Tri"), let design = n.ownOutline, let now = n.outline(at: t) else { return nil }
+        return CGPoint(x: now.anchorPoints[2].x - design.anchorPoints[2].x, y: now.anchorPoints[2].y - design.anchorPoints[2].y)
+    }
+
+    private func near(_ p: CGPoint?, _ x: CGFloat, _ y: CGFloat) -> Bool {
+        guard let p else { return false }
+        return abs(p.x - x) < 1e-6 && abs(p.y - y) < 1e-6
+    }
+
+    /// The triangle made twice as high on a Mac, its keys going with it as an edit in the app has them.
+    private func resized(_ mac: inout Mac) {
+        mac.edit { doc in
+            let was = doc
+            set(&doc, "Tri") { $0.frame.size.height = 160 }
+            doc.followOutlines(since: was)
+        }
+    }
+
+    /// The triangle's tip keyed to go `by` from the design's at a moment, on a Mac, for the triangle as it has it.
+    private func keyed(_ mac: inout Mac, _ by: CGPoint, at t: Double) {
+        mac.edit { doc in
+            set(&doc, "Tri") { n in
+                var o = n.ownOutline!
+                o.subpaths[0].anchors[2].point = o.subpaths[0].anchors[2].point + by
+                n.poseShape(o, at: t)
+            }
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func aShapeKeyOneSetsForTheOldSizeGrowsWithTheResizeTheOtherMadeMeanwhile(resizerFirst: Bool) {
+        var (a, b) = pair(keyedTriangle())
+        resized(&a)
+        keyed(&b, CGPoint(x: 0, y: 20), at: 2)
+        // They meet, each showing what came as the app shows it, in either order.
+        var macs = resizerFirst ? [a, b] : [b, a]
+        for _ in 0..<3 {
+            macs[1].show(macs[0].state)
+            macs[0].show(macs[1].state)
+        }
+        #expect(macs[0].doc.nodes == macs[1].doc.nodes)
+        let doc = macs[0].doc
+        #expect(node(doc, "Tri")?.frame.height == 160)
+        // Both keys are for the triangle as tall as it is now: the tip goes twice as far down.
+        #expect(near(tip(doc, at: 1), 0, 60), "\(String(describing: tip(doc, at: 1)))")
+        #expect(near(tip(doc, at: 2), 0, 40), "\(String(describing: tip(doc, at: 2)))")
+        #expect(times(doc, "Tri", .shape) == [0, 1, 2])
+    }
+
+    @Test func aShapeKeyOneChangesForTheOldSizeAfterTheOtherResizedIsKeptAndGrows() {
+        var (a, b) = pair(keyedTriangle())
+        resized(&a)
+        // Later still, the other moves the key at one second's tip 10 right, for the triangle it has.
+        b.time = a.time + 10
+        keyed(&b, CGPoint(x: 10, y: 30), at: 1)
+        var macs = [a, b]
+        for _ in 0..<3 {
+            macs[0].show(macs[1].state)
+            macs[1].show(macs[0].state)
+        }
+        #expect(macs[0].doc.nodes == macs[1].doc.nodes)
+        // That change is the later one, and is kept, grown with the triangle.
+        #expect(near(tip(macs[0].doc, at: 1), 10, 60), "\(String(describing: tip(macs[0].doc, at: 1)))")
+    }
+
+    @Test func keysNobodyKeyedMeanwhileAreAsTheResizeLeftThem() {
+        var (a, b) = pair(keyedTriangle())
+        resized(&a)
+        // The other changes something else of it meanwhile.
+        b.edit { set(&$0, "Tri") { $0.fill.color = .black } }
+        var macs = [a, b]
+        for _ in 0..<3 {
+            macs[0].show(macs[1].state)
+            macs[1].show(macs[0].state)
+        }
+        #expect(macs[0].doc.nodes == macs[1].doc.nodes)
+        #expect(near(tip(macs[0].doc, at: 1), 0, 60) && node(macs[0].doc, "Tri")?.fill.color == .black)
+        // And a design without Shape keys is shown as it is put together.
+        var plain = keyedTriangle()
+        plain.update(node(plain, "Tri")!.id) { $0.motion = nil }
+        var moved = plain
+        moved.update(node(plain, "Tri")!.id) { $0.frame.size.height = 160 }
+        var shown = moved
+        shown.followOutlines(merging: plain)
+        #expect(shown == moved)
     }
 
     // MARK: In the app
