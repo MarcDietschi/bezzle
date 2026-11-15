@@ -14,6 +14,11 @@ enum Theme {
     static var dark = false
 
     static func readAppearance() {
+        // BEZZLE_APPEARANCE=dark or light, for a test copy, whatever Windows is set to.
+        if let asked = ProcessInfo.processInfo.environment["BEZZLE_APPEARANCE"], ["dark", "light"].contains(asked) {
+            dark = asked == "dark"
+            return
+        }
         var value: DWORD = 1
         var size = DWORD(MemoryLayout<DWORD>.size)
         let read = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize".withCString(encodedAs: UTF16.self) { key in

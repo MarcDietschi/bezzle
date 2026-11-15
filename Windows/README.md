@@ -157,6 +157,30 @@ service made beside it ("Poster 2", "Poster (1)") are taken back in and sent to 
 (`FolderCopy.foldCopies`, the shared `FolderShare.fold`): the Mac's rules, `README.md` › The Mac
 app › Designs in synced folders.
 
+A design opens as on the Mac (`README.md` › The Mac app › Opening a design): its tab shows at once,
+covered by the window's paper with Bezzle's mark pressed into it (`Sources/Bezzle/OpeningCover.swift`),
+and the design is opened on the window's thread once the cover is on screen (`Tabs.open`); the
+cover lifts a frame after the canvas is laid out and drawn, or 1.6 s after the design was opened.
+The mark's pictures are the shared drawing (`Bezzle/Model/OpeningMarkPaint.swift`, by Skia through
+`Host/OpeningPictures.swift`), its name Gelasio's letters, and its moves the shared numbers as the
+compositor's key frames (`Host/OpeningPlan.swift`, checked against the Mac's by `Windows/Tests`),
+all handed over as the cover shows, so it goes on while the window's thread opens the design
+(filmed so in the VM on 2026-11-16: the sheets struck and the name set while the thread was away
+for 840 ms). The window lays it over the page in front, under the bar (`BezzleApp.showCover`).
+What differs from the Mac: the window takes its new size at once, so the first design too comes
+through without the mark when it is open within the grace; the ink runs into the deepest sheet
+behind a straight edge, where the Mac's is soft; and the bar's controls come with the design's page,
+a moment before the paper lifts. Windows' "Animation effects" off, the mark only fades. To try it:
+`BEZZLE_OPEN_AT=2:<design>` opens from home, `BEZZLE_OPEN_SLOW=<s>` holds the design back,
+`BEZZLE_SLOW=6` plays the cover six times slower, `BEZZLE_NO_COVER=1` opens as before to compare,
+`BEZZLE_APPEARANCE=dark`, `BEZZLE_REDUCE_MOTION=1`, and with `BEZZLE_TRACE` each step is traced,
+and every time the window's thread was away for more than 40 ms. Measured in the VM on 2026-11-16
+(a debug build, `OpeningTests`' designs): before, a design of 3 layers was drawn
+72 ms after it was asked for, and one of 4,860 layers with 60 photos 825 ms, the window meanwhile
+grown round home as it was, held still; after, the cover shows in 7 ms, its pictures drawn and its
+moves handed over in 6 more, the small design comes through without the mark at 81 to 93 ms, and
+the large one is drawn by 862 to 869 ms under its mark, which lifts at 970 ms.
+
 To try it in the VM without anyone at it: `VM/desktop` runs a command in its signed-in session,
 and `VM/input.ps1` there moves the mouse and presses keys (real input, as WinUI needs). With
 `BEZZLE_TRACE` set, the app writes what `Trace.say` reports to `%TEMP%\bezzle-trace.log`.

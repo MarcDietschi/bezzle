@@ -82,6 +82,13 @@ final class BezzleApp: SwiftApplication {
     private var home: HomeView?
     /// The page in the window now.
     private var presented: TabPage?
+    /// What the window holds: the page, and over it, under the bar, the cover of a design on its
+    /// way into its tab (OpeningCover.swift).
+    private lazy var frame = Grid()
+    private lazy var coverLayer = Grid()
+    /// Whether the window holds the frame yet, and the cover in it.
+    private var framed = false
+    private weak var shownCover: OpeningCover?
     /// The window's own presenter, which says whether it can be resized.
     private var presenter: OverlappedPresenter?
     /// Set as Bezzle quits, when the window may close.
@@ -217,6 +224,7 @@ final class BezzleApp: SwiftApplication {
             fitWindow(forDesigns: false, centred: true)
             Tabs.shared.showFront()
             openCommandLine(Array(CommandLine.arguments.dropFirst()), in: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+            OpeningCover.openAsAsked()
             // The tour, the first time Bezzle starts with no designs (WelcomeTour.swift).
             WelcomeTour.start()
             // Import from a Website, over the page in front; what it makes opens in a tab with what
@@ -325,6 +333,7 @@ final class BezzleApp: SwiftApplication {
         home = makeHome()
         tabs.home = { [weak self] in self?.home }
         tabs.present = { [weak self] page, title in self?.present(page, title: title) }
+        tabs.showCover = { [weak self] cover in self?.showCover(cover) }
         tabs.fitWindow = { [weak self] forDesigns in self?.fitWindow(forDesigns: forDesigns) }
         tabs.quit = { [weak self] in self?.quit() }
         // A copy a sync service made of a design is taken back in only when it is not open here.
@@ -367,11 +376,28 @@ final class BezzleApp: SwiftApplication {
     @MainActor private func present(_ page: TabPage, title: String) {
         guard let window else { return }
         if presented !== page {
+            // Only the page, first in the frame, changes: the cover over it goes on as it was.
+            if framed {
+                frame.children.removeAt(0)
+            } else {
+                coverLayer.margin = Theme.inset(0, Theme.barHeight, 0, 0)
+                frame.children.append(coverLayer)
+                window.content = frame
+                framed = true
+            }
+            frame.children.insertAt(0, page.root)
             presented = page
-            window.content = page.root
             try? window.setTitleBar(page.dragArea)
         }
         if window.title != title { window.title = title }
+    }
+
+    /// Lays a design's opening cover over the page in front, under the bar; nil takes it away.
+    @MainActor private func showCover(_ cover: OpeningCover?) {
+        guard cover !== shownCover else { return }
+        shownCover = cover
+        coverLayer.children.clear()
+        if let cover { coverLayer.children.append(cover.root) }
     }
 
     // MARK: The window's size

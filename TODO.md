@@ -544,6 +544,12 @@ The tab covered by the window's paper with Bezzle's mark pressed into it while t
 - **A Photoshop document** keeps its own progress while it comes in (`BringingInView`), not the
   mark. Files from Adobe XD, Figma and Sketch are still brought in on the main thread, under the
   cover (the mark goes on meanwhile; the menus and the bar wait).
+- **Windows** (`Windows/README.md` › The app): seen only in the VM, at one scale, with WARP for a
+  graphics card. Unlike the Mac: the ink runs in behind a straight edge (a soft one needs the ink
+  as a composition surface with a gradient mask: `CompositionVisualSurface` and
+  `CompositionMaskBrush` are in the bindings, untried); the bar's controls show with the design's
+  page a moment before the paper lifts; a file from another app is brought in without the cover,
+  under its own "Bringing in" page, as before.
 
 ## Housekeeping
 

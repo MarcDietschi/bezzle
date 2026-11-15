@@ -1,6 +1,7 @@
 import Foundation
 import WinUI
 import UWP
+import WindowsFoundation
 import WinSDK
 import BezzleCore
 
@@ -105,6 +106,9 @@ final class DesignTab {
     var renaming = false
     /// What the window does when a tab's page changes (a design brought in has arrived).
     fileprivate var pageChanged: () -> Void = {}
+    /// The paper over the tab while its design opens, Bezzle's mark pressed into it; nil once the
+    /// design shows (OpeningCover.swift).
+    fileprivate(set) var cover: OpeningCover?
 
     init(url: URL) {
         self.url = url
@@ -241,6 +245,8 @@ final class Tabs {
 
     /// What the window does for the tabs: show a page in it, home's page, fit its size.
     var present: (TabPage, _ title: String) -> Void = { _, _ in }
+    /// Lays the cover of a design on its way over the page in front, under the bar, or takes it away.
+    var showCover: (OpeningCover?) -> Void = { _ in }
     var home: () -> HomeView? = { nil }
     var fitWindow: (_ forDesigns: Bool) -> Void = { _ in }
     var quit: () -> Void = {}
@@ -280,6 +286,10 @@ final class Tabs {
     /// Opens a design in a new tab after the others and brings it to the front. One open already
     /// comes to the front instead. A file from Adobe XD, Figma, Sketch or Photoshop is brought in
     /// again each time, as a new design.
+    ///
+    /// A design of Bezzle's opens under a cover, as on the Mac: its tab shows at once, the
+    /// window's paper over it with Bezzle's mark pressed into it, and the design is opened once
+    /// the cover is on screen; the cover lifts once the design has been drawn.
     func open(_ url: URL, report: WindowsCore.ImportSummary? = nil) {
         let url = url.standardizedFileURL
         if !WindowsCore.imports(url), let tab = tab(showing: url) {
@@ -299,8 +309,100 @@ final class Tabs {
             self.changed()
         }
         designs.append(tab)
-        tab.load(report: report)
+        Trace.time("opening \(url.lastPathComponent)")
+        OpeningCover.watchThread()
+        // One from another app shows its name while it comes in instead.
+        guard !WindowsCore.imports(url), !OpeningCover.off else {
+            tab.load(report: report)
+            show(tab.id)
+            Trace.time("design opened")
+            uncoverWhenDrawn(tab)
+            return
+        }
+        // Here the window takes its new size at once, where the Mac's grows for a moment, so a
+        // design open within the grace comes through without the mark, the first one too.
+        let cover = OpeningCover(plan: OpeningPlan.Cover(began: WindowsCore.now, growing: false))
+        tab.cover = cover
         show(tab.id)
+        cover.whenShown { [weak self, weak tab] in
+            let open = {
+                // Closed meanwhile, it is not opened.
+                guard let self, let tab, self.designs.contains(where: { $0 === tab }) else { return }
+                tab.load(report: report)
+                Trace.time("design opened")
+                self.opened(tab)
+                self.uncoverWhenDrawn(tab)
+            }
+            if OpeningCover.hold > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + OpeningCover.hold) { MainActor.assumeIsolated { open() } }
+            } else {
+                open()
+            }
+        }
+    }
+
+    /// A design opened under its cover: it comes to the front if its tab is, or else the core goes
+    /// back to the design in front.
+    private func opened(_ tab: DesignTab) {
+        if selectedID == tab.id {
+            activateFront()
+            presentFront()
+            tab.cameToFront()
+        } else {
+            tab.view?.session.wentBack()
+            activateFront()
+        }
+        changed()
+    }
+
+    /// Lifts a tab's cover once its canvas has drawn the design, as the canvas does once it is
+    /// laid out, a frame after; or, as one out of sight never is, after a while; or at once when
+    /// it could not be opened.
+    private func uncoverWhenDrawn(_ tab: DesignTab) {
+        guard let view = tab.view else { return uncover(tab) }
+        let canvas = view.canvas.root
+        var ticking: EventCleanup?
+        var loading: EventCleanup?
+        let drawn: () -> Void = { [weak self, weak tab] in
+            loading?.dispose()
+            loading = nil
+            ticking = CompositionTarget.rendering.addHandler { _, _ in
+                MainActor.assumeIsolated {
+                    ticking?.dispose()
+                    ticking = nil
+                    guard let self, let tab else { return }
+                    Trace.time("design drawn")
+                    self.uncover(tab)
+                }
+            }
+        }
+        if canvas.isLoaded {
+            drawn()
+        } else {
+            loading = canvas.loaded.addHandler { _, _ in MainActor.assumeIsolated { drawn() } }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + OpeningPlan.Cover.patience) { [weak self, weak tab] in
+            MainActor.assumeIsolated {
+                guard let self, let tab else { return }
+                self.uncover(tab)
+            }
+        }
+    }
+
+    /// The design in a tab is ready: its cover lifts, with the mark if it came, and is gone after.
+    private func uncover(_ tab: DesignTab) {
+        guard let cover = tab.cover, !cover.lifting else { return }
+        let now = WindowsCore.now
+        let lift = cover.plan.lift(readyAt: now)
+        cover.lift(at: lift.at, marked: lift.marked)
+        Trace.say("opening cover lifts \(lift.marked ? "with" : "without") the mark, \(Int((lift.at - cover.plan.began) * 1000)) ms after it was asked for")
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, cover.plan.gone(readyAt: now) - now)) { [weak self, weak tab] in
+            MainActor.assumeIsolated {
+                guard let self, let tab, tab.cover === cover else { return }
+                tab.cover = nil
+                if self.selectedID == tab.id { self.showCover(nil) }
+            }
+        }
     }
 
     /// Asks for designs to open, or for files from other apps to bring in, each in a tab of its
@@ -367,6 +469,7 @@ final class Tabs {
         let page = frontPage
         strip.place(in: page.tabsHolder)
         present(page, selected?.name ?? "Bezzle")
+        showCover(selected?.cover)
         measureRoom()
     }
 
