@@ -70,6 +70,9 @@ final class FilmHand {
         var grip = 0.0
         var moved = false
         var caught: Double?
+        /// Option was held as the press came: the keys stay where they are, and copies of
+        /// them go with the hand, as layers do on the canvas.
+        var copies = false
     }
 
     /// What was so as a press came: what Escape gives back, and what a marquee adds to.
@@ -165,7 +168,8 @@ final class FilmHand {
     /// A press on the sheet. On a bead it picks its key, with Shift one more or one fewer; on a
     /// line's band it takes the whole motion; twice on a line it sets a key there; on the
     /// playhead's line it takes the playhead. Anywhere else, on bare sheet, it begins a marquee
-    /// over the keys, which only clicked is a place for the playhead.
+    /// over the keys, which only clicked is a place for the playhead. With Option a bead or a
+    /// band is taken as copies, which the drag moves while the keys stay.
     func press(at p: CGPoint, rows: [FilmRow], scale: FilmScale, flags: NSEvent.ModifierFlags = [], clicks: Int = 1) {
         let at = point(p, rows: rows, scale: scale)
         hot = at
@@ -188,7 +192,7 @@ final class FilmHand {
                 keys = [ref]
             }
             store.film.keys = keys
-            drag = keys.contains(ref) ? Drag(kind: .keys, refs: Array(keys), anchor: ref.time, grip: scale.t(p.x)) : Drag(kind: .nothing)
+            drag = keys.contains(ref) ? Drag(kind: .keys, refs: Array(keys), anchor: ref.time, grip: scale.t(p.x), copies: flags.contains(.option)) : Drag(kind: .nothing)
         } else if let row, clicks >= 2 {
             // Twice on a line holds it there: a key where there was none.
             pick(row)
@@ -208,7 +212,7 @@ final class FilmHand {
             pick(row)
             let refs = row.marks.map { FilmKeyRef(row.layer, row.property, input: row.input, look: row.look, at: $0.t) }
             store.film.keys = Set(refs)
-            drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0, grip: scale.t(p.x))
+            drag = Drag(kind: .band, refs: refs, anchor: refs.first?.time ?? 0, grip: scale.t(p.x), copies: flags.contains(.option))
         } else if abs(p.x - scale.x(store.film.live)) <= Self.headReach {
             // On the playhead's own line down the sheet: taken there as by its tab in the ruler.
             if !store.film.keys.isEmpty { store.film.keys = [] }
@@ -286,7 +290,7 @@ final class FilmHand {
                     to = (to / grid).rounded() * grid
                 }
             }
-            store.film.keys = Set(store.retime(d.refs, by: to - d.anchor))
+            store.film.keys = Set(store.retime(d.refs, by: to - d.anchor, copying: d.copies))
         case .marquee:
             guard let before else { break }
             if !d.moved {
@@ -338,14 +342,15 @@ final class FilmHand {
         last = nil
         creepIfNeeded()
         watchIfNeeded()
+        let moving: LocalizedStringResource = d.copies ? DocumentStore.duplicatingKeys : "Move Key"
         switch d.kind {
         case .keys:
             // A bead only clicked is where the playhead goes.
-            if d.moved { store.endGesture("Move Key") } else if !flags.contains(.shift) { store.seek(d.anchor) }
+            if d.moved { store.endGesture(moving) } else if !flags.contains(.shift) { store.seek(d.anchor) }
         case .band:
             // A line's band taken and let go is only a place to put the playhead; moved, it has
-            // moved the whole motion. Either way its keys are let go of again.
-            if d.moved { store.endGesture("Move Key") } else { store.seek(snapped(scale.t(hot.x))) }
+            // moved the whole motion, or copies of it. Either way its keys are let go of again.
+            if d.moved { store.endGesture(moving) } else { store.seek(snapped(scale.t(hot.x))) }
             store.film.keys = []
         case .length:
             if d.moved { store.endGesture("Film Length") }
@@ -392,7 +397,7 @@ final class FilmHand {
     }
 
     /// Escape while something is in hand: everything is as it was before the press came. Keys
-    /// moved are where they were; a film's end is where it was;
+    /// moved, or copied, are where they were and no copy is left; a film's end is where it was;
     /// the playhead, what was picked, the part of the film the sheet showed and how far down the
     /// lines it was scrolled are as they were; and nothing is left to undo. The rest of the drag
     /// does nothing. False with nothing in hand.

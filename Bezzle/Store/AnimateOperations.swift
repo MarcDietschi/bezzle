@@ -641,7 +641,7 @@ extension DocumentStore {
 
     /// The tracks a picked key stands for: one property's, one input's, one look's, or all the
     /// layer's, or all the camera's.
-    private func tracks(of ref: FilmKeyRef) -> [String] {
+    func tracks(of ref: FilmKeyRef) -> [String] {
         if let p = ref.property { return [p.rawValue] }
         if let input = ref.input { return [ShaderFill.inputTrack(input)] }
         if let look = ref.look { return [look.name] }
@@ -803,17 +803,24 @@ extension DocumentStore {
     }
 
     /// Moves keys in time, within a drag: `refs` are the keys as the drag began, and `delta` how
-    /// far they have been dragged since. Gives back where they are now.
+    /// far they have been dragged since. Gives back where they are now. `copying`, the keys stay
+    /// where they were and copies of them go, as the keys picked are pasted (`place`).
     @discardableResult
-    func retime(_ refs: [FilmKeyRef], by delta: Double) -> [FilmKeyRef] {
+    func retime(_ refs: [FilmKeyRef], by delta: Double, copying: Bool = false) -> [FilmKeyRef] {
         guard let before = gestureBefore, !refs.isEmpty else { return refs }
         let delta = max(delta, -(refs.map(\.time).min() ?? 0))
         // The later first when they go later, so none lands on one still to move.
         let ordered = refs.sorted { delta > 0 ? $0.ms > $1.ms : $0.ms < $1.ms }
-        edit("Move Key") { doc in
+        // Copies are taken of the keys as they were, whatever lands where.
+        let copies = copying ? keys(of: refs, in: before) : [:]
+        edit(copying ? Self.duplicatingKeys : "Move Key") { doc in
             for layer in Set(refs.map(\.layer)) {
                 let was = before.node(layer)?.motion
                 doc.update(layer) { $0.motion = was }
+            }
+            guard !copying else {
+                for (layer, tracks) in copies { doc.update(layer) { _ = Self.place(tracks, onto: &$0, by: delta, own: true) } }
+                return
             }
             for ref in ordered {
                 doc.update(ref.layer) { $0.moveKeys(from: ref.time, to: ref.time + delta, tracks: tracks(of: ref)) }

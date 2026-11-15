@@ -101,15 +101,17 @@ struct FilmZoomTests {
     }
 
     /// A press on a line at one moment, dragged to another in steps, and let go: one step.
-    private func drag(line: Int, from: Double, to: Double, flags: NSEvent.ModifierFlags = []) {
+    /// `pulling` are the keys held while it is pulled, where they are not the ones held as it
+    /// is pressed.
+    private func drag(line: Int, from: Double, to: Double, flags: NSEvent.ModifierFlags = [], pulling: NSEvent.ModifierFlags? = nil) {
         let a = at(from, line: line), b = at(to, line: line)
         bench.step {
             hand.press(at: a, rows: rows, scale: scale, flags: flags)
             for i in 1...4 {
                 let x = a.x + (b.x - a.x) * CGFloat(i) / 4
-                hand.dragged(to: CGPoint(x: x, y: a.y), by: x - a.x, rows: rows, scale: scale, length: length, flags: flags)
+                hand.dragged(to: CGPoint(x: x, y: a.y), by: x - a.x, rows: rows, scale: scale, length: length, flags: pulling ?? flags)
             }
-            hand.ended(scale: scale, flags: flags)
+            hand.ended(scale: scale, flags: pulling ?? flags)
         }
     }
 
@@ -319,9 +321,10 @@ struct FilmZoomTests {
         }
         #expect(keys(.move) == [0.2, 0.85])
         bench.undo.undo()
-        // Very close, Option steps by hundredths, each a dozen points apart.
+        // Very close, Option held once the key is taken steps by hundredths, each a dozen points
+        // apart. (Held as it is pressed, it takes copies: `FilmKeyCopyTests`.)
         zoom(1000, about: 0.8)
-        drag(line: 1, from: 0.8, to: 0.83, flags: .option)
+        drag(line: 1, from: 0.8, to: 0.83, pulling: .option)
         #expect(keys(.move) == [0.2, 0.83])
     }
 

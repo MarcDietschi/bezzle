@@ -166,9 +166,10 @@ struct BezzleCommands: Commands {
                 .disabled(store == nil)
         }
         CommandGroup(after: .pasteboard) {
-            Button("Duplicate") { store?.duplicateSelection() }
+            // In Animate, the keys picked in the timeline while there are any.
+            Button("Duplicate") { store?.duplicate() }
                 .keyboardShortcut("d")
-                .disabled(store?.selection.isEmpty ?? true)
+                .disabled(store?.canDuplicate != true)
         }
         CommandGroup(replacing: .textEditing) {
             Menu("Find") {

@@ -28,6 +28,8 @@ final class Bench {
         store.undoManager = undo
         undo.groupsByEvent = false
         store.viewport = Viewport(origin: .zero, zoom: 1)
+        // Keys copied in Animate are the app's, not a design's: none that an earlier test copied.
+        DocumentStore.filmClip = nil
     }
 
     var a: Node { store.doc.nodes[0] }

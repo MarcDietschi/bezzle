@@ -16454,6 +16454,28 @@
         }
       }
     },
+    "Cut Keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keyframes ausschneiden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couper les images clés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taglia fotogrammi chiave"
+          }
+        }
+      }
+    },
     "Cut out" : {
       "localizations" : {
         "de" : {
@@ -19319,6 +19341,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Duplica"
+          }
+        }
+      }
+    },
+    "Duplicate Keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keyframes duplizieren"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dupliquer les images clés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duplica fotogrammi chiave"
           }
         }
       }
@@ -36208,6 +36252,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Incolla"
+          }
+        }
+      }
+    },
+    "Paste Keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keyframes einsetzen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coller les images clés"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incolla fotogrammi chiave"
           }
         }
       }

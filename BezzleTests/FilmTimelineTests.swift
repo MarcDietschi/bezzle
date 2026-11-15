@@ -49,16 +49,18 @@ struct FilmTimelineTests {
     }
 
     /// A press at one moment of a line, dragged to another moment, and let go: one step.
-    private func drag(line: Int, from: Double, to: Double, flags: NSEvent.ModifierFlags = []) {
+    /// `pulling` are the keys held while it is pulled, where they are not the ones held as it
+    /// is pressed.
+    private func drag(line: Int, from: Double, to: Double, flags: NSEvent.ModifierFlags = [], pulling: NSEvent.ModifierFlags? = nil) {
         let (rows, scale, length) = sheet
         let a = at(from, line: line, scale), b = at(to, line: line, scale)
         bench.step {
             hand.press(at: a, rows: rows, scale: scale, flags: flags)
             for i in 1...4 {
                 let x = a.x + (b.x - a.x) * CGFloat(i) / 4
-                hand.dragged(to: CGPoint(x: x, y: a.y), by: x - a.x, rows: rows, scale: scale, length: length, flags: flags)
+                hand.dragged(to: CGPoint(x: x, y: a.y), by: x - a.x, rows: rows, scale: scale, length: length, flags: pulling ?? flags)
             }
-            hand.ended(scale: scale, flags: flags)
+            hand.ended(scale: scale, flags: pulling ?? flags)
         }
     }
 
@@ -255,7 +257,8 @@ struct FilmTimelineTests {
 
     @Test func optionStepsFinerAndTheKeyCatchesOnThePlayhead() {
         animateCard()
-        drag(line: 1, from: 0.8, to: 1.234, flags: .option)
+        // Held once the key is taken: held as it is pressed, Option takes copies (`FilmKeyCopyTests`).
+        drag(line: 1, from: 0.8, to: 1.234, pulling: .option)
         #expect(keys("Card", .move) == [0.2, 1.23])
         store.seek(1.57)
         // Within reach of the playhead it lands on it, though that is on no step.

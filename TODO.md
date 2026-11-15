@@ -105,14 +105,21 @@ file was made (2026-11-14): look before starting on one.
   playhead's line were not tried with a pointer.
 - **The marquee, not built:** it begins only on bare sheet: where every line's bar runs the
   film's length and the card shows no spare line, there is none to begin on. Shift is read as
-  the press comes. Keys cannot be copied in Animate, so a marquee's keys move and are deleted
-  together but are not copied.
-- **Escape under every drag, the lines scrolled under a marquee** (2026-11-15, `README.md` ›
-  Animate): driven by tests only, never felt. Not tried: Escape with a real key under a key, a
-  band, the playhead or the film's end; the pace the lines scroll at; whether SwiftUI's drag goes
-  on, and tells points down the lines, while the card's `ScrollPosition` scrolls them under a
-  pointer at rest (the hand counts on it). The scrub was not measured again since the hand asks
-  the keyboard for Escape sixty times a second under every drag, not only under a marquee.
+  the press comes.
+- **Escape under every drag, the lines scrolled under a marquee, copying keys** (2026-11-15,
+  `README.md` › Animate): driven by tests only, never felt. Not tried: Escape with a real key
+  under a key, a band, the playhead or the film's end; the pace the lines scroll at; whether
+  SwiftUI's drag goes on, and tells points down the lines, while the card's `ScrollPosition`
+  scrolls them under a pointer at rest (the hand counts on it); the Edit menu's items in a
+  running window (checked through `validateMenuItem` only). The scrub was not measured again
+  since the hand asks the keyboard for Escape sixty times a second under every drag, not only
+  under a marquee.
+- **Copying keys, as chosen:** Option held as a bead or a band is pressed takes copies, so held
+  before the press it no longer only steps finer (held once the press is under way it still
+  does). Keys copied stay until other keys or layers are copied in Bezzle; copying in another
+  app leaves them, and they never reach the pasteboard, another app or the AI server. Paste in
+  Animate never pastes layers. Duplicate puts the copies half a second after the last key
+  picked. A camera's keys go onto the camera of whichever film is on the desk.
 - **Driving a copy:** `press=` replaces `acceptsFirstMouse` on the kind of view under the point
   while the press lasts (Debug only).
 - **Unchecked:** a movie saved from the sandboxed build onto another disk, where it is copied into
@@ -137,7 +144,9 @@ outlines and looks. What is left:
   `FilmDesk.poseLook` shows the call.
 - **The timeline has no marquee over keys,** and bare sheet dragged still moves the playhead
   there. The shared `FilmMarquee` (`Bezzle/Model/FilmKeys.swift`) is tested and there to use.
-- **No Escape under a drag on the timeline** (the Mac has it since 2026-11-15, `FilmHand.cancel`).
+- **No Escape under a drag on the timeline, and keys cannot be copied** (the Mac has both since
+  2026-11-15). What pastes keys is the Mac's store (`Bezzle/Store/AnimateClipboard.swift`:
+  `place`, `taken`, `pasteTargets`), to move into `Bezzle/Model` for Windows to share.
 - **A movie's gentle tones** are still rounded twice (pieces and the frame in eight bits, then
   NV12), and there is no ten bit choice; the AI server's `codec` is the Mac's alone. What it
   takes is in e652531's report: `bz_film_frame` composing in sixteen bits, the stand-in pictures

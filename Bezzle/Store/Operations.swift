@@ -208,6 +208,8 @@ extension DocumentStore {
 
     func copySelection() {
         guard let (clip, words) = doc.clip(of: selection, designName: name), let data = try? JSONEncoder().encode(clip) else { return }
+        // What was copied last is what Paste puts down: keys copied before are let go of.
+        Self.filmClip = nil
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setData(data, forType: Self.pasteboardType)

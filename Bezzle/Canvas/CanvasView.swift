@@ -2484,9 +2484,15 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     // MARK: - Edit menu
 
-    @objc func copy(_ sender: Any?) { store.copySelection() }
-    @objc func cut(_ sender: Any?) { if !store.inspecting && !store.animating { store.cutSelection() } }
-    @objc func paste(_ sender: Any?) { if !store.inspecting && !store.animating { store.paste() } }
+    // Animated, with keys picked in the timeline, Copy and Cut are of those keys, and Paste puts
+    // down keys copied (`AnimateClipboard.swift`).
+    @objc func copy(_ sender: Any?) { if !store.copyFilmKeys() { store.copySelection() } }
+    @objc func cut(_ sender: Any?) {
+        if store.animating { store.cutFilmKeys() } else if !store.inspecting { store.cutSelection() }
+    }
+    @objc func paste(_ sender: Any?) {
+        if store.animating { store.pasteFilmKeys() } else if !store.inspecting { store.paste() }
+    }
     @objc func delete(_ sender: Any?) {
         // Seen as a prototype, what is taken away is where the picked layers go, never the layers.
         if store.inspecting { return }
@@ -2526,10 +2532,10 @@ final class CanvasView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(cut(_:)): return !store.selection.isEmpty && !store.inspecting && !store.animating
+        case #selector(cut(_:)): return store.animating ? store.canCopyFilmKeys && !store.isReadOnly : !store.selection.isEmpty && !store.inspecting
         case #selector(delete(_:)): return store.animating ? store.hasKeysToRemove : !store.selection.isEmpty && !store.inspecting
-        case #selector(copy(_:)): return !store.selection.isEmpty
-        case #selector(paste(_:)): return store.canPaste && !store.inspecting && !store.animating
+        case #selector(copy(_:)): return store.canCopyFilmKeys || !store.selection.isEmpty
+        case #selector(paste(_:)): return store.animating ? store.canPasteFilmKeys : store.canPaste && !store.inspecting
         case #selector(selectAll(_:)): return !store.doc.nodes.isEmpty
         default: return true
         }

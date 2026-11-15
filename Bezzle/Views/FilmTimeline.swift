@@ -13,7 +13,8 @@ import AppKit
 /// film fits the card again. Bare sheet only clicked puts the playhead there; dragged, it draws a
 /// marquee that picks the keys under it, with Shift adding to those picked and letting go of
 /// those among them it catches again, and scrolls the lines when it is drawn past those in
-/// sight. Escape under any drag gives back everything as it was before the press.
+/// sight. Option as a bead or a band is pressed leaves the keys and drags copies of them. Escape
+/// under any drag gives back everything as it was before the press.
 ///
 /// A pinch looks at the film closer, about the moment under the pointer, and two fingers then
 /// move it along; a double tap with two fingers, or pinching back out, shows the whole film

@@ -299,6 +299,23 @@ along one artboard's film. Its keys are changes from the design and never the de
   follows a press, neither its event monitors nor whatever has the keyboard, and Escape does not
   end SwiftUI's drag either (measured 2026-11-14 on macOS 27.2 in a test copy). Its tests are
   `FilmEscapeTests`.
+- **Copying keys** (`Bezzle/Store/AnimateClipboard.swift`): while Animate has keys picked, Copy,
+  Cut and Duplicate in the Edit menu, and their keys, are of those keys, and Paste puts keys
+  copied down; with none picked, Copy and Duplicate are the layers' as ever, and Cut and Paste do
+  nothing in Animate. Keys go onto a clipboard of the app's own (`DocumentStore.filmClip`), never
+  the pasteboard nor a design, and stay there until other keys are copied, or layers. Paste puts
+  the earliest on the playhead and the others as far from it, onto the layers and the properties
+  they came from, each picked key standing for what its bead did (on a layer's line every key at
+  that moment, on a property's line that one); the camera's onto the camera of the film on the
+  desk. The keys of one layer alone go onto the layers picked when another is among them, each
+  only where that layer can take it (`taken`: a Shape of as many points, a shader's input of as
+  many numbers, a look the layer has as the key says). A key already at a moment gives way
+  (`place`), the keys pasted are picked with their layers, and it is one step through `edit`, so
+  a design shared live takes it key by key and an undo takes back only it. Duplicate puts copies
+  half a second after the last key picked, as far apart as they are, and picks them. Option held
+  as a bead or a band is pressed leaves the keys and drags copies of them
+  (`retime(copying:)`), as Option does layers on the canvas; held once the press is under way it
+  steps finer, as before. Its tests are `FilmKeyCopyTests`.
 - **A shader fill that builds on its frames** (feedback, trails, a simulation:
   `ShaderFill.builds`) shows at a film's moment the step that moment falls in, drawn forward from
   what the page's textures held when it came in, by steps as often as the page drew (sixty a
