@@ -57,7 +57,12 @@ final class DocumentStore {
     /// looking, kept here beside the design and handed to it (`BezzleDocument.looks`) so that
     /// everything on the canvas sees layers where they show. Never an undo step, never saved,
     /// and only while designing: seen as a prototype, inspected or animated, all is from the front.
-    private(set) var looks: [UUID: DepthLook] = [:]
+    private(set) var looks: [UUID: DepthLook] = [:] {
+        didSet { if lookingAside == looks.isEmpty { lookingAside = !looks.isEmpty } }
+    }
+    /// Whether any artboard is looked at from the side: what the menus ask, which would otherwise
+    /// be told of every step of a look dragged round.
+    private(set) var lookingAside = false
     /// Counts the changes that added, took away or moved layers among the others.
     @ObservationIgnored private var layersVersion = 0
     /// Counts the document's changes, so what is worked out from it is worked out once per change.

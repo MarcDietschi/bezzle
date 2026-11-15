@@ -28097,6 +28097,29 @@
         }
       }
     },
+    "Layers Keep Their Depth" : {
+      "comment" : "Right-click menu item for a group, checked when it is so: the layers in the group stand in the artboard's 3D scene each on its own, rather than the group being one flat card.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ebenen behalten ihre Tiefe"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les calques gardent leur profondeur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I livelli mantengono la profondità"
+          }
+        }
+      }
+    },
     "Layers keep their depth" : {
       "localizations" : {
         "de" : {
@@ -29930,6 +29953,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Guarda di fronte"
+          }
+        }
+      }
+    },
+    "Look from the Side" : {
+      "comment" : "View menu command: the artboard being worked on is looked at from the side, to see how high each layer stands in 3D.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von der Seite schauen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Regarder de côté"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guarda di lato"
           }
         }
       }

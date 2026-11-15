@@ -44,4 +44,36 @@ struct CanvasMenuTests {
         bench.store.selection = [bench.node("Plain")!.id]
         #expect(!titles(bench.store).contains { $0.hasSuffix("Background") })
     }
+
+    @Test func aGroupIsOfferedToKeepItsLayersDepthAsItsThreeDCardDoes() throws {
+        var group = Node(kind: .group, name: "Group", frame: CGRect(x: 20, y: 20, width: 100, height: 60))
+        group.children = [CanvasTests.rect("In", CGRect(x: 0, y: 0, width: 100, height: 60))]
+        var grid = group
+        grid.id = UUID()
+        grid.name = "Grid"
+        grid.children = [CanvasTests.rect("Cell", CGRect(x: 0, y: 0, width: 100, height: 60))]
+        grid.grid = RepeatGrid()
+        let bench = Bench(extra: [group, grid, CanvasTests.rect("Plain", CGRect(x: 200, y: 10, width: 20, height: 20))])
+        let id = try #require(bench.node("Group")).id
+        func keeping() -> MenuEntry? { CanvasMenus.entries(for: bench.store).first { $0.title == "Layers Keep Their Depth" } }
+        // A group lying flat, whose 3D card is not open: offered, not checked.
+        bench.store.selection = [id]
+        let entry = try #require(keeping())
+        #expect(!entry.checked && entry.enabled)
+        bench.step { entry.action() }
+        #expect(bench.node("Group")?.keepsDepth == true && bench.undo.undoActionName == "Keep Layers in Depth")
+        // Checked now, and chosen again a card once more, with the card's switch's own undo names.
+        #expect(keeping()?.checked == true)
+        bench.step { keeping()?.action() }
+        #expect(bench.node("Group")?.keepsDepth == nil && bench.undo.undoActionName == "Draw as One Card")
+        bench.undo.undo()
+        #expect(bench.node("Group")?.keepsDepth == true)
+        // Not for anything but groups, nor for a repeat grid, which is one card whatever it is told.
+        bench.store.selection = [try #require(bench.node("Plain")).id]
+        #expect(keeping() == nil)
+        bench.store.selection = [id, try #require(bench.node("Plain")).id]
+        #expect(keeping() == nil)
+        bench.store.selection = [try #require(bench.node("Grid")).id]
+        #expect(keeping() == nil && bench.store.depthGroups == nil)
+    }
 }

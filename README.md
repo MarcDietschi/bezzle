@@ -468,7 +468,12 @@ tool stays true, while what stands off the page shows where the moved eye sees i
 under each corner down to where it would lie (under what is picked alone, when some of it is). On
 the Mac, Control dragged beside the layers turns the look (Shift in fives); a click there with
 Control, Escape with nothing picked, or the word by the artboard's top right corner looks from the
-front again (on Windows the key is Alt, `Windows/README.md` › The app). It is a way of looking, never part of the design: `DocumentStore.looks` holds it and
+front again (on Windows the key is Alt, `Windows/README.md` › The app). View › Look from the Side,
+also in the zoom menu, begins it for the artboard being worked on, from the left and a little
+above (`DocumentStore.firstLook`), and reads Look from the Front while any artboard is seen so;
+it is off in a read-only design, while looking back at versions, and with no artboard. The menus
+ask only `lookingAside`, which changes when looking begins or ends, never at each step of a drag.
+It is a way of looking, never part of the design: `DocumentStore.looks` holds it and
 hands it to the design it shows (`BezzleDocument.looks`, which no file has and `==` leaves out), so
 everything on the canvas asks `doc.eye(…)` as ever and is given the moved eye. It is not an undo
 step, and it ends when the design is seen as a prototype, inspected or animated. The renderer
@@ -476,7 +481,8 @@ sees from the side only where the canvas says so (`Renderer.Options.looks`): exp
 thumbnails and the AI server's pictures are always from the front.
 
 A group can be told to keep its layers' depth (`Node.keepsDepth`, the 3D card's switch for a
-group, the AI server's `keepsDepth`): CSS's `transform-style: preserve-3d`. What it holds then
+group and Layers Keep Their Depth in its right-click menu, both `DocumentStore.keepDepth`, the
+AI server's `keepsDepth`): CSS's `transform-style: preserve-3d`. What it holds then
 stands in the artboard's scene layer by layer, where the group's turn and height put it, and is
 ordered among everything beside the group, nearer over further across its border, instead of
 being drawn onto one card that is then turned. As in CSS, anything done to the group as a whole

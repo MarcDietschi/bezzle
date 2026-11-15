@@ -276,6 +276,83 @@ struct DepthLookTests {
         #expect(bench.store.looks.isEmpty && bench.undo.undoActionName.isEmpty)
     }
 
+    // MARK: From the menus
+
+    @Test func theViewMenuLooksAtTheArtboardWorkedOnFromTheSideAndFromTheFrontAgain() throws {
+        let bench = Bench(extra: scene)
+        let store = bench.store, before = store.doc
+        let lifted = try #require(bench.node("Lifted")).id
+        store.selection = [lifted]
+        #expect(store.canLookFromTheSide && !store.lookingAside)
+        // In the View menu, beside the rulers and guides.
+        func look() -> MenuEntry? { Helpers.shared.entries(for: store).last { $0.kind == .item } }
+        #expect(look()?.title == "Look from the Side" && look()?.enabled == true)
+        look()?.action()
+        // The artboard of what is picked, from the left and a little above; nothing of the
+        // design changed, nothing to undo, and what was picked still is.
+        #expect(store.looks == [bench.a.id: DocumentStore.firstLook] && store.doc.looks == store.looks && store.lookingAside)
+        #expect(DocumentStore.firstLook.across < 0 && DocumentStore.firstLook.down < 0)
+        #expect(store.doc == before && bench.undo.undoActionName.isEmpty && store.selection == [lifted])
+        // What stands off the page shows to the right and down of where it lies, on its posts.
+        let card = try #require(bench.node("Lifted"))
+        let shown = try #require(store.doc.perspective(of: card)).shown(CGPoint(x: 200, y: 150))
+        #expect(shown.x > 205 && shown.y > 152 && store.doc.posts(of: bench.a).count == 4)
+        // Turned further by hand, it is still looked at from the side; then from the front again.
+        store.look(at: bench.a.id, from: DepthLook(across: 40, down: 10))
+        #expect(store.lookingAside && look()?.title == "Look from the Front")
+        look()?.action()
+        #expect(store.looks.isEmpty && store.doc.looks == nil && !store.lookingAside && bench.undo.undoActionName.isEmpty)
+        // With the other artboard picked, that one.
+        store.selection = [bench.b.id]
+        store.lookFromTheSide()
+        #expect(store.looks == [bench.b.id: DocumentStore.firstLook])
+        // From the front ends every artboard's look, however it began.
+        store.look(at: bench.a.id, from: DepthLook(across: 20))
+        store.lookFromTheFront()
+        #expect(store.looks.isEmpty && !store.lookingAside)
+    }
+
+    @Test func theMenuCannotLookFromTheSideWhereNoArtboardCanBe() throws {
+        let bench = Bench(extra: scene)
+        let store = bench.store
+        func offered() -> Bool { Helpers.shared.entries(for: store).last { $0.kind == .item }?.enabled == true }
+        // Seen as a prototype, inspected or animated, all is from the front.
+        store.prototyping = true
+        #expect(!store.canLookFromTheSide && !offered())
+        store.lookFromTheSide()
+        #expect(store.looks.isEmpty)
+        store.prototyping = false
+        #expect(store.canLookFromTheSide && offered())
+        // Looking back at versions shows another design.
+        store.versions.browse()
+        #expect(!store.canLookFromTheSide && !offered())
+        store.lookFromTheSide()
+        #expect(store.looks.isEmpty)
+        store.versions.leave()
+        #expect(store.canLookFromTheSide)
+        // With no artboard, or only hidden ones, there is no scene to look at.
+        var loose = BezzleDocument()
+        loose.nodes = [CanvasTests.rect("Loose", CGRect(x: 0, y: 0, width: 50, height: 50))]
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("BezzleTests-\(UUID().uuidString).bezzle")
+        let none = DocumentStore(url: url, document: loose)
+        #expect(!none.canLookFromTheSide)
+        none.lookFromTheSide()
+        #expect(none.looks.isEmpty)
+        var hidden = bench.store.doc
+        for i in hidden.nodes.indices { hidden.nodes[i].hidden = true }
+        #expect(!DocumentStore(url: url, document: hidden).canLookFromTheSide)
+        // The menu bar has it in the View menu, under the helpers, off with no design in front.
+        func find(_ menu: NSMenu?, _ title: String) -> NSMenuItem? {
+            for item in menu?.items ?? [] {
+                if item.title == title { return item }
+                if let found = find(item.submenu, title) { return found }
+            }
+            return nil
+        }
+        let item = try #require(find(NSApp.mainMenu, "Look from the Side"))
+        #expect(item.menu === find(NSApp.mainMenu, "Lock Guides")?.menu)
+    }
+
     @Test func whatLeavesTheCanvasIsSeenFromTheFront() throws {
         let bench = Bench(extra: scene)
         bench.store.look(at: bench.a.id, from: DepthLook(across: -45))

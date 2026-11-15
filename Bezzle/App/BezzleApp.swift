@@ -368,6 +368,13 @@ struct BezzleCommands: Commands {
             Toggle("Layout Grids", isOn: Binding(get: { Helpers.shared.grids }, set: { Helpers.shared.grids = $0 }))
                 .keyboardShortcut("g", modifiers: .control)
             Toggle("Lock Guides", isOn: Binding(get: { Helpers.shared.guidesLocked }, set: { Helpers.shared.guidesLocked = $0 }))
+            // The artboard being worked on seen from the side, to see how high each layer stands,
+            // and from the front again. Asks only whether any is seen so, not how far round.
+            Button(store?.lookingAside == true ? LookTool.front : DocumentStore.lookingFromTheSide) {
+                guard let store else { return }
+                if store.lookingAside { store.lookFromTheFront() } else { store.lookFromTheSide() }
+            }
+            .disabled(store.map { !$0.lookingAside && !$0.canLookFromTheSide } ?? true)
             Divider()
             Toggle(LocalizedStringResource("mode.prototype", defaultValue: "Prototype"), isOn: Binding(get: { store?.prototyping == true }, set: { store?.prototyping = $0 }))
                 .keyboardShortcut("p", modifiers: .control)

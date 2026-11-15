@@ -510,11 +510,9 @@ extension SelectionInspector {
                 depthField("Z", range: -10_000...10_000, scrub: 1, lead: lead, get: { Double($0.z) }, set: { $0.z = CGFloat($1) })
             }
             // A group is one card, unless told that what it holds stands in the scene on its own.
-            if !nodes.isEmpty, nodes.allSatisfy(\.isGroup) {
+            if DocumentStore.canKeepDepth(nodes) {
                 Row(title: "Layers keep their depth") {
-                    Switch(isOn: Binding(get: { nodes.allSatisfy { $0.keepsDepth == true } }, set: { v in
-                        store.updateSelection(v ? "Keep Layers in Depth" : "Draw as One Card") { $0.keepsDepth = v ? true : nil }
-                    }))
+                    Switch(isOn: Binding(get: { nodes.allSatisfy { $0.keepsDepth == true } }, set: { v in store.keepDepth(v) }))
                 }
             }
             Caption("On the canvas, drag the knob in its middle to aim it. Hold Control while you move a layer to bring it nearer or push it away. Just outside a side, a drag turns anything in depth.")

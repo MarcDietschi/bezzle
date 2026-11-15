@@ -81,7 +81,14 @@ enum CanvasMenus {
                 let riding = store.selectedNodes.contains(where: \.rides)
                 entries.append(.item(riding ? DocumentStore.takingOffPath : DocumentStore.straightening) { store.straightenSelection() })
             }
-            if store.canGroup || store.canUngroup || store.canMask || store.selectedMask != nil || store.ridePair != nil || store.canStraighten {
+            // Whether what a group holds stands in the scene layer by layer, as on its 3D card,
+            // which a group lying flat does not show.
+            let groups = store.depthGroups
+            if let groups {
+                let keeps = groups.allSatisfy { $0.keepsDepth == true }
+                entries.append(.item(DocumentStore.keepingDepth, checked: keeps) { store.keepDepth(!keeps) })
+            }
+            if store.canGroup || store.canUngroup || store.canMask || store.selectedMask != nil || store.ridePair != nil || store.canStraighten || groups != nil {
                 entries.append(.separator)
             }
             let nodes = store.selectedNodes

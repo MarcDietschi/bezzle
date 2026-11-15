@@ -37,6 +37,11 @@ final class Helpers {
             .item("Remove Guides", enabled: guides > 0 && !store.isReadOnly) {
                 if let board { store.removeGuides(from: board.id) }
             },
+            .separator,
+            // A way of looking as the helpers are: the artboard seen from the side, or from the front again.
+            store.lookingAside
+                ? .item(LookTool.front) { store.lookFromTheFront() }
+                : .item(DocumentStore.lookingFromTheSide, enabled: store.canLookFromTheSide) { store.lookFromTheSide() },
         ]
     }
 }
