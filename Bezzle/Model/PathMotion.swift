@@ -329,8 +329,9 @@ nonisolated extension Node {
     }
 
     /// Poses its Shape at a moment as the outline of another shape, `other`, which lies in this
-    /// layer's own upright points: its points numbered so that they come from the outline this
-    /// one has at the key before with nothing turning on the way (`BezierPath.laid(along:)`).
+    /// layer's own upright points: with its own points, numbered so that they come from the
+    /// outline this one has at the key before with nothing turning on the way
+    /// (`shapeValue(taking:at:)`).
     @discardableResult
     mutating func poseShape(taking other: BezierPath, at time: Double) -> Bool {
         guard let value = shapeValue(taking: other, at: time) else { return false }
@@ -338,14 +339,26 @@ nonisolated extension Node {
         return true
     }
 
-    /// What a key of its Shape at a moment holds to say the outline of another shape, `other`,
-    /// numbered as `poseShape(taking:at:)` numbers it. Nil where `shapeValue(of:)` is.
+    /// What a key of its Shape at a moment holds to say the outline of another shape, `other`:
+    /// its own points and no more, numbered to come from the outline this one has at the key
+    /// before (`BezierPath.numbered(along:)`), or else to go into the one at the key after. Only
+    /// where a key either side has the same runs and would go into it point by point otherwise
+    /// than the two lie along each other (a square into a circle of four points would turn on the
+    /// way), it has the points more that lay it along the one before (`BezierPath.laid(along:)`).
+    /// Nil where `shapeValue(of:)` is.
     func shapeValue(taking other: BezierPath, at time: Double) -> [Double]? {
         guard canReshape, let design = ownOutline else { return nil }
-        // What it comes from: the key before, or the design, which a first key has for company.
+        // What it comes from: the key before, or the design, which a first key has for company;
+        // and what it goes into, the key after, if there is one.
         let track = self[track: .shape]
         let before = track?.keys.last { $0.t < time && !MotionTiming.same($0.t, time) }
+        let after = track?.keys.first { $0.t > time && !MotionTiming.same($0.t, time) }
         let from = before.flatMap { key in track.map { $0.outline(of: key, from: design) } } ?? design
+        let into = after.flatMap { key in track.map { $0.outline(of: key, from: design) } }
+        for own in ([from] + (into.map { [$0] } ?? [])).map(other.numbered(along:)) {
+            guard from.goesAlong(into: own), into.map({ own.goesAlong(into: $0) }) ?? true else { continue }
+            if let value = shapeValue(of: own) { return value }
+        }
         return shapeValue(of: other.laid(along: from))
     }
 }
@@ -985,6 +998,34 @@ nonisolated extension BezierPath {
     func laid(along other: BezierPath) -> BezierPath {
         BezierPath(subpaths: OutlineMatching.matched(other, self, anew: true).filter(\.own).map(\.second))
     }
+
+    /// This outline with its own points and no more, numbered as they best come from `other`'s:
+    /// its runs in the order of the runs of `other` they go with, each begun at the anchor and
+    /// drawn the way `laid(along:)` begins and draws it, or at the first of its own anchors after
+    /// a place that falls between two.
+    func numbered(along other: BezierPath) -> BezierPath {
+        let xs = other.subpaths.filter { !$0.anchors.isEmpty }, ys = subpaths.filter { !$0.anchors.isEmpty }
+        let partner = OutlineMatching.partners(xs, ys)
+        var out: [Subpath] = []
+        var taken = Set<Int>()
+        for (i, x) in xs.enumerated() {
+            guard let j = partner[i] else { continue }
+            out.append(OutlineMatching.numbered(ys[j], as: OutlineMatching.matched(x, ys[j], anew: true).1))
+            taken.insert(j)
+        }
+        for (j, y) in ys.enumerated() where !taken.contains(j) { out.append(y) }
+        return BezierPath(subpaths: out)
+    }
+
+    /// Whether a stretch from `self` into `other` goes as the two lie along each other: whether
+    /// the points a film gives them for it (`matched`, point by point where they have the same
+    /// runs) are the ones they are given when every run is looked at anew, as an outline taken
+    /// from another shape is laid along the one it comes from.
+    func goesAlong(into other: BezierPath) -> Bool {
+        let played = Self.matched(self, other)
+        let runs = OutlineMatching.matched(self, other, anew: true)
+        return played.0 == BezierPath(subpaths: runs.map(\.first)) && played.1 == BezierPath(subpaths: runs.map(\.second))
+    }
 }
 
 /// How two runs of anchors are given the same anchors (`BezierPath.matched`).
@@ -1154,6 +1195,25 @@ nonisolated private enum OutlineMatching {
     /// Where anchor `k` of a closed run of `count` comes to be in the run begun at `start`.
     static func place(of k: Int, begunAt start: Int, turned: Bool, count: Int) -> Int {
         turned ? (start - k + count) % count : (k - start + count) % count
+    }
+
+    /// `run` begun and drawn as `made` has it, `made` being the run as matching makes it: with
+    /// points more on its curves, begun elsewhere, drawn the other way, opened, or grown at its
+    /// ends. Its own anchors and no more, begun at the first of them that `made` has.
+    static func numbered(_ run: Run, as made: Run) -> Run {
+        let n = run.anchors.count
+        guard n > 1 else { return run }
+        // Which of its anchors each of `made`'s is, where it is one: told by where it lies.
+        var order: [Int] = []
+        for a in made.anchors {
+            guard let k = run.anchors.indices.first(where: { run.anchors[$0].point == a.point }) else { continue }
+            if order.last != k { order.append(k) }
+        }
+        if run.closed, order.count > 1, order.last == order.first { order.removeLast() }
+        guard let first = order.first else { return run }
+        guard run.closed else { return order.count > 1 && order[0] > order[order.count - 1] ? turned(run) : run }
+        let next = order.count > 1 ? order[1] : (first + 1) % n
+        return begun(run, at: first, turned: next == (first - 1 + n) % n && next != (first + 1) % n)
     }
 
     /// An open run drawn the other way.

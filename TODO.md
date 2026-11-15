@@ -18,12 +18,13 @@ file was made (2026-11-14): look before starting on one.
   and squared again lose a little of the keyed reshaping (about 47 of 50 points come back); a new
   component copy made at another size takes the component's keys unscaled.
 - **Outlines with other points** (2026-11-14: points added and taken away at the playhead, and
-  From… in the Pose card's Shape row gives a shape another's outline). A shape given another's
-  outline gets extra points where the outline before has points it has none for (a rectangle
-  after a triangle has six), and points taken in hand between two such keys are the matched
-  outline with those extras. From… ignores a 3D turn of either shape and takes only shapes on
-  the film's own artboard. Its menu and the hover preview were never looked at in a running
-  window; adding and deleting points is driven through canvas events in tests only.
+  From… in the Pose card's Shape row gives a shape another's outline; 2026-11-15: the key keeps
+  the other's own points). Where a key either side has the same runs and would go into it point
+  by point otherwise than they lie along each other, the outline taken still has points more (a
+  square given a circle has eight). Points taken in hand between two keys are the outline as it
+  is then, with the points the stretch gives both. From… ignores a 3D turn of either shape and
+  takes only shapes on the film's own artboard. Its menu and the hover preview were never looked
+  at in a running window; adding and deleting points is driven through canvas events in tests only.
 - **Outline keys in Bezzle 1.7:** it shows the design at such a key and keeps the key whole. Where
   the design's outline gets more points while such a key keeps its old count of noughts (points
   added in 1.7, or one person keying while another edits the design's points), 1.7 shows the

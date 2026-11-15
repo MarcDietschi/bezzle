@@ -474,11 +474,15 @@ struct MotionOutlineKeyTests {
         let (from, to) = BezierPath.matched(design, round)
         let far = zip(from.anchorPoints, to.anchorPoints).map { hypot($0.x - $1.x, $0.y - $1.y) }.max() ?? 0
         #expect(far < 60, "\(far)")
-        // A triangle next: it is laid along the circle before it, not along the design.
+        // The circle has four points more, where the square's corners go: with its own four,
+        // as many as the square's, it would go into it point by point and turn on the way.
+        #expect(round.anchorCount == 8)
+        // A triangle next: its own three points, numbered along the circle before it, not along
+        // the design.
         let triangle = BezierPath("M 50 0 L 100 100 L 0 100 Z")
         let value = try #require(n.shapeValue(taking: triangle, at: 2))
         let laid = try #require(n.shapeOutline(of: value))
-        #expect(alike(laid, triangle.laid(along: round)))
+        #expect(laid.anchorCount == 3 && alike(laid, triangle.numbered(along: round)))
         #expect(n.shapeValue(taking: BezierPath(), at: 2) == nil)
     }
 
@@ -524,12 +528,11 @@ struct MotionOutlineKeyTests {
         now = film.node("Square")
         #expect(film.keys("Square", .shape).map(\.t) == [0, 1, 2])
         #expect(now.outline(at: 1) == round)
-        // The star as it is: its ten points, and at most a point more on its outline where the
-        // circle's first point and the star's meet between two of them.
+        // The star as it is: its ten points and no more.
         let pointed = try #require(now.outline(at: 2))
         let own = try #require(film.node("Star").ownOutline)
         #expect(own.anchorPoints.allSatisfy { p in pointed.anchorPoints.contains { near($0, p) } }, "\(pointed.anchorPoints)")
-        #expect(pointed.anchorCount >= 10 && pointed.anchorCount <= 12)
+        #expect(pointed.anchorCount == 10)
         #expect(pointed.anchorPoints.allSatisfy { p in own.nearest(to: p).map { hypot($0.point.x - p.x, $0.point.y - p.y) < 0.01 } == true })
         #expect(close(box(pointed), CGRect(x: 0, y: 0, width: 100, height: 100)))
         // One step each.
@@ -543,6 +546,136 @@ struct MotionOutlineKeyTests {
         let was = film.store.doc
         film.step { film.store.takeShape(of: film.id("Star"), for: id) }
         #expect(film.store.doc == was)
+    }
+
+    /// Whether everything `a` draws lies on what `b` draws, and the other way round: the same
+    /// shape, whatever points each has.
+    private func sameShape(_ a: BezierPath?, _ b: BezierPath, within e: CGFloat = 0.05) -> Bool {
+        guard let a else { return false }
+        func lies(_ x: BezierPath, on y: BezierPath) -> Bool {
+            for s in x.subpaths.indices {
+                for i in 0..<x.subpaths[s].segmentCount {
+                    let c = x.segment(s, i)
+                    for k in 0...8 {
+                        guard let spot = y.nearest(to: BezierPath.point(on: c, at: CGFloat(k) / 8)), spot.distance < e else { return false }
+                    }
+                }
+            }
+            return true
+        }
+        return lies(a, on: b) && lies(b, on: a)
+    }
+
+    /// Whether an outline, followed in short straight steps, crosses itself anywhere.
+    private func crossesItself(_ outline: BezierPath) -> Bool {
+        for s in outline.subpaths.indices {
+            var points: [CGPoint] = []
+            for i in 0..<outline.subpaths[s].segmentCount {
+                let c = outline.segment(s, i)
+                for k in 0..<12 { points.append(BezierPath.point(on: c, at: CGFloat(k) / 12)) }
+            }
+            let closed = outline.subpaths[s].closed
+            if !closed, let last = outline.subpaths[s].anchors.last { points.append(last.point) }
+            let count = closed ? points.count : points.count - 1
+            func side(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
+            for i in 0..<max(count, 0) {
+                for j in (i + 2)..<max(count, i + 2) where !(closed && i == 0 && j == count - 1) {
+                    let p = points[i], q = points[(i + 1) % points.count], r = points[j], u = points[(j + 1) % points.count]
+                    let d1 = side(r, u, p), d2 = side(r, u, q), d3 = side(p, q, r), d4 = side(p, q, u)
+                    if d1 * d2 < -1e-6, d3 * d4 < -1e-6 { return true }
+                }
+            }
+        }
+        return false
+    }
+
+    /// A star of `n` points about `c`.
+    private func star(_ n: Int, _ outer: CGFloat, _ inner: CGFloat, at c: CGPoint) -> BezierPath {
+        let anchors = (0..<(2 * n)).map { i -> BezierPath.Anchor in
+            let r = i % 2 == 0 ? outer : inner, a = CGFloat(i) * .pi / CGFloat(n) - .pi / 2
+            return BezierPath.Anchor(CGPoint(x: c.x + r * cos(a), y: c.y + r * sin(a)))
+        }
+        return BezierPath(subpaths: [BezierPath.Subpath(anchors: anchors, closed: true)])
+    }
+
+    @Test func aShapeGivenAnothersOutlineHoldsItWithItsOwnPointsAndGoesIntoItWhole() throws {
+        func path(_ outline: BezierPath) -> Node { var n = Node.path(outline, name: "P"); n.fill.on = true; return n }
+        var rounded = Node(kind: .rectangle, name: "R", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        rounded.cornerRadius = 20
+        let circle = BezierPath(CGPath(ellipseIn: CGRect(x: 10, y: -10, width: 100, height: 100), transform: nil))
+        // Each: a layer, the outline it is given at one second, and how many points its key holds.
+        let cases: [(String, Node, BezierPath, Int)] = [
+            ("triangle to rectangle", path(BezierPath("M 0 0 L 100 0 L 50 80 Z")), BezierPath("M 0 0 L 100 0 L 100 80 L 0 80 Z"), 4),
+            ("triangle to a turned rectangle", path(BezierPath("M 0 0 L 100 0 L 50 80 Z")),
+             BezierPath("M 0 0 L 100 0 L 100 80 L 0 80 Z").applying(CGAffineTransform(translationX: 50, y: 40).rotated(by: 0.3).translatedBy(x: -50, y: -40)), 4),
+            // The circle has the rectangle's runs: with its own four points it would go into
+            // them point by point and turn on the way, so it has four more, where the corners go.
+            ("rectangle to circle", Node(kind: .rectangle, name: "Rect", frame: CGRect(x: 0, y: 0, width: 120, height: 80)), circle, 8),
+            ("star to rounded rectangle", path(star(5, 50, 22, at: CGPoint(x: 50, y: 50))), try #require(rounded.ownOutline), 9),
+            ("circle to star", Node(kind: .ellipse, name: "Dot", frame: CGRect(x: 0, y: 0, width: 100, height: 100)), star(5, 50, 22, at: CGPoint(x: 50, y: 50)), 10),
+            ("open to closed", path(BezierPath("M 0 50 L 100 50")), BezierPath("M 0 0 L 100 0 L 100 100 L 0 100 Z"), 4),
+            ("closed to open", Node(kind: .rectangle, name: "Box", frame: CGRect(x: 0, y: 0, width: 100, height: 100)), BezierPath("M 0 0 L 50 80 L 100 0"), 3),
+        ]
+        for (name, layer, given, count) in cases {
+            var n = layer
+            let posed = n.poseShape(taking: given, at: 1)
+            #expect(posed, "\(name)")
+            let held = try #require(n.outline(at: 1))
+            #expect(held.anchorCount == count && sameShape(held, given), "\(name): \(held.anchorCount) points")
+            #expect(n.outline(at: 0) == n.ownOutline, "\(name)")
+            // On the way it is whole: it never crosses itself, stays within the room the two
+            // take up, and each moment is close to the one before.
+            let room = try #require(n.ownOutline).bounds.union(given.bounds).insetBy(dx: -1, dy: -1)
+            var last = try #require(n.outline(at: 0))
+            for t in stride(from: 1.0 / 40, through: 1, by: 1.0 / 40) {
+                let now = try #require(n.outline(at: t))
+                #expect(!crossesItself(now), "\(name) at \(t)")
+                #expect(room.contains(now.bounds), "\(name) at \(t): \(now.bounds)")
+                if now.hasRuns(of: last) {
+                    let far = zip(now.anchorPoints, last.anchorPoints).map { hypot($0.x - $1.x, $0.y - $1.y) }.max() ?? 0
+                    #expect(far < 12, "\(name) at \(t): a point \(far) from where it was")
+                }
+                last = now
+            }
+        }
+    }
+
+    @Test func aRectangleAfterATriangleHasItsFourPointsAndOpensOutOfItEvenly() throws {
+        var n = Node(kind: .rectangle, name: "Square", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        n.poseShape(taking: BezierPath("M 50 0 L 100 100 L 0 100 Z"), at: 1)
+        n.poseShape(taking: BezierPath("M 0 10 L 100 10 L 100 90 L 0 90 Z"), at: 2)
+        // Each key holds its own points: the triangle three, the rectangle four, which with the
+        // square's runs is a change of the square's points.
+        #expect(n.outline(at: 1)?.anchorCount == 3 && n.outline(at: 2)?.anchorCount == 4)
+        #expect(n[track: .shape]?.keys.last?.v.count == n.shapeRest.count)
+        // On the way the tip comes down to the middle of the top side, and the sides open out to
+        // its corners alike: the outline is the same either side of the middle at every moment,
+        // with a point more than the rectangle has.
+        let mirror = CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 100, ty: 0)
+        for t in stride(from: 1.05, to: 2, by: 0.05) {
+            let now = try #require(n.outline(at: t))
+            #expect(now.anchorCount == 5 && sameShape(now, now.applying(mirror)), "at \(t): \(now.anchorPoints)")
+            #expect(now.anchorPoints.contains { abs($0.x - 50) < 0.01 }, "at \(t)")
+        }
+    }
+
+    @Test func thePointsTakenInHandAtAKeyThatTookAnothersOutlineAreThatOutlinesOwn() throws {
+        var tri = path("M 0 0 L 100 0 L 50 80 Z", name: "Tri")
+        tri.frame.origin = CGPoint(x: 100, y: 60)
+        let box = CanvasTests.rect("Box", CGRect(x: 260, y: 220, width: 100, height: 80))
+        let film = FilmBench([tri, box])
+        let id = film.id("Tri")
+        film.store.seek(1)
+        film.step { film.store.takeShape(of: film.id("Box"), for: id) }
+        // Taken in hand at the key: the rectangle's four corners, about the triangle's middle.
+        film.click(film.view(150, 100))
+        film.click(film.view(150, 100), clicks: 2)
+        #expect(film.store.editingPath == id)
+        let shown = film.tool.points.pen.overlay().anchors.map(\.point)
+        #expect(shown.count == 4, "\(shown)")
+        for corner in [CGPoint(x: 100, y: 60), CGPoint(x: 200, y: 60), CGPoint(x: 200, y: 140), CGPoint(x: 100, y: 140)] {
+            #expect(shown.contains { near($0, CGPoint(x: corner.x + 100, y: corner.y + 100)) }, "\(corner) in \(shown)")
+        }
     }
 
     // MARK: The movie

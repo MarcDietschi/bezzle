@@ -295,6 +295,51 @@ struct MotionMatchingTests {
         #expect(laid.subpaths[0] == two.subpaths[1] && laid.subpaths[1] == two.subpaths[0])
     }
 
+    @Test func anOutlineNumberedAlongAnotherKeepsItsOwnPoints() {
+        // The same square, begun at its third corner and drawn the other way: itself again.
+        var other = square
+        other.subpaths[0].anchors = [2, 1, 0, 3].map { square.subpaths[0].anchors[$0] }
+        #expect(other.numbered(along: square) == square)
+        // A diamond, whose corners are where the square's sides are: laid along it, it has eight
+        // points; numbered, its own four, begun at the first of them the laid one has.
+        let diamond = BezierPath("M 50 110 L -10 50 L 50 -10 L 110 50 Z")
+        let laid = diamond.laid(along: square), numbered = diamond.numbered(along: square)
+        #expect(laid.anchorCount == 8)
+        #expect(numbered.anchorCount == 4 && sameShape(numbered, diamond))
+        #expect(numbered.anchorPoints.first == laid.anchorPoints.first { diamond.anchorPoints.contains($0) })
+        #expect(Set(numbered.anchorPoints.map { [$0.x, $0.y] }) == Set(diamond.anchorPoints.map { [$0.x, $0.y] }))
+        // Drawn the way the laid one is: the second of its own after the first.
+        let order = laid.anchorPoints.filter { diamond.anchorPoints.contains($0) }
+        #expect(Array(numbered.anchorPoints) == order, "\(numbered.anchorPoints) \(order)")
+        // An open run, drawn the other way.
+        #expect(BezierPath("M 100 0 L 50 10 L 0 0").numbered(along: BezierPath("M 0 5 L 50 5 L 100 5")) == BezierPath("M 0 0 L 50 10 L 100 0"))
+        // A closed run for an open one stays closed, its own four points.
+        let opened = square.numbered(along: BezierPath("M 100 0 L 100 100 L 0 100 L 0 0"))
+        #expect(opened.subpaths.count == 1 && opened.subpaths[0].closed && opened.anchorCount == 4 && sameShape(opened, square))
+        #expect(opened.anchorPoints.first == CGPoint(x: 100, y: 0))
+        // Runs in the order of the runs they go with, and a run with none to go with last.
+        let three = BezierPath("M 200 0 L 240 0 L 220 40 Z M 0 0 L 40 0 L 40 40 L 0 40 Z M 100 100 L 110 100 L 105 110 Z")
+        let ordered = three.numbered(along: BezierPath("M 2 2 L 42 2 L 42 42 L 2 42 Z M 202 2 L 242 2 L 222 42 Z"))
+        #expect(ordered.subpaths.count == 3)
+        #expect(ordered.subpaths[0] == three.subpaths[1] && ordered.subpaths[1] == three.subpaths[0] && ordered.subpaths[2] == three.subpaths[2])
+    }
+
+    @Test func aStretchGoesAlongWhereAFilmGivesItThePointsTheOutlinesLieAlongEachOtherBy() {
+        // A square into a circle of as many points goes point by point: each corner round to the
+        // middle of a side, which is not how they lie along each other.
+        #expect(!square.goesAlong(into: circle))
+        // Into a square a little turned and grown, numbered along it: corner to corner.
+        let turn = CGAffineTransform(translationX: 50, y: 50).rotated(by: 0.1).scaledBy(x: 1.2, y: 1.2).translatedBy(x: -50, y: -50)
+        let near = square.applying(turn)
+        #expect(square.goesAlong(into: near.numbered(along: square)))
+        // Begun at another corner, the same square goes round a quarter point by point.
+        var begun = near.numbered(along: square)
+        begun.subpaths[0].anchors = (0..<4).map { begun.subpaths[0].anchors[($0 + 1) % 4] }
+        #expect(!square.goesAlong(into: begun))
+        // Outlines with other points always do: a film lays them along each other.
+        #expect(BezierPath("M 0 0 L 100 0 L 50 80 Z").goesAlong(into: square) && square.goesAlong(into: circle.laid(along: square)))
+    }
+
     // MARK: Whatever the outlines
 
     private struct Dice {

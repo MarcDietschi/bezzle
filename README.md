@@ -355,8 +355,10 @@ along one artboard's film. Its keys are changes from the design and never the de
   outline there. Outlines that share no anchor are laid along each other whole, begun where and
   run the way their points go least far; a run with none to go with shrinks to its middle. Outlines
   with the same runs of as many points go point by point as they are numbered, so an outline taken
-  from another shape is first numbered like the one it comes from (`laid(along:)`). Its tests are
-  `MotionMatchingTests`. A film asks for it between two keys that say other points
+  from another shape is first numbered like the one it comes from (`numbered(along:)`, its own
+  points begun and drawn as they lie along it; `laid(along:)` gives it the points more that
+  `matched` would as well). `goesAlong(into:)` says whether a stretch goes as two outlines lie
+  along each other, which point by point it may not. Its tests are `MotionMatchingTests`. A film asks for it between two keys that say other points
   (`MotionTrack.outline(at:from:)`), and keeps the pairs it was given lately (`MatchedOutlines`).
 - **A key with an outline of its own** is what a Shape key is where it says other points than the
   design's, more or fewer, or runs open where the design's are closed. It comes of points added or
@@ -377,9 +379,16 @@ along one artboard's film. Its keys are changes from the design and never the de
   changes, such a key keeps its outline where it shows: grown with a resize, turned over with a
   flip, shifted when `setPoints` fits the frame anew (`MotionTrack.withOutlines`). Another shape's
   outline is placed for a layer by `Node.outline(of:for:at:)`, as large and turned as the other is
-  on the artboard and about the layer's own middle, and numbered to come from the key before by
-  `Node.shapeValue(taking:at:)`, which gives it points more on its own outline where the outline
-  before has points it has none for; `Node.shapesToTake` lists whose a layer can take. Its tests
+  on the artboard and about the layer's own middle, and kept by `Node.shapeValue(taking:at:)` with
+  its own points and no more, numbered to come from the key before or else to go into the key
+  after, so the points taken in hand at that key are the other's own. Only where a key either side
+  has the same runs and would go into it point by point otherwise than the two lie along each other
+  (a square and a circle of four points each, whose corners would go round) does it keep the points
+  more that lay it along the key before. Measured on 2026-11-15 on eleven pairs, among them a
+  triangle into a rectangle, a rectangle into a circle, a star into a rounded rectangle, open into
+  closed and back: the film is the same at every moment as with those points more, but for a
+  rectangle after a triangle, which now opens out of it evenly with five points on the way, not
+  six. `Node.shapesToTake` lists whose a layer can take. Its tests
   are `MotionOutlineKeyTests`, and `AnimateStressTests` keys other outlines and takes them from
   other shapes.
 - **Looks** (`Bezzle/Model/LookMotion.swift`, shared): a layer's fills, borders and shadows and a
