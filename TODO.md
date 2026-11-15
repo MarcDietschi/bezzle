@@ -427,10 +427,13 @@ room's hands and presence, four languages, the icon library in the core, and mem
 
 ## The website
 
-bezzle.ch as of 2026-11-14 (bezzle-web 4b268bf, deployed): the docs, What's New and the home page
+bezzle.ch as of 2026-11-15 (bezzle-web b351ca1, deployed): the docs, What's New and the home page
 say what 1.8 has, and the story has twelve chapters, with Vectorize and Animate among them and
-the window's switch showing four modes. Its source is `~/Sites/bezzle-web`; this is what was left
-there.
+the window's switch showing four modes. The docs play the Vectorize and Animate scenes, the
+comparison pages have rows for Animation, 3D and Vectorize (Figma's and Sketch's sides as their
+own sites had them in November 2026), `/docs/index.html` no longer puts React's error 418 in the
+console, and `scripts/shelter-logo.mjs` runs with Node 26. Its source is `~/Sites/bezzle-web`;
+this is what was left there.
 
 - **The story's ten older captures show three modes.** The pictures a visitor without motion
   sees (`public/img/app/<locale>/`) were taken before Animate; only `vectorize` and `animate` are
@@ -438,18 +441,10 @@ there.
   from that session and not run from this folder since; its header says what it needs beside
   it). Left: all twelve taken afresh through `capture/capture.py`, and words for the two
   chapters in `captions.py`.
-- **The docs do not play the two new scenes:** `src/docs/Live.jsx` has no entry for Vectorize or
-  Animate, so their pages show no playing window.
-- **The comparison pages** (`figma-alternative.html`, `sketch-alternative.html`) show Vectorize
-  and Animate among the story's chapters, but their tables have no row for Animate, 3D scenes
-  or Vectorize.
 - **Not measured:** the two new scenes drawn flat on a phone (`lib/flat.js`; the memory Safari
   holds, with Playwright's WebKit at an iPhone's size and 3× as the site's README says), and
   Lighthouse on the live site (on the local preview server, which sends files uncompressed, the
   home page's performance was 82 before the two chapters and 81 after, the other three 100).
-- **Found, not fixed:** `https://bezzle.ch/docs/index.html` puts React's error 418 in the
-  console (`/docs/` has none), and the line in the header of `scripts/shelter-logo.mjs` that
-  runs it fails with Node 26.
 - **For Erik, the two new captures:** the window's three buttons are grey in them, since a test
   copy never comes to the front (four of the ten older captures are grey too, six coloured).
   The copies ran with a relay address nothing answers at (`http://127.0.0.1:9`) instead of none,
