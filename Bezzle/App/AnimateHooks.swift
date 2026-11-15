@@ -38,9 +38,9 @@ import AppKit
 ///                                  the keyboard. While a press is kept down on SwiftUI's ground
 ///                                  it goes nowhere: the app is told of no key then, which is why
 ///                                  the timeline asks the keyboard itself for Escape
-///       escape=1 | escape=0        as if Escape were held down, and let go again, for the
-///                                  timeline's marquee (`FilmHand.escapeOnKeyboard`): the keyboard
-///                                  itself is not a test run's to press
+///       escape=1 | escape=0        as if Escape were held down, and let go again, for whatever
+///                                  is dragged on the timeline (`FilmHand.escapeOnKeyboard`): the
+///                                  keyboard itself is not a test run's to press
 ///       picked                     writes which layers, or the camera, and which keys are picked,
 ///                                  whether the film plays, and where the playhead is, and whether
 ///                                  the copy has come to the front (it never should), to

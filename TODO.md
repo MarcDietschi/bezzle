@@ -103,13 +103,16 @@ file was made (2026-11-14): look before starting on one.
   the sandboxed release build. Never felt: drawn once in a background copy by made presses; the 3
   points before it begins, the 4 within which it catches a bead and the 4 that take the
   playhead's line were not tried with a pointer.
-- **The marquee, not built:** Escape under other drags on the timeline (a key, a bar, the playhead
-  or the film's end dragged is not given back; `FilmHand.heed` could do it). It begins only on
-  bare sheet: where every line's bar runs the film's length and the card shows no spare line,
-  there is none to begin on. In a film of more than seven lines it does not scroll the lines up
-  or down, it creeps only along the film, and Escape leaves the sheet where it crept to. Shift
-  is read as the press comes. Keys cannot be copied in Animate, so a marquee's keys move and are
-  deleted together but are not copied.
+- **The marquee, not built:** it begins only on bare sheet: where every line's bar runs the
+  film's length and the card shows no spare line, there is none to begin on. Shift is read as
+  the press comes. Keys cannot be copied in Animate, so a marquee's keys move and are deleted
+  together but are not copied.
+- **Escape under every drag, the lines scrolled under a marquee** (2026-11-15, `README.md` ›
+  Animate): driven by tests only, never felt. Not tried: Escape with a real key under a key, a
+  band, the playhead or the film's end; the pace the lines scroll at; whether SwiftUI's drag goes
+  on, and tells points down the lines, while the card's `ScrollPosition` scrolls them under a
+  pointer at rest (the hand counts on it). The scrub was not measured again since the hand asks
+  the keyboard for Escape sixty times a second under every drag, not only under a marquee.
 - **Driving a copy:** `press=` replaces `acceptsFirstMouse` on the kind of view under the point
   while the press lasts (Debug only).
 - **Unchecked:** a movie saved from the sandboxed build onto another disk, where it is copied into
@@ -134,6 +137,7 @@ outlines and looks. What is left:
   `FilmDesk.poseLook` shows the call.
 - **The timeline has no marquee over keys,** and bare sheet dragged still moves the playhead
   there. The shared `FilmMarquee` (`Bezzle/Model/FilmKeys.swift`) is tested and there to use.
+- **No Escape under a drag on the timeline** (the Mac has it since 2026-11-15, `FilmHand.cancel`).
 - **A movie's gentle tones** are still rounded twice (pieces and the frame in eight bits, then
   NV12), and there is no ten bit choice; the AI server's `codec` is the Mac's alone. What it
   takes is in e652531's report: `bz_film_frame` composing in sixteen bits, the stand-in pictures

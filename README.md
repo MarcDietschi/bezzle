@@ -283,12 +283,22 @@ along one artboard's film. Its keys are changes from the design and never the de
   keys are only ever picked of what is picked. With Shift it picks what it catches that was not
   picked and lets go of what was. The rectangle is kept in moments and in points down the lines
   (`FilmMarquee`, with what it catches, in `Bezzle/Model/FilmKeys.swift`, shared, for Windows to
-  use), so it keeps what it caught where the sheet creeps along under it. Escape gives back what
-  was picked before (`FilmHand.cancel`). The hand asks the keyboard whether Escape is down
-  (`heed`: at every step of the drag and sixty times a second while a marquee is in hand),
-  because the app is told of no key while SwiftUI follows a press, neither its event monitors
-  nor whatever has the keyboard, and Escape does not end SwiftUI's drag either (measured
-  2026-11-14 on macOS 27.2 in a test copy). Its tests are `FilmMarqueeTests`.
+  use), so it keeps what it caught where the sheet creeps along under it. In a film of more
+  than seven lines it scrolls them the same way when it is drawn past the top or the foot of
+  those in sight (`FilmHand.climb`), reaching no further than the lines show and catching what
+  comes into sight. The card tells the hand how far down its lines are scrolled (`linesTop`, from
+  `onScrollGeometryChange`), and the hand scrolls them through a `ScrollPosition` of the card's
+  own, which no other view reads. Its tests are `FilmMarqueeTests`.
+- **Escape under every drag** on the timeline, a key, several, a line's band, the playhead, the
+  film's end or a marquee: everything is as it was before the press came (`FilmHand.cancel`).
+  The keys' moments and the film's length go back by `cancelGesture`, which leaves nothing to
+  undo; what was picked, the playhead (where it showed, of a film that played), the part of the
+  film the sheet showed and how far down the lines it was scrolled are put back by the hand.
+  The hand asks the keyboard whether Escape is down (`heed`: at every step of the drag and sixty
+  times a second while anything is in hand), because the app is told of no key while SwiftUI
+  follows a press, neither its event monitors nor whatever has the keyboard, and Escape does not
+  end SwiftUI's drag either (measured 2026-11-14 on macOS 27.2 in a test copy). Its tests are
+  `FilmEscapeTests`.
 - **A shader fill that builds on its frames** (feedback, trails, a simulation:
   `ShaderFill.builds`) shows at a film's moment the step that moment falls in, drawn forward from
   what the page's textures held when it came in, by steps as often as the page drew (sixty a

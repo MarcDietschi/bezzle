@@ -292,42 +292,46 @@ struct FilmMarqueeTests {
         #expect(store.film.camera && store.selection.isEmpty && store.film.keys == [FilmKeyRef(board, at: 1)])
         letGo()
         #expect(store.film.camera && store.film.keys == [FilmKeyRef(board, at: 1)] && store.filmTime == 1)
-        // A key that is dragged is not put back by it: that is no marquee.
+        // A key that is dragged is put back by it as well, and leaves nothing to undo
+        // (`FilmEscapeTests` has every drag the timeline takes).
         bench.step {
             press(at(1, 0.5))
             pull(from: at(1, 0.5), to: at(1.2, 0.5))
-            #expect(!hand.cancel() && hand.drag?.kind == .keys)
+            #expect(hand.drag?.kind == .keys && hand.cancel() && hand.drag?.kind == .nothing)
             letGo()
         }
-        #expect((store.filmBoard?[track: .cameraZoom]?.keys ?? []).map(\.t) == [0, 1.2])
-        bench.undoLast()
-        #expect(store.doc == before)
+        #expect((store.filmBoard?[track: .cameraZoom]?.keys ?? []).map(\.t) == [0, 1])
+        #expect(store.doc == before && bench.undo.undoActionName != String(localized: "Move Key"))
     }
 
     /// Of a key pressed while a drag is in SwiftUI's hand the app is told nothing, so the hand
-    /// asks whether Escape is down: at every step of the drag, and between them while a marquee
+    /// asks whether Escape is down: at every step of the drag, and between them while anything
     /// is in hand, as its timer does with `heed`.
-    @Test func escapeIsAskedOfTheKeyboardOnlyWhileAMarqueeIsInHand() {
+    @Test func escapeIsAskedOfTheKeyboardOnlyWhileSomethingIsInHand() {
         nonisolated final class Key: @unchecked Sendable { var down = false, asked = 0 }
         let key = Key()
         hand.escapeDown = { key.asked += 1; return key.down }
         click(at(1, 0.5))
         #expect(store.film.camera && store.film.keys == [FilmKeyRef(board, at: 1)])
-        // No marquee in hand: the keyboard is not asked, and Escape held changes nothing, not
-        // for a key that is dragged either.
+        // Nothing in hand: the keyboard is not asked, and Escape held changes nothing.
         key.down = true
         #expect(!hand.heed() && key.asked == 0)
+        // A key dragged with Escape held is given up at its first step, and stays where it was.
         drag(at(1, 0.5), at(1.2, 0.5))
-        #expect((store.filmBoard?[track: .cameraZoom]?.keys ?? []).map(\.t) == [0, 1.2] && key.asked == 0)
+        #expect((store.filmBoard?[track: .cameraZoom]?.keys ?? []).map(\.t) == [0, 1] && key.asked == 1)
+        #expect(store.film.camera && store.film.keys == [FilmKeyRef(board, at: 1)])
+        // Not held, it is asked at every step, and the key goes.
+        key.down = false
+        drag(at(1, 0.5), at(1.2, 0.5))
+        #expect((store.filmBoard?[track: .cameraZoom]?.keys ?? []).map(\.t) == [0, 1.2] && key.asked == 5)
         #expect(store.film.camera && store.film.keys == [FilmKeyRef(board, at: 1.2)])
         let head = store.filmTime
         // A marquee: asked at each step.
-        key.down = false
         let a = at(0.9, 3.5)
         press(a)
         pull(from: a, to: at(0.1, 2.5))
-        #expect(store.selection == [card] && !store.film.camera && store.film.keys.count == 3 && key.asked == 1)
-        #expect(!hand.heed() && key.asked == 2)
+        #expect(store.selection == [card] && !store.film.camera && store.film.keys.count == 3 && key.asked == 6)
+        #expect(!hand.heed() && key.asked == 7)
         // Escape goes down while the pointer rests: the next look gives the marquee up.
         key.down = true
         #expect(hand.heed())
@@ -393,15 +397,21 @@ struct FilmMarqueeTests {
             letGo()
             key.down = false
         }
-        // Nor once a marquee is let go of, nor while a key is dragged.
+        // Nor once it is let go of.
         drag(a, at(0.1, 2.5))
         #expect(store.film.keys.count == 3 && hand.drag == nil)
         let after = key.asked
         wait(.default, upTo: 0.1) { false }
-        press(at(0.8, 2.5))
-        wait(.default, upTo: 0.1) { false }
-        letGo()
         #expect(key.asked == after)
+        // A key held still is looked out for as a marquee is, and given up without a step.
+        press(at(0.8, 2.5))
+        wait(.default) { key.asked >= after + 3 }
+        #expect(key.asked >= after + 3 && hand.drag?.kind == .keys)
+        key.down = true
+        wait(.default) { hand.drag?.kind == .nothing }
+        #expect(hand.drag?.kind == .nothing && store.film.keys.count == 3)
+        letGo()
+        key.down = false
     }
 
     // MARK: Lines as they show
@@ -615,6 +625,130 @@ struct FilmMarqueeTests {
         #expect(store.film.keys == [FilmKeyRef(badge, at: 0), FilmKeyRef(badge, at: 0.8), FilmKeyRef(badge, at: 1.4),
                                     FilmKeyRef(card, at: 0.2), FilmKeyRef(card, at: 0.6), FilmKeyRef(card, at: 0.8)])
         letGo()
+    }
+
+    // MARK: More lines than show
+
+    /// A film of nine layers that fade in over a second, with the camera's line ten lines: the
+    /// card shows seven of them, from `linesTop` down, and scrolls the rest.
+    private struct Tall {
+        let bench: Bench
+        let hand: FilmHand
+        /// Where the hand has had the card's lines scrolled to, in order.
+        let scrolled: Scrolled
+        final class Scrolled { var tops: [CGFloat] = [] }
+
+        init() {
+            let names = (1...9).map { "L\($0)" }
+            let bench = Bench(extra: names.enumerated().map { i, name in CanvasTests.rect(name, CGRect(x: 10 + CGFloat(i) * 40, y: 20, width: 30, height: 30)) })
+            let hand = FilmHand(store: bench.store), scrolled = Scrolled()
+            self.bench = bench
+            self.hand = hand
+            self.scrolled = scrolled
+            bench.store.show(.animate)
+            bench.store.glide.stop()
+            let ids = names.map { bench.node($0)!.id }
+            bench.step {
+                bench.store.edit("Add Key") { doc in
+                    for id in ids { doc.update(id) { $0.setKey(.fade, [0], at: 0); $0.setKey(.fade, [1], at: 1) } }
+                }
+            }
+            hand.scrollsLines = { scrolled.tops.append($0) }
+        }
+
+        var store: DocumentStore { bench.store }
+        var rows: [FilmRow] { FilmRow.rows(of: store.filmBoard!, open: []) }
+        var scale: FilmScale { hand.scale(width: 600) }
+        /// A point of the lines at a moment, so many lines down from the first, wherever they are scrolled.
+        func at(_ t: Double, _ lines: CGFloat) -> CGPoint { CGPoint(x: scale.x(t), y: lines * FilmTimeline.rowHeight) }
+        /// The keys at one second of these lines.
+        func caught(_ lines: ClosedRange<Int>) -> Set<FilmKeyRef> { Set(rows[lines].map { FilmKeyRef($0.layer, at: 1) }) }
+        func press(_ p: CGPoint) { hand.press(at: p, rows: rows, scale: scale) }
+        func pull(from a: CGPoint, to b: CGPoint) {
+            hand.dragged(to: b, by: b.x - a.x, rows: rows, scale: scale, length: store.filmBoard!.filmLength)
+        }
+    }
+
+    @Test func inAFilmOfMoreLinesThanShowItScrollsThemAndPicksWhatComesIntoSight() {
+        let tall = Tall()
+        let hand = tall.hand, store = tall.store
+        #expect(tall.rows.count == 10 && FilmHand.sight(of: 10) == 168)
+        // Pressed on bare sheet past the keys of the fifth line, dragged back over its beads at
+        // one second and down to the seventh.
+        let a = tall.at(1.5, 4.5)
+        tall.press(a)
+        tall.pull(from: a, to: tall.at(0.9, 6.5))
+        #expect(store.film.keys == tall.caught(4...6))
+        #expect(!hand.creep(0.1) && hand.linesTop == 0)
+        // Thirty points past the foot of the lines in sight: it reaches no further than they show,
+        // and catches nothing of the lines out of sight.
+        let down = CGPoint(x: tall.scale.x(0.9), y: 168 + 30)
+        tall.pull(from: a, to: down)
+        #expect(hand.marquee?.foot == 168 && store.film.keys == tall.caught(4...6))
+        // The lines scroll up under it at 400 points a second, and it catches what comes into sight.
+        #expect(hand.creep(0.1))
+        #expect(abs(hand.linesTop - 40) < 1e-9 && tall.scrolled.tops == [hand.linesTop])
+        #expect(abs((hand.marquee?.foot ?? 0) - 208) < 1e-9 && store.film.keys == tall.caught(4...8))
+        // To the last line, and no further.
+        var steps = 0
+        while hand.creep(0.1), steps < 100 { steps += 1 }
+        #expect(steps == 1 && hand.linesTop == 72 && hand.marquee?.foot == 240)
+        #expect(store.film.keys == tall.caught(4...9) && store.selection == tall.rows[4...9].map(\.layer))
+        // Back within the lines in sight it scrolls no more, and lets go of what it no longer covers.
+        tall.pull(from: a, to: tall.at(0.9, 6))
+        #expect(!hand.creep(0.1) && hand.linesTop == 72)
+        #expect(store.film.keys == tall.caught(4...5))
+        // Past their top, the lines scroll down under it, to the first.
+        tall.pull(from: a, to: tall.at(0.9, 2))
+        #expect(hand.marquee?.foot == 72 && store.film.keys == tall.caught(3...4))
+        steps = 0
+        while hand.creep(0.1), steps < 100 { steps += 1 }
+        #expect(steps < 100 && hand.linesTop == 0 && hand.marquee?.foot == 0)
+        #expect(store.film.keys == tall.caught(1...4))
+        hand.ended(scale: tall.scale)
+        // Let go, what it caught stays picked, and the lines stay where they are.
+        #expect(store.film.keys == tall.caught(1...4) && hand.linesTop == 0 && !hand.creep(0.1))
+        #expect(tall.scrolled.tops.last == 0)
+    }
+
+    @Test func escapeScrollsTheLinesBackWhereTheyWere() {
+        let tall = Tall()
+        let hand = tall.hand, store = tall.store
+        // The lines scrolled by hand a line down, and a key picked.
+        hand.linesTop = 24
+        tall.bench.step {
+            tall.press(tall.at(1, 2.5))
+            hand.ended(scale: tall.scale)
+        }
+        let picked = tall.caught(2...2)
+        #expect(store.film.keys == picked)
+        let a = tall.at(1.5, 3.5)
+        tall.press(a)
+        tall.pull(from: a, to: CGPoint(x: tall.scale.x(0.9), y: 24 + 168 + 60))
+        while hand.creep(0.1) {}
+        #expect(hand.linesTop == 72 && store.film.keys == tall.caught(3...9))
+        #expect(hand.cancel())
+        #expect(hand.linesTop == 24 && tall.scrolled.tops.last == 24)
+        #expect(store.film.keys == picked && store.selection == [tall.rows[2].layer] && hand.marquee == nil)
+        hand.ended(scale: tall.scale)
+        #expect(store.film.keys == picked && hand.linesTop == 24)
+    }
+
+    @Test func aFilmOfSevenLinesOrFewerNeverScrollsThem() {
+        #expect(rows.count == 3)
+        let a = at(1, 3.5)
+        press(a)
+        pull(from: a, to: CGPoint(x: scale.x(0.1), y: 400))
+        #expect(!hand.creep(0.1) && hand.linesTop == 0)
+        // Reaching as far as the four lines the card shows of it.
+        #expect(hand.marquee?.foot == FilmHand.sight(of: 3) && FilmHand.sight(of: 3) == 96)
+        pull(from: a, to: CGPoint(x: scale.x(0.1), y: -300))
+        #expect(!hand.creep(0.1) && hand.marquee?.foot == 0)
+        letGo()
+        // Slowly just past the lines, faster further out, and not at all within them.
+        #expect(FilmHand.climbRate(at: 100, sight: 168) == 0 && FilmHand.climbRate(at: 0, sight: 168) == 0)
+        #expect(FilmHand.climbRate(at: 170, sight: 168) == 64 && FilmHand.climbRate(at: -2, sight: 168) == -64)
+        #expect(FilmHand.climbRate(at: 1000, sight: 168) == 1600)
     }
 
     // MARK: What it tells

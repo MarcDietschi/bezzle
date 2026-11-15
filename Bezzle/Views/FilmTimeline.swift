@@ -12,7 +12,8 @@ import AppKit
 /// long the film runs. While something is dragged the seconds hold still under it; let go, the
 /// film fits the card again. Bare sheet only clicked puts the playhead there; dragged, it draws a
 /// marquee that picks the keys under it, with Shift adding to those picked and letting go of
-/// those among them it catches again, and Escape gives back what was picked before.
+/// those among them it catches again, and scrolls the lines when it is drawn past those in
+/// sight. Escape under any drag gives back everything as it was before the press.
 ///
 /// A pinch looks at the film closer, about the moment under the pointer, and two fingers then
 /// move it along; a double tap with two fingers, or pinching back out, shows the whole film
@@ -23,6 +24,9 @@ struct FilmTimeline: View {
     @Environment(MenuHost.self) private var menus
     @State private var hand: FilmHand
     @State private var fingers: FilmFingers
+    /// Where the lines are scrolled to, when the hand scrolls them (`FilmHand.climb`). Only the
+    /// lines read it, so the card is not built again as they scroll.
+    @State private var lines = ScrollPosition(edge: .top)
 
     init(store: DocumentStore) {
         self.store = store
@@ -71,6 +75,13 @@ struct FilmTimeline: View {
         .onAppear {
             fingers.menus = menus
             fingers.watch()
+            // Under the hand nothing glides: the lines are where it put them.
+            let lines = $lines
+            hand.scrollsLines = { top in
+                var now = Transaction()
+                now.disablesAnimations = true
+                withTransaction(now) { lines.wrappedValue.scrollTo(y: top) }
+            }
         }
         .onDisappear { fingers.rest() }
     }
@@ -113,6 +124,10 @@ struct FilmTimeline: View {
                     .animation(still ? nil : Theme.spring, value: rows.map(\.id))
                 }
                 .scrollIndicators(.never)
+                .scrollPosition($lines)
+                // How far down the lines they show from, for the hand: what a press there is on,
+                // and where a marquee drawn past them scrolls them on from.
+                .onScrollGeometryChange(for: CGFloat.self) { $0.visibleRect.minY } action: { [hand] _, top in hand.linesTop = top }
                 .frame(height: tall)
             }
             // Within the sheet: moved along, a film looked at closer takes the playhead out of sight.

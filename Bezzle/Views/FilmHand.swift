@@ -13,7 +13,7 @@ final class FilmHand {
     var drag: Drag?
     /// The marquee dragged over the keys, once it is under way: what the card draws.
     var marquee: FilmMarquee?
-    /// What was picked as a marquee's press came, and where down the lines the press was.
+    /// What was so as the press in hand came: what Escape gives back, and what a marquee adds to.
     @ObservationIgnored private var before: Before?
     /// The seconds the card shows, held as they were while something is dragged.
     var held: Double?
@@ -22,13 +22,18 @@ final class FilmHand {
     @ObservationIgnored private var last: (p: CGPoint, dx: CGFloat, width: CGFloat, flags: NSEvent.ModifierFlags)?
     @ObservationIgnored private var creeper: Timer?
     @ObservationIgnored private var crept: CFTimeInterval = 0
-    /// Whether Escape is held down: what gives a marquee up. The card asks the keyboard itself
+    /// Whether Escape is held down: what gives a drag up. The card asks the keyboard itself
     /// (`escapeOnKeyboard`), as it asks it for Shift: of a key pressed while a drag is in
     /// SwiftUI's hand the app is told nothing at all, neither who listens to its events nor
     /// whatever has the keyboard (measured in a window, 2026-11-14), so there is no word of
     /// it to wait for. Never down for a hand no card has, as in the tests.
     @ObservationIgnored var escapeDown: () -> Bool = { false }
     @ObservationIgnored private var watcher: Timer?
+    /// How far down the lines the card shows them from: where their own scrolling has them,
+    /// which the card tells (`FilmTimeline`), or where a marquee drawn past them took them.
+    @ObservationIgnored var linesTop: CGFloat = 0
+    /// Has the card's lines scrolled to so far down them; nil for a hand no card has.
+    @ObservationIgnored var scrollsLines: ((CGFloat) -> Void)?
 
     init(store: DocumentStore) {
         self.store = store
@@ -67,16 +72,28 @@ final class FilmHand {
         var caught: Double?
     }
 
-    /// What was picked as a marquee's press came: what it adds to, and what Escape gives back.
+    /// What was so as a press came: what Escape gives back, and what a marquee adds to.
     private struct Before {
         var keys: Set<FilmKeyRef>
         var layers: [UUID]
         var camera: Bool
-        /// Shift was held: the keys it catches are added to those, and let go of where they
-        /// were among them, as Shift on a bead does one at a time.
+        /// Where the playhead was, or showed while the film played.
+        var time: Double
+        /// Which part of the film the sheet showed, and how far down the lines it was scrolled.
+        var window: FilmWindow?
+        var linesTop: CGFloat
+        /// Shift was held: the keys a marquee catches are added to those, and let go of where
+        /// they were among them, as Shift on a bead does one at a time.
         var adding: Bool
         /// How far down the lines the press was.
         var y: CGFloat
+    }
+
+    /// What is so now, for a press that comes now.
+    private func now(adding: Bool = false, y: CGFloat = 0) -> Before {
+        Before(keys: store.film.keys, layers: store.selection, camera: store.film.camera,
+               time: store.film.playing ? store.film.live : store.film.time, window: store.film.window, linesTop: linesTop,
+               adding: adding, y: y)
     }
 
     func picked(_ row: FilmRow) -> Bool {
@@ -154,6 +171,12 @@ final class FilmHand {
         hot = at
         let row = rows.first { $0.id == at.row }
         let shift = flags.contains(.shift)
+        // Whatever the press does, Escape gives back what was so before it.
+        before = now(adding: shift, y: p.y)
+        defer {
+            if drag?.kind == .nothing { before = nil }
+            watchIfNeeded()
+        }
         if let ref = at.key, let row {
             // A bead among the picked keys is taken with them as they are: the camera's too,
             // where a marquee or Shift has picked it beside layers' keys.
@@ -192,10 +215,8 @@ final class FilmHand {
             drag = Drag(kind: .scrub)
         } else {
             // Bare sheet. Shift keeps what is picked, for the marquee to add to.
-            before = Before(keys: store.film.keys, layers: store.selection, camera: store.film.camera, adding: shift, y: p.y)
             if !shift, !store.film.keys.isEmpty { store.film.keys = [] }
             drag = Drag(kind: .marquee, grip: scale.t(p.x))
-            watchIfNeeded()
         }
     }
 
@@ -203,6 +224,11 @@ final class FilmHand {
     /// as its keys again; anywhere else it takes the playhead.
     func pressRuler(at p: CGPoint, scale: FilmScale, length: Double, clicks: Int = 1) {
         hot = pointRuler(p, scale: scale, length: length)
+        before = now()
+        defer {
+            if drag?.kind == .nothing { before = nil }
+            watchIfNeeded()
+        }
         guard hot.end else {
             drag = Drag(kind: .scrub)
             return
@@ -218,7 +244,7 @@ final class FilmHand {
     /// The press moved on: to `p`, `dx` points from where it began. Command lets go of
     /// everything a moment catches on, and Option steps finer.
     func dragged(to p: CGPoint, by dx: CGFloat, rows: [FilmRow], scale: FilmScale, length: Double, flags: NSEvent.ModifierFlags = []) {
-        // With Escape down a marquee is given up, and goes no further.
+        // With Escape down what is in hand is given back, and goes no further.
         if heed() { return }
         guard var d = drag else { return }
         let free = flags.contains(.command), fine = flags.contains(.option)
@@ -269,8 +295,11 @@ final class FilmHand {
             }
             // From the moment it was pressed at to the one under the pointer, over what the sheet
             // shows: past either side it waits there, and keeps what it caught while a sheet
-            // looked at closer moves along under it (`creep`).
-            let now = FilmMarquee(from: d.grip, to: scale.t(min(max(p.x, 0), scale.width)), top: before.y, foot: p.y)
+            // looked at closer moves along under it (`creep`). The same past the top or the foot
+            // of the lines in sight, while more lines scroll into sight under it.
+            let sight = Self.sight(of: rows.count)
+            let now = FilmMarquee(from: d.grip, to: scale.t(min(max(p.x, 0), scale.width)), top: before.y,
+                                  foot: min(max(p.y, linesTop), linesTop + sight))
             if marquee != now { marquee = now }
             pick(now.keys(of: rows, line: FilmTimeline.rowHeight, scale: scale), rows: rows)
         case .length:
@@ -328,11 +357,11 @@ final class FilmHand {
                 store.seek(moment(hot.x, scale, FilmRow.rows(of: board, open: store.film.open), free: flags.contains(.command),
                                   fine: flags.contains(.option), caught: &caught, length: board.filmLength))
             }
-            before = nil
             if marquee != nil { marquee = nil }
         case .scrub, .nothing:
             break
         }
+        before = nil
         withAnimation(Theme.spring) { held = nil }
     }
 
@@ -362,33 +391,43 @@ final class FilmHand {
         if store.film.keys != keys { store.film.keys = keys }
     }
 
-    /// Escape while a marquee is in hand: what was picked before it is picked again, and the
-    /// rest of the drag does nothing. False with no marquee in hand.
+    /// Escape while something is in hand: everything is as it was before the press came. Keys
+    /// moved are where they were; a film's end is where it was;
+    /// the playhead, what was picked, the part of the film the sheet showed and how far down the
+    /// lines it was scrolled are as they were; and nothing is left to undo. The rest of the drag
+    /// does nothing. False with nothing in hand.
     @discardableResult
     func cancel() -> Bool {
-        guard drag?.kind == .marquee, let before else { return false }
+        guard let d = drag, d.kind != .nothing, let before else { return false }
+        // What the drag changed of the design, as one step it has not yet become.
+        if d.moved, d.kind == .keys || d.kind == .band || d.kind == .length { store.cancelGesture() }
         put(layers: before.layers, camera: before.camera, keys: before.keys)
+        // A film that plays on, under keys dragged, plays on.
+        if !store.film.playing, store.film.time != before.time { store.seek(before.time, following: false) }
+        if store.film.window != before.window { store.film.window = before.window }
+        scrollLines(to: before.linesTop)
         self.before = nil
         if marquee != nil { marquee = nil }
         drag = Drag(kind: .nothing)
+        if held != nil { held = nil }
         creepIfNeeded()
         watchIfNeeded()
         return true
     }
 
-    /// Looks whether Escape is down while a marquee is in hand, and gives the marquee up if it
-    /// is: at every step of the drag, and between the steps (`watchIfNeeded`). False when
-    /// there was nothing to give up.
+    /// Looks whether Escape is down while something is in hand, and gives it up if it is: at
+    /// every step of the drag, and between the steps (`watchIfNeeded`). False when there was
+    /// nothing to give up.
     @discardableResult
     func heed() -> Bool {
-        guard drag?.kind == .marquee, escapeDown() else { return false }
+        guard let d = drag, d.kind != .nothing, escapeDown() else { return false }
         return cancel()
     }
 
-    /// Keeps looking for Escape while a marquee is in hand, with every frame: a key that is
+    /// Keeps looking for Escape while something is in hand, with every frame: a key that is
     /// tapped is down for less long than a pointer may rest.
     private func watchIfNeeded() {
-        if drag?.kind != .marquee {
+        if drag == nil || drag?.kind == .nothing {
             watcher?.invalidate()
             watcher = nil
         } else if watcher == nil {
@@ -435,17 +474,24 @@ final class FilmHand {
     /// Moves a sheet looked at closer along under what is dragged past either end of the part
     /// it shows, as far as it goes in `seconds`, and has the drag go on from there: the playhead,
     /// the keys or the film's end stay at that end of the sheet, and the film runs by under
-    /// them. False where nothing moved: nothing in hand, the whole film showing, the pointer
-    /// within the sheet, or the film's own end reached.
+    /// them. A marquee drawn past the top or the foot of the lines in sight scrolls the lines
+    /// the same way (`climb`). False where nothing moved: nothing in hand, the whole film
+    /// showing and all the lines, the pointer within the sheet, or the film's own end reached.
     @discardableResult
     func creep(_ seconds: Double) -> Bool {
-        guard creeps, let last, zoomed else { return false }
-        let rate = Self.creepRate(at: last.p.x, width: last.width)
-        guard rate != 0 else { return false }
-        let before = scale(width: last.width)
-        let to = before.scrolled(by: -rate * CGFloat(seconds), whole: store.filmWhole)
-        guard to != before else { return false }
-        store.lookAtFilm(to)
+        guard creeps, let last else { return false }
+        var moved = false
+        let rate = zoomed ? Self.creepRate(at: last.p.x, width: last.width) : 0
+        if rate != 0 {
+            let before = scale(width: last.width)
+            let to = before.scrolled(by: -rate * CGFloat(seconds), whole: store.filmWhole)
+            if to != before {
+                store.lookAtFilm(to)
+                moved = true
+            }
+        }
+        if climb(seconds) { moved = true }
+        guard moved else { return false }
         again()
         return true
     }
@@ -457,9 +503,57 @@ final class FilmHand {
         return d.kind != .nothing && (d.kind != .marquee || d.moved)
     }
 
+    // MARK: Past the top or the foot of the lines in sight
+
+    /// How tall the lines in sight are, of a film with this many: as many as the card shows.
+    static func sight(of lines: Int) -> CGFloat { CGFloat(FilmTimeline.shown(of: lines)) * FilmTimeline.rowHeight }
+
+    /// How fast the lines scroll under a marquee drawn past the top or the foot of those in
+    /// sight, in points a second, at `y` points down from the top of them: as the sheet creeps
+    /// along, slowly just past them and faster the further out. Nothing within them.
+    static func climbRate(at y: CGFloat, sight: CGFloat) -> CGFloat {
+        let past = y < 0 ? y : y > sight ? y - sight : 0
+        guard past != 0 else { return 0 }
+        return (past < 0 ? -1 : 1) * min(40 + abs(past) * 12, 1600)
+    }
+
+    /// How fast the lines scroll under what is in hand now: a marquee under way, past the top
+    /// or the foot of the lines in sight, in a film with more lines than show.
+    private var climbing: CGFloat {
+        guard drag?.kind == .marquee, drag?.moved == true, let last, let board = store.filmBoard else { return 0 }
+        let lines = FilmRow.rows(of: board, open: store.film.open).count
+        let sight = Self.sight(of: lines)
+        guard CGFloat(lines) * FilmTimeline.rowHeight > sight else { return 0 }
+        return Self.climbRate(at: last.p.y - linesTop, sight: sight)
+    }
+
+    /// Scrolls the lines under a marquee drawn past the top or the foot of those in sight, as
+    /// far as they go in `seconds`, and no further than the first line or the last. The pointer
+    /// holds still over the card, so it is as much further up or down the lines as they moved,
+    /// and the marquee reaches the lines that come into sight. False where they did not move.
+    private func climb(_ seconds: Double) -> Bool {
+        let rate = climbing
+        guard rate != 0, var last, let board = store.filmBoard else { return false }
+        let lines = FilmRow.rows(of: board, open: store.film.open).count
+        let most = max(CGFloat(lines) * FilmTimeline.rowHeight - Self.sight(of: lines), 0)
+        let top = min(max(linesTop + rate * CGFloat(seconds), 0), most)
+        guard abs(top - linesTop) > 0.001 else { return false }
+        last.p.y += top - linesTop
+        self.last = last
+        scrollLines(to: top)
+        return true
+    }
+
+    /// Has the lines scrolled so far down them: on the card, where there is one.
+    private func scrollLines(to top: CGFloat) {
+        guard top != linesTop else { return }
+        linesTop = top
+        scrollsLines?(top)
+    }
+
     /// Keeps the sheet creeping while it has reason to, a step with every frame.
     private func creepIfNeeded() {
-        let wanted = creeps && zoomed && last.map { Self.creepRate(at: $0.p.x, width: $0.width) != 0 } == true
+        let wanted = creeps && ((zoomed && last.map { Self.creepRate(at: $0.p.x, width: $0.width) != 0 } == true) || climbing != 0)
         if !wanted {
             creeper?.invalidate()
             creeper = nil
