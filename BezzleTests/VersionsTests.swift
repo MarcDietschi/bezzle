@@ -844,6 +844,24 @@ struct VersionsTests {
         #expect(motion.heights[2].value > 15)
     }
 
+    /// Strokes plucked near the comb's right end, and the comb a sixth as wide by the next frame,
+    /// as when the window is made smaller while the line flies: the ripple is set going where the
+    /// string still is, and nothing breaks off past its end.
+    @Test func aStrokePluckedPastTheStringsEndOnceTheCombNarrowsBreaksNothing() {
+        let motion = RulerMotion()
+        let start = Date(timeIntervalSince1970: 0)
+        let bases: [CGFloat] = [9, 9, 0]
+        motion.step(at: start, xs: [200, 400, 590], bases: bases, pointer: nil, head: 150, held: true, width: 600)
+        motion.step(at: start.addingTimeInterval(1.0 / 20), xs: [200, 400, 590], bases: bases, pointer: nil, head: 590, held: true, width: 600)
+        #expect(motion.glow[0] == 1)
+        motion.step(at: start.addingTimeInterval(2.0 / 20), xs: [20, 60, 94], bases: bases, pointer: nil, head: 94, held: true, width: 100)
+        #expect(motion.wave.count == 20 && motion.wave.allSatisfy(\.isFinite))
+        // And a stroke within reach still sets the string going there.
+        motion.step(at: start.addingTimeInterval(3.0 / 20), xs: [20, 60, 94], bases: bases, pointer: nil, head: 10, held: true, width: 100)
+        for i in 4...8 { motion.step(at: start.addingTimeInterval(Double(i) / 20), xs: [20, 60, 94], bases: bases, pointer: nil, head: 10, held: true, width: 100) }
+        #expect(motion.wave.contains { abs($0) > 0 })
+    }
+
     @Test func theRulerNamesDaysAsOneSaysThem() {
         let now = Date()
         #expect(TimeRuler.day(now, now: now) == String(localized: "Today"))

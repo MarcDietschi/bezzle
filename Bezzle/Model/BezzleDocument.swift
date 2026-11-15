@@ -214,26 +214,33 @@ nonisolated struct BezzleDocument: Codable, Equatable, Sendable {
     }
 
     /// Puts a layer whose frame is on the canvas into an artboard or group (or onto the canvas
-    /// itself when nil), on top unless `index` says where.
+    /// itself when nil), on top unless `index` says where: a place past either end is that end.
     mutating func attach(_ node: Node, to container: UUID?, at index: Int? = nil) {
         var n = node
         if let container, let p = path(of: container) {
             let o = parentOrigin(of: container), frame = self[p].frame
             n.frame.origin.x -= o.x + frame.minX
             n.frame.origin.y -= o.y + frame.minY
-            Self.modify(&nodes, p.indices[...]) { $0.children.insert(n, at: min(index ?? $0.children.count, $0.children.count)) }
+            Self.modify(&nodes, p.indices[...]) { $0.children.insert(n, at: Self.place(index, among: $0.children.count)) }
         } else {
-            nodes.insert(n, at: min(index ?? nodes.count, nodes.count))
+            nodes.insert(n, at: Self.place(index, among: nodes.count))
         }
     }
 
-    /// Puts a layer into the list `path` points into, at the place it names there.
+    /// Puts a layer into the list `path` points into, at the place it names there, or the end
+    /// nearest to it.
     mutating func insert(_ node: Node, at path: NodePath) {
         if let parent = path.parent {
-            Self.modify(&nodes, parent.indices[...]) { $0.children.insert(node, at: min(path.indices.last!, $0.children.count)) }
+            Self.modify(&nodes, parent.indices[...]) { $0.children.insert(node, at: Self.place(path.indices.last, among: $0.children.count)) }
         } else {
-            nodes.insert(node, at: min(path.top, nodes.count))
+            nodes.insert(node, at: Self.place(path.top, among: nodes.count))
         }
+    }
+
+    /// Where among `count` layers one goes that is asked to go at `index`: on top without one,
+    /// and at the bottom or on top for a place below or above them all (the AI server's -1).
+    private static func place(_ index: Int?, among count: Int) -> Int {
+        min(max(index ?? count, 0), count)
     }
 
     // MARK: Groups

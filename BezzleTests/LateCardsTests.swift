@@ -120,6 +120,41 @@ struct LateCardsTests {
         #expect(host.fittingSize.height == 0)
     }
 
+    // MARK: What the model is asked for late
+
+    /// Where a dropped row goes, said so that two can be compared.
+    private func said(_ destination: (parent: UUID?, index: Int, depth: Int)?) -> String {
+        destination.map { "\($0.parent?.uuidString ?? "canvas") \($0.index) \($0.depth)" } ?? "nowhere"
+    }
+
+    /// The gap a row dragged in the layers list would go into, found while the list had more rows
+    /// than it has once the line is drawn or the row let go (layers taken away by an undo or by
+    /// someone else while the drag went on): the last gap there is now.
+    @Test func aDropGapPastTheRowsThereAreNowIsTheLast() {
+        let a = bench.a
+        let rows = [ListedLayer(node: a, depth: 0, parent: nil)] + a.children.reversed().map { ListedLayer(node: $0, depth: 1, parent: a.id) }
+        let drop = LayerDrop(doc: bench.store.doc, rows: rows, board: nil, isShut: { _ in false })
+        let s = rows[1]
+        #expect(said(drop.destination(for: s, spot: .gap(rows.count))) == "\(a.id.uuidString) 0 1")
+        #expect(said(drop.destination(for: s, spot: .gap(40))) == said(drop.destination(for: s, spot: .gap(rows.count))))
+        #expect(said(drop.destination(for: s, spot: .gap(-3))) == said(drop.destination(for: s, spot: .gap(0))))
+    }
+
+    /// A layer asked to go below the bottom (the AI server's -1, or a place counted among layers
+    /// that have gone since) goes to the bottom, and one above the top on top.
+    @Test func aLayerPutPastEitherEndGoesToThatEnd() {
+        var doc = bench.store.doc
+        let a = bench.a.id
+        doc.attach(CanvasTests.rect("Under", CGRect(x: 110, y: 110, width: 10, height: 10)), to: a, at: -1)
+        doc.attach(CanvasTests.rect("Over", CGRect(x: 110, y: 110, width: 10, height: 10)), to: a, at: 99)
+        #expect(doc.node(a)?.children.map(\.name) == ["Under", "R", "S", "Over"])
+        doc.attach(CanvasTests.rect("Loose", CGRect(x: 0, y: 0, width: 10, height: 10)), to: nil, at: -2)
+        doc.insert(CanvasTests.rect("Lowest", CGRect(x: 0, y: 0, width: 10, height: 10)), at: NodePath(indices: [-1]))
+        #expect(doc.nodes.prefix(2).map(\.name) == ["Lowest", "Loose"])
+        doc.insert(CanvasTests.rect("Deep", CGRect(x: 0, y: 0, width: 10, height: 10)), at: NodePath(indices: [2, -5]))
+        #expect(doc.node(a)?.children.first?.name == "Deep")
+    }
+
     /// Animate's cards, those of the layers as they look at the playhead, once the camera is picked.
     @Test func animatesCardsAreNoCardsOnceTheCameraIsPicked() {
         let f = FilmBench([bench.node("R")!, bench.node("S")!])

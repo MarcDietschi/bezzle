@@ -66,7 +66,9 @@ struct LayerDrop {
             guard rows.indices.contains(i), canHold(rows[i], row) else { return nil }
             return (rows[i].id, rows[i].node.children.count, rows[i].depth + 1)
         case .gap(let i):
-            slot = i
+            // A gap found while the list was longer (rows gone while the drag went on, by an
+            // undo or another person's change) is the last there is now.
+            slot = min(max(i, 0), rows.count)
         }
         var above = slot > 0 ? rows[slot - 1] : nil
         // Artboards only go between the layers on the canvas itself.

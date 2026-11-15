@@ -369,7 +369,11 @@ final class RulerMotion {
     private func ring(_ dt: Double) {
         for x in plucked {
             let c = Double(x / Self.spacing - 0.5)
-            for k in max(Int(c) - 3, 0)...min(Int(c) + 3, wave.count - 1) {
+            // Plucked at the last step: the comb may have grown narrower since, and the stroke
+            // lie past the string's end.
+            let from = max(Int(c) - 3, 0), to = min(Int(c) + 3, wave.count - 1)
+            guard from <= to else { continue }
+            for k in from...to {
                 let d = Double(k) - c
                 speed[k] += 70 * exp(-d * d / 2)
             }
