@@ -348,9 +348,22 @@ window, only in tests and in pictures the renderer made. What that left:
   tiles' redraw around such groups on a live canvas (it rests on `Renderer.reach` and its test);
   a 1.7 copy in a live room beside the new `keepsDepth` entry. Bezzle 1.7 opening and saving such
   a design writes it back without the flag.
-- **Web import:** a page's 3D transforms arrive flattened to 2D (`flat(matrix)` in
-  `Import/WebPageReader.js`), so nothing imported is in depth and `transform-style: preserve-3d`
-  has nothing to keep.
+- **For Erik, web import:** a page's 3D comes in depth only where it is seen from the artboard's
+  own eye (`README.md` › 3D, From a web page). Real pages set a perspective of their own on a box
+  (1000px, say), so nearly all of them come in flat as before, with a note. Pinning such a layer
+  by its corners (`Transform3D.corners`, as a Photoshop mockup's screen is) would show it exactly
+  as the page does, though not in depth. Say if it should.
+- **Web import, not built:** a turned box that does not keep depth holding something turned in it
+  through a perspective of the box's own (drawn flat, noted); a part photographed inside a turned
+  box keeps the box from being one group (each of its layers then stands on its own, true to the
+  page); a background that can only be photographed is photographed as the page shows it, turned,
+  and turned again with its box, as a box turned flat in the page already is; a face the page
+  hides from behind and that faces the eye is shown, and stays shown when turned away later, as
+  the design cannot hide a face only from behind. Nearer over further is the design's
+  (`DepthOrder`), not CSS's splitting of planes, so faces crossing each other may differ.
+- **Web import, unchecked:** only test pages read in WebKit, no real site with 3D; a page taller
+  than its window, whose artboard's eye is twice the page's height away, so a perspective would
+  have to be that far to be the artboard's.
 - **Films of groups that keep depth** (order at rest and keys measured in the group, fixed
   2026-11-14 in the shared model): Windows was not built or run with the fix, nor with
   2026-11-15's shared changes: `DepthOrder.nearness` (a face in a body's plane, its middle as high
@@ -374,6 +387,10 @@ window, only in tests and in pictures the renderer made. What that left:
 - **Windows, not checked:** the switch and captions in German, French and Italian in the window;
   a deck's artboard looked at from the side; the x64 build run; a film of a group that keeps depth
   playing in the window (only at rest there).
+- **Windows, web import in depth:** not built or run there. The reader and the converter are the
+  Mac's (`WebPageReader.js`, `WebPage.swift`, `WebImporter.swift`, linked), so the next Windows
+  build reads a page's depth too; whether WebView2 hands over the same matrices and typed
+  transforms WebKit does is not known.
 - **Not looked at on the Mac:** whether the 3D card's row cuts "Layers keep their depth" (Windows
   uses a wrapping row).
 

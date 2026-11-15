@@ -6,7 +6,8 @@
 //
 // Everything is measured as the page is laid out with no element turned or moved by a
 // transform; each element's transforms are worked out on their own and handed over as a matrix,
-// so that Bezzle can turn the layer as the page turns it.
+// so that Bezzle can turn the layer as the page turns it. Where a page turns things in depth,
+// the matrices that stand them in its 3D scene come beside that flat one (see `place3`).
 (() => {
   'use strict';
   if (window.__bezzle) return;
@@ -108,17 +109,31 @@
     const t = cs.transform, tr = cs.translate, ro = cs.rotate, sc = cs.scale;
     const none = (v) => !v || v === 'none';
     if (none(t) && none(tr) && none(ro) && none(sc)) return;
-    transforms.set(el, { t, tr, ro, sc, origin: cs.transformOrigin });
+    transforms.set(el, { t, tr, ro, sc, origin: cs.transformOrigin, typed: typedTransform(el, t) });
     el.setAttribute('data-bz-tf', '');
+  }
+
+  /// The transform as CSS's typed object model keeps it, to every figure: the computed style
+  /// writes a matrix with six decimals, which leaves a perspective in it with only three.
+  function typedTransform(el, t) {
+    if (!t || t === 'none' || !el.computedStyleMap) return null;
+    try {
+      const v = el.computedStyleMap().get('transform');
+      return v && typeof v.toMatrix === 'function' ? v : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   function cssList(v) { return v.trim().split(/\s+/).join(', '); }
 
-  /// An element's own transform in page coordinates, about its origin, its box as laid out.
-  function localMatrix(tf, box) {
+  /// An element's own transform in page coordinates, about its origin, its box as laid out:
+  /// flat, as the page's layers are placed; or, `deep`, all of it, in depth too, about an origin
+  /// that may lie off the page.
+  function localMatrix(tf, box, deep) {
     const o = (tf.origin || '0px 0px').split(/\s+/).map(parseFloat);
-    const ox = box[0] + (o[0] || 0), oy = box[1] + (o[1] || 0);
-    let m = new DOMMatrix().translateSelf(ox, oy);
+    const ox = box[0] + (o[0] || 0), oy = box[1] + (o[1] || 0), oz = deep ? o[2] || 0 : 0;
+    let m = new DOMMatrix().translateSelf(ox, oy, oz);
     try {
       if (tf.tr && tf.tr !== 'none') {
         // Percentages are of the box, which DOMMatrix cannot know.
@@ -133,17 +148,119 @@
           m.multiplySelf(new DOMMatrix(`rotate3d(${axis}, ${p[1]})`));
         } else m.multiplySelf(new DOMMatrix(`rotate3d(${p.slice(0, 3).join(', ')}, ${p[3]})`));
       }
-      if (tf.sc && tf.sc !== 'none') m.multiplySelf(new DOMMatrix(`scale(${cssList(tf.sc)})`));
-      if (tf.t && tf.t !== 'none') m.multiplySelf(new DOMMatrix(tf.t));
+      if (tf.sc && tf.sc !== 'none') {
+        const s = cssList(tf.sc);
+        m.multiplySelf(new DOMMatrix(deep && s.split(',').length > 2 ? `scale3d(${s})` : `scale(${s})`));
+      }
+      if (tf.t && tf.t !== 'none') m.multiplySelf(deep ? exact(tf) : new DOMMatrix(tf.t));
     } catch (e) {
       return null;
     }
-    m.translateSelf(-ox, -oy);
-    if (!m.is2D) note('3d');
-    return new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]);
+    m.translateSelf(-ox, -oy, -oz);
+    return deep ? m : new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]);
+  }
+
+  /// The transform property's matrix to every figure the browser has, where the typed object
+  /// model gives it; else as the computed style writes it.
+  function exact(tf) {
+    const written = new DOMMatrix(tf.t);
+    if (tf.typed) {
+      try {
+        // The same matrix, but for the figures the written one lacks.
+        const m = tf.typed.toMatrix(), a = m.toFloat64Array(), b = written.toFloat64Array();
+        if (a.every((v, i) => Number.isFinite(v) && Math.abs(v - b[i]) <= 1e-3 * Math.max(1, Math.abs(b[i])))) return m;
+      } catch (e) {}
+    }
+    return written;
   }
 
   const flat = (m) => (m && !isIdentity(m) ? [m.a, m.b, m.c, m.d, m.e, m.f] : undefined);
+
+  // MARK: Depth
+
+  /// Whether a matrix leaves everything in the page and sees it straight on, as the flat
+  /// matrices above do; null is none at all.
+  const isFlat = (m) => !m || (m.m13 === 0 && m.m14 === 0 && m.m23 === 0 && m.m24 === 0 && m.m31 === 0 && m.m32 === 0 &&
+    m.m33 === 1 && m.m34 === 0 && m.m43 === 0 && m.m44 === 1);
+  /// One matrix after another, null being none.
+  const after = (a, b) => (a ? (b ? a.multiply(b) : a) : b);
+  const numbers = (m) => Array.from((m || new DOMMatrix()).toFloat64Array());
+
+  /// What a matrix draws onto the plane it is drawn in: everything pressed flat into it, as CSS
+  /// draws what an element holds into the element unless it keeps its depth.
+  function pressed(m) {
+    const f = DOMMatrix.fromMatrix(m);
+    f.m13 = 0; f.m23 = 0; f.m33 = 0; f.m43 = 0;
+    return f;
+  }
+
+  /// A length of a box's side as a computed style gives it: in pixels, or a share of the side.
+  const along = (v, side) => (v && v.endsWith('%') ? (parseFloat(v) / 100) * side : parseFloat(v) || 0);
+
+  /// The perspective an element sees what it holds through, in page coordinates: from its
+  /// perspective-origin, as far in front as it says. Null for none.
+  function perspectiveOf(cs, box) {
+    if (!cs.perspective || cs.perspective === 'none') return null;
+    const d = Math.max(parseFloat(cs.perspective) || 0, 1);
+    const o = (cs.perspectiveOrigin || '50% 50%').split(/\s+/);
+    const ox = box[0] + along(o[0], box[2]), oy = box[1] + along(o[1] || '50%', box[3]);
+    const p = new DOMMatrix();
+    p.m34 = -1 / d;
+    return new DOMMatrix().translateSelf(ox, oy).multiplySelf(p).translateSelf(-ox, -oy);
+  }
+
+  /// Whether what an element holds keeps its depth, as transform-style: preserve-3d asks, unless
+  /// something done to the element as a whole makes it one flat picture after all, as CSS has it.
+  function keepsDepth(cs) {
+    if (cs.transformStyle !== 'preserve-3d') return false;
+    if (parseFloat(cs.opacity) < 1 || (cs.filter && cs.filter !== 'none') || (cs.clipPath && cs.clipPath !== 'none')) return false;
+    if (!/^(visible|clip)$/.test(cs.overflowX) || !/^(visible|clip)$/.test(cs.overflowY)) return false;
+    if (cs.isolation === 'isolate' || (cs.mixBlendMode && cs.mixBlendMode !== 'normal')) return false;
+    const mask = cs.maskImage || cs.webkitMaskImage, backdrop = cs.backdropFilter || cs.webkitBackdropFilter;
+    return (!mask || mask === 'none') && (!backdrop || backdrop === 'none');
+  }
+
+  /// Whether an element turned so shows its back, as WebKit decides it: by which way the face
+  /// it had toward the page points once the matrix has turned it.
+  function showsBack(m) {
+    const z = m.inverse().m33;
+    return Number.isFinite(z) && z < 0;
+  }
+
+  /// What an element is in depth, kept for a pseudo-element to be stood again in its host.
+  const depths = new WeakMap();
+
+  /// Stands an element in the page's 3D scene, as the browser draws it, and says what those it
+  /// holds stand in. `offer` is what its parent offers: the matrix its own goes after inside the
+  /// 3D context it is in (`C0`), what draws that context's plane onto the page (`P`), and which
+  /// element that plane is (`pid`, none for the page itself). An element that keeps its depth
+  /// offers its own context on; any other draws what it holds into its own plane, a context of
+  /// its own. Only where any of this is in depth are the matrices handed over: `w3` how the
+  /// element is drawn on the page, `c3` how it stands in its context, `pl` that context's plane.
+  function place3(item, d, offer) {
+    const o = offer || {};
+    const C = after(o.C0, d.L), P = o.P || null;
+    const W = isFlat(C) ? after(P, C) : after(P, pressed(C));
+    for (const k of ['w3', 'c3', 'pl', 'p3', 'o3', 'back']) delete item[k];
+    if (!isFlat(C) || !isFlat(P)) {
+      item.w3 = numbers(W);
+      item.c3 = numbers(C);
+      if (o.pid !== undefined) item.pl = o.pid;
+      if (d.keeps) item.p3 = true;
+      if (!isFlat(d.L)) item.o3 = true;
+      if (d.hidesBack && C && showsBack(C)) item.back = true;
+    }
+    if (d.keeps) return { C0: after(C, d.PP), P, pid: o.pid };
+    return { C0: d.PP, P: W, pid: d.id };
+  }
+
+  /// Stands a pseudo-element, read on its own, again in what its host offers, and all it holds.
+  function replace3(item, offer) {
+    const d = depths.get(item);
+    if (!d) return;
+    const kid = place3(item, d, offer);
+    for (const k of item.kids || []) replace3(k, kid);
+  }
 
   // MARK: Measuring type
 
@@ -399,13 +516,14 @@
   const inlineDisplays = new Set(['inline']);
   const atomicInline = new Set(['inline-block', 'inline-flex', 'inline-grid', 'inline-table', 'ruby']);
 
-  /// The page as items, from an element down.
-  function walk(el, parentMatrix, fixed) {
+  /// The page as items, from an element down; `offer` is what its parent offers it in depth
+  /// (`place3`).
+  function walk(el, parentMatrix, fixed, offer) {
     if (skipped.has(el.localName) || el.hasAttribute('data-bz-hide')) return null;
     const cs = getComputedStyle(el);
     if (cs.display === 'none') return null;
     if (cs.display === 'contents') {
-      return { contents: true, kids: content(el, cs, parentMatrix, fixed, null) };
+      return { contents: true, kids: content(el, cs, parentMatrix, fixed, null, offer) };
     }
     const opacity = parseFloat(cs.opacity);
     if (opacity <= 0.001) return null;
@@ -423,6 +541,9 @@
     if (isFixed) item.fixed = true;
     const m = flat(matrix);
     if (m) item.m = m;
+    const d = { L: tf ? localMatrix(tf, box, true) : null, PP: perspectiveOf(cs, box), keeps: keepsDepth(cs), hidesBack: cs.backfaceVisibility === 'hidden', id: item.id };
+    depths.set(item, d);
+    const kidOffer = place3(item, d, offer);
     const name = label(el);
     if (name) item.label = name;
 
@@ -550,24 +671,26 @@
       item.key = hash(`${el.textContent}|${cs.font}|${cs.fontFamily}|${cs.color}|${box[2]}x${box[3]}`);
       return item;
     }
-    const kidsItems = content(el, cs, matrix, isFixed, item);
+    const kidsItems = content(el, cs, matrix, isFixed, item, kidOffer);
     const marker = listMarker(el, cs, matrix);
     if (marker) kidsItems.unshift(marker);
     const pseudo = pseudoItems.get(el);
     if (pseudo) {
-      if (pseudo.before) kidsItems.unshift(...adopt(pseudo.before, matrix, true));
-      if (pseudo.after) kidsItems.push(...adopt(pseudo.after, matrix, false));
+      if (pseudo.before) kidsItems.unshift(...adopt(pseudo.before, matrix, true, kidOffer));
+      if (pseudo.after) kidsItems.push(...adopt(pseudo.after, matrix, false, kidOffer));
     }
     if (kidsItems.length) item.kids = kidsItems;
     return item;
   }
 
-  /// A pseudo-element read apart, taken into its element: turned with it, and painted first or last.
-  function adopt(item, matrix, before) {
+  /// A pseudo-element read apart, taken into its element: turned with it, standing in depth in
+  /// what it offers, and painted first or last.
+  function adopt(item, matrix, before, offer) {
     const out = item.contents ? item.kids : [item];
     for (const i of out) {
       if (before) i.before = true;
       if (matrix) premultiply(i, matrix);
+      replace3(i, offer);
     }
     return out;
   }
@@ -590,7 +713,7 @@
 
   /// What an element holds, in order: elements as items of their own, and words with the inline
   /// elements they run through as texts, each a run of them between two of those items.
-  function content(el, cs, matrix, fixed, owner) {
+  function content(el, cs, matrix, fixed, owner, offer) {
     const out = [];
     let group = null;
     let started = false;
@@ -607,7 +730,7 @@
       }
     };
     const addElement = (n) => {
-      const child = walk(n, matrix, fixed);
+      const child = walk(n, matrix, fixed, offer);
       if (!child) return;
       flush(false);
       started = true;
@@ -634,9 +757,9 @@
         if (inline) {
           decorations(n, ncs, matrix, out);
           const pseudo = pseudoItems.get(n);
-          if (pseudo && pseudo.before) out.push(...adopt(pseudo.before, matrix, true));
+          if (pseudo && pseudo.before) out.push(...adopt(pseudo.before, matrix, true, offer));
           visit(kids(n), n);
-          if (pseudo && pseudo.after) out.push(...adopt(pseudo.after, matrix, false));
+          if (pseudo && pseudo.after) out.push(...adopt(pseudo.after, matrix, false, offer));
           continue;
         }
         addElement(n);

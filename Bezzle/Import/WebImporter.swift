@@ -47,6 +47,10 @@ struct WebConverter {
     private var fonts = FontMatch()
     private var assets = WebAssets()
     private var pageSize = CGSize.zero
+    /// Where the page's elements in depth stand, by id (`WebDepth`).
+    private var stands: [Int: WebStand] = [:]
+    /// The groups already stood in depth as one, fitted round what they hold in their own plane.
+    private var standing: Set<UUID> = []
 
     init(source: String) {
         report = ImportReport(source: source)
@@ -88,9 +92,28 @@ struct WebConverter {
             back.fills = fills(layers, color: nil, box: box, item: nil)
             if !back.fills.isEmpty { kids.append(back) }
         }
-        if let root = page.root { kids += nodes(Self.restacked(root)) }
+        if let root = page.root {
+            let depth = WebDepth.prepare(root, size: pageSize)
+            stands = depth.stands
+            noteDepth(depth)
+            kids += nodes(Self.restacked(depth.root))
+        }
         board.children = prune(kids, in: CGRect(origin: .zero, size: pageSize))
         return board
+    }
+
+    /// Says what of the page's depth is drawn flat, and why, and which faces are hidden.
+    private mutating func noteDepth(_ depth: WebDepth.Prepared) {
+        for (why, count) in depth.flat {
+            for _ in 0..<count {
+                switch why {
+                case .perspective: report.note("3D transforms in a perspective other than the artboard’s, drawn flat")
+                case .slanted: report.note("Slanted 3D transforms, drawn flat")
+                case .unseen: report.note("3D transforms with no perspective, drawn flat as the page shows them")
+                }
+            }
+        }
+        for _ in 0..<depth.hiddenBacks { report.note("Faces turned away that the page hides, hidden") }
     }
 
     /// Takes away what lies off the page, at any depth: menus slid out of view, slides of a
@@ -125,8 +148,10 @@ struct WebConverter {
     /// Whether a layer shows anything of itself in `area`: it lies there, at least in part.
     private func visible(_ n: Node, in area: CGRect) -> Bool {
         guard let b = Self.extent(n) else { return false }
-        // Flat, a shape shows only its border, as a straight stroke does.
-        if n.kind != .line && n.kind != .text && !n.isGroup && n.borders.isEmpty && (b.width < 0.01 || b.height < 0.01) { return false }
+        // Flat, a shape shows only its border, as a straight stroke does. Turned in depth, it may
+        // be seen edge on from its own middle, but not from the artboard's eye: its own size says.
+        let size = Perspective.inDepth(n) ? n.frame.size : b.size
+        if n.kind != .line && n.kind != .text && !n.isGroup && n.borders.isEmpty && (size.width < 0.01 || size.height < 0.01) { return false }
         return b.insetBy(dx: -1, dy: -1).intersects(area)
     }
 
@@ -149,8 +174,8 @@ struct WebConverter {
 
     private mutating func nodes(_ item: WebItem) -> [Node] {
         switch item.t {
-        case "text": return text(item)
-        case "deco": return backing(item).map { [$0] } ?? []
+        case "text": return stood(text(item), item)
+        case "deco": return stood(backing(item).map { [$0] } ?? [], item)
         default: return element(item)
         }
     }
@@ -242,16 +267,24 @@ struct WebConverter {
         if var b = back { b.name = label ?? b.kind.title; back = b }
         under += back.map { [$0] } ?? []
         over += sideBorders(item) + outline(item)
+        // Its back turned to the eye, and the page hides it: its own box and words are not seen.
+        let hides = item.back == true
+        func own(_ nodes: [Node]) -> [Node] { stood(nodes, item).map { hides ? Self.hidden($0) : $0 } }
+        under = own(under)
+        over = own(over)
 
         var held: [Node] = []
-        if let img = item.img { held += live(picture(img, item: item, name: label ?? String(localized: "Image")), item) }
-        if let vec = item.vec { held += vectors(vec, item: item, name: label ?? String(localized: "Vector")) }
-        for kid in Self.paintOrder(item.kids ?? []) { held += nodes(kid) }
+        if let img = item.img { held += own(live(picture(img, item: item, name: label ?? String(localized: "Image")), item)) }
+        if let vec = item.vec { held += own(vectors(vec, item: item, name: label ?? String(localized: "Vector"))) }
+        for kid in Self.paintOrder(item.kids ?? []) {
+            let made = nodes(kid)
+            held += hides && kid.t != "el" ? made.map(Self.hidden) : made
+        }
 
         // Cut off at its edge, or at the shape it is clipped to.
         var clipped = false
         let cutsHeld = item.clip == true && !held.isEmpty
-        if let clipPath = item.clipPath, let holder = clipHolder(clipPath, item: item) {
+        if let clipPath = item.clipPath, let holder = clipHolder(clipPath, item: item).map({ stood([$0], item)[0] }) {
             var all = under + held + over
             let cut = Self.extent(holder) ?? item.box
             all = all.filter { visible($0, in: cut.insetBy(dx: -2, dy: -2)) }
@@ -265,7 +298,7 @@ struct WebConverter {
             report.note("Shapes boxes are cut to, left out")
         }
         if !clipped, cutsHeld {
-            let edge = edgeShape(item)
+            let edge = stood([edgeShape(item)], item)[0]
             let cut = Self.extent(edge) ?? item.box
             held = held.filter { visible($0, in: cut.insetBy(dx: -1, dy: -1)) }
             if !held.isEmpty, ImportMask.reaches(held, outside: edge) {
@@ -303,10 +336,12 @@ struct WebConverter {
             }
         }
         let blend = item.blend.flatMap(Self.blend)
+        // Turned or moved in depth by a transform of its own, it is one group, which stands so.
+        let deep = item.o3 == true && item.id.flatMap { stands[$0] } != nil
         let grouped = item.tag != "html" && item.tag != "body" && out.count > 1 &&
             (back != nil || item.label != nil || clipped || cutsHeld || Self.sections.contains(item.tag ?? "") ||
              opacity < 1 || blend != nil || blur != nil || !drop.isEmpty)
-        if grouped || ((opacity < 1 || blend != nil || blur != nil || !drop.isEmpty) && out.count > 1) {
+        if grouped || ((opacity < 1 || blend != nil || blur != nil || !drop.isEmpty || deep) && out.count > 1) {
             var g = Node(kind: .group, name: name, frame: .zero)
             g.children = out
             // The box's own fill, under what it holds, is its background, as an imported frame's is.
@@ -319,7 +354,7 @@ struct WebConverter {
             g.blend = blend
             g.blur = blur
             if !drop.isEmpty { g.shadows = drop }
-            return [g]
+            return [inDepth(g, item)]
         }
         if out.count == 1 {
             if opacity < 1 { out[0].opacity *= opacity }
@@ -327,7 +362,10 @@ struct WebConverter {
             if let blur { out[0].blur = blur }
             if !drop.isEmpty { out[0].shadows += drop }
             if out[0].isGroup, let label { out[0].name = label }
+            if deep, out[0].isGroup, !standing.contains(out[0].id) { out[0] = inDepth(out[0], item) }
         }
+        // Drawn flat into a face the page hides, all of it is hidden with the face.
+        if hides, item.p3 != true { out = out.map(Self.hidden) }
         return out
     }
 
@@ -466,6 +504,147 @@ struct WebConverter {
             }
         }) { return false }
         return item.box.width * item.box.height <= 600 * 600
+    }
+
+    // MARK: Depth
+
+    /// A turn and a move in the artboard's scene, which takes a place and a way in one space to
+    /// where they are in another.
+    private struct Rigid {
+        var spin: Spin
+        var shift: ScenePoint
+        /// How it is tipped and swung, roughly, to choose between the two ways of saying a turn.
+        var lean: (tip: Double, swing: Double)
+        /// Whether it takes the scene back into a plane, rather than a plane into the scene.
+        var inverted = false
+
+        init(_ stand: WebStand) {
+            spin = stand.spin
+            shift = stand.base
+            lean = (stand.tip, stand.swing)
+        }
+
+        private init(spin: Spin, shift: ScenePoint, lean: (tip: Double, swing: Double), inverted: Bool) {
+            self.spin = spin
+            self.shift = shift
+            self.lean = lean
+            self.inverted = inverted
+        }
+
+        /// A turn in the plane of what it moves, clockwise about `pivot`.
+        static func turn(_ degrees: Double, about pivot: CGPoint) -> Rigid {
+            let spin = Spin.turn(degrees), p = ScenePoint(x: Double(pivot.x), y: Double(pivot.y))
+            return Rigid(spin: spin, shift: p - spin(p), lean: (0, 0), inverted: true)
+        }
+
+        func callAsFunction(_ p: ScenePoint) -> ScenePoint { spin(p) + shift }
+
+        var inverse: Rigid {
+            let back = spin.back, s = back(shift)
+            return Rigid(spin: back, shift: ScenePoint(x: -s.x, y: -s.y, z: -s.z), lean: (-lean.tip, -lean.swing), inverted: !inverted)
+        }
+    }
+
+    /// The layers an element in depth drew flat in its own plane, by its flat matrix, stood where
+    /// that plane stands in the artboard's scene; any other's as they are.
+    private func stood(_ nodes: [Node], _ item: WebItem) -> [Node] {
+        guard let id = item.id, let stand = stands[id] else { return nodes }
+        let m = Rigid(stand)
+        return nodes.map { moved($0, by: m) }
+    }
+
+    /// A layer taken from one space to another: where its middle is, how high it is held, and how
+    /// it is tipped, swung and turned in its plane. A group not yet fitted holds its layers where
+    /// they are, so each of them is moved; one already stood is moved as one, and as it is never
+    /// turned in its own plane, what it holds is, and it is fitted round them again.
+    private func moved(_ node: Node, by m: Rigid) -> Node {
+        var n = node
+        if n.isGroup, !standing.contains(n.id) {
+            // Fitted already, it measures what it holds from its own corner: they go back to where
+            // they lie first, and it is fitted again with the rest.
+            let o = n.frame.origin
+            func back(_ c: Node) -> Node {
+                var c = c
+                c.frame = c.frame.offsetBy(dx: o.x, dy: o.y)
+                return c
+            }
+            n.frame = .zero
+            n.children = n.children.map { moved(back($0), by: m) }
+            n.mask = n.mask?.map { moved(back($0), by: m) }
+            return n
+        }
+        let t = n.transform3D ?? Transform3D()
+        var place = m(ScenePoint(x: Double(n.frame.midX), y: Double(n.frame.midY), z: Double(t.z)))
+        let turn = m.spin.after(Spin(t)).after(.turn(n.isGroup ? 0 : n.rotation))
+        let angles = turn.angles(near: (m.lean.tip + t.x, m.lean.swing + t.y))
+        let tip = WebDepth.tidy(angles.tip), swing = WebDepth.tidy(angles.swing)
+        let twist = WebDepth.tidy(angles.twist)
+        if n.isGroup, abs(twist) > 1e-6 {
+            // Each layer it holds is turned about its middle as a whole, in depth too.
+            let c = n.frame.center, turn = Rigid.turn(twist, about: CGPoint(x: n.frame.width / 2, y: n.frame.height / 2))
+            n.children = n.children.map { moved($0, by: turn) }
+            n.mask = n.mask?.map { moved($0, by: turn) }
+            n = BezzleDocument.fitted(n)
+            let gone = ScenePoint(x: Double(n.frame.midX - c.x), y: Double(n.frame.midY - c.y))
+            place = place + Spin(Transform3D(x: tip, y: swing))(gone)
+        } else if !n.isGroup {
+            n.rotation = Geometry.normalized(twist)
+        }
+        // Laid back into a plane, where it is is what the page laid out there, and is tidied as
+        // that; stood in the scene, it is wherever that is, and left as it comes.
+        if m.inverted { place = ScenePoint(x: WebDepth.tidy(place.x), y: WebDepth.tidy(place.y), z: WebDepth.tidy(place.z)) }
+        n.frame = CGRect(center: CGPoint(x: place.x, y: place.y), size: n.frame.size)
+        let level = tip == 0 && swing == 0 && abs(place.z) < 1e-9 && t.corners == nil
+        n.transform3D = level ? nil : Transform3D(x: tip, y: swing, z: CGFloat(abs(place.z) < 1e-9 ? 0 : place.z), corners: t.corners)
+        return n
+    }
+
+    /// The group an element became, in depth: stood as one where the element stands, if it is
+    /// turned or moved in depth by a transform of its own, and keeping its layers' depth where
+    /// the element keeps it and they have any.
+    private mutating func inDepth(_ group: Node, _ item: WebItem) -> Node {
+        var g = group
+        if item.o3 == true, let id = item.id, let stand = stands[id], let one = stoodAsOne(g, stand: stand, keepsDepth: item.p3 == true) {
+            g = one
+        } else if item.p3 == true, Self.holdsDepth(g) {
+            g.keepsDepth = true
+        }
+        // Drawn flat into a face the page hides, all of it is hidden with the face.
+        if item.back == true, item.p3 != true { g.hidden = true }
+        return g
+    }
+
+    /// A group stood as one where its element stands: what it holds laid back into the element's
+    /// plane, or into its space where it keeps its layers' depth, the group fitted round them
+    /// there and tipped, swung and lifted as the element is. Nil where a group that is one card
+    /// would hold something not lying in its plane, which a card cannot show; each layer of it
+    /// then stands on its own, as it already does.
+    private mutating func stoodAsOne(_ group: Node, stand: WebStand, keepsDepth: Bool) -> Node? {
+        let back = Rigid(stand).inverse
+        var g = group
+        g.children = group.children.map { moved($0, by: back) }
+        g.mask = group.mask?.map { moved($0, by: back) }
+        if !keepsDepth, Self.holdsDepth(g) { return nil }
+        g = BezzleDocument.fitted(g)
+        let c = g.frame.center
+        let place = Rigid(stand)(ScenePoint(x: Double(c.x), y: Double(c.y)))
+        let z = abs(place.z) < 1e-9 ? 0 : place.z
+        g.frame = CGRect(center: CGPoint(x: place.x, y: place.y), size: g.frame.size)
+        g.transform3D = stand.tip == 0 && stand.swing == 0 && z == 0 ? nil : Transform3D(x: stand.tip, y: stand.swing, z: CGFloat(z))
+        if keepsDepth, Self.holdsDepth(g) { g.keepsDepth = true }
+        standing.insert(g.id)
+        return g
+    }
+
+    /// Whether anything a group holds, however deep, is turned or held up in depth in it.
+    private static func holdsDepth(_ group: Node) -> Bool {
+        (group.children + (group.mask ?? [])).contains { Perspective.inDepth($0) || ($0.isGroup && holdsDepth($0)) }
+    }
+
+    private static func hidden(_ node: Node) -> Node {
+        var n = node
+        n.hidden = true
+        return n
     }
 
     // MARK: Names

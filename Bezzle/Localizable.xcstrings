@@ -3527,6 +3527,50 @@
     "3D" : {
       "shouldTranslate" : false
     },
+    "3D transforms in a perspective other than the artboard’s, drawn flat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3D-Transformationen in einer anderen Perspektive als der der Zeichenfläche, flach gezeichnet"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transformations 3D dans une autre perspective que celle du plan de travail, dessinées à plat"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trasformazioni 3D in una prospettiva diversa da quella della tavola da disegno, disegnate in piano"
+          }
+        }
+      }
+    },
+    "3D transforms with no perspective, drawn flat as the page shows them" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3D-Transformationen ohne Perspektive, flach gezeichnet, wie die Seite sie zeigt"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transformations 3D sans perspective, dessinées à plat comme la page les montre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trasformazioni 3D senza prospettiva, disegnate in piano come le mostra la pagina"
+          }
+        }
+      }
+    },
     "3D transforms, drawn flat" : {
       "localizations" : {
         "de" : {
@@ -21092,6 +21136,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Storia Facebook"
+          }
+        }
+      }
+    },
+    "Faces turned away that the page hides, hidden" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abgewandte Flächen, die die Seite verbirgt, ausgeblendet"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faces tournées vers l’arrière que la page cache, masquées"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Facce rivolte all’indietro che la pagina nasconde, nascoste"
           }
         }
       }
@@ -44832,6 +44898,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scheletro"
+          }
+        }
+      }
+    },
+    "Slanted 3D transforms, drawn flat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schräggestellte 3D-Transformationen, flach gezeichnet"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transformations 3D inclinées, dessinées à plat"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trasformazioni 3D inclinate, disegnate in piano"
           }
         }
       }

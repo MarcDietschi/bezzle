@@ -597,6 +597,20 @@ own (`LayerField`): a Bezzle that does not know it reads the same group as one c
   that keep depth, held against the design's own order and picture; `FilmBodyTests` and
   `FilmMovePlaneTests` for bodies and drags in a film, and on Animate's canvas
   `AnimateCanvasBodyTests.swift` and `AnimateCanvasDepthTests.swift` (in `AnimateCanvasTests`).
+- **From a web page** a 3D transform comes in depth where the design can say it exactly
+  (`WebDepth` in `Import/WebPage.swift`; the reader's `place3` hands over how the browser draws
+  each element and stands it in its 3D context): seen from the artboard's own eye, a perspective
+  as far in front of the page's middle as that eye (twice the page's larger side, never under
+  600), as Inspect's CSS writes an artboard, on the element's parent or inside its transform.
+  Such an element becomes a group tipped, swung, lifted and turned as it is, keeping its layers'
+  depth for `preserve-3d` and one card otherwise, what it holds lying in its plane or standing in
+  its space; one layer alone is turned itself. Each must show its corners within half a pixel of
+  where the browser draws them, or it keeps its flat matrix as before and the report says why: a
+  perspective other than the artboard's (as most pages have, set on a box of their own), a slant,
+  or none at all, which the page draws flat too, and which then lies where the page has it, a
+  `preserve-3d` box included. Faces turned away that the page hides (`backface-visibility`) come
+  in hidden. Transforms are read from CSS's typed object model, as the computed matrix has only
+  six decimals. `WebDepthTests` reads pages in WebKit and measures their corners in the page.
 - **Driving a copy:** `BEZZLE_CLICKS` takes `^x,y>x,y` for a drag with Control held.
 
 ### Mac parity
