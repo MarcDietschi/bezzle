@@ -462,6 +462,80 @@ struct MotionOutlineKeyTests {
         #expect(board.outline(of: film.id("Dot"), for: film.id("Group"), at: 0) == nil)
     }
 
+    @Test func anothersOutlineTurnedInDepthIsTakenAsItShowsOnTheArtboard() throws {
+        // A card tipped back in depth, a circle swung round, and a dot that takes their outlines.
+        var card = CanvasTests.rect("Card", CGRect(x: 200, y: 40, width: 120, height: 80))
+        card.transform3D = Transform3D(x: 40)
+        var circle = Node(kind: .ellipse, name: "Circle", frame: CGRect(x: 200, y: 160, width: 100, height: 100))
+        circle.transform3D = Transform3D(y: 35)
+        let dot = CanvasTests.rect("Dot", CGRect(x: 40, y: 40, width: 20, height: 20))
+        let film = FilmBench([card, circle, dot])
+        let board = film.board
+        let taken = try #require(board.outline(of: film.id("Card"), for: film.id("Dot"), at: 0))
+        // Its corners are the card's as they show on the artboard, seen from its eye, moved so that
+        // the card's middle as it shows is on the dot's: wider at the bottom than at the top.
+        let eye = BezzleDocument.eyes(along: [board, card])[1]
+        let turn = try #require(Perspective(card, eye: eye))
+        let shownMiddle = turn.shown(card.frame.center)
+        let expected = Perspective.corners(of: card, eye: eye).map { CGPoint(x: $0.x - shownMiddle.x + 10, y: $0.y - shownMiddle.y + 10) }
+        #expect(taken.anchorCount == 4)
+        for p in expected { #expect(taken.anchorPoints.contains { near($0, p, 1e-6) }, "\(p) in \(taken.anchorPoints)") }
+        let points = taken.anchorPoints.sorted { $0.y < $1.y }
+        #expect(abs(points[1].x - points[0].x) + 1 < abs(points[3].x - points[2].x), "\(points)")
+        // The circle's points show where they do; its curves, carried by their handles, within
+        // half a point of the circle as it shows.
+        let round = try #require(board.outline(of: film.id("Circle"), for: film.id("Dot"), at: 0))
+        let circleEye = BezzleDocument.eyes(along: [board, circle])[1]
+        let swing = try #require(Perspective(circle, eye: circleEye))
+        let from = swing.shown(circle.frame.center)
+        func asShown(_ p: CGPoint) -> CGPoint {
+            let q = swing.shown(CGPoint(x: p.x + circle.frame.minX, y: p.y + circle.frame.minY))
+            return CGPoint(x: q.x - from.x + 10, y: q.y - from.y + 10)
+        }
+        let own = try #require(circle.ownOutline)
+        for (a, b) in zip(round.anchorPoints, own.anchorPoints) { #expect(near(a, asShown(b), 1e-6)) }
+        for i in 0..<own.subpaths[0].segmentCount {
+            for k in 1...7 {
+                let truth = asShown(BezierPath.point(on: own.segment(0, i), at: CGFloat(k) / 8))
+                #expect(try #require(round.nearest(to: truth)).distance < 0.5, "\(truth)")
+            }
+        }
+        // Through the store: the dot's key holds the card as it shows.
+        film.store.seek(1)
+        film.step { film.store.takeShape(of: film.id("Card"), for: film.id("Dot")) }
+        #expect(alike(film.node("Dot").outline(at: 1), taken))
+    }
+
+    @Test func aShapeTurnedInDepthItselfTakesAnOutlineThatShowsAsTheOtherDoes() throws {
+        // A panel swung round in depth takes the outline of a square lying flat.
+        var panel = CanvasTests.rect("Panel", CGRect(x: 60, y: 60, width: 100, height: 100))
+        panel.transform3D = Transform3D(y: 40)
+        let square = CanvasTests.rect("Square", CGRect(x: 240, y: 80, width: 60, height: 60))
+        // Tipped a quarter round about the level line through the artboard's eye: edge on.
+        var edge = CanvasTests.rect("Edge", CGRect(x: 60, y: 120, width: 80, height: 60))
+        edge.transform3D = Transform3D(x: 90)
+        let film = FilmBench([panel, square, edge])
+        let board = film.board
+        let taken = try #require(board.outline(of: film.id("Square"), for: film.id("Panel"), at: 0))
+        // In its own points it is no square, but turned as the panel is, it shows as the square
+        // does, about where the panel's middle shows.
+        let eye = BezzleDocument.eyes(along: [board, panel])[1]
+        let turn = try #require(Perspective(panel, eye: eye))
+        let middle = turn.shown(panel.frame.center)
+        let shown = taken.anchorPoints.map { turn.shown(CGPoint(x: $0.x + panel.frame.minX, y: $0.y + panel.frame.minY)) }
+        for corner in [CGPoint(x: -30, y: -30), CGPoint(x: 30, y: -30), CGPoint(x: 30, y: 30), CGPoint(x: -30, y: 30)] {
+            let p = CGPoint(x: middle.x + corner.x, y: middle.y + corner.y)
+            #expect(shown.contains { near($0, p, 1e-6) }, "\(p) in \(shown)")
+        }
+        let sides = taken.anchorPoints.sorted { $0.x < $1.x }
+        #expect(abs(abs(sides[1].y - sides[0].y) - abs(sides[3].y - sides[2].y)) > 1, "\(taken.anchorPoints)")
+        // Seen edge on, a layer has no plane to take it in: none, and the store changes nothing.
+        #expect(board.outline(of: film.id("Square"), for: film.id("Edge"), at: 0) == nil)
+        let was = film.store.doc
+        film.step { film.store.takeShape(of: film.id("Square"), for: film.id("Edge")) }
+        #expect(film.store.doc == was)
+    }
+
     @Test func aShapePosedWithAnothersOutlineHasItNumberedToComeFromTheOutlineBefore() throws {
         // A square given a circle of its size, whose own first point is at its right.
         var n = Node(kind: .rectangle, name: "Square", frame: CGRect(x: 0, y: 0, width: 100, height: 100))

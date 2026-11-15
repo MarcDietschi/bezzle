@@ -244,14 +244,51 @@ nonisolated extension Node {
     /// it, in that layer's own upright points: as large as the other is and turned as it is on
     /// the artboard, its frame's middle on the layer's. What the layer takes to become that
     /// shape (`poseShape(taking:at:)`). Nil when either is not on it or has no outline.
+    ///
+    /// Where either, or what holds it, is turned in depth, the other's outline is taken as it shows
+    /// on the artboard, seen from the artboard's eye as every layer on it is (`Perspective`), and
+    /// put into the layer's own plane so that the layer, turned as it is, shows it just so about
+    /// where its own middle shows. A turn in depth keeps straight lines straight, so an outline
+    /// of straight sides is taken exactly; a curve's handles are carried as its points are, which
+    /// is the curve as it shows only as near as a turn seen from afar leaves it. Nil where any of
+    /// it lies past the layer's horizon, as for a layer seen edge on.
     func outline(of other: UUID, for id: UUID, at t: Double) -> BezierPath? {
         guard other != id, let theirs = way(to: other), let mine = way(to: id),
               let source = theirs.last, let layer = mine.last, layer.canReshape, let outline = source.outline(at: t) else { return nil }
+        let middle = { (n: Node) in CGPoint(x: n.frame.width / 2, y: n.frame.height / 2) }
+        // In depth: through each one's place and turn, its turn in depth, and those of what holds it.
+        let eyesTheirs = BezzleDocument.eyes(along: [self] + theirs), eyesMine = BezzleDocument.eyes(along: [self] + mine)
+        func turns(_ way: [Node], _ eyes: [Eye?]) -> [Perspective?] { way.indices.map { Perspective(way[$0], eye: eyes[$0 + 1]) } }
+        let turnsTheirs = turns(theirs, eyesTheirs), turnsMine = turns(mine, eyesMine)
+        if turnsTheirs.contains(where: { $0 != nil }) || turnsMine.contains(where: { $0 != nil }) {
+            func shown(_ p: CGPoint, _ way: [Node], _ turns: [Perspective?]) -> CGPoint {
+                way.indices.reversed().reduce(p) { q, i in
+                    let flat = q.applying(way[i].placement)
+                    return turns[i]?.shown(flat) ?? flat
+                }
+            }
+            func flat(_ p: CGPoint) -> CGPoint? {
+                var q = p
+                for i in mine.indices {
+                    if let turn = turnsMine[i] {
+                        guard let lying = turn.flat(q) else { return nil }
+                        q = lying
+                    }
+                    q = q.applying(mine[i].placement.inverted())
+                }
+                return [q.x, q.y].allSatisfy(\.isFinite) ? q : nil
+            }
+            let there = shown(middle(source), theirs, turnsTheirs), here = shown(middle(layer), mine, turnsMine)
+            return outline.mapped { p in
+                let q = shown(p, theirs, turnsTheirs)
+                return flat(CGPoint(x: q.x + here.x - there.x, y: q.y + here.y - there.y))
+            }
+        }
         // Each one's own points on the artboard: through its place and turn, and those of what holds it.
         func onBoard(_ way: [Node]) -> CGAffineTransform { way.reversed().reduce(.identity) { $0.concatenating($1.placement) } }
         let from = onBoard(theirs), to = onBoard(mine)
-        let there = CGPoint(x: source.frame.width / 2, y: source.frame.height / 2).applying(from)
-        let here = CGPoint(x: layer.frame.width / 2, y: layer.frame.height / 2).applying(to)
+        let there = middle(source).applying(from)
+        let here = middle(layer).applying(to)
         let place = from.concatenating(CGAffineTransform(translationX: here.x - there.x, y: here.y - there.y)).concatenating(to.inverted())
         guard [place.a, place.b, place.c, place.d, place.tx, place.ty].allSatisfy(\.isFinite) else { return nil }
         return outline.applying(place)

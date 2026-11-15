@@ -30,9 +30,13 @@ file was made (2026-11-14): look before starting on one.
   the other's own points). Where a key either side has the same runs and would go into it point
   by point otherwise than they lie along each other, the outline taken still has points more (a
   square given a circle has eight). Points taken in hand between two keys are the outline as it
-  is then, with the points the stretch gives both. From… ignores a 3D turn of either shape and
-  takes only shapes on the film's own artboard. Its menu and the hover preview were never looked
-  at in a running window; adding and deleting points is driven through canvas events in tests only.
+  is then, with the points the stretch gives both. From… takes the other's outline as the design
+  places and turns it, in depth too (2026-11-15), not as the film poses either at the playhead
+  (Move, Turn, Scale, Tilt, Swing); under a turn in depth a curve is carried by its handles, so a
+  strong perspective takes it only nearly. It offers only shapes on the film's own artboard: others
+  would need the menu grouped by artboard (`ShapeFromChip` in `AnimateInspector.swift`) and their
+  outline placed from another artboard's eye. Its menu and the hover preview were never looked at
+  in a running window; adding and deleting points is driven through canvas events in tests only.
 - **Outline keys in Bezzle 1.7:** it shows the design at such a key and keeps the key whole. Where
   the design's outline gets more points while such a key keeps its old count of noughts (points
   added in 1.7, or one person keying while another edits the design's points), 1.7 shows the

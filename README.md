@@ -399,7 +399,13 @@ along one artboard's film. Its keys are changes from the design and never the de
   changes, such a key keeps its outline where it shows: grown with a resize, turned over with a
   flip, shifted when `setPoints` fits the frame anew (`MotionTrack.withOutlines`). Another shape's
   outline is placed for a layer by `Node.outline(of:for:at:)`, as large and turned as the other is
-  on the artboard and about the layer's own middle, and kept by `Node.shapeValue(taking:at:)` with
+  on the artboard and about the layer's own middle. Where either, or what holds it, is turned in
+  depth, the other's outline is taken as it shows on the artboard, seen from the artboard's eye
+  (`Perspective`, `BezzleDocument.eyes(along:)`), and put into the layer's own plane, so that the
+  layer, turned as it is, shows it just so about where its own middle shows: straight sides
+  exactly, curves by carrying their handles as their points (within half a point of a circle of a
+  hundred swung 35°), none where any of it lies past the layer's horizon (a layer seen edge on).
+  It is kept by `Node.shapeValue(taking:at:)` with
   its own points and no more, numbered to come from the key before or else to go into the key
   after, so the points taken in hand at that key are the other's own. Only where a key either side
   has the same runs and would go into it point by point otherwise than the two lie along each other
