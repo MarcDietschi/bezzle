@@ -453,6 +453,11 @@ the rules). What that left:
   chunk size, which any program on this Mac could send (`MCPServer.swift`, the chunked body).
   `steps` of `1e18` (`MCPTools.swift`) does not break off but runs for ever.
 
+- **Windows' own panels** were not looked through for what broke 1.8 off on the Mac (a card or
+  a drag asking for layers, rows or tabs that have gone since it was made, 2026-11-15). What they
+  share with the Mac is safe there too: the layers list's drop (`LayerDrop`), a layer's place
+  (`BezzleDocument.attach`, `insert`) and the versions ruler's string (`RulerMotion`).
+
 - **The full test run in parallel** fails on a quiet Mac since 1.8 (found 2026-11-15, on 1.8.1's
   commit too): `FilmSharpTests.withTheViewCloseOnlyWhatIsInTheViewIsDrawnSharper` waits more than
   a minute for pictures from the film stage's one queue, which every test's stage shares. It no
