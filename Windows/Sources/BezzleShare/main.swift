@@ -313,6 +313,60 @@ func wait(for file: URL) {
     print("glimpses: \(events)")
 }
 
+/// `drive`: a design in a folder Google Drive keeps in step (BEZZLE_SYNCED_FOLDER): what the
+/// service kept twice inside it is taken back in as the folder is looked through, a picture and a
+/// version from the relay wait beside it and write nothing in it, and go in with a change made here
+/// (the Mac's GoogleDriveFolderTests). Writes drive.json.
+@MainActor func driveRun(_ url: URL, _ out: URL) throws {
+    let fm = FileManager.default
+    func names(_ folder: URL) -> [String] { ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).sorted() }
+    func picture(_ shade: UInt8) -> Data {
+        let rep = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        return rep + Data(repeating: shade, count: 64)
+    }
+    if !fm.fileExists(atPath: url.path) {
+        var doc = BezzleDocument()
+        doc.nodes = [Node(kind: .artboard, name: "Board", frame: CGRect(x: 0, y: 0, width: 200, height: 100))]
+        try fm.createDirectory(at: url.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
+        try JSONEncoder().encode(doc).write(to: url.appendingPathComponent("document.json"))
+    }
+    _ = try WindowsCore.open(url)
+    var result: [String: Any] = ["synced": WindowsCore.inSyncedFolder]
+    let images = url.appendingPathComponent("images", isDirectory: true)
+    try fm.createDirectory(at: images, withIntermediateDirectories: true)
+    // What the service kept twice: one picture from three computers, a folder made on two, the
+    // design's file written on two at once.
+    for name in ["photo.png", "photo (1).png", "photo 2.png"] { try picture(1).write(to: images.appendingPathComponent(name)) }
+    try fm.createDirectory(at: url.appendingPathComponent("images 2"), withIntermediateDirectories: true)
+    try picture(2).write(to: url.appendingPathComponent("images 2/other.png"))
+    try Data("{}".utf8).write(to: url.appendingPathComponent("document 2.json"))
+    WindowsCore.lookAtShare()
+    result["images"] = names(images)
+    result["design"] = names(url)
+
+    // A picture from the relay, and a version someone named elsewhere: beside it, not in it.
+    try WindowsCore.arrivals.keep(picture(3), as: "relay.png", in: WindowsCore.arrivals.images(of: url))
+    WindowsCore.pictureArrived("relay.png", in: url)
+    var doc = WindowsCore.design ?? BezzleDocument()
+    if !doc.nodes.isEmpty { doc.nodes[0].name = "Named elsewhere" }
+    let version = DesignVersion(date: Date(), name: "Anna's", by: "Anna", replica: "anna", layers: 1, shared: true)
+    WindowsCore.versions.arrived(version, data: VersionKeeping.pack(doc) ?? Data())
+    result["relayInDesign"] = fm.fileExists(atPath: images.appendingPathComponent("relay.png").path)
+    result["relayAside"] = WindowsCore.arrivals.picture("relay.png", of: url)?.path ?? ""
+    result["versionInDesign"] = fm.fileExists(atPath: FolderShare.versionFile(version.id, of: url).path)
+    result["versionShown"] = WindowsCore.versions.document(version.id) != nil
+
+    // A change made here takes in what the folder has not brought.
+    WindowsCore.arrivalsGrace = 0
+    if let first = WindowsCore.design?.nodes.first?.id { WindowsCore.edit { d in d.update(first) { $0.frame.origin.x += 10 } } }
+    try WindowsCore.save()
+    result["relayAfterSave"] = fm.fileExists(atPath: images.appendingPathComponent("relay.png").path)
+    result["versionAfterSave"] = fm.fileExists(atPath: FolderShare.versionFile(version.id, of: url).path)
+    result["asideAfterSave"] = fm.fileExists(atPath: WindowsCore.arrivals.folder(of: url).path)
+    try write(result, "drive.json", in: out)
+    print("drive: \(result)")
+}
+
 do {
     try WindowsCore.loadFonts(from: URL(fileURLWithPath: arguments[1]))
     let given = URL(fileURLWithPath: arguments[3]), out = URL(fileURLWithPath: arguments[4])
@@ -322,6 +376,7 @@ do {
     case "link": try await linkRun(given, out)
     case "live": try await liveRun(given, out)
     case "glimpses": try await glimpsesRun(given, out)
+    case "drive": try driveRun(given, out)
     default: print("unknown: \(arguments[2])"); exit(2)
     }
     print("done")

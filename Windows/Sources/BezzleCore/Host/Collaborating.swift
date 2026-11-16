@@ -96,7 +96,7 @@ extension WindowsCore {
             if !FileManager.default.fileExists(atPath: session.url.appendingPathComponent("document.json").path) { follow() }
             // A copy the folder's service made beside it, written on another computer as this one
             // wrote: taken in first, so that what it brings is read now.
-            folder.foldCopies(open: openDesigns())
+            folder.foldCopies(open: openDesigns(), using: SharedSession.pictures(in: (previewBase ?? design)?.nodes ?? []))
             let found = FolderShare.look(folder.url, replica: session.replica, seen: folder.seen, opening: false)
             let took = folder.take(found)
             if !took.changes.isEmpty {
@@ -104,6 +104,7 @@ extension WindowsCore {
                 session.persist()
             }
             if took.roomChanged { session.roomChanged() }
+            if !took.pictures.isEmpty { arrivals.arrived(pictures: took.pictures, of: folder.url) }
             for name in took.pictures { pictureArrived(name, in: folder.url) }
             for (version, data) in took.versions { versions.arrived(version, data: data) }
         }
@@ -156,10 +157,9 @@ extension WindowsCore {
     /// How a design's path is told apart in `openDesigns`.
     public static func openKey(_ url: URL) -> String { url.standardizedFileURL.path.lowercased() }
 
-    /// A picture someone else added came through the folder: Skia learns it, to draw it.
+    /// A picture someone else added came, through the folder or the relay: Skia learns it, to draw it.
     static func pictureArrived(_ name: String, in design: URL) {
-        let file = design.appendingPathComponent("images").appendingPathComponent(name)
-        guard let data = try? Data(contentsOf: file) else { return }
+        guard let file = arrivals.picture(name, of: design), let data = try? Data(contentsOf: file) else { return }
         // Asked for again the next time it is drawn: one not there yet is not kept as missing.
         giveSkia(name, data)
         // One shown by its glimpse until now is drawn as itself from now on, coming into focus.
@@ -658,10 +658,12 @@ final class FolderCopy {
 
     /// Takes copies the folder's service made beside the design back into it and sends them to the
     /// Recycle Bin, every 20 seconds at most, but none open here (`open`, by path); true when any
-    /// was (the Mac's FolderSync.foldCopies, `FolderShare.fold`).
+    /// was (the Mac's FolderSync.foldCopies, `FolderShare.fold`). In a service that keeps each file
+    /// apart, so too what it kept twice inside the design as two computers wrote one name, but
+    /// pictures the design shows by such a name (`using`; `FolderShare.foldCopiesInside`).
     @discardableResult
-    func foldCopies(open: Set<String>) -> Bool {
-        guard service != nil else { return false }
+    func foldCopies(open: Set<String>, using: Set<String> = []) -> Bool {
+        guard let service else { return false }
         if let last = copiesLookedFor, Date().timeIntervalSince(last) < 20 { return false }
         copiesLookedFor = Date()
         var folded = false
@@ -674,6 +676,14 @@ final class FolderCopy {
                 NSLog("Bezzle took %@ into %@, a copy the folder's sync service made of it, and sent it to the Recycle Bin", copy.lastPathComponent, url.lastPathComponent)
             } catch {
                 NSLog("Bezzle could not take %@ into %@: %@", copy.path, url.path, "\(error)")
+            }
+        }
+        if service != "iCloud Drive" {
+            let taken = FolderShare.foldCopiesInside(url, using: using) { copy in
+                guard WindowsCore.recycle(copy) else { throw WindowsCore.CoreError("\(copy.path) could not go to the Recycle Bin") }
+            }
+            if !taken.isEmpty {
+                NSLog("Bezzle took back into %@ what the folder's sync service kept twice in it: %@", url.lastPathComponent, taken.joined(separator: ", "))
             }
         }
         return folded

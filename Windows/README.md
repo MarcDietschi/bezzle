@@ -155,7 +155,14 @@ in step, only the computer that changes a design writes in it (`SharedSession.ch
 is retried for 20 s before it is written again where it was (`WindowsCore.Away`), and copies the
 service made beside it ("Poster 2", "Poster (1)") are taken back in and sent to the Recycle Bin
 (`FolderCopy.foldCopies`, the shared `FolderShare.fold`): the Mac's rules, `README.md` › The Mac
-app › Designs in synced folders.
+app › Designs in synced folders. Since 2026-11-16, as there, it writes in such a design only names
+of its own: pictures and named versions from the relay wait beside it in
+`%LOCALAPPDATA%\Bezzle\Arrivals` (`WindowsCore.arrivals`, the shared `FolderShare.Arrivals`) until
+the folder brings them or a change made here takes them in, what a service that keeps each file
+apart kept twice inside it is taken back in (`FolderShare.foldCopiesInside`, from `foldCopies`), and
+a link to a design already in the designs folder opens it (`acceptLink`,
+`FolderShare.design(sharedAs:among:)`). Checked headless in the VM: `bezzle-share <fonts> drive
+<design.bezzle> <out>` with `BEZZLE_SYNCED_FOLDER` naming its folder.
 
 A design opens as on the Mac (`README.md` › The Mac app › Opening a design): its tab shows at once,
 covered by the window's paper with Bezzle's mark pressed into it (`Sources/Bezzle/OpeningCover.swift`),

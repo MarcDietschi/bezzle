@@ -535,11 +535,9 @@ written on two Macs at once (`README.md` › The Mac app › Designs in synced f
   VM: a copy editing a design in a folder marked synced writes every edit (five of five) and its
   own parts. Not checked there: two copies on one design (the one looking on writing nothing), a
   copy the service made taken back in and sent to the Recycle Bin, a design away for a moment;
-  nor with a real OneDrive, Google Drive or iCloud for Windows. Not on Windows yet (2026-11-16):
-  pictures and versions from the relay still go straight into the design (`Host/CloudCopy.swift`,
-  `Host/Versions.swift`), and copies inside a design are not taken back in (call
-  `FolderShare.foldCopiesInside` beside `copiesFromTheService` in `Collaborating.foldCopies`). A
-  link's copy beside a design is taken in there too, through the shared `copiesFromTheService`.
+  nor with a real OneDrive, Google Drive or iCloud for Windows. The 2026-11-16 Google Drive rules
+  (arrivals beside the design, copies inside taken back in, a link's design found) were checked
+  there headless only (`bezzle-share … drive`), not with two computers.
 - **A Mac only looking on** keeps where the design was looked at only until it is closed, and its
   Finder picture and versions are made by the Mac that changed it.
 

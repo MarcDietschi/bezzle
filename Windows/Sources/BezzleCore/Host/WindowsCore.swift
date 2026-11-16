@@ -141,12 +141,31 @@ public enum WindowsCore {
         var doc = try JSONDecoder().decode(BezzleDocument.self, from: Data(contentsOf: json))
         doc.repairStyles()
         let images = folder.appendingPathComponent("images")
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? [] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? []
+        for name in names {
             let data = try Data(contentsOf: images.appendingPathComponent(name))
             giveSkia(name, data)
         }
+        // Pictures from the relay that wait beside a design in a synced folder (`arrivals`).
+        let waiting = arrivals.images(of: folder)
+        for name in Set((try? FileManager.default.contentsOfDirectory(atPath: waiting.path)) ?? []).subtracting(names) {
+            if let data = try? Data(contentsOf: waiting.appendingPathComponent(name)) { giveSkia(name, data) }
+        }
         return doc
     }
+
+    /// Pictures and named versions that came from the relay to a design in a synced folder, kept
+    /// beside it in this computer's own folder until the folder brings them (`FolderShare.Arrivals`,
+    /// which says why; the Mac's Arrivals).
+    static let arrivals: FolderShare.Arrivals = {
+        let env = ProcessInfo.processInfo.environment
+        let base = env["LOCALAPPDATA"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return FolderShare.Arrivals(root: base.appendingPathComponent("Bezzle", isDirectory: true).appendingPathComponent("Arrivals", isDirectory: true))
+    }()
+
+    /// How long one waits for the folder to bring it before this computer writes it into the design.
+    nonisolated(unsafe) public static var arrivalsGrace: TimeInterval = 120
 
     /// Draws the design's layer `index` (an artboard) at `scale` pixels a point with the app's own
     /// renderer, and Skia makes the pictures it recorded: premultiplied RGBA, rows top first.
@@ -346,6 +365,9 @@ extension WindowsCore {
             try FileManager.default.createDirectory(at: url.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
             try data.write(to: url.appendingPathComponent("document.json"), options: .atomic)
         }
+        // Pictures and versions from the relay that the folder has not brought by now go in with
+        // this computer's own change; those it brought are forgotten (`arrivals`).
+        if inSyncedFolder { arrivals.settle(url, grace: arrivalsGrace) }
         // Written: nothing done here waits to be.
         sharing?.changedHere = false
         return true

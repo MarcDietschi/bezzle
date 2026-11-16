@@ -296,7 +296,11 @@ final class CloudCopy {
     private func fetchPictures(_ session: SharedSession, _ server: ShareServer) async throws {
         let design = session.url, images = design.appendingPathComponent("images", isDirectory: true)
         let wanted = shown.isEmpty ? SharedSession.pictures(in: session.state.flatDesign().document().nodes) : shown
-        for name in wanted.sorted() where !FileManager.default.fileExists(atPath: images.appendingPathComponent(name).path) {
+        // In a synced folder whoever placed a picture writes it into the design, and the folder
+        // brings it: one from the room waits beside it (`WindowsCore.arrivals`), as written in by
+        // every computer it was kept once for each.
+        let synced = SyncedPlaces.service(of: design) != nil
+        for name in wanted.sorted() where WindowsCore.arrivals.picture(name, of: design) == nil {
             guard !name.hasPrefix("."), (name as NSString).lastPathComponent == name else { continue }
             let key = ShareRecord.picture(keys.pictureName(name)).key
             if let last = asked[name], Date().timeIntervalSince(last) < 20 { continue }
@@ -304,8 +308,12 @@ final class CloudCopy {
             guard progress.known[key] != nil, let sealed = try await server.get(keys.room, key, read: keys.readToken),
                   let data = await Self.open(file: sealed, keys, about: key) else { continue }
             do {
-                try WindowsCore.makeFolder(images, in: design)
-                try data.write(to: images.appendingPathComponent(name), options: .atomic)
+                if synced {
+                    try WindowsCore.arrivals.keep(data, as: name, in: WindowsCore.arrivals.images(of: design))
+                } else {
+                    try WindowsCore.makeFolder(images, in: design)
+                    try data.write(to: images.appendingPathComponent(name), options: .atomic)
+                }
             } catch {
                 NSLog("Bezzle could not keep a picture: %@", "\(error)")
                 continue

@@ -121,7 +121,9 @@ extension WindowsCore {
         public func load() {
             guard let url, loaded != url else { return }
             loaded = url
-            all = FolderShare.versions(of: url, replica: WindowsCore.replica).filter { FileManager.default.fileExists(atPath: file($0.id, url).path) }
+            all = FolderShare.versions(of: url, replica: WindowsCore.replica).filter {
+                FileManager.default.fileExists(atPath: file($0.id, url).path) || FileManager.default.fileExists(atPath: WindowsCore.arrivals.version($0.id, of: url).path)
+            }
         }
 
         private func makeRoom() -> URL? {
@@ -207,6 +209,15 @@ extension WindowsCore {
                 all = (all + [version]).sorted { $0.date < $1.date }
                 cache[version.id] = doc
             }
+            // In a synced folder whoever named it writes it into the design, and this computer's list
+            // goes with its next change of its own: it waits beside the design meanwhile.
+            if WindowsCore.inSyncedFolder {
+                if !FileManager.default.fileExists(atPath: file(version.id, url).path) {
+                    try? WindowsCore.arrivals.keep(data, as: "\(version.id.uuidString).lzfse", in: WindowsCore.arrivals.versions(of: url))
+                }
+                changed()
+                return
+            }
             if !FileManager.default.fileExists(atPath: file(version.id, url).path) {
                 try? WindowsCore.makeFolder(folder(url), in: url)
                 try? data.write(to: file(version.id, url), options: .atomic)
@@ -238,7 +249,9 @@ extension WindowsCore {
 
         func document(_ id: UUID) -> BezzleDocument? {
             if let doc = cache[id] { return doc }
-            guard let url, let data = try? Data(contentsOf: file(id, url)), let doc = VersionKeeping.unpack(data) else { return nil }
+            // One someone else named may still wait beside a design in a synced folder (`WindowsCore.arrivals`).
+            guard let url, let data = (try? Data(contentsOf: file(id, url))) ?? (try? Data(contentsOf: WindowsCore.arrivals.version(id, of: url))),
+                  let doc = VersionKeeping.unpack(data) else { return nil }
             cache[id] = doc
             return doc
         }

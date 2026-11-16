@@ -168,6 +168,13 @@ extension WindowsCore {
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)), let secret = CloudRoom.secret(from: url),
               let keys = ShareKeys(link: secret) else { throw ShareProblem(String(localized: "This link does not lead to a design.")) }
         if let known = Linking.url(of: keys.room), Linking.link(of: known)?.keys?.room == keys.room { return known }
+        // In the designs folder already, there through a folder a sync service keeps in step from a
+        // computer that opened the link before: found, not made again beside it as "Poster 2".
+        let listed = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        if let there = FolderShare.design(sharedAs: secret, among: listed) {
+            _ = Linking.claim(keys.room, at: there)
+            return there
+        }
         guard let server = Linking.server else { throw ShareProblem(String(localized: "This copy of Bezzle cannot share designs.")) }
         let arrived: CloudRoom.Arrived
         do {
