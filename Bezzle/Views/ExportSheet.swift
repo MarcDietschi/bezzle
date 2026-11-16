@@ -3,7 +3,8 @@ import AppKit
 
 /// Exporting: the layers picked, each on its own and only as big as it is, or the artboards they
 /// lie on, or all of them; as pictures or SVGs, a file each, or as one PDF with a page each. Or
-/// everything marked for export, each as its Export card says.
+/// everything marked for export, each as its Export card says. It closes once the files are
+/// written, and stays open only when some could not be made.
 struct ExportSheet: View {
     let store: DocumentStore
     @AppStorage("exportFormat") private var format: ExportFormat = .png
@@ -134,7 +135,9 @@ struct ExportSheet: View {
     private func run(_ export: ExportPanel.Clash, replacing: Bool) {
         withAnimation(Theme.spring) { asking = nil }
         ExportPanel.write(export.files, quality: quality, to: export.folder, replacing: replacing, assets: store.assets) { progress = $0 } finished: { outcome in
-            withAnimation(Theme.spring) { done = outcome }
+            // Once everything is out, the sheet has done its work. It stays only to say what could
+            // not be made.
+            if outcome.missed == 0, outcome.written > 0 { close() } else { withAnimation(Theme.spring) { done = outcome } }
         }
     }
 }
