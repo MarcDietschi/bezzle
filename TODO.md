@@ -553,6 +553,11 @@ The tab covered by the window's paper with Bezzle's mark pressed into it while t
 
 ## Housekeeping
 
+- **The Export sheet closes by itself** once every file is written, and stays only to say what
+  could not be made (2026-11-16, both `ExportSheet.swift`). On the Mac built, not tried in a
+  window (the folder panel wants a person). On Windows written while the VM was off: never built
+  nor tried there.
+
 - **The AI server, numbers past any size** (found 2026-11-15 in the audit after 1.8's crash; the
   whole-number reader and places among layers no longer break off): what reads a number its own
   way still turns one past any whole number into one and breaks off. `import_website` with a

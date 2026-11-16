@@ -8,8 +8,8 @@ import BezzleCore
 /// window, which dims; the layers picked, the post in front, their artboards, everything marked,
 /// or all the artboards; as pictures (at 1×, 2× or 3×) or as one PDF; how much of a picture is
 /// kept; a sentence saying what goes out; then Export…, which asks where the files go. Files of
-/// the same names already there are replaced or kept beside, as asked; once written, where they
-/// went, with a way to see them.
+/// the same names already there are replaced or kept beside, as asked. Once all are written it
+/// closes; when some could not be made, it says so and stays.
 @MainActor
 final class ExportSheet {
     let layer = Grid()
@@ -278,8 +278,9 @@ final class ExportSheet {
             }
             guard let self else { return }
             self.progress = nil
-            self.done = outcome
-            self.show()
+            // Once everything is out, as on the Mac, the sheet closes; it stays only to say what
+            // could not be made.
+            if outcome.missed == 0, outcome.written > 0 { self.close() } else { self.done = outcome; self.show() }
         }
     }
 
