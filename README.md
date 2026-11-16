@@ -163,6 +163,35 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
   - Tested in `CloudFolderTests` (two Macs in one process on a folder marked synced). A test copy
     reading `~/Documents` (which iCloud keeps here) has macOS ask for permission on screen, so run
     such checks only with Erik there.
+- **Google Drive** (and OneDrive, Dropbox; `SyncedFolders.keepsPackagesWhole` is false for them)
+  keeps each file in a package as an item of its own: `fileproviderctl evaluate` shows the package
+  with children, and `document.json` keeps its item through Bezzle's atomic saves. It keeps every
+  file written under one name as one more item, "photo (1).jpg" as Google Drive names it and
+  "photo 2.jpg" as a Mac shows it. One Mac editing alone makes none (202 edits in three minutes,
+  2026-11-16, Google Drive 134). Several Macs did, each writing a name another wrote too: in a
+  design three Macs had open, one picture from the relay was kept five times and three versions
+  twice. Since 2026-11-16 a Mac writes in a design only names that are its own:
+  - Pictures and named versions that came from the relay wait beside the design in this Mac's
+    caches (`Arrivals`), shown from there (`Assets.aside`, `VersionShelf.document`), and are
+    forgotten when the folder brings them. One the folder has not brought two minutes later goes in
+    with this Mac's next change of its own (`Arrivals.settle`), as one from someone with the link
+    alone never comes through the folder. iCloud Drive gets the same, as writing them was a Mac only
+    looking on writing the design.
+  - The home screen makes no Finder picture for a design in a synced folder (`Library.seekPreview`).
+  - What the service kept twice inside a design is taken back in as the open design's folder is
+    looked through (`FolderShare.foldCopiesInside`, not in iCloud Drive, held by file coordination
+    only when there is any): copies the same byte for byte are deleted, a second folder's files go
+    into the first, a second `document.json` is put in the Trash, of two rooms the first made is
+    kept by everyone. A picture the design shows by such a name is left.
+  - Opening a link to a design already in the designs folder, there through the folder from a
+    computer that opened the link before, opens it (`Sharing.design(sharedAs:among:)`). Before, it
+    was made again beside it as "Poster 2" (`Library.freeURL`), with a room of its own. Such a copy
+    beside a design is taken in like the service's (`FolderShare.copiesFromTheService` knows the link
+    too).
+  - Tested in `GoogleDriveFolderTests`. With Google Drive on this Mac: Erik's work account (shared
+    drive X, `Vorlagen/Bezzle`), `~/Library/Application Support/Google/DriveFS/<id>/metadata_sqlite_db`
+    lists every item by name without reading the drive through, and `ls -lO` shows which files are
+    still only in the cloud (`dataless`).
 
 ### Animate
 

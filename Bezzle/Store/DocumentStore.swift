@@ -719,6 +719,9 @@ final class DocumentStore {
                 NSLog("Bezzle could not save %@: %@", url.path, error.localizedDescription)
             }
         }
+        // Pictures and versions from the relay that the folder has not brought by now go in with
+        // this Mac's own change; those it brought are forgotten (`Arrivals`).
+        if inSyncedFolder { Self.saving.async { Arrivals.settle(url) } }
         Library.shared.touched(url)
         versions.saved(copy)
         schedulePreview()

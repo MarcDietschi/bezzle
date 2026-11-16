@@ -268,6 +268,17 @@ final class Sharing {
             WindowRouter.shared.open(known)
             return
         }
+        // In the designs folder already, come through a folder a sync service keeps in step from
+        // a computer that opened the link before: opened, rather than made again beside it as
+        // "Poster 2", a design of its own that nobody else would see changes in.
+        let library = Library.shared
+        let listed = (try? FileManager.default.contentsOfDirectory(at: library.folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        if let there = Self.design(sharedAs: secret, among: listed + library.entries.map(\.url)) {
+            _ = claim(room, at: there)
+            Library.shared.touched(there)
+            WindowRouter.shared.open(there)
+            return
+        }
         guard let server, arriving[room] == nil else { return }
         Self.log.notice("Opening a link to room \(room.prefix(8), privacy: .public)")
         arriving[room] = Arrival(title: String(localized: "Shared Design"), owner: nil)
@@ -292,6 +303,17 @@ final class Sharing {
                 }
             }
         }
+    }
+
+    /// Of the designs at `urls`, the one shared by the link with `secret`, if one is.
+    nonisolated static func design(sharedAs secret: String, among urls: [URL]) -> URL? {
+        var seen = Set<String>()
+        for url in urls.map(\.standardizedFileURL) where seen.insert(url.path).inserted {
+            guard BezzleDocument.fileExtensions.contains(url.pathExtension.lowercased()),
+                  !url.pathComponents.contains(where: { $0 == ".Trash" || $0 == ".Trashes" }) else { continue }
+            if FolderShare.linkSecret(of: url) == secret { return url }
+        }
+        return nil
     }
 
     /// Makes the design that came from a link in the designs folder.

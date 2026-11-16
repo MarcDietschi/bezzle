@@ -54,6 +54,11 @@ nonisolated enum SyncedFolders {
         }
     }
 
+    /// Whether the service keeps a design's package as one item, whatever is written in it, as
+    /// iCloud Drive does; the others (Google Drive, OneDrive, Dropbox) keep each file in it as an
+    /// item of its own, and keep two files of one name side by side when two computers write one.
+    static func keepsPackagesWhole(_ service: String) -> Bool { service == "iCloud Drive" }
+
     /// The services on this Mac with a folder of their own, Google Drive first, to move a design into.
     static func places() -> [(name: String, url: URL)] {
         let found = (try? FileManager.default.contentsOfDirectory(at: storage, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
@@ -262,10 +267,14 @@ final class FolderSync {
         looking = true
         let url = url, replica = replica, seen = seen
         // A copy the folder's service made beside it, written on another computer as this one
-        // wrote: taken in first, so that what it brings is read now.
+        // wrote: taken in first, so that what it brings is read now. And, in a service that keeps
+        // each file apart, the copies it made inside it as two computers wrote one name.
         let synced = service != nil, open = Self.openHere()
+        let inside = service.map { !SyncedFolders.keepsPackagesWhole($0) } ?? false
+        let using = inside ? (collaboration?.store.map { Collaboration.pictures(in: $0.sharedDoc) } ?? []) : []
         DispatchQueue.global(qos: .utility).async {
             if synced { Self.foldCopies(beside: url, open: open) }
+            if inside { Self.foldCopiesInside(url, using: using) }
             let found = Self.look(url, replica: replica, seen: seen, opening: false)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -312,6 +321,7 @@ final class FolderSync {
             if service == nil { collaboration.persist() }
         }
         let store = collaboration?.store
+        if !found.pictures.isEmpty { Arrivals.arrived(pictures: found.pictures, of: url) }
         for name in found.pictures {
             store?.pictureArrived(name)
             collaboration?.live?.arrived(name)
@@ -399,6 +409,19 @@ final class FolderSync {
     nonisolated static func fold(_ copy: URL, into design: URL,
                                  discard: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
         try FolderShare.fold(copy, into: design, holding: { url, write in try DesignFile.coordinated(writing: url) { _ in try write() } }, discard: discard)
+    }
+
+    /// Takes back in the copies the folder's service made inside the design, as two computers
+    /// wrote the same name in it (`FolderShare.foldCopiesInside`), but pictures it shows by such a
+    /// name (`using`). Held by the system's file coordination; what is put away goes in the Trash.
+    @discardableResult
+    nonisolated static func foldCopiesInside(_ design: URL, using: Set<String>) -> [String] {
+        let taken = FolderShare.foldCopiesInside(design, using: using, holding: { url, write in try DesignFile.coordinated(writing: url) { _ in try write() } },
+                                                 discard: { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) })
+        if !taken.isEmpty {
+            NSLog("Bezzle took back into %@ what the folder's sync service kept twice in it: %@", design.lastPathComponent, taken.joined(separator: ", "))
+        }
+        return taken
     }
 
     /// Folds every copy the folder's service made beside the design into it, but those open here

@@ -298,9 +298,9 @@ final class CloudShare {
 
     /// Pictures the design shows that are not here yet, from the room.
     private func fetchPictures(_ collaboration: Collaboration, _ server: ShareServer) async throws {
-        let design = collaboration.url, images = design.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+        let design = collaboration.url
         let wanted = shown.isEmpty ? Collaboration.pictures(in: collaboration.state.flatDesign().document()) : shown
-        for name in wanted.sorted() where !FileManager.default.fileExists(atPath: images.appendingPathComponent(name).path) {
+        for name in wanted.sorted() where !Arrivals.hasPicture(name, of: design) {
             guard !name.hasPrefix("."), (name as NSString).lastPathComponent == name else { continue }
             let key = ShareRecord.picture(keys.pictureName(name)).key
             if let last = asked[name], Date().timeIntervalSince(last) < 20 { continue }
@@ -308,8 +308,7 @@ final class CloudShare {
             guard progress.known[key] != nil, let sealed = try await server.get(keys.room, key, read: keys.readToken),
                   let data = await Self.open(file: sealed, keys, about: key) else { continue }
             do {
-                try DesignFile.makeFolder(images, in: design)
-                try data.write(to: images.appendingPathComponent(name), options: .atomic)
+                try Self.keep(picture: data, named: name, in: design)
             } catch {
                 Sharing.log.error("Could not keep a picture: \(error.localizedDescription, privacy: .public)")
                 continue
@@ -336,6 +335,18 @@ final class CloudShare {
         let fetched = try await fetch(keys, from: server, progress: Progress(), fully: true, replica: Sharing.replica)
         if let found = fetched.meta { meta(found) }
         return try CloudRoom.arrived(fetched)
+    }
+
+    /// Keeps a picture that came from the room: in the design, or beside it while the design is in
+    /// a folder a sync service keeps in step, where whoever placed it writes it (`Arrivals`).
+    nonisolated static func keep(picture data: Data, named name: String, in design: URL) throws {
+        if SyncedFolders.service(of: design) != nil {
+            try Arrivals.keep(data, as: name, in: Arrivals.images(of: design))
+            return
+        }
+        let images = design.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+        try DesignFile.makeFolder(images, in: design)
+        try data.write(to: images.appendingPathComponent(name), options: .atomic)
     }
 
     // MARK: Keeping what was done

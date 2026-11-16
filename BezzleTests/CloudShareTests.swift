@@ -255,6 +255,39 @@ struct CloudShareTests {
         #expect((try? Data(contentsOf: arrived)) == picture)
     }
 
+    /// In a folder Google Drive keeps in step, the Mac that placed a picture writes it into the
+    /// design, and the folder brings it to the others: one from the room waits beside the design
+    /// (`Arrivals`), as written in by every Mac it was kept once for each.
+    @Test func aPictureFromTheRoomWaitsBesideADesignInASyncedFolder() async throws {
+        let shared = Shared()
+        SyncedFolders.forTests[shared.folder.path] = "Google Drive"
+        defer { SyncedFolders.forTests[shared.folder.path] = nil }
+        let anna = try await start(shared)
+        let ben = try await join(shared, as: "ben")
+        defer {
+            try? FileManager.default.removeItem(at: Arrivals.folder(of: ben.url))
+            done(shared, [anna, ben])
+        }
+        let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let picture = try #require(rep.representation(using: .png, properties: [:]))
+        let images = anna.url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true)
+        try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+        try picture.write(to: images.appendingPathComponent("photo.png"))
+        anna.cloud?.offer(["photo.png"])
+        await anna.cloud?.syncForTesting()
+        ben.cloud?.offer(["photo.png"])
+        await ben.cloud?.syncForTesting()
+        let inDesign = ben.url.appendingPathComponent(DesignFile.imagesFolder).appendingPathComponent("photo.png")
+        #expect(!FileManager.default.fileExists(atPath: inDesign.path))
+        #expect((try? Data(contentsOf: Arrivals.images(of: ben.url).appendingPathComponent("photo.png"))) == picture)
+        #expect(Assets(design: ben.url).image("photo.png") != nil)
+        // Not fetched again while it waits.
+        let fetched = shared.relay.fetched["p.\(shared.keys.pictureName("photo.png"))"]
+        await ben.cloud?.syncForTesting()
+        #expect(shared.relay.fetched["p.\(shared.keys.pictureName("photo.png"))"] == fetched)
+    }
+
     @Test func manyChangesFoldAndSomeoneComingLaterHasThemAll() async throws {
         let shared = Shared()
         let anna = try await start(shared)

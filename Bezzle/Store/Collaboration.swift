@@ -47,7 +47,7 @@ nonisolated enum SharingFiles {
     static let folderName = FolderShare.sharingFolder
 
     static func folder(of design: URL) -> URL { design.appendingPathComponent(folderName, isDirectory: true) }
-    private static func linkFile(_ design: URL) -> URL { folder(of: design).appendingPathComponent("share.json") }
+    private static func linkFile(_ design: URL) -> URL { folder(of: design).appendingPathComponent(FolderShare.linkFile) }
 
     static func link(of design: URL) -> ShareLink? {
         (try? Data(contentsOf: linkFile(design))).flatMap { FolderShare.decode(ShareLink.self, from: $0) }

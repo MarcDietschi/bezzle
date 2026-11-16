@@ -529,8 +529,11 @@ final class Library {
     /// A design on the home screen without a current picture for the Finder, made before Bezzle
     /// kept them, brought in from elsewhere or changed while closed, is given one in the
     /// background. One open in a tab makes its own as it is worked on. See `DesignPreview`.
+    /// Not one in a synced folder: there the computer that changes a design makes its picture,
+    /// and one made here too was another computer writing it, which iCloud Drive keeps as a
+    /// second design and Google Drive as a second picture.
     private func seekPreview(_ url: URL) {
-        guard !BezzleApp.isTesting, previewsSought.insert(url).inserted,
+        guard !BezzleApp.isTesting, previewsSought.insert(url).inserted, SyncedFolders.service(of: url) == nil,
               !Tabs.shared.designs.contains(where: { $0.store?.url.standardizedFileURL == url.standardizedFileURL }) else { return }
         DesignPreview.catchingUp.async {
             guard DesignFile.isPackage(url), !DesignPreview.isCurrent(for: url), let doc = try? DesignFile.read(url) else { return }

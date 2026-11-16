@@ -516,9 +516,18 @@ Made safe on 2026-11-15 against the duplicates ("Poster 2") iCloud Drive keeps w
 written on two Macs at once (`README.md` › The Mac app › Designs in synced folders). What is left:
 
 - **Never seen with two real Macs:** two Macs in one process on a folder marked synced
-  (`CloudFolderTests`), and one copy editing a design in iCloud Drive on this Mac for four minutes
-  with no duplicate (before the change too). Not tried: two Macs on one iCloud account, Google
-  Drive (not installed here), Dropbox. Released in 1.9.1 (Mac).
+  (`CloudFolderTests`, `GoogleDriveFolderTests`), and one copy editing a design in iCloud Drive on
+  this Mac for four minutes and one in Google Drive for three, with no duplicate. Not tried: two
+  Macs on one iCloud account, two computers on one Google Drive with the 2026-11-16 changes, Dropbox.
+  What Google Drive kept twice was found in Erik's work drive, written by three Macs before them.
+- **Google Drive, not yet released** (2026-11-16): pictures and versions from the relay wait beside
+  the design, copies inside a design are taken back in, a link's design in the folder is opened
+  rather than made again (`README.md` › Designs in synced folders). Not looked at: what Google Drive
+  does when two computers change `document.json` at once (a Mac writes it whenever it changes the
+  design); `Library.carry` moving a design into a folder holding the same one still names it
+  "Poster 2" (taken in by `copiesFromTheService` once both are open there).
+- **A Mac only looking on** still writes what it did with the relay's room (`cloud.json`, in its own
+  folder, `CloudShare.keep`): harmless to Google Drive, but to iCloud Drive a write of the design.
 - **Both Macs changing it at once** still makes the service keep two now and then; the copy is
   taken back in within 20 s while the design is open, or when the designs list is read. One the
   service made that holds nothing new (only a picture or the view) is left as it is.
@@ -526,7 +535,11 @@ written on two Macs at once (`README.md` › The Mac app › Designs in synced f
   VM: a copy editing a design in a folder marked synced writes every edit (five of five) and its
   own parts. Not checked there: two copies on one design (the one looking on writing nothing), a
   copy the service made taken back in and sent to the Recycle Bin, a design away for a moment;
-  nor with a real OneDrive, Google Drive or iCloud for Windows.
+  nor with a real OneDrive, Google Drive or iCloud for Windows. Not on Windows yet (2026-11-16):
+  pictures and versions from the relay still go straight into the design (`Host/CloudCopy.swift`,
+  `Host/Versions.swift`), and copies inside a design are not taken back in (call
+  `FolderShare.foldCopiesInside` beside `copiesFromTheService` in `Collaborating.foldCopies`). A
+  link's copy beside a design is taken in there too, through the shared `copiesFromTheService`.
 - **A Mac only looking on** keeps where the design was looked at only until it is closed, and its
   Finder picture and versions are made by the Mac that changed it.
 

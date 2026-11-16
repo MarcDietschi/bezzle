@@ -8,6 +8,9 @@ import ImageIO
 nonisolated final class Assets: @unchecked Sendable {
     /// Where the pictures are; none for a design saved as a single file, which has no pictures.
     let folder: URL?
+    /// Where pictures that came from the relay wait while the design is in a synced folder, until
+    /// the folder brings them (`Arrivals`): looked in for one the design does not have yet.
+    let aside: URL?
 
     private struct Kept {
         /// Each picture at the sizes it has been drawn at, in steps of two, up to its own.
@@ -25,15 +28,26 @@ nonisolated final class Assets: @unchecked Sendable {
     /// Guards `kept`, and is waited on for a picture another thread is reading.
     private let lock = NSCondition()
 
-    init(folder: URL?) {
+    init(folder: URL?, aside: URL? = nil) {
         self.folder = folder
+        self.aside = aside
     }
 
     /// The images folder of the design at `url`, when it is a package.
     convenience init(design url: URL) {
         var isFolder: ObjCBool = false
         let package = FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && isFolder.boolValue
-        self.init(folder: package ? url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true) : nil)
+        self.init(folder: package ? url.appendingPathComponent(DesignFile.imagesFolder, isDirectory: true) : nil,
+                  aside: package ? Arrivals.images(of: url) : nil)
+    }
+
+    /// Where the picture `name` is: in the design, or else beside it while it is on its way.
+    private func file(_ name: String) -> URL? {
+        guard let folder else { return nil }
+        let file = folder.appendingPathComponent(name)
+        guard let aside, !FileManager.default.fileExists(atPath: file.path) else { return file }
+        let waiting = aside.appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: waiting.path) ? waiting : file
     }
 
     private func locked<Result>(_ body: (inout Kept) -> Result) -> Result {
@@ -51,11 +65,11 @@ nonisolated final class Assets: @unchecked Sendable {
         // A photo across many tiles is wanted by each of the threads drawing them at once.
         while kept.reading.contains(key) { lock.wait() }
         if let preview = kept.previews[name] { lock.unlock(); return preview }
-        guard let folder, !kept.missing.contains(name) else { let standIn = kept.standIns[name]; lock.unlock(); return standIn }
+        guard folder != nil, !kept.missing.contains(name) else { let standIn = kept.standIns[name]; lock.unlock(); return standIn }
         if let image = kept.cache[name]?[step] { lock.unlock(); return image }
         kept.reading.insert(key)
         lock.unlock()
-        let image = Self.read(folder.appendingPathComponent(name), step: step)
+        let image = file(name).flatMap { Self.read($0, step: step) }
         finish(name, step: step, image)
         return image ?? locked { $0.standIns[name] }
     }
@@ -83,7 +97,7 @@ nonisolated final class Assets: @unchecked Sendable {
     /// drawn; and away from the main thread it is simply read, as nothing waits on it there.
     func image(_ name: String, pixels: CGFloat, later: Bool) -> CGImage? {
         let step = Self.step(pixels), key = Self.key(name, step)
-        guard later, pixels.isFinite, Thread.isMainThread, let folder else { return image(name, pixels: pixels) }
+        guard later, pixels.isFinite, Thread.isMainThread, folder != nil else { return image(name, pixels: pixels) }
         let (sizes, start) = locked { k -> ([Int: CGImage]?, Bool) in
             guard k.previews[name] == nil, !k.missing.contains(name), k.cache[name]?[step] == nil,
                   let sizes = k.cache[name], !sizes.isEmpty else { return (nil, false) }
@@ -91,11 +105,11 @@ nonisolated final class Assets: @unchecked Sendable {
         }
         guard let sizes else { return image(name, pixels: pixels) }
         if start {
-            let url = folder.appendingPathComponent(name), back = Handoff(assets: self)
+            let back = Handoff(assets: self)
             // Kept from here, not from the main thread, which may itself be waiting for it.
             Self.readers.async {
                 guard let assets = back.assets else { return }
-                let image = Self.read(url, step: step)
+                let image = assets.file(name).flatMap { Self.read($0, step: step) }
                 assets.finish(name, step: step, image)
                 if image != nil { TileMaker.onMain { back.assets?.ready?(name) } }
             }
@@ -129,13 +143,13 @@ nonisolated final class Assets: @unchecked Sendable {
     /// of a design with many reads them here, away from the main thread, and is then only drawn.
     static func previews(_ sizes: [String: Int], design url: URL) -> Assets {
         let assets = Assets(design: url)
-        guard let folder = assets.folder, !sizes.isEmpty else { return assets }
+        guard assets.folder != nil, !sizes.isEmpty else { return assets }
         let names = Array(sizes.keys)
         let read = Previews(count: names.count)
         DispatchQueue.concurrentPerform(iterations: names.count) { i in
             let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
                                             kCGImageSourceShouldCacheImmediately: true, kCGImageSourceThumbnailMaxPixelSize: sizes[names[i]] ?? 64]
-            let image = CGImageSourceCreateWithURL(folder.appendingPathComponent(names[i]) as CFURL, nil)
+            let image = assets.file(names[i]).flatMap { CGImageSourceCreateWithURL($0 as CFURL, nil) }
                 .flatMap { CGImageSourceCreateThumbnailAtIndex($0, 0, options as CFDictionary) }
             read.set(i, image)
         }

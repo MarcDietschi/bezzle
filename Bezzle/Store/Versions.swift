@@ -108,7 +108,10 @@ final class VersionShelf {
     func load() {
         guard !loaded, let url else { return }
         loaded = true
-        list = VersionFiles.index(of: url, replica: replica).filter { FileManager.default.fileExists(atPath: VersionFiles.file($0.id, of: url).path) }
+        let fm = FileManager.default
+        list = VersionFiles.index(of: url, replica: replica).filter {
+            fm.fileExists(atPath: VersionFiles.file($0.id, of: url).path) || fm.fileExists(atPath: Arrivals.version($0.id, of: url).path)
+        }
     }
 
     /// A design kept as a single file becomes a package, where versions have room.
@@ -207,7 +210,9 @@ final class VersionShelf {
 
     func document(_ id: UUID) -> BezzleDocument? {
         if let doc = cache[id] { return doc }
-        guard let url, let doc = VersionFiles.read(id, of: url) else { return nil }
+        // One someone else named may still wait beside a design in a synced folder (`Arrivals`).
+        guard let url, let doc = VersionFiles.read(id, of: url)
+                ?? (try? Data(contentsOf: Arrivals.version(id, of: url))).flatMap(VersionFiles.unpack) else { return nil }
         cache[id] = doc
         return doc
     }
@@ -236,6 +241,17 @@ final class VersionShelf {
             cache[version.id] = doc
         }
         let all = list, replica = replica
+        // In a synced folder, whoever named it writes it into the design, and this Mac's list goes
+        // with its next change of its own: written here too, a service that keeps each file kept it
+        // twice, and to iCloud Drive this Mac only looking on wrote the design. What came from the
+        // room waits beside it until the folder brings it (`Arrivals`).
+        if store?.inSyncedFolder == true {
+            DocumentStore.saving.async {
+                guard !FileManager.default.fileExists(atPath: VersionFiles.file(version.id, of: url).path) else { return }
+                try? Arrivals.keep(data, as: "\(version.id.uuidString).lzfse", in: Arrivals.versions(of: url))
+            }
+            return
+        }
         DocumentStore.saving.async {
             if !FileManager.default.fileExists(atPath: VersionFiles.file(version.id, of: url).path) { try? VersionFiles.write(data, as: version.id, to: url) }
             try? VersionFiles.writeIndex(all, to: url, replica: replica)
