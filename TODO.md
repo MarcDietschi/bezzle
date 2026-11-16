@@ -520,7 +520,7 @@ written on two Macs at once (`README.md` › The Mac app › Designs in synced f
   this Mac for four minutes and one in Google Drive for three, with no duplicate. Not tried: two
   Macs on one iCloud account, two computers on one Google Drive with the 2026-11-16 changes, Dropbox.
   What Google Drive kept twice was found in Erik's work drive, written by three Macs before them.
-- **Google Drive, not yet released** (2026-11-16): pictures and versions from the relay wait beside
+- **Google Drive, released in 1.9.3** (2026-11-16, Mac and Windows): pictures and versions from the relay wait beside
   the design, copies inside a design are taken back in, a link's design in the folder is opened
   rather than made again (`README.md` › Designs in synced folders). Not looked at: what Google Drive
   does when two computers change `document.json` at once (a Mac writes it whenever it changes the
@@ -602,3 +602,11 @@ The tab covered by the window's paper with Bezzle's mark pressed into it while t
   same as before the six agents' work) and the speed measures in an optimized Debug build. The
   Windows installers were not run; the Arm64 release build they hold was launched once in the VM
   (its home window, responding). None of the agents' work was seen in a running window.
+
+- **1.9.3 as released, not watched** (2026-11-16, the Mac and Windows from d70f4e1, for Google
+  Drive keeping pictures once for every computer and a link's design twice): an installed 1.9.2
+  taking the update was not seen on either. Before it: the whole Mac suite one test at a time
+  (2,526 tests), Windows' share code checked headless in the VM (`bezzle-share … drive`), the Mac
+  build against real Google Drive with planted copies. The Mac was notarized with the API key
+  (`ASC_KEY_PATH`), as the keychain profile `harness-notary` was gone from this Mac that afternoon;
+  the Windows installers are the dry run's, not run.

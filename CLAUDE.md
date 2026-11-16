@@ -29,11 +29,11 @@ Whenever the version is raised, or Erik asks for a release:
    The Mac app, On a busy Mac): run together on a busy Mac, they run one another out of time.
 3. **Run `Scripts/release.sh`** (about 15 minutes, 35 beside the Windows build; `--dry-run` first
    puts a notarized zip on the Desktop and publishes nothing). It notarizes with the keychain profile
-   `harness-notary`, which this Mac has (1.6.1, 2026-11-11), so it needs nothing more. Should the
-   profile be gone, it takes an App Store Connect API key instead:
-   `ASC_KEY_PATH=<AuthKey_P85NK4PS34.p8> ASC_KEY_ID=P85NK4PS34
-   ASC_ISSUER=a4b709c7-f491-4dbe-aad0-b1643daf9bc2 Scripts/release.sh`. The key is no longer on the
-   Desktop: ask Erik for it rather than looking for it. It builds from `git archive` of the commit plus the git-ignored
+   `harness-notary` when this Mac has it (it did from 1.6.1, 2026-11-11, and was gone on 2026-11-16,
+   for no known reason). Without it, it takes an App Store Connect API key instead:
+   `ASC_KEY_PATH=~/Documents/apps/AuthKey_P85NK4PS34.p8 ASC_KEY_ID=P85NK4PS34
+   ASC_ISSUER=a4b709c7-f491-4dbe-aad0-b1643daf9bc2 Scripts/release.sh`, the key where Erik keeps it
+   (2026-11-16; 1.9.3 was notarized so). Never print it or copy it elsewhere. It builds from `git archive` of the commit plus the git-ignored
    subject matte, exports with the Developer ID, adds Sparkle, signs, notarizes and staples. It then
    publishes the zip and delta updates as the GitHub release `v<version>` of mfrports/bezzle-web. It
    then commits the new feed and a copy of `RELEASE_NOTES.md` there, which rebuilds and deploys the
