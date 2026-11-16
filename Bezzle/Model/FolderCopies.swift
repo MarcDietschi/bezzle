@@ -42,6 +42,20 @@ nonisolated extension FolderShare {
     /// Where a design keeps the link it is shared by, in its sharing folder (`SharingFiles`).
     static let linkFile = "share.json"
 
+    /// Of the designs at `urls`, the one shared by the link with `secret`, if one is: a link opened
+    /// for a design in the designs folder already, there through a folder a sync service keeps in
+    /// step from a computer that opened the link before, opens it rather than making it again
+    /// beside it as "Poster 2".
+    static func design(sharedAs secret: String, among urls: [URL]) -> URL? {
+        var seen = Set<String>()
+        for url in urls.map(\.standardizedFileURL) where seen.insert(url.path).inserted {
+            guard BezzleDocument.fileExtensions.contains(url.pathExtension.lowercased()),
+                  !url.pathComponents.contains(where: { ["$recycle.bin", ".trash", ".trashes"].contains($0.lowercased()) }) else { continue }
+            if linkSecret(of: url) == secret { return url }
+        }
+        return nil
+    }
+
     /// The name a sync service gave a second file or folder of the same name, as it does when two
     /// computers write one at once: "Poster 2.bezzle" as macOS names it on a Mac, "Poster
     /// (1).bezzle" as Google Drive, OneDrive and Windows do. Returns the name it stands for

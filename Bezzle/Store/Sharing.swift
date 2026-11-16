@@ -305,16 +305,8 @@ final class Sharing {
         }
     }
 
-    /// Of the designs at `urls`, the one shared by the link with `secret`, if one is.
-    nonisolated static func design(sharedAs secret: String, among urls: [URL]) -> URL? {
-        var seen = Set<String>()
-        for url in urls.map(\.standardizedFileURL) where seen.insert(url.path).inserted {
-            guard BezzleDocument.fileExtensions.contains(url.pathExtension.lowercased()),
-                  !url.pathComponents.contains(where: { $0 == ".Trash" || $0 == ".Trashes" }) else { continue }
-            if FolderShare.linkSecret(of: url) == secret { return url }
-        }
-        return nil
-    }
+    /// Of the designs at `urls`, the one shared by the link with `secret`, if one is (`FolderShare.design(sharedAs:among:)`).
+    nonisolated static func design(sharedAs secret: String, among urls: [URL]) -> URL? { FolderShare.design(sharedAs: secret, among: urls) }
 
     /// Makes the design that came from a link in the designs folder.
     private func make(_ arrived: CloudShare.Arrived, secret: String, keys: ShareKeys) throws -> URL {

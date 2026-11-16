@@ -188,6 +188,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
     was made again beside it as "Poster 2" (`Library.freeURL`), with a room of its own. Such a copy
     beside a design is taken in like the service's (`FolderShare.copiesFromTheService` knows the link
     too).
+  - Shared with Windows: `FolderShare.Arrivals` (where and when, the Mac's `Arrivals` keeping them in
+    its caches), `foldCopiesInside`, `design(sharedAs:among:)`; `Windows/README.md` › The app.
   - Tested in `GoogleDriveFolderTests`. With Google Drive on this Mac: Erik's work account (shared
     drive X, `Vorlagen/Bezzle`), `~/Library/Application Support/Google/DriveFS/<id>/metadata_sqlite_db`
     lists every item by name without reading the drive through, and `ls -lO` shows which files are
