@@ -154,8 +154,12 @@ What every session here keeps to (Erik's rules, gathered from many sessions):
 - **This repository is public** (mfrports/bezzle, MIT, since 2026-11-20): every commit and its whole
   history can be read by anyone. Never commit a secret (`gitleaks git .` scans the history), nor
   the names of the companies Erik works for or of their designs: write "one of Erik's largest
-  designs" and use example.ch in tests. Only Erik changes it: he is its only collaborator, pull
-  requests can be opened by collaborators alone (the repository's `pull_request_creation_policy`),
-  and the ruleset `main` forbids deleting `main` or force-pushing to it, Erik as admin excepted.
-  Issues are open to everyone.
+  designs" and use example.ch in tests. Its collaborators are Erik and MarcDietschi (invited
+  2026-11-20 at Erik's word, after his Windows speed-ups came in from a fork; a personal
+  repository gives every collaborator write access). Pull requests can be opened by collaborators
+  alone (the repository's `pull_request_creation_policy`), and the ruleset `main` forbids deleting
+  `main` or force-pushing to it and takes changes only through a pull request approved after its
+  last push (since 2026-11-20), Erik as admin excepted, so his pushes and releases go on as before.
+  A contributor's work is read, built and tried in the VM before it comes onto `main`, keeping its
+  author. Issues are open to everyone.
 
