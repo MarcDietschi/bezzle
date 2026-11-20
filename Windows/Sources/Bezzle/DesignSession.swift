@@ -179,7 +179,16 @@ final class DesignSession {
     /// with none selected, `board` is the artboard whose page the layers list shows, if any.
     private(set) var selection: [UUID] = []
     private(set) var board: Int?
-    var zoom = 0.5 { didSet { if zoom != oldValue { changed() } } }
+    /// The canvas and zoom label follow the view without refreshing the design's panels.
+    var zoom = 0.5 {
+        didSet {
+            guard zoom != oldValue else { return }
+            guard isFront else { stale = true; return }
+            for f in zoomListeners { f() }
+        }
+    }
+    private var zoomListeners: [() -> Void] = []
+    func listenToZoom(_ f: @escaping () -> Void) { zoomListeners.append(f) }
     /// The inspector's open card, which the canvas lights what belongs to it for (a layout grid).
     var openCard: String? { didSet { if openCard != oldValue { openCardChanged?() } } }
     /// Where the open card holds a style ("fill:0", "text"), which a style taken goes to, as on

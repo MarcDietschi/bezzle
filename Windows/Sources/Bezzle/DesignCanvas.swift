@@ -636,7 +636,7 @@ final class DesignCanvas {
             self.lookFirst()
         }
         session.openCardChanged = { [weak self] in self?.drawAids() }
-        session.listen { [weak self] in
+        let showSession: () -> Void = { [weak self] in
             self?.stepLetters()
             self?.placeOverlays()
             // The row under a stack follows the selection.
@@ -648,6 +648,8 @@ final class DesignCanvas {
             self?.drawFlow()
             self?.placeFilm()
         }
+        session.listen(showSession)
+        session.listenToZoom(showSession)
         session.listenToHover { [weak self] in self?.placeOverlays() }
         // The fill menu opened or shut, or another of its gradient's colours chosen.
         session.listenToGradient { [weak self] in self?.gradients.draw() }
@@ -5242,9 +5244,11 @@ final class DesignCanvas {
 
     /// The Mac's zoom range (2% to 6400%), keeping `p` (on the stage) where it is.
     private func zoom(to z: Double, around p: CGPoint) {
+        let next = min(64, max(0.02, z))
+        guard next != session.zoom || flyingZoom != nil else { return }
         let before = inDesign(p)
         flyingZoom = nil
-        session.zoom = min(64, max(0.02, z))
+        session.zoom = next
         let after = onStage(before)
         pan = CGPoint(x: Double(pan.x) + Double(p.x) - Double(after.x), y: Double(pan.y) + Double(p.y) - Double(after.y))
         drawAll()

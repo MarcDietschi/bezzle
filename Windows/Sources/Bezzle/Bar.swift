@@ -71,6 +71,7 @@ final class Bar {
         root.children.append(right)
 
         session.listen { [weak self] in self?.show() }
+        session.listenToZoom { [weak self] in self?.showZoom() }
         // Animated, the button plays the film or stops it, and says which.
         session.listenToFilm { [weak self] in
             guard let self, self.session.mode == 3, self.actionPlaying != self.session.film.playing else { return }
@@ -80,9 +81,14 @@ final class Bar {
     }
 
     private func show() {
-        zoomLabel.text = "\(Int((session.zoom * 100).rounded()))%"
+        showZoom()
         if actionMode != session.mode || (session.mode == 3 && actionPlaying != session.film.playing) { paintAction() }
         paintModes()
+    }
+
+    private func showZoom() {
+        let text = "\(Int((session.zoom * 100).rounded()))%"
+        if zoomLabel.text != text { zoomLabel.text = text }
     }
 
     /// Export…, or seen as a prototype, Play: one button turning from a card into the pencil's blue.
