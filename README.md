@@ -6,6 +6,12 @@ browser viewer and the sharing relay. The website is a repository of its own (be
 
 Start here to find how anything is done. Each part has its own document; this page says which.
 
+Bezzle's own code is under the MIT license (`LICENSE`). Code vendored from others keeps its own
+license, kept beside it (`Packages/WebP`, `Packages/Shaders`, `Web/Sources/LZFSE`,
+`Scripts/subject-matte`), and the apps credit it (`Bezzle/Credits.rtf`, `Windows/Credits/`). The
+repository is open to read, fork and report issues on; changes to it are made by its author alone,
+so pull requests are not taken.
+
 ## What is where
 
 | Path | What it is |
@@ -85,7 +91,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
 - **Speed:** Debug builds mislead. Build with `SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule`
   and run `BEZZLE_STRESS` (see DebugHooks). Erik's main screen is 5120×1440 at 1× and 75 Hz, so a
   frame has 13.3 ms; he runs both the released copy and Xcode's Debug build, so measure both.
-- **Moving about quickly** (measured 2026-11-15 on a copy of Lawsearch AI, 17 artboards and about
+- **Moving about quickly** (measured 2026-11-15 on a copy of one of Erik's largest designs, 17 artboards and about
   10,000 layers): `BEZZLE_FILM='4:zoom=fit;5:roam=40,16,8,1,40'` pans 40 points a frame while
   pinching from the whole design to 40 % and back, once a second each way (`pan=` pans alone,
   `zoom=` and `see=` set the view first; `AnimateHooks` has them), in step with the screen's frames,
@@ -112,8 +118,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
     and under a pinch (three changes of zoom within 0.15 s) leaves its pictures stretched until the
     zoom stays put, as the tiles do.
   - A change of where the design is looked at alone is written after 30 s of rest, or with the next
-    change, or on closing, not 2 s after each pause: the whole `document.json` (8 MB for Lawsearch
-    AI) was written each time, 2 GB in an afternoon of looking about.
+    change, or on closing, not 2 s after each pause: the whole `document.json` (8 MB for that
+    design) was written each time, 2 GB in an afternoon of looking about.
 - **Opening a design** (from home, the Open panel, the Finder, a link, the AI server: all through
   `Tabs.open`): its tab shows at once, covered by the window's paper with Bezzle's mark pressed
   into it, and the first design opened grows the window from home's size meanwhile

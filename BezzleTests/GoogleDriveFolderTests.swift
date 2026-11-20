@@ -78,7 +78,7 @@ struct GoogleDriveFolderTests {
         #expect(FolderShare.numberedCopy("Poster 12.bezzle") == "Poster.bezzle")
         #expect(FolderShare.numberedCopy("images 2") == "images")
         #expect(FolderShare.numberedCopy("document (3).json") == "document.json")
-        #expect(FolderShare.numberedCopy("Weblaw Print + Media 2.bezzle") == "Weblaw Print + Media.bezzle")
+        #expect(FolderShare.numberedCopy("Studio Print + Media 2.bezzle") == "Studio Print + Media.bezzle")
         // Not a second one: no number, a name of its own, or nothing before the number.
         #expect(FolderShare.numberedCopy("photo.jpg") == nil)
         #expect(FolderShare.numberedCopy("Poster copy.bezzle") == nil)

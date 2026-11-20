@@ -81,8 +81,8 @@ fix with nothing to show gets a title and a lede, no list.
   https://mfrports.github.io/bezzle-web/updates/appcast.xml, which every deploy keeps the same file.
   Neither ever moves. It lists the newest version alone, with its deltas and its notes in every
   language. Only `release.sh` writes it.
-- **Zips and deltas**: kept as the releases of the public repository mfrports/bezzle-web (the app's
-  own repository is private), and served from https://bezzle.ch/downloads/, where the feed points: the
+- **Zips and deltas**: kept as the releases of the public repository mfrports/bezzle-web (never as
+  releases of the app's own repository), and served from https://bezzle.ch/downloads/, where the feed points: the
   site's Deploy (its scripts/downloads.mjs) copies every enclosure there from the GitHub release, so
   `release.sh` refuses to release until that step is on the site's main (Erik, 2026-11-08; Windows'
   installers go the same way, from the releases `windows-v<version>`). `release.sh` keeps the last
@@ -151,4 +151,11 @@ What every session here keeps to (Erik's rules, gathered from many sessions):
 - **Shared code and the Mac:** `Bezzle/Model` is compiled into Windows and the browser too. Share only
   what tests cover, prove the Mac unchanged (`README.md` › Mac parity), and commit Mac-touching work
   apart from Windows work.
+- **This repository is public** (mfrports/bezzle, MIT, since 2026-11-20): every commit and its whole
+  history can be read by anyone. Never commit a secret (`gitleaks git .` scans the history), nor
+  the names of the companies Erik works for or of their designs: write "one of Erik's largest
+  designs" and use example.ch in tests. Only Erik changes it: he is its only collaborator, pull
+  requests can be opened by collaborators alone (the repository's `pull_request_creation_policy`),
+  and the ruleset `main` forbids deleting `main` or force-pushing to it, Erik as admin excepted.
+  Issues are open to everyone.
 

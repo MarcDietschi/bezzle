@@ -74,17 +74,17 @@ struct WebBrowserTests {
             if let expires { p[.expires] = expires }
             return HTTPCookie(properties: p)!
         }
-        let host = cookie("search.weblaw.ch"), wide = cookie(".weblaw.ch"), other = cookie("example.com")
-        let deep = cookie("search.weblaw.ch", path: "/api"), safe = cookie("search.weblaw.ch", path: "/", secure: true)
-        let old = cookie("search.weblaw.ch", expires: Date(timeIntervalSinceNow: -60))
+        let host = cookie("search.example.ch"), wide = cookie(".example.ch"), other = cookie("example.com")
+        let deep = cookie("search.example.ch", path: "/api"), safe = cookie("search.example.ch", path: "/", secure: true)
+        let old = cookie("search.example.ch", expires: Date(timeIntervalSinceNow: -60))
         let all = [host, wide, other, deep, safe, old]
-        let page = URL(string: "https://search.weblaw.ch/img/logo.png")!
+        let page = URL(string: "https://search.example.ch/img/logo.png")!
         #expect(Set(WebCapture.cookies(for: page, among: all).map(\.name)) == Set([host, wide, safe].map(\.name)))
         // Only the domain's own cookie goes to a host beside it, and none marked secure over HTTP.
-        #expect(WebCapture.cookies(for: URL(string: "https://www.weblaw.ch/a.png")!, among: all).map(\.name) == [wide.name])
-        #expect(!WebCapture.cookies(for: URL(string: "http://search.weblaw.ch/api/x")!, among: all).contains { $0.name == safe.name })
-        #expect(WebCapture.cookies(for: URL(string: "https://search.weblaw.ch/api/x")!, among: all).contains { $0.name == deep.name })
-        #expect(!WebCapture.cookies(for: URL(string: "https://search.weblaw.ch/apix")!, among: all).contains { $0.name == deep.name })
+        #expect(WebCapture.cookies(for: URL(string: "https://www.example.ch/a.png")!, among: all).map(\.name) == [wide.name])
+        #expect(!WebCapture.cookies(for: URL(string: "http://search.example.ch/api/x")!, among: all).contains { $0.name == safe.name })
+        #expect(WebCapture.cookies(for: URL(string: "https://search.example.ch/api/x")!, among: all).contains { $0.name == deep.name })
+        #expect(!WebCapture.cookies(for: URL(string: "https://search.example.ch/apix")!, among: all).contains { $0.name == deep.name })
     }
 
     // MARK: Into an open design
@@ -245,7 +245,7 @@ struct WebBrowserTests {
         browser.back()
         try await browser.settle()
         #expect(await browser.findPages().map(\.kind) == [.open, .visited, .linked])
-        #expect(WebSitePage.doesSomething(URL(string: "https://search.weblaw.ch/signout")!))
+        #expect(WebSitePage.doesSomething(URL(string: "https://search.example.ch/signout")!))
         #expect(WebSitePage.doesSomething(URL(string: "https://a.ch/de/abmelden?x=1")!))
         #expect(!WebSitePage.doesSomething(URL(string: "https://a.ch/account/searches")!))
     }

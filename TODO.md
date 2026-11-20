@@ -253,7 +253,7 @@ outlines and looks. What is left:
 - **The browser viewer** shows the picture for such a fill (`beyondPlain`); drawing it needs
   framebuffer passes, steps with kept state, a depth and stencil context, instancing, textures
   of numbers and per-draw clocks in `site/shaders.mjs`.
-- **For Erik:** the glow layer of the Lawsearch AI design was recorded before the recorder was
+- **For Erik:** the glow layer of the web page design Erik imported on 2026-11-13 was recorded before the recorder was
   fixed (2026-11-13); importing it again gives the fixed recording.
 
 ## Vectorize
@@ -496,7 +496,7 @@ Made quick on 2026-11-15 (`README.md` › The Mac app › Moving about quickly h
 the rules). What that left:
 
 - **Never felt:** measured with made scroll and pinch events in a copy in the background, on a
-  copy of Lawsearch AI, never with a hand on a trackpad. Released in 1.9 (2026-11-15).
+  copy of one of Erik's largest designs, never with a hand on a trackpad. Released in 1.9 (2026-11-15).
 - **For Erik, the zoom button** keeps the width it has at 100 % from the whole design to 999 %
   (a few points wider at 50 % than before, the number at its right), so that the bar never moves
   while zooming. Say if it should hug its number again; that costs a late frame now and then
@@ -549,7 +549,7 @@ The tab covered by the window's paper with Bezzle's mark pressed into it while t
 - **Never seen by a person:** photographed held still at moments of the gesture and filmed at
   about ten frames a second in test copies in the background, light and dark, on this Mac's
   1728 × 997 window at 2×. Not seen at 75 Hz on Erik's 5120 × 1440 screen at 1×, nor with a design
-  as heavy as Lawsearch AI (the largest tried: 4,860 layers and 60 photos).
+  as heavy as Erik's largest designs (the largest tried: 4,860 layers and 60 photos).
 - **Measured in Debug alone:** an optimized build makes the design sooner, so more designs opened
   in a second tab come through within the grace, without the mark.
 - **A Photoshop document** keeps its own progress while it comes in (`BringingInView`), not the

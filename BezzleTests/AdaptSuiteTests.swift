@@ -1305,7 +1305,7 @@ struct AdaptSuiteTests {
         let post = A.board(CGSize(width: 900, height: 900), [
             laptop,
             A.text("Tailored to every department, it becomes a tool for productivity and innovation.", 30, at: CGPoint(x: 74, y: 182), width: 589, color: .white),
-            A.text("weblaw", 20, face: "Bold", at: CGPoint(x: 74, y: 785), color: .white),
+            A.text("nordia", 20, face: "Bold", at: CGPoint(x: 74, y: 785), color: .white),
         ], color: RGBA(r: 0.1, g: 0.3, b: 0.35))
         let plan = Adapt.plan(post, shapes: ["laptop.png": CGRect(x: 0.234, y: 0.135, width: 0.516, height: 0.719)],
                               cores: ["laptop.png": CGRect(x: 0.27, y: 0.25, width: 0.45, height: 0.55)])
