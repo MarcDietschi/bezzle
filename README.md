@@ -1,3 +1,5 @@
+Just to contribute to Erik's project at https://github.com/mfrports/bezzle/
+
 # Bezzle
 
 A free design app for the Mac and for Windows: apps, websites, social posts and print, opening
