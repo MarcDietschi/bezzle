@@ -100,14 +100,18 @@ extension Fonts {
 }
 
 /// A font file's names as its name table gives them: the family and face it belongs to, for
-/// each font in it (a .ttc holds several). Only the table directory and the name table are read.
+/// each font in it (a .ttc holds several). The start of the file is reused across directory reads.
 nonisolated enum FontNames {
     struct Names: Sendable { let family: String; let face: String }
 
     static func read(_ url: URL) -> [Names?] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
         defer { try? handle.close() }
+        let prefix = (try? handle.read(upToCount: 4096)) ?? Data()
         func bytes(_ offset: Int, _ count: Int) -> [UInt8]? {
+            if offset <= prefix.count, count <= prefix.count - offset {
+                return Array(prefix[offset..<offset + count])
+            }
             guard (try? handle.seek(toOffset: UInt64(offset))) != nil, let data = try? handle.read(upToCount: count), data.count == count else { return nil }
             return [UInt8](data)
         }
